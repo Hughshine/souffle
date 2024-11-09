@@ -49,7 +49,8 @@ Own<ram::Condition> ConstraintTranslator::visit_(type_identity<ast::Negation>, c
 
     if (arity == 0) {
         // for a nullary, negation is a simple emptiness check
-        return mk<ram::EmptinessCheck>(getConcreteRelationName(atom->getQualifiedName()));
+        return nullptr;
+        // return mk<ram::EmptinessCheck>(getConcreteRelationName(atom->getQualifiedName()));
     }
 
     // else, we construct the atom and create a negation
@@ -57,7 +58,8 @@ Own<ram::Condition> ConstraintTranslator::visit_(type_identity<ast::Negation>, c
     for (const auto* arg : atom->getArguments()) {
         values.push_back(context.translateValue(index, arg));
     }
-    return mk<ram::Negation>(
-            mk<ram::ExistenceCheck>(getConcreteRelationName(atom->getQualifiedName()), std::move(values)));
+    // return mk<ram::Negation>(
+    //         mk<ram::ExistenceCheck>(getConcreteRelationName(atom->getQualifiedName()), std::move(values)));
+    return nullptr;
 }
 }  // namespace souffle::ast2ram::seminaive

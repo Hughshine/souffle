@@ -1,16 +1,10 @@
-.decl edge(x:number, y:number)
-.input edge
+.decl C(x:number)
+.input C
 
-.decl path(x:number, y:number)
-.output path
+.decl B(x:number, y:number)
+.input B
 
 .decl A(x:number)
 .output A
-A(1).
-.decl B(x:number)
-.output B
 
-path(x, y) :- edge(x, y).
-path(x, y) :- path(x, z), edge(z, y).
-A(x) :- path(x, y), B(y).
-B(y) :- path(x, y), A(x).
+A(x) :- B(x, y), !C(y).
