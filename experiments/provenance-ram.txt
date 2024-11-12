@@ -1,0 +1,66 @@
+PROGRAM
+ DECLARATION
+  B(x:i:number,y:i:number,@rule_number:i:number auxiliary,@level_number:i:number auxiliary) 
+  C(x:i:number,@rule_number:i:number auxiliary,@level_number:i:number auxiliary) 
+  A(x:i:number,@rule_number:i:number auxiliary,@level_number:i:number auxiliary) 
+  A.@info.1(clause_num:i:number,head_vars:s:symbol,rel_0:s:symbol,rel_1:s:symbol,clause_repr:s:symbol) info
+ END DECLARATION
+ SUBROUTINE 3
+  DEBUG "@info.clause[A(x) :- \n   B(x,y),\n   !C(y).]\nin file example.dl [10:1-10:24]"
+   QUERY
+    INSERT (NUMBER(1), STRING("x"), STRING("B,x,y"), STRING("!C"), STRING("A(x) :- \n   B(x,y),\n   !C(y).")) INTO A.@info.1
+   END QUERY
+  END DEBUG
+ END SUBROUTINE
+ SUBROUTINE A
+  DEBUG "A(x) :- \n   B(x,y),\n   !C(y).\nin file example.dl [10:1-10:24]"
+   QUERY
+    FOR t0 IN B
+     IF (NOT ISEMPTY(B))
+      IF (NOT (t0.1,UNDEF,UNDEF) IN C)
+       INSERT (t0.0, NUMBER(1), (t0.3+NUMBER(1))) INTO A
+   END QUERY
+  END DEBUG
+  IO A (IO="file",attributeNames="x",auxArity="2",name="A",operation="output",output-dir="./output",params="{\"records\": {}, \"relation\": {\"arity\": 1, \"params\": [\"x\"]}}",types="{\"ADTs\": {}, \"records\": {}, \"relation\": {\"arity\": 1, \"types\": [\"i:number\"]}}")
+ END SUBROUTINE
+ SUBROUTINE A_1_negation_subproof
+  QUERY
+   IF (ARGUMENT(0),ARGUMENT(1),UNDEF,UNDEF) IN B
+    RETURN (NUMBER(1))
+  END QUERY
+  QUERY
+   IF (NOT (ARGUMENT(0),ARGUMENT(1),UNDEF,UNDEF) IN B)
+    RETURN (NUMBER(0))
+  END QUERY
+  QUERY
+   IF (ARGUMENT(1),UNDEF,UNDEF) IN C
+    RETURN (NUMBER(0))
+  END QUERY
+  QUERY
+   IF (NOT (ARGUMENT(1),UNDEF,UNDEF) IN C)
+    RETURN (NUMBER(1))
+  END QUERY
+ END SUBROUTINE
+ SUBROUTINE A_1_subproof
+  QUERY
+   FOR t0 IN B
+    IF (NOT ISEMPTY(B))
+     IF (t0.3 < ARGUMENT(1))
+      IF (t0.0 = ARGUMENT(0))
+       IF (NOT (t0.1,UNDEF,UNDEF) IN C)
+        RETURN (t0.0, t0.1, t0.2, t0.3, t0.1, UNDEF, UNDEF, t0.0, ARGUMENT(0), t0.3, ARGUMENT(1))
+  END QUERY
+ END SUBROUTINE
+ SUBROUTINE B
+  IO B (IO="file",attributeNames="x\ty",auxArity="2",fact-dir="./facts",name="B",operation="input",params="{\"records\": {}, \"relation\": {\"arity\": 2, \"params\": [\"x\", \"y\"]}}",types="{\"ADTs\": {}, \"records\": {}, \"relation\": {\"arity\": 2, \"types\": [\"i:number\", \"i:number\"]}}")
+ END SUBROUTINE
+ SUBROUTINE C
+  IO C (IO="file",attributeNames="x",auxArity="2",fact-dir="./facts",name="C",operation="input",params="{\"records\": {}, \"relation\": {\"arity\": 1, \"params\": [\"x\"]}}",types="{\"ADTs\": {}, \"records\": {}, \"relation\": {\"arity\": 1, \"types\": [\"i:number\"]}}")
+ END SUBROUTINE
+ BEGIN MAIN
+  CALL stratum_B
+  CALL stratum_C
+  CALL stratum_A
+  CALL stratum_3
+ END MAIN
+END PROGRAM

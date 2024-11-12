@@ -38,7 +38,7 @@ public:
 
     virtual Own<ram::TranslationUnit> translateUnit(ast::TranslationUnit& tu) = 0;
 
-protected:
+// protected:
     Own<TranslatorContext> context;
 };
 

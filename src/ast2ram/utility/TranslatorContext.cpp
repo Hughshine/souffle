@@ -124,6 +124,15 @@ std::size_t TranslatorContext::getClauseNum(const ast::Clause* clause) const {
     return clauseNums.at(clause);
 }
 
+void TranslatorContext::dumpClauseNums(std::ostream& o) const {
+    assert(!clauseNums.empty() && "clauseNums is empty");
+    for (const auto& [clause, clauseId] : clauseNums) {
+        o << clauseId << " ";
+        clause->getSrcLoc().print(o);
+        o << " " << clause->getHead()->getQualifiedName() << std::endl;  // TODO: plain file should be ok
+    }
+}
+
 std::string TranslatorContext::getAttributeTypeQualifier(const ast::QualifiedName& name) const {
     return getTypeQualifier(typeEnv->getType(name));
 }

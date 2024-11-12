@@ -709,8 +709,9 @@ std::vector<MainOption> getMainOptions() {
           "Enable profiling, and write profile data to <FILE>."},
       {"profile-frequency", nextOptChar++, "", "", false,
           "Enable the frequency counter in the profiler."},
-      {"provenance", 't', "[ none | explain | explore ]", "", false,
-          "Enable provenance instrumentation and interaction."},
+      // {"provenance", 't', "[ none | explain | explore ]", "", false,
+          // "Enable provenance instrumentation and interaction."},
+      // {"prob", 'x', "", "", false},
       {"show", nextOptChar++, "[ <see-list> ]", "", true,
           "Print selected program information.\n"
           "Modes:\n"
@@ -1122,12 +1123,25 @@ int main(Global& glb, const char* souffle_executable) {
                 std::string mainClass = db.emitMultipleFilesInDir(directory, srcFiles);
                 binaryFilename = (directory / fs::path(mainClass)).string();
             } else {
-                std::string sourceFilename = baseFilename + ".cpp";
-                std::ofstream os{sourceFilename};
-                db.emitSingleFile(os);
-                os.close();
-                srcFiles.push_back(fs::path(sourceFilename));
+                {
+                    std::string sourceFilename = baseFilename + ".cpp";
+                    std::ofstream os{sourceFilename};
+                    db.emitSingleFile(os);
+                    os.close();
+                    srcFiles.push_back(fs::path(sourceFilename));
+                }
+                {
+                    // TODO emit TranslationContext.clauseNums here
+                    std::string clauseMapFilename = baseFilename + "-clauses.txt";
+                    std::ofstream os{clauseMapFilename};
+                    unitTranslator->context->dumpClauseNums(os);
+                    os.close();
+                }
             }
+
+
+            // Output relationId to relationStr mapping
+
             if (glb.config().has("verbose")) {
                 auto synthesisEnd = std::chrono::high_resolution_clock::now();
                 std::cout << "Synthesis time: "

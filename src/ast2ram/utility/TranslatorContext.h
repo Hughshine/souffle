@@ -109,6 +109,7 @@ public:
     bool hasSubsumptiveClause(const ast::QualifiedName& name) const;
     bool isRecursiveClause(const ast::Clause* clause) const;
     std::size_t getClauseNum(const ast::Clause* clause) const;
+    void dumpClauseNums(std::ostream& o) const;
 
     /** SCC methods */
     std::size_t getNumberOfSCCs() const;
