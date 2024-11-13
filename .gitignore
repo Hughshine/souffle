@@ -53,3 +53,7 @@ utilities/bash-completion
 debian/changelog
 
 __pycache__
+
+experiment/*
+!experiment/*.dl
+!experiment/facts

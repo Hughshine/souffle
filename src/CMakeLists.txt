@@ -171,6 +171,7 @@ set(SOUFFLE_SOURCES
     synthesiser/Relation.cpp
     synthesiser/Utils.cpp
     synthesiser/GenDb.cpp
+        include/souffle/Derivation.h
 )
 
 # --------------------------------------------------

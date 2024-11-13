@@ -2572,6 +2572,9 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         db.setNS("souffle");
     }
 
+    // include derivation manager
+    db.addGlobalInclude("\"souffle/Derivation.h\"");
+
     // produce external definitions for user-defined functors
     std::map<std::string, std::tuple<TypeAttribute, std::vector<TypeAttribute>, bool>> functors;
     visit(prog, [&](const UserDefinedOperator& op) {
@@ -3271,7 +3274,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
              << glb.config().get("version") << R"_(");)_" << '\n';
     }
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
-
+    hook << "DerivationManager::print();\n";  // TODO
     if (glb.config().get("provenance") == "explain") {
         hook << "explain(obj, false);\n";
     } else if (glb.config().get("provenance") == "explore") {
