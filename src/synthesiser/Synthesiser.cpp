@@ -3274,7 +3274,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
              << glb.config().get("version") << R"_(");)_" << '\n';
     }
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
-    hook << "DerivationManager::print();\n";  // TODO
+    hook << "DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFileDir());\n";  // TODO
     if (glb.config().get("provenance") == "explain") {
         hook << "explain(obj, false);\n";
     } else if (glb.config().get("provenance") == "explore") {
