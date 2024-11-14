@@ -205,16 +205,16 @@ Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause)
     // Propositions
     if (head->getArity() == 0) {
         return mk<ram::Filter>(mk<ram::EmptinessCheck>(headRelationName),
-                mk<ram::Insert>(headRelationName, std::move(values)));
+                mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), "CLAUSE"));
     }
 
     // Relations with functional dependency constraints
     if (auto guardedConditions = getFunctionalDependencies(clause)) {
-        return mk<ram::GuardedInsert>(headRelationName, std::move(values), std::move(guardedConditions));
+        return mk<ram::GuardedInsert>(headRelationName, std::move(values), std::move(guardedConditions), context.getClauseNum(&clause), "CLAUSE");
     }
 
     // Everything else
-    return mk<ram::Insert>(headRelationName, std::move(values));
+    return mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), "CLAUSE");
 }
 
 Own<ram::Operation> ClauseTranslator::addAtomScan(Own<ram::Operation> op, const ast::Atom* atom,

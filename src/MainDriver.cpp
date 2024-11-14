@@ -709,9 +709,9 @@ std::vector<MainOption> getMainOptions() {
           "Enable profiling, and write profile data to <FILE>."},
       {"profile-frequency", nextOptChar++, "", "", false,
           "Enable the frequency counter in the profiler."},
-      // {"provenance", 't', "[ none | explain | explore ]", "", false,
-          // "Enable provenance instrumentation and interaction."},
-      // {"prob", 'x', "", "", false},
+      {"provenance", 't', "[ none | explain | explore ]", "", false,
+          "Enable provenance instrumentation and interaction."},
+      // {"prob", 'x', "", "", false}, // TODO
       {"show", nextOptChar++, "[ <see-list> ]", "", true,
           "Print selected program information.\n"
           "Modes:\n"

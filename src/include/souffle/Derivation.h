@@ -7,6 +7,7 @@
 #include "souffle/RamTypes.h"
 
 #include <fstream>
+#include <cassert>
 #include <map>
 #include <set>
 #include <vector>
@@ -21,6 +22,7 @@ struct UntypedTuple {
     static std::string to_string_fields(std::vector<souffle::RamDomain>& fields) {
         std::string result = "";
         bool first = true;
+        // may use StreamUtil::join()
         for (const auto& field : fields) {
             if (first) {
                 first = false;
@@ -40,19 +42,19 @@ public:
 // private:
     // TODO
     // mapping from tuple's pointer to rules that derive it
-
     static inline std::set<souffle::RamDomain> testRules = {
         0, 1, 2, 42
     };
-    static inline std::map<void*, std::set<souffle::RamDomain>*> tuplePtr2Rules = {
+    static inline std::map<const void*, std::set<souffle::RamDomain>*> tuplePtr2Rules = {
         // {nullptr, &testRules}
     };
     // mapping from tuple's pointer to its (untyped) real representation, i.e., relation name and value list
-    static inline std::map<void*, UntypedTuple*> tuplePtr2UntypedTuple = {
+    static inline std::map<const void*, UntypedTuple*> tuplePtr2UntypedTuple = {
         // {nullptr, &testUntypedTuple}
     };
 
     static std::string rules2Str(const std::set<souffle::RamDomain>* rules) {
+        assert(rules != nullptr && "null ruleSet");
         std::string result = "[";
         bool first = true;
         for (auto& ruleId : *rules) {
@@ -67,21 +69,19 @@ public:
     }
 
     static void dumpDerivationInfo(const std::string& filename, const std::string& outputDir) {
-        std::cout << "DerivationManager::dumpDerivationInfo()" << std::endl;
-        std::cout << filename << std::endl;
         // TODO: should change to souffle's IO system later
         std::string baseFilename = filename;
         if (baseFilename.size() >= 3 && baseFilename.substr(baseFilename.size() - 3) == ".dl") {
             baseFilename = baseFilename.substr(0, baseFilename.size() - 3);
         }
-        std::cout << baseFilename << std::endl;
         std::string derivationInfoFilename = baseFilename + "-derivation-info.txt";
         std::ofstream os{derivationInfoFilename};
         for (const auto& [tuplePtr, tuple] : tuplePtr2UntypedTuple) {
-            os << UntypedTuple::to_string(*tuple) << '\t' << rules2Str(tuplePtr2Rules[tuplePtr]) << std::endl;
+            os << UntypedTuple::to_string(*tuple) << '\t';
+            auto* ruleSet = tuplePtr2Rules[tuplePtr];
+            os << rules2Str(ruleSet) << std::endl;
         }
         os.close();
-
     }
 };
 
