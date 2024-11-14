@@ -1767,7 +1767,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             auto arity = rel->getArity();
             auto relName = synthesiser.getRelationName(rel);
             auto ctxName = "READ_OP_CONTEXT(" + synthesiser.getOpContextName(*rel) + ")";
-
+            auto tempRelName = rel->getName();
             // create inserted tuple
             // TODO: is tuple local? which means its pointer used as key?
             out << "Tuple<RamDomain," << arity << "> tuple{{" << join(insert.getValues(), ",", rec)
@@ -1777,19 +1777,21 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             out << relName << "->"
                 << "insert(tuple," << ctxName << ");\n";
 
-            // get the tuple from the relation; it might be old
-            out << "auto& realTuple = *(" << relName << "->"
-                << "find(tuple," << ctxName << "));\n";
             // record derivation info about realTuple
-            out << "auto*& ruleSet = DerivationManager::tuplePtr2Rules[&realTuple];\n";
-            out << "if (ruleSet == nullptr) {\n";
-            out << "ruleSet = new std::set<souffle::RamDomain>();\n";
-            out << "DerivationManager::tuplePtr2UntypedTuple[&realTuple] = new UntypedTuple{\"" << rel->getName()
-                << "\",{" << join(insert.getValues(), ",", rec) << "}};\n";
-            out << "}\n";
-            out << "ruleSet->insert(" << insert.getClauseID() <<");\n";  // TODO: need to pass real ruleId to RAM::Insert
-
-            // TODO: also insert to the untypedTupleMap
+            // if target rel is @delta or @new, avoid record new derivation
+            // get the tuple from the relation; it might be old
+            if (!(tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new"
+                || tempRelName.size() >= 6 && tempRelName.substr(0, 6) == "@delta")) {
+                out << "auto& realTuple = *(" << relName << "->"
+                    << "find(tuple," << ctxName << "));\n";
+                out << "auto*& ruleSet = DerivationManager::tuplePtr2Rules[&realTuple];\n";
+                out << "if (ruleSet == nullptr) {\n";
+                out << "ruleSet = new std::set<souffle::RamDomain>();\n";
+                out << "DerivationManager::tuplePtr2UntypedTuple[&realTuple] = new UntypedTuple{\"" << tempRelName
+                    << "\",{" << join(insert.getValues(), ",", rec) << "}};\n";
+                out << "}\n";
+                out << "ruleSet->insert(" << insert.getClauseID() <<");\n";
+            }
             PRINT_END_COMMENT(out);
         }
 

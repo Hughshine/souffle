@@ -7,6 +7,7 @@
 .decl A(x:number)
 .output A
 
-A(x) :- B(x, _).
 
 A(x) :- C(x).
+
+A(y) :- A(x), B(x, y).
