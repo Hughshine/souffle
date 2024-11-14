@@ -1780,8 +1780,12 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             // record derivation info about realTuple
             // if target rel is @delta or @new, avoid record new derivation
             // get the tuple from the relation; it might be old
-            if (!((tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new")
-                || (tempRelName.size() >= 6 && tempRelName.substr(0, 6) == "@delta"))) {
+            if ((!(insert.getClauseStr() == "UNKNOWN CLAUSE")) // TODO
+                && (!(tempRelName.size() >= 6 && tempRelName.substr(0, 6) == "@delta"))) {
+                if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new") {
+                    tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
+                    // TODO: relName should be A_xxx rather than new_A_yyy ...
+                }
                 out << "auto& realTuple = *(" << relName << "->"
                     << "find(tuple," << ctxName << "));\n";
                 out << "auto*& ruleSet = DerivationManager::tuplePtr2Rules[&realTuple];\n";

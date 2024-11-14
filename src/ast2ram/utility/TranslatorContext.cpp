@@ -74,14 +74,18 @@ TranslatorContext::TranslatorContext(const ast::TranslationUnit& tu) {
     polyAnalysis = &tu.getAnalysis<ast::analysis::PolymorphicObjectsAnalysis>();
     joinSizeAnalysis = &tu.getAnalysis<ast::analysis::JoinSizeAnalysis>();
 
-    // Set up clause nums
+    // Set up clause nums // TODO: num is now id; less readability now
+    std::size_t count = 1;
     for (const ast::Relation* rel : program->getRelations()) {
-        std::size_t count = 1;
+        for (auto&& clause : program->getClauses(*rel)) {
+            if (!isFact(*clause)) {
+                clauseNums[clause] = count++;
+            }
+        }
         for (auto&& clause : program->getClauses(*rel)) {
             if (isFact(*clause)) {
-                clauseNums[clause] = 0;
+                clauseNums[clause] = count++;
             }
-            clauseNums[clause] = count++;
         }
     }
 
