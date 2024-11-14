@@ -202,19 +202,21 @@ Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause)
         values.push_back(context.translateValue(*valueIndex, arg));
     }
 
+    auto clauseStr = clause.toString();
     // Propositions
     if (head->getArity() == 0) {
         return mk<ram::Filter>(mk<ram::EmptinessCheck>(headRelationName),
-                mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), "CLAUSE"));
+                mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), clauseStr));
     }
 
     // Relations with functional dependency constraints
     if (auto guardedConditions = getFunctionalDependencies(clause)) {
-        return mk<ram::GuardedInsert>(headRelationName, std::move(values), std::move(guardedConditions), context.getClauseNum(&clause), "CLAUSE");
+        return mk<ram::GuardedInsert>(headRelationName, std::move(values), std::move(guardedConditions),
+            context.getClauseNum(&clause), clauseStr);
     }
 
     // Everything else
-    return mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), "CLAUSE");
+    return mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), clauseStr);
 }
 
 Own<ram::Operation> ClauseTranslator::addAtomScan(Own<ram::Operation> op, const ast::Atom* atom,

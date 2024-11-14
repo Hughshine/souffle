@@ -89,6 +89,8 @@ public:
 
     static bool classof(const Node*);
 
+    std::string toString() const;
+
 protected:
     void print(std::ostream& os) const override;
 

@@ -85,6 +85,19 @@ void Clause::print(std::ostream& os) const {
     }
 }
 
+std::string Clause::toString() const {
+    std::stringstream resultStream;
+    resultStream << *head;
+    if (!bodyLiterals.empty()) {
+        resultStream << " :-  " << join(bodyLiterals, ",  ");
+    }
+    resultStream << ".";
+    if (plan != nullptr) {
+        resultStream << *plan;
+    }
+    return resultStream.str();
+}
+
 void Clause::printForDebugInfo(std::ostream& os) const {
     os << *head;
     if (!bodyLiterals.empty()) {

@@ -126,10 +126,11 @@ std::size_t TranslatorContext::getClauseNum(const ast::Clause* clause) const {
 
 void TranslatorContext::dumpClauseNums(std::ostream& o) const {
     assert(!clauseNums.empty() && "clauseNums is empty");
+
     for (const auto& [clause, clauseId] : clauseNums) {
         o << clauseId << " ";
         clause->getSrcLoc().print(o);
-        o << " " << clause->getHead()->getQualifiedName() << std::endl;  // TODO: plain file should be ok
+        o << " " << clause->toString() << std::endl;  // TODO: plain file should be ok
     }
 }
 
@@ -328,6 +329,7 @@ bool TranslatorContext::isADTBranchSimple(const ast::BranchInit* adt) const {
     return arity <= 1;
 }
 
+//TODO: ClauseTranslator should be a field in Translator Context
 Own<ram::Statement> TranslatorContext::translateNonRecursiveClause(
         const ast::Clause& clause, TranslationMode mode) const {
     auto clauseTranslator = Own<ClauseTranslator>(translationStrategy->createClauseTranslator(*this, mode));

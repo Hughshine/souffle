@@ -98,7 +98,7 @@ protected:
     void print(std::ostream& os, int tabpos) const override {
         os << times(" ", tabpos);
         os << "INSERT (" << join(expressions, ", ", print_deref<Own<Expression>>()) << ") INTO " << relation
-           << std::endl;
+           << " BY RULE (" << std::to_string(clauseID) << ")" << clauseStr << std::endl;
     }
 
     bool equal(const Node& node) const override {
