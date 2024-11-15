@@ -15,12 +15,12 @@
 struct UntypedTuple {
     std::string relation_name;
     std::vector<souffle::RamDomain> fields;
-    static std::string to_string(UntypedTuple& tuple) {
-        std::string result = tuple.relation_name + '(' + to_string_fields(tuple.fields) + ')';
+    static std::string toString(const UntypedTuple& tuple) {
+        std::string result = tuple.relation_name + '(' + toStringFields(tuple.fields) + ')';
         return result;
     }
-    static std::string to_string_fields(std::vector<souffle::RamDomain>& fields) {
-        std::string result = "";
+    static std::string toStringFields(const std::vector<souffle::RamDomain>& fields) {
+        std::string result;
         bool first = true;
         // may use StreamUtil::join()
         for (const auto& field : fields) {
@@ -30,6 +30,33 @@ struct UntypedTuple {
             } else {
                 result += "," + std::to_string(field);
             }
+        }
+        return result;
+    }
+
+    bool operator<(const UntypedTuple& other) const {
+        // Primary sort by name, secondary sort by age
+        if (relation_name != other.relation_name) {
+            return relation_name < other.relation_name;
+        }
+        if (fields.size() != other.fields.size()) {
+            return fields.size() < other.fields.size();
+        }
+        for (size_t i = 0; i < fields.size(); i++) {
+            if (fields[i] != other.fields[i]) {
+                return fields[i] < other.fields[i];
+            }
+        }
+        return false;
+    }
+
+    // TODO: avoid non-reference passing
+    template<std::size_t N>
+    static UntypedTuple fromTypedTuple(const std::string& relationName, const souffle::Tuple<souffle::RamDomain, N>& typedTuple) {
+        UntypedTuple result;
+        result.relation_name = relationName;
+        for (const auto& field : typedTuple) {
+            result.fields.push_back(field);
         }
         return result;
     }
@@ -45,13 +72,13 @@ public:
     static inline std::set<souffle::RamDomain> testRules = {
         0, 1, 2, 42
     };
-    static inline std::map<const void*, std::set<souffle::RamDomain>*> tuplePtr2Rules = {
-        // {nullptr, &testRules}
+    static inline std::map<UntypedTuple, std::set<souffle::RamDomain>*> untypedTuple2Rules = {
+        // {testUntypedTuple, &testRules}
     };
     // mapping from tuple's pointer to its (untyped) real representation, i.e., relation name and value list
-    static inline std::map<const void*, UntypedTuple*> tuplePtr2UntypedTuple = {
-        // {nullptr, &testUntypedTuple}
-    };
+    // static inline std::map<const void*, UntypedTuple*> tuplePtr2UntypedTuple = {
+    //     // {testUntypedTuple, &testUntypedTuple}
+    // };
 
     static std::string rules2Str(const std::set<souffle::RamDomain>* rules) {
         assert(rules != nullptr && "null ruleSet");
@@ -76,9 +103,8 @@ public:
         }
         std::string derivationInfoFilename = baseFilename + "-derivation-info.txt";
         std::ofstream os{derivationInfoFilename};
-        for (const auto& [tuplePtr, tuple] : tuplePtr2UntypedTuple) {
-            os << UntypedTuple::to_string(*tuple) << '\t';
-            auto* ruleSet = tuplePtr2Rules[tuplePtr];
+        for (const auto& [tuple, ruleSet] : untypedTuple2Rules) {
+            os << UntypedTuple::toString(tuple) << '\t';
             os << rules2Str(ruleSet) << std::endl;
         }
         os.close();

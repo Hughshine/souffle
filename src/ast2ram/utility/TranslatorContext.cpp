@@ -75,6 +75,7 @@ TranslatorContext::TranslatorContext(const ast::TranslationUnit& tu) {
     joinSizeAnalysis = &tu.getAnalysis<ast::analysis::JoinSizeAnalysis>();
 
     // Set up clause nums // TODO: num is now id; less readability now
+    // TODO: better change ruleId to (Rel name, Rule Num) pair
     std::size_t count = 1;
     for (const ast::Relation* rel : program->getRelations()) {
         for (auto&& clause : program->getClauses(*rel)) {

@@ -1754,7 +1754,23 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             // insert tuple
             out << relName << "->"
                 << "insert(tuple," << ctxName << ");\n";
+            auto tempRelName = rel->getName();
 
+            // record derivation info about realTuple
+            // if target rel is @delta or @new, avoid record new derivation
+            // get the tuple from the relation; it might be old
+            if ((!(guardedInsert.getClauseStr() == "UNKNOWN CLAUSE")) // TODO
+                && (!(tempRelName.size() >= 6 && tempRelName.substr(0, 6) == "@delta"))) {
+                if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new") {
+                    tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
+                }
+                out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << tempRelName << "\",tuple);\n";
+                out << "auto*& ruleSet = DerivationManager::untypedTuple2Rules[untypedTuple];\n";
+                out << "if (ruleSet == nullptr) {\n";
+                out << "ruleSet = new std::set<souffle::RamDomain>();\n";
+                out << "}\n";
+                out << "ruleSet->insert(" << guardedInsert.getClauseID() <<");\n";
+            }
             // end of conseq body.
             out << "}\n";
 
@@ -1784,15 +1800,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 && (!(tempRelName.size() >= 6 && tempRelName.substr(0, 6) == "@delta"))) {
                 if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new") {
                     tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
-                    // TODO: relName should be A_xxx rather than new_A_yyy ...
                 }
-                out << "auto& realTuple = *(" << relName << "->"
-                    << "find(tuple," << ctxName << "));\n";
-                out << "auto*& ruleSet = DerivationManager::tuplePtr2Rules[&realTuple];\n";
+                out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << tempRelName << "\",tuple);\n";
+                out << "auto*& ruleSet = DerivationManager::untypedTuple2Rules[untypedTuple];\n";
                 out << "if (ruleSet == nullptr) {\n";
                 out << "ruleSet = new std::set<souffle::RamDomain>();\n";
-                out << "DerivationManager::tuplePtr2UntypedTuple[&realTuple] = new UntypedTuple{\"" << tempRelName
-                    << "\",{" << join(insert.getValues(), ",", rec) << "}};\n";
                 out << "}\n";
                 out << "ruleSet->insert(" << insert.getClauseID() <<");\n";
             }
