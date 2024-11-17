@@ -34,7 +34,7 @@ public:
         return (kind >= NK_Operation && kind < NK_LastOperation);
     }
 
-protected:
+// protected:
     Operation(NodeKind kind) : Node(kind) {
         assert(kind >= NK_Operation && kind < NK_LastOperation);
     }

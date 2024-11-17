@@ -1784,30 +1784,32 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             auto relName = synthesiser.getRelationName(rel);
             auto ctxName = "READ_OP_CONTEXT(" + synthesiser.getOpContextName(*rel) + ")";
             auto tempRelName = rel->getName();
-            // create inserted tuple
-            // TODO: is tuple local? which means its pointer used as key?
+            // create (typed) inserted tuple
             out << "Tuple<RamDomain," << arity << "> tuple{{" << join(insert.getValues(), ",", rec)
                 << "}};\n";
 
-            // insert tuple
-            out << relName << "->"
-                << "insert(tuple," << ctxName << ");\n";
-
-            // record derivation info about realTuple
-            // if target rel is @delta or @new, avoid record new derivation
-            // get the tuple from the relation; it might be old
-            if ((!(insert.getClauseStr() == "UNKNOWN CLAUSE")) // TODO
-                && (!(tempRelName.size() >= 6 && tempRelName.substr(0, 6) == "@delta"))) {
+            // insert tuple and record derivation
+            // case 1: insert to delta, (new) to old
+            if (insert.getClauseStr() == "UNKNOWN CLAUSE") {
+                out << relName << "->"
+                    << "insert(tuple," << ctxName << ");\n";
+            } else {
+                // case 2: insert to new/original rel, record derivation
                 if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new") {
                     tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
                 }
+                // retrieve the tuple first
                 out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << tempRelName << "\",tuple);\n";
                 out << "auto*& ruleSet = DerivationManager::untypedTuple2Rules[untypedTuple];\n";
                 out << "if (ruleSet == nullptr) {\n";
+                out << relName << "->"
+                    << "insert(tuple," << ctxName << ");\n";  // only insert tuple to rel when it wasn't recorded
                 out << "ruleSet = new std::set<souffle::RamDomain>();\n";
                 out << "}\n";
+                // record derivation info about realTuple
                 out << "ruleSet->insert(" << insert.getClauseID() <<");\n";
             }
+
             PRINT_END_COMMENT(out);
         }
 

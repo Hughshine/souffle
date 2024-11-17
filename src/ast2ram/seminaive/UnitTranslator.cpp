@@ -275,7 +275,7 @@ Own<ram::Statement> UnitTranslator::generateMergeRelations(
         return mk<ram::MergeExtend>(destRelation, srcRelation);
     }
     for (std::size_t i = 0; i < rel->getArity(); i++) {
-        values.push_back(mk<ram::TupleElement>(0, i));
+        values.push_back(mk<ram::TupleElement>(0, i));  // TupleElement对应tuple的具体元。这里的逻辑看起来有些冗余，不知道生成代码有没有影响，相当于拆除一个tuple又重建回去。和RAM的设计直接相关。
     }
     auto insertion = mk<ram::Insert>(destRelation, std::move(values));
     auto stmt = mk<ram::Query>(mk<ram::Scan>(srcRelation, 0, std::move(insertion)));
@@ -407,6 +407,9 @@ VecOwn<ram::Statement> UnitTranslator::generateClauseVersions(
     VecOwn<ram::Statement> clauseVersions;
     for (std::size_t version = 0; version < sccAtoms.size(); version++) {
         appendStmt(clauseVersions, context->translateRecursiveClause(*clause, scc, version));
+        // for (auto& clauseVersion: clauseVersions) {
+        //     clauseVersion->print(std::cout); // TODO: debug purpose
+        // }
     }
 
     // Check that the correct number of versions have been created
@@ -469,6 +472,7 @@ Own<ram::Statement> UnitTranslator::generateStratumPreamble(const ast::RelationS
     VecOwn<ram::Statement> preamble;
 
     // Generate code for non-recursive rules
+    // 处理每个relation的non-recursive rules
     for (const ast::Relation* rel : scc) {
         std::string deltaRelation = getDeltaRelationName(rel->getQualifiedName());
         std::string mainRelation = getConcreteRelationName(rel->getQualifiedName());
@@ -483,12 +487,14 @@ Own<ram::Statement> UnitTranslator::generateStratumPreamble(const ast::RelationS
     }
 
     // Generate code for priming relation
+    // 初始化delta，将每个relation已有的都变成delta. 它们是可能不为空的，因为可能具有non recursive rules，再前面会先处理掉.
     for (const ast::Relation* rel : scc) {
         std::string deltaRelation = getDeltaRelationName(rel->getQualifiedName());
         std::string mainRelation = getConcreteRelationName(rel->getQualifiedName());
         appendStmt(preamble, generateMergeRelations(rel, deltaRelation, mainRelation));
     }
 
+    // TODO: 不知道debug relation是什么
     for (const ast::Relation* rel : scc) {
         if (const auto* debugRel = context->getDeltaDebugRelation(rel)) {
             const std::string debugRelation = getConcreteRelationName(debugRel->getQualifiedName());
@@ -756,7 +762,7 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratum(
     // Add in the preamble
     appendStmt(result, generateStratumPreamble(scc));
 
-    // Get all recursive relation statements
+    // Get all recursive relation statements // TODO: what are statements here? joinsize seems orthogonal statement to semi-naive evaluation
     auto recursiveJoinSizeStatements = context->getRecursiveJoinSizeStatementsInSCC(sccNumber);
     auto joinSizeSequence = mk<ram::Sequence>(std::move(recursiveJoinSizeStatements));
 
@@ -765,19 +771,19 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratum(
     inc.push_back(mk<ram::Variable>(loop_counter));
     inc.push_back(mk<ram::UnsignedConstant>(1));
     auto increment_counter = mk<ram::Assign>(mk<ram::Variable>(loop_counter),
-            mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(inc)), false);
+            mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(inc)), false);  // counter每一次迭代后的累加
     // Add in the main fixpoint loop
     auto loopBody = generateStratumLoopBody(scc);
-    auto exitSequence = generateStratumExitSequence(scc);
-    auto updateSequence = generateStratumTableUpdates(scc);
+    auto exitSequence = generateStratumExitSequence(scc);  // 每次迭代后，如果new都为空，说明迭代结束，离开循环体；否则更新tables，开始下一次迭代
+    auto updateSequence = generateStratumTableUpdates(scc); // 每次迭代后，将new->真正的table，new->delta, new清空
     auto fixpointLoop = mk<ram::Loop>(mk<ram::Sequence>(std::move(loopBody), std::move(joinSizeSequence),
             std::move(exitSequence), std::move(updateSequence), std::move(increment_counter)));
 
-    appendStmt(result, mk<ram::Assign>(mk<ram::Variable>(loop_counter), mk<ram::UnsignedConstant>(1), true));
-    appendStmt(result, std::move(fixpointLoop));
+    appendStmt(result, mk<ram::Assign>(mk<ram::Variable>(loop_counter), mk<ram::UnsignedConstant>(1), true));  // counter最初的赋值1
+    appendStmt(result, std::move(fixpointLoop)); // semi-naive 循环计算主体
 
     // Add in the postamble
-    appendStmt(result, generateStratumPostamble(scc));
+    appendStmt(result, generateStratumPostamble(scc)); // 最终删除全部的临时变量
     return mk<ram::Sequence>(std::move(result));
 }
 

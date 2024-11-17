@@ -36,7 +36,7 @@ public:
         return (kind >= NK_Statement && kind < NK_LastStatement);
     }
 
-protected:
+// protected:
     Statement(NodeKind kind) : Node(kind) {
         assert(kind > NK_Statement && kind < NK_LastStatement);
     }
