@@ -334,7 +334,8 @@ bool TranslatorContext::isADTBranchSimple(const ast::BranchInit* adt) const {
     return arity <= 1;
 }
 
-//TODO: ClauseTranslator should be a field in Translator Context
+
+
 Own<ram::Statement> TranslatorContext::translateNonRecursiveClause(
         const ast::Clause& clause, TranslationMode mode) const {
     auto clauseTranslator = Own<ClauseTranslator>(translationStrategy->createClauseTranslator(*this, mode));

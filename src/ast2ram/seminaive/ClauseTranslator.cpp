@@ -106,6 +106,31 @@ std::string ClauseTranslator::getClauseAtomName(const ast::Clause& clause, const
     return getAtomName(clause, atom, sccAtoms, version, isRecursive(), mode);
 }
 
+// TODO: change to heap
+std::map<std::string, Own<ram::Expression>> ClauseTranslator::getClauseVars(const ast::Clause& clause) const {
+    std::map<std::string, Own<ram::Expression>> varExprMap{};
+    // iterate all body literals and translate it to expression
+    for (const auto& lit: clause.getBodyLiterals()) {
+        ast::Atom* atom;
+        if (isA<ast::Atom>(lit)) {
+            atom = as<ast::Atom>(lit);
+        } else if (isA<ast::Negation>(lit)) {
+            atom = as<ast::Negation>(lit)->getAtom();
+        } else {
+            assert(false && "constraints are not supported");
+        }
+        for (const auto* arg : atom->getArguments()) {
+            if (const auto& var = as<ast::Variable>(arg)) {
+                const auto& varName = var->getName();
+                if (varExprMap.find(varName) == varExprMap.end()) {
+                    varExprMap.insert({varName, context.translateValue(*valueIndex, var)});
+                }
+            }
+        }
+    }
+    return varExprMap;
+}
+
 Own<ram::Statement> ClauseTranslator::translateRecursiveClause(
         const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version) {
     // Update version config
@@ -193,9 +218,19 @@ Own<ram::Operation> ClauseTranslator::addVariableBindingConstraints(Own<ram::Ope
     return op;
 }
 
+std::map<std::string, Own<ram::Expression>> cloneClauseVarMap(const std::map<std::string, Own<ram::Expression>>& varExprMap) {
+    std::map<std::string, Own<ram::Expression>> newVarExprMap{};
+    for (auto& [var, expr] : varExprMap) {
+        newVarExprMap.emplace(var, expr->cloning());
+    }
+    return newVarExprMap;
+}
+
 Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause) const {
     const auto head = clause.getHead();
     auto headRelationName = getClauseAtomName(clause, head);
+
+    auto clauseVarMap = getClauseVars(clause);
 
     VecOwn<ram::Expression> values;
     for (const auto* arg : head->getArguments()) {
@@ -203,20 +238,23 @@ Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause)
     }
 
     auto clauseStr = clause.toString();
+
+
     // Propositions
     if (head->getArity() == 0) {
         return mk<ram::Filter>(mk<ram::EmptinessCheck>(headRelationName),
-                mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), clauseStr));
+                mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap))));
     }
 
     // Relations with functional dependency constraints
     if (auto guardedConditions = getFunctionalDependencies(clause)) {
         return mk<ram::GuardedInsert>(headRelationName, std::move(values), std::move(guardedConditions),
-            context.getClauseNum(&clause), clauseStr);
+            context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)));
     }
 
     // Everything else
-    return mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), clauseStr);
+    return mk<ram::Insert>(headRelationName, std::move(values),
+        context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)));
 }
 
 Own<ram::Operation> ClauseTranslator::addAtomScan(Own<ram::Operation> op, const ast::Atom* atom,

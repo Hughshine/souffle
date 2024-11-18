@@ -1814,7 +1814,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "ruleSet = new std::set<RuleApplication>();\n";
                 out << "}\n";
                 // record derivation info about realTuple
-                out << "RuleApplication ruleApplication{" << insert.getClauseID() << ", testVarValues};\n";
+                out << "std::map<std::string, souffle::RamDomain> varValues{};\n";
+                for (const auto& [var, expr]: insert.varExprMap) {
+                    out << "varValues.insert({\"" << var  << "\", "; rec(out, expr.get()); out << "});\n";
+                }
+                out << "RuleApplication ruleApplication{" << insert.getClauseID() << ", varValues};\n";
                 out << "ruleSet->insert(ruleApplication);\n";
             }
 

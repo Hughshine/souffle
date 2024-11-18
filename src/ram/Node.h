@@ -261,7 +261,7 @@ public:
         return out;
     }
 
-protected:
+// protected:
     /**
      * @brief Print RAM node
      */
