@@ -6,8 +6,8 @@
 #define DERIVATION_H
 #include "souffle/RamTypes.h"
 
-#include <fstream>
 #include <cassert>
+#include <fstream>
 #include <map>
 #include <set>
 #include <vector>
@@ -35,7 +35,6 @@ struct UntypedTuple {
     }
 
     bool operator<(const UntypedTuple& other) const {
-        // Primary sort by name, secondary sort by age
         if (relation_name != other.relation_name) {
             return relation_name < other.relation_name;
         }
@@ -64,6 +63,48 @@ struct UntypedTuple {
 
 inline UntypedTuple testUntypedTuple{"T", {0, -1, -2, -42}};
 
+struct RuleApplication {
+    souffle::RamDomain ruleId;
+    std::map<std::string, souffle::RamDomain> varValues;
+    static std::string toString(const RuleApplication& ruleApplication) {
+        std::string result = std::to_string(ruleApplication.ruleId) + "[" +
+                             toStringVarValues(ruleApplication.varValues) + "]";
+        return result;
+    }
+    static std::string toStringVarValues(const std::map<std::string, souffle::RamDomain>& varValues) {
+        std::string result;
+        bool first = true;
+        // may use StreamUtil::join()
+        for (const auto& [var, value] : varValues) {
+            if (first) {
+                first = false;
+                result += var + "->" + std::to_string(value);
+            } else {
+                result += "," + var + "->" + std::to_string(value);
+            }
+        }
+        return result;
+    }
+    bool operator<(const RuleApplication& other) const {
+        if (ruleId != other.ruleId) {
+            return ruleId < other.ruleId;
+        }
+        // size should equal; vars should equal
+        assert(varValues.size() == other.varValues.size());
+        for (const auto& [var, value1] : varValues) {
+            assert(other.varValues.find(var) != other.varValues.end());
+            const auto& value2 = other.varValues.at(var);
+            if (value1 != value2) {
+                return value1 < value2;
+            }
+        }
+        return false;
+    }
+};
+
+inline std::map<std::string, souffle::RamDomain> testVarValues = {{"x", 1}, {"y", 2}};
+inline RuleApplication testRuleApplication{47906, testVarValues};
+
 class DerivationManager {
 public:
 // private:
@@ -72,7 +113,7 @@ public:
     static inline std::set<souffle::RamDomain> testRules = {
         0, 1, 2, 42
     };
-    static inline std::map<UntypedTuple, std::set<souffle::RamDomain>*> untypedTuple2Rules = {
+    static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2Rules = {
         // {testUntypedTuple, &testRules}
     };
     // mapping from tuple's pointer to its (untyped) real representation, i.e., relation name and value list
@@ -80,16 +121,16 @@ public:
     //     // {testUntypedTuple, &testUntypedTuple}
     // };
 
-    static std::string rules2Str(const std::set<souffle::RamDomain>* rules) {
-        assert(rules != nullptr && "null ruleSet");
+    static std::string ruleApplications2Str(const std::set<RuleApplication>* ruleApplications) {
+        assert(ruleApplications != nullptr && !ruleApplications->empty() && "null ruleSet");
         std::string result = "[";
         bool first = true;
-        for (auto& ruleId : *rules) {
+        for (auto& ruleApplication : *ruleApplications) {
             if (first) {
                 first = false;
-                result += std::to_string(ruleId);
+                result += RuleApplication::toString(ruleApplication);
             } else {
-                result += "," + std::to_string(ruleId);
+                result += "," + RuleApplication::toString(ruleApplication);
             }
         }
         return result + ']';
@@ -103,9 +144,9 @@ public:
         }
         std::string derivationInfoFilename = baseFilename + "-derivation-info.txt";
         std::ofstream os{derivationInfoFilename};
-        for (const auto& [tuple, ruleSet] : untypedTuple2Rules) {
+        for (const auto& [tuple, ruleApplicationSet] : untypedTuple2Rules) {
             os << UntypedTuple::toString(tuple) << '\t';
-            os << rules2Str(ruleSet) << std::endl;
+            os << ruleApplications2Str(ruleApplicationSet) << std::endl;
         }
         os.close();
     }

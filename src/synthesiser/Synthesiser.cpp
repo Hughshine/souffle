@@ -1772,10 +1772,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "if (ruleSet == nullptr) {\n";
                 out << relName << "->"
                     << "insert(tuple," << ctxName << ");\n";  // only insert tuple to rel when it wasn't recorded
-                out << "ruleSet = new std::set<souffle::RamDomain>();\n";
+                out << "ruleSet = new std::set<RuleApplication>();\n";
                 out << "}\n";
                 // record derivation info about realTuple
-                out << "ruleSet->insert(" << guardedInsert.getClauseID() <<");\n";
+                out << "RuleApplication ruleApplication{" << guardedInsert.getClauseID() << ", testVarValues};\n";
+                out << "ruleSet->insert(ruleApplication);\n";
             }
             // end of conseq body.
             out << "}\n";
@@ -1810,10 +1811,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "if (ruleSet == nullptr) {\n";
                 out << relName << "->"
                     << "insert(tuple," << ctxName << ");\n";  // only insert tuple to rel when it wasn't recorded
-                out << "ruleSet = new std::set<souffle::RamDomain>();\n";
+                out << "ruleSet = new std::set<RuleApplication>();\n";
                 out << "}\n";
                 // record derivation info about realTuple
-                out << "ruleSet->insert(" << insert.getClauseID() <<");\n";
+                out << "RuleApplication ruleApplication{" << insert.getClauseID() << ", testVarValues};\n";
+                out << "ruleSet->insert(ruleApplication);\n";
             }
 
             PRINT_END_COMMENT(out);
