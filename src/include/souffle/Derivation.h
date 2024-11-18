@@ -113,7 +113,7 @@ public:
     static inline std::set<souffle::RamDomain> testRules = {
         0, 1, 2, 42
     };
-    static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2Rules = {
+    static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2RuleApplications = {
         // {testUntypedTuple, &testRules}
     };
     // mapping from tuple's pointer to its (untyped) real representation, i.e., relation name and value list
@@ -144,7 +144,7 @@ public:
         }
         std::string derivationInfoFilename = baseFilename + "-derivation-info.txt";
         std::ofstream os{derivationInfoFilename};
-        for (const auto& [tuple, ruleApplicationSet] : untypedTuple2Rules) {
+        for (const auto& [tuple, ruleApplicationSet] : untypedTuple2RuleApplications) {
             os << UntypedTuple::toString(tuple) << '\t';
             os << ruleApplications2Str(ruleApplicationSet) << std::endl;
         }

@@ -1807,7 +1807,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 }
                 // retrieve the tuple first
                 out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << tempRelName << "\",tuple);\n";
-                out << "auto*& ruleSet = DerivationManager::untypedTuple2Rules[untypedTuple];\n";
+                out << "auto*& ruleSet = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
                 out << "if (ruleSet == nullptr) {\n";
                 out << relName << "->"
                     << "insert(tuple," << ctxName << ");\n";  // only insert tuple to rel when it wasn't recorded
