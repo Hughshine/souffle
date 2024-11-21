@@ -67,6 +67,8 @@
 #include "ast2ram/provenance/UnitTranslator.h"
 #include "ast2ram/seminaive/TranslationStrategy.h"
 #include "ast2ram/seminaive/UnitTranslator.h"
+#include "ast2ram/incremental/TranslationStrategy.h"
+#include "ast2ram/incremental/UnitTranslator.h"
 #include "ast2ram/utility/TranslatorContext.h"
 #include "config.h"
 #include "interpreter/Engine.h"
@@ -477,7 +479,7 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
             mk<ast::transform::PipelineTransformer>(mk<ast::transform::ExpandEqrelsTransformer>(),
                     mk<ast::transform::NameUnnamedVariablesTransformer>()));
 
-    // Main pipeline
+    // Main pipeline // TODO: Maybe some passes is unused or invalid or should be changed under prob setting
     auto pipeline = mk<ast::transform::PipelineTransformer>(mk<ast::transform::ComponentChecker>(),
             mk<ast::transform::ComponentInstantiationTransformer>(),
             mk<ast::transform::LatticeTransformer>(),
@@ -485,11 +487,11 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
             mk<ast::transform::IODefaultsTransformer>(),
             mk<ast::transform::SimplifyAggregateTargetExpressionTransformer>(),
             mk<ast::transform::UniqueAggregationVariablesTransformer>(),
-            mk<ast::transform::FixpointTransformer>(mk<ast::transform::PipelineTransformer>(
+            mk<ast::transform::FixpointTransformer>(mk<ast::transform::PipelineTransformer>(  // TODO: useless
                     mk<ast::transform::ResolveAnonymousRecordAliasesTransformer>(),
                     mk<ast::transform::FoldAnonymousRecords>())),
-            mk<ast::transform::SubsumptionQualifierTransformer>(), mk<ast::transform::SemanticChecker>(),
-            mk<ast::transform::GroundWitnessesTransformer>(),
+            mk<ast::transform::SubsumptionQualifierTransformer>(), mk<ast::transform::SemanticChecker>(),  // TODO: useless
+            mk<ast::transform::GroundWitnessesTransformer>(),  // TODO: we (pdatalog) will never support aggregation and other datalog extensions right?
             mk<ast::transform::UniqueAggregationVariablesTransformer>(),
             mk<ast::transform::MaterializeSingletonAggregationTransformer>(),
             mk<ast::transform::FixpointTransformer>(
@@ -524,9 +526,11 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
 
 Own<ast2ram::UnitTranslator> getUnitTranslator(Global& glb) {
     auto translationStrategy =
-            glb.config().has("provenance")
+            glb.config().has("inc")
+                ? mk<ast2ram::TranslationStrategy, ast2ram::incremental::TranslationStrategy>()
+                : (glb.config().has("provenance")
                     ? mk<ast2ram::TranslationStrategy, ast2ram::provenance::TranslationStrategy>()
-                    : mk<ast2ram::TranslationStrategy, ast2ram::seminaive::TranslationStrategy>();
+                    : mk<ast2ram::TranslationStrategy, ast2ram::seminaive::TranslationStrategy>());
     auto unitTranslator = Own<ast2ram::UnitTranslator>(translationStrategy->createUnitTranslator());
 
     return unitTranslator;
@@ -711,7 +715,7 @@ std::vector<MainOption> getMainOptions() {
           "Enable the frequency counter in the profiler."},
       {"provenance", 't', "[ none | explain | explore ]", "", false,
           "Enable provenance instrumentation and interaction."},
-      // {"prob", 'x', "", "", false}, // TODO
+      {"inc", 'i', "", "", false}, // TODO
       {"show", nextOptChar++, "[ <see-list> ]", "", true,
           "Print selected program information.\n"
           "Modes:\n"

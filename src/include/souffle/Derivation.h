@@ -109,7 +109,7 @@ class DerivationManager {
 public:
 // private:
     // TODO
-    // mapping from tuple's pointer to rules that derive it
+    // mapping from tuple's pomainter to rules that derive it
     static inline std::set<souffle::RamDomain> testRules = {
         0, 1, 2, 42
     };

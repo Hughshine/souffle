@@ -172,6 +172,11 @@ set(SOUFFLE_SOURCES
     synthesiser/Utils.cpp
     synthesiser/GenDb.cpp
         include/souffle/Derivation.h
+        ast2ram/incremental/TranslationStrategy.cpp
+        ast2ram/incremental/ClauseTranslator.cpp
+        ast2ram/incremental/ConstraintTranslator.cpp
+        ast2ram/incremental/UnitTranslator.cpp
+        ast2ram/incremental/ValueTranslator.cpp
 )
 
 # --------------------------------------------------
