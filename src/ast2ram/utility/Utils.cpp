@@ -116,12 +116,24 @@ std::string getDeleteRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "@delete_");
 }
 
+std::string getIncDeltaRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@inc_delta_");
+}
+
+std::string getIncDeltaInsertRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@inc_delta_insert_");
+}
+
+std::string getIncDeltaDeleteRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@inc_delta_delete_");
+}
+
 const std::string& getRelationName(const ast::QualifiedName& name) {
     return name.toString();
 }
 
 std::string getBaseRelationName(const ast::QualifiedName& name) {
-    return stripPrefix("@new_", stripPrefix("@delta_", stripPrefix("@info_", name.toString())));
+    return stripPrefix("@inc_delta_", stripPrefix("@inc_delta_delete_", stripPrefix("@inc_delta_insert_", stripPrefix("@new_", stripPrefix("@delta_", stripPrefix("@info_", name.toString()))))));
 }
 
 void appendStmt(VecOwn<ram::Statement>& stmtList, Own<ram::Statement> stmt) {

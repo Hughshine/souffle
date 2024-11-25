@@ -63,6 +63,15 @@ std::string getRejectRelationName(const ast::QualifiedName& name);
 /** Get the corresponding RAM 'delete' relation name for the relation */
 std::string getDeleteRelationName(const ast::QualifiedName& name);
 
+/** Get the corresponding RAM 'inc-delta' relation name for the relation  */
+std::string getIncDeltaRelationName(const ast::QualifiedName& name);
+
+/** Get the corresponding RAM 'inc-delta-insert' relation name for the relation  */
+std::string getIncDeltaInsertRelationName(const ast::QualifiedName& name);
+
+/** Get the corresponding RAM 'inc-delta-delete' relation name for the relation  */
+std::string getIncDeltaDeleteRelationName(const ast::QualifiedName& name);
+
 /** Get base relation name, strip off any possible prefix */
 std::string getBaseRelationName(const ast::QualifiedName& name);
 

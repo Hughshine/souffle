@@ -126,6 +126,10 @@ using ram::analysis::IndexAnalysis;
 using namespace ram;
 using namespace stream_write_qualified_char_as_number;
 
+const std::string getBaseRelationName(const std::string& name) {
+    return stripPrefix("@inc_delta_", stripPrefix("@inc_delta_delete_", stripPrefix("@inc_delta_insert_", stripPrefix("@new_", stripPrefix("@delta_", stripPrefix("@info_", name))))));
+}
+
 /** Lookup frequency counter */
 unsigned Synthesiser::lookupFreqIdx(const std::string& txt) {
     static unsigned ctr;
@@ -352,7 +356,10 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             };
 
             const auto& directives = io.getDirectives();
+
             const std::string& op = io.get("operation");
+            const std::string& inc = io.get("incDelta");
+
             out << "if (performIO) {\n";
 
             // get some table details
@@ -364,10 +371,41 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << R"_(if (!inputDirectory.empty()) {)_";
                 out << R"_(directiveMap["fact-dir"] = inputDirectory;)_";
                 out << "}\n";
-                out << "IOSystem::getInstance().getReader(";
-                out << "directiveMap, symTable, recordTable";
-                out << ")->readAll(*" << synthesiser.getRelationName(synthesiser.lookup(io.getRelation()));
-                out << ");\n";
+                if (inc == "false") {
+                    out << "IOSystem::getInstance().getReader(";
+                    out << "directiveMap, symTable, recordTable";
+                    out << ")->readAll(*" << synthesiser.getRelationName(synthesiser.lookup(io.getRelation()));
+                    out << ");\n";
+                } else {
+                    const std::string& isInsert = io.get("inc-insert");
+                    const std::string& isDelete = io.get("inc-delete");
+                    // TODO: update derivations to mapping
+                    out << "IOSystem::getInstance().getReader(";
+                    out << "directiveMap, symTable, recordTable";
+                    out << ")->readAll(*" << synthesiser.getRelationName(synthesiser.lookup(io.getRelation()));
+                    out << ");\n";
+                    assert(!(isInsert == "true" && isDelete == "true") && "no same-time insertion and deletion");
+                    if (isInsert == "true") {
+                        out << "for(auto it = " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->begin(); it != " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->end(); ++it) {\n";
+                        out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\""<< getBaseRelationName(io.getRelation()) <<"\", *it);\n";
+                        out << "auto*& deltaInsRuleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedTuple];\n";
+                        out << "if (deltaInsRuleSet == nullptr) {\n";
+                        out << "deltaInsRuleSet = new std::set<RuleApplication>();\n";
+                        out << "}\n";
+                        out << "deltaInsRuleSet->insert(naiveRuleApplication);\n";
+                        out << "}\n";
+                    } else if (isDelete == "true") {
+                        // TODO: could eliminate semoutenously inserted and deleted facts
+                        out << "for(auto it = " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->begin(); it != " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->end(); ++it) {\n";
+                        out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\""<< getBaseRelationName(io.getRelation()) <<"\", *it);\n";
+                        out << "auto*& deltaDelRuleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedTuple];\n";
+                        out << "if (deltaDelRuleSet == nullptr) {\n";
+                        out << "deltaDelRuleSet = new std::set<RuleApplication>();\n";
+                        out << "}\n";
+                        out << "deltaDelRuleSet->insert(naiveRuleApplication);\n";
+                        out << "}\n";
+                    }
+                }
                 out << "} catch (std::exception& e) {std::cerr << \"Error loading " << io.getRelation()
                     << " data: \" << e.what() "
                        "<< "

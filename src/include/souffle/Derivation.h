@@ -102,6 +102,9 @@ struct RuleApplication {
     }
 };
 
+/** Fact is trivially true; use the naiveRuleApplication for such cases when needed */
+inline RuleApplication naiveRuleApplication{0, {}};
+
 inline std::map<std::string, souffle::RamDomain> testVarValues = {{"x", 1}, {"y", 2}};
 inline RuleApplication testRuleApplication{47906, testVarValues};
 
@@ -116,10 +119,14 @@ public:
     static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2RuleApplications = {
         // {testUntypedTuple, &testRules}
     };
-    // mapping from tuple's pointer to its (untyped) real representation, i.e., relation name and value list
-    // static inline std::map<const void*, UntypedTuple*> tuplePtr2UntypedTuple = {
-    //     // {testUntypedTuple, &testUntypedTuple}
-    // };
+    // for incremental computation: delta insert
+    static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2DeltaInsertRuleApplications = {
+        // {testUntypedTuple, &testRules}
+    };
+    // for incremental computation: delta delete
+    static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2DeltaDeleteRuleApplications = {
+        // {testUntypedTuple, &testRules}
+    };
 
     static std::string ruleApplications2Str(const std::set<RuleApplication>* ruleApplications) {
         assert(ruleApplications != nullptr && !ruleApplications->empty() && "null ruleSet");
@@ -142,13 +149,33 @@ public:
         if (baseFilename.size() >= 3 && baseFilename.substr(baseFilename.size() - 3) == ".dl") {
             baseFilename = baseFilename.substr(0, baseFilename.size() - 3);
         }
-        std::string derivationInfoFilename = baseFilename + "-derivation-info.txt";
-        std::ofstream os{derivationInfoFilename};
-        for (const auto& [tuple, ruleApplicationSet] : untypedTuple2RuleApplications) {
-            os << UntypedTuple::toString(tuple) << '\t';
-            os << ruleApplications2Str(ruleApplicationSet) << std::endl;
+        {
+            std::string derivationInfoFilename = baseFilename + "-derivation-info.txt";
+            std::ofstream os{derivationInfoFilename};
+            for (const auto& [tuple, ruleApplicationSet] : untypedTuple2RuleApplications) {
+                os << UntypedTuple::toString(tuple) << '\t';
+                os << ruleApplications2Str(ruleApplicationSet) << std::endl;
+            }
+            os.close();
         }
-        os.close();
+        {
+            std::string deltaInsDerivationInfoFilename = baseFilename + "-delta-insert-derivation-info.txt";
+            std::ofstream os{deltaInsDerivationInfoFilename};
+            for (const auto& [tuple, ruleApplicationSet] : untypedTuple2DeltaInsertRuleApplications) {
+                os << UntypedTuple::toString(tuple) << '\t';
+                os << ruleApplications2Str(ruleApplicationSet) << std::endl;
+            }
+            os.close();
+        }
+        {
+            std::string deltaDelDerivationInfoFilename = baseFilename + "-delta-delete-derivation-info.txt";
+            std::ofstream os{deltaDelDerivationInfoFilename};
+            for (const auto& [tuple, ruleApplicationSet] : untypedTuple2DeltaDeleteRuleApplications) {
+                os << UntypedTuple::toString(tuple) << '\t';
+                os << ruleApplications2Str(ruleApplicationSet) << std::endl;
+            }
+            os.close();
+        }
     }
 };
 

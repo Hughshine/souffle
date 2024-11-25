@@ -177,6 +177,8 @@ set(SOUFFLE_SOURCES
         ast2ram/incremental/ConstraintTranslator.cpp
         ast2ram/incremental/UnitTranslator.cpp
         ast2ram/incremental/ValueTranslator.cpp
+        ast/DeltaRelation.cpp
+        ast/DeltaRelation.h
 )
 
 # --------------------------------------------------

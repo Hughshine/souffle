@@ -35,6 +35,8 @@
 
 namespace souffle::synthesiser {
 
+const std::string getBaseRelationName(const std::string& name);
+
 /**
  * A RAM synthesiser: synthesises a C++ program from a RAM program.
  */

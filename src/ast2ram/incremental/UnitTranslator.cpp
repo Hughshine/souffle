@@ -170,8 +170,16 @@ Own<ram::Statement> UnitTranslator::generateStratum(std::size_t scc) const {
     VecOwn<ram::Statement> current;
 
     // Load all internal input relations from the facts dir with a .facts extension
+    // INC: Also load all delta changes for IDB by files having .facts.insert and .facts.delete extension
+    // TODO: here we suppose IDB does not change during fixpoint computation
+    // TODO: i.e. they are not the heads of any rules
     for (const auto& relation : context->getInputRelationsInSCC(scc)) {
         appendStmt(current, generateLoadRelation(relation));
+    }
+
+    // Load all cached external output relations from the output dir?
+    for (const auto& relation : context->getOutputRelationsInSCC(scc)) {
+        appendStmt(current, generateLoadRelationForEDB(relation));
     }
 
     // Compute the current stratum
@@ -804,10 +812,36 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
             directives.insert(std::make_pair("no-warn", "true"));
         }
         addAuxiliaryArity(relation, directives);
+        directives.insert(std::make_pair("incDelta", "false"));
+        directives.insert(std::make_pair("inc-insert", "false"));
+        directives.insert(std::make_pair("inc-delete", "false"));
 
         // Create the resultant load statement, with profile information
         std::string ramRelationName = getConcreteRelationName(relation->getQualifiedName());
         Own<ram::Statement> loadStmt = mk<ram::IO>(ramRelationName, directives);
+
+        // Also add IO for delta's IO; when loading those facts, the derivation mapping is also their
+        directives["incDelta"] = "true";
+        directives["inc-insert"] = "true";
+
+        std::string ramIncDeltaInsertRelationName = getIncDeltaInsertRelationName((relation->getQualifiedName()));
+        Own<ram::Statement> loadIncDeltaInsertStmt = mk<ram::IO>(ramIncDeltaInsertRelationName, directives);
+
+        directives["inc-insert"] = "false";
+        directives["inc-delete"] = "true";
+
+        std::string ramIncDeltaDeleteRelationName = getIncDeltaDeleteRelationName((relation->getQualifiedName()));
+        Own<ram::Statement> loadIncDeltaDeleteStmt = mk<ram::IO>(ramIncDeltaDeleteRelationName, directives);
+
+        // join the information for deletion and insertion
+        // ramIncDeltaRelation contains all tuples whose derivations change
+        std::string ramIncDeltaRelationName = getIncDeltaRelationName(relation->getQualifiedName());
+        Own<ram::Statement> combineDeltaInsertAndDeleteStmt = mk<ram::Sequence>(
+            mk<ram::Swap>(ramIncDeltaRelationName, ramIncDeltaInsertRelationName),
+            generateMergeRelations(relation, ramIncDeltaRelationName, ramIncDeltaDeleteRelationName)
+        );
+
+        loadStmt = mk<ram::Sequence>(std::move(loadStmt), std::move(loadIncDeltaInsertStmt), std::move(loadIncDeltaDeleteStmt), std::move(combineDeltaInsertAndDeleteStmt));
         if (glb->config().has("profile")) {
             const std::string logTimerStatement =
                     LogStatement::tRelationLoadTime(ramRelationName, relation->getSrcLoc());
@@ -818,6 +852,38 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
     return mk<ram::Sequence>(std::move(loadStmts));
 }
 
+
+Own<ram::Statement> UnitTranslator::generateLoadRelationForEDB(const ast::Relation* relation) const {
+    VecOwn<ram::Statement> storeStmts;
+    for (const auto* store : context->getStoreDirectives(relation->getQualifiedName())) {
+        // Set up the corresponding directive map
+        std::map<std::string, std::string> directives;
+        for (const auto& [key, value] : store->getParameters()) {
+            directives.insert(std::make_pair(key, unescape(value)));
+        }
+        directives["operation"] = "input";
+        directives["fact-dir"] = directives["output-dir"];
+        directives.insert(std::make_pair("incDelta", "false")); // TODO
+        directives.insert(std::make_pair("inc-insert", "false"));
+        directives.insert(std::make_pair("inc-delete", "false"));
+
+        addAuxiliaryArity(relation, directives);
+
+        // Create the resultant store statement, with profile information
+        std::string ramRelationName = getConcreteRelationName(relation->getQualifiedName());
+        Own<ram::Statement> loadStmt = mk<ram::IO>(ramRelationName, directives);
+
+        if (glb->config().has("profile")) {
+            const std::string logTimerStatement =
+                    LogStatement::tRelationSaveTime(ramRelationName, relation->getSrcLoc());
+            loadStmt = mk<ram::LogRelationTimer>(std::move(loadStmt), logTimerStatement, ramRelationName);
+        }
+        appendStmt(storeStmts, std::move(loadStmt));
+    }
+    // TODO: dump delta relations for inc computation
+    return mk<ram::Sequence>(std::move(storeStmts));
+}
+
 Own<ram::Statement> UnitTranslator::generateStoreRelation(const ast::Relation* relation) const {
     VecOwn<ram::Statement> storeStmts;
     for (const auto* store : context->getStoreDirectives(relation->getQualifiedName())) {
@@ -826,6 +892,10 @@ Own<ram::Statement> UnitTranslator::generateStoreRelation(const ast::Relation* r
         for (const auto& [key, value] : store->getParameters()) {
             directives.insert(std::make_pair(key, unescape(value)));
         }
+        directives.insert(std::make_pair("incDelta", "false")); // TODO
+        directives.insert(std::make_pair("inc-insert", "false"));
+        directives.insert(std::make_pair("inc-delete", "false"));
+
         addAuxiliaryArity(relation, directives);
 
         // Create the resultant store statement, with profile information
@@ -873,6 +943,16 @@ VecOwn<ram::Relation> UnitTranslator::createRamRelations(const std::vector<std::
             std::string mainName = getConcreteRelationName(rel->getQualifiedName());
             ramRelations.push_back(createRamRelation(rel, mainName));
 
+            // Add delta relation for derivation-changing tuples in incremental computation
+            std::string incDeltaName = getIncDeltaRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, incDeltaName));
+
+            std::string incDeltaInsertName = getIncDeltaInsertRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, incDeltaInsertName));
+
+            std::string incDeltaDeleteName = getIncDeltaDeleteRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, incDeltaDeleteName));
+
             if (rel->getAuxiliaryArity() > 0) {
                 // Add lub relation
                 std::string lubName = getLubRelationName(rel->getQualifiedName());
@@ -885,6 +965,7 @@ VecOwn<ram::Relation> UnitTranslator::createRamRelations(const std::vector<std::
                 ramRelations.push_back(createRamRelation(rel, newName));
             }
 
+            // TODO: for inc, need extra delta relations for delta rules
             // Recursive relations also require @delta and @new variants, with the same signature
             if (isRecursive) {
                 // Add delta relation
@@ -916,6 +997,7 @@ Own<ram::Sequence> UnitTranslator::generateProgram(const ast::TranslationUnit& t
     if (context->getNumberOfSCCs() == 0) {
         return mk<ram::Sequence>();
     }
+    // TODO
     const auto& sccOrdering =
             translationUnit.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>().order();
     VecOwn<ram::Statement> res;
