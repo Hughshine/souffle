@@ -76,7 +76,7 @@ protected:
     /** IO translation */
     Own<ram::Statement> generateStoreRelation(const ast::Relation* relation) const;
     Own<ram::Statement> generateLoadRelation(const ast::Relation* relation) const;
-    Own<ram::Statement> generateLoadRelationForEDB(const ast::Relation* relation) const;
+    Own<ram::Statement> generateLoadRelationForIDB(const ast::Relation* relation) const;
 
     /** Low-level stratum translation */
     Own<ram::Statement> generateStratum(std::size_t scc) const;

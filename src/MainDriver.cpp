@@ -715,7 +715,8 @@ std::vector<MainOption> getMainOptions() {
           "Enable the frequency counter in the profiler."},
       {"provenance", 't', "[ none | explain | explore ]", "", false,
           "Enable provenance instrumentation and interaction."},
-      {"inc", 'i', "", "", false}, // TODO
+      {"inc", 'i', "", "", false,
+          "Enable incremental computation pipeline"}, // TODO
       {"show", nextOptChar++, "[ <see-list> ]", "", true,
           "Print selected program information.\n"
           "Modes:\n"

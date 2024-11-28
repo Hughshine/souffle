@@ -176,7 +176,7 @@ public:
     static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2DeltaInsertRuleApplications = {
         // {testUntypedTuple, &testRules}
     };
-    // for incremental computation: delta delete
+    // for incremental computation: delta deleteC
     static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2DeltaDeleteRuleApplications = {
         // {testUntypedTuple, &testRules}
     };
@@ -216,7 +216,7 @@ public:
                     {"rel", tuple.relation_name},
                     {"fields", json11::Json::array(tuple.fields.begin(), tuple.fields.end())}}
                 },
-                {"edge", ruleAppsJson}
+                {"edges", ruleAppsJson}
             };
             result.emplace_back(item);
         }
@@ -235,7 +235,7 @@ public:
                 derivationInfo[tuple] = new std::set<RuleApplication>();
             }
             std::set<RuleApplication>* ruleApps = derivationInfo[tuple];
-            for (const auto& ruleAppJson: item["edge"].array_items()) {
+            for (const auto& ruleAppJson: item["edges"].array_items()) {
                 RuleApplication ruleApp;
                 souffle::RamDomain ruleId = ruleAppJson["ruleId"].int_value();
                 ruleApp.ruleId = ruleId;

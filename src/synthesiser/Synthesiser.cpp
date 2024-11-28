@@ -3362,6 +3362,8 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"\", DerivationManager::untypedTuple2RuleApplications);\n";  // Should be complete, take into new deltas into account
     hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"insert\", DerivationManager::untypedTuple2DeltaInsertRuleApplications);\n";  // TODO: Delta insert
     hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"delete\", DerivationManager::untypedTuple2DeltaDeleteRuleApplications);\n";  // TODO: Delta delete
+    // TODO: for debug; remove this later
+    hook << "DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFileDir());\n";
     if (glb.config().get("provenance") == "explain") {
         hook << "explain(obj, false);\n";
     } else if (glb.config().get("provenance") == "explore") {

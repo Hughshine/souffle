@@ -171,46 +171,46 @@ Own<ram::Statement> UnitTranslator::generateStratum(std::size_t scc) const {
 
     // Load all internal input relations from the facts dir with a .facts extension
     // INC: Also load all delta changes for IDB by files having .facts.insert and .facts.delete extension
-    // TODO: here we suppose IDB does not change during fixpoint computation
+    // TODO: here we suppose EDB does not change during fixpoint computation
     // TODO: i.e. they are not the heads of any rules
     for (const auto& relation : context->getInputRelationsInSCC(scc)) {
         appendStmt(current, generateLoadRelation(relation));
     }
 
-    // Load all cached external output relations from the output dir?
+    // Load all cached external output relations from the output dir
+    // Cached derivation info maintained separately
     for (const auto& relation : context->getOutputRelationsInSCC(scc)) {
-        appendStmt(current, generateLoadRelationForEDB(relation));
+        appendStmt(current, generateLoadRelationForIDB(relation));
     }
 
     // Compute the current stratum
     const auto& sccRelations = context->getRelationsInSCC(scc);
     if (context->isRecursiveSCC(scc)) {
-        appendStmt(current, generateRecursiveStratum(sccRelations, scc));
+        // appendStmt(current, generateRecursiveStratum(sccRelations, scc));
+        assert(false && "recursion not supported");
     } else {
         assert(sccRelations.size() == 1 && "only one relation should exist in non-recursive stratum");
         const auto* rel = *sccRelations.begin();
-        appendStmt(current, generateNonRecursiveRelation(*rel));
+        appendStmt(current, generateNonRecursiveRelation(*rel));  // TODO
 
         // lub auxiliary arities using the @lub relation
         if (rel->getAuxiliaryArity() > 0) {
-            std::string mainRelation = getConcreteRelationName(rel->getQualifiedName());
-            std::string newRelation = getNewRelationName(rel->getQualifiedName());
-            std::string deltaRelation = getDeltaRelationName(rel->getQualifiedName());
-            appendStmt(current, generateStratumLubSequence(*rel, false));
-            std::map<std::string, std::string> directives;
-            appendStmt(current, mk<ram::Clear>(newRelation));
+            assert (false && "lub auxiliary not supported");
         }
 
-        // issue delete sequence for non-recursive subsumptions
-        appendStmt(current, generateNonRecursiveDelete(*rel));
+        if (context->hasSubsumptiveClause(rel->getQualifiedName())) {
+            assert (false && "subsumption clause not supported");
+        }
     }
 
     // Get all non-recursive relation statements
-    auto nonRecursiveJoinSizeStatements = context->getNonRecursiveJoinSizeStatementsInSCC(scc);
+    auto nonRecursiveJoinSizeStatements = context->getNonRecursiveJoinSizeStatementsInSCC(scc);  // TODO
     auto joinSizeSequence = mk<ram::Sequence>(std::move(nonRecursiveJoinSizeStatements));
     appendStmt(current, std::move(joinSizeSequence));
 
     // Store all internal output relations to the output dir with a .csv extension
+    // Note: delta derivations will be dumped after all calculations
+    // Note: do we also need to provide delta EDB? It seems this is already enough
     for (const auto& relation : context->getOutputRelationsInSCC(scc)) {
         appendStmt(current, generateStoreRelation(relation));
     }
@@ -853,7 +853,7 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
 }
 
 
-Own<ram::Statement> UnitTranslator::generateLoadRelationForEDB(const ast::Relation* relation) const {
+Own<ram::Statement> UnitTranslator::generateLoadRelationForIDB(const ast::Relation* relation) const {
     VecOwn<ram::Statement> storeStmts;
     for (const auto* store : context->getStoreDirectives(relation->getQualifiedName())) {
         // Set up the corresponding directive map
