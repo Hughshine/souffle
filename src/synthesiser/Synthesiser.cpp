@@ -3357,8 +3357,11 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << R"_(souffle::ProfileEventSingleton::instance().makeConfigRecord("version", ")_"
              << glb.config().get("version") << R"_(");)_" << '\n';
     }
+    hook << "DerivationManager::untypedTuple2RuleApplications = DerivationManager::derivationInfoFromJsonFile(opt.getSourceFileName(),\"\");\n"; // Read old computation
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
-    hook << "DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFileDir());\n";  // TODO
+    hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"\", DerivationManager::untypedTuple2RuleApplications);\n";  // Should be complete, take into new deltas into account
+    hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"insert\", DerivationManager::untypedTuple2DeltaInsertRuleApplications);\n";  // TODO: Delta insert
+    hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"delete\", DerivationManager::untypedTuple2DeltaDeleteRuleApplications);\n";  // TODO: Delta delete
     if (glb.config().get("provenance") == "explain") {
         hook << "explain(obj, false);\n";
     } else if (glb.config().get("provenance") == "explore") {

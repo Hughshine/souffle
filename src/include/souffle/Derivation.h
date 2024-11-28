@@ -268,12 +268,15 @@ public:
 
     static std::map<UntypedTuple, std::set<RuleApplication>*> derivationInfoFromJsonFile(const std::string& originalFileName, const std::string& suffix) {
         std::ifstream inputFile((suffix.empty() ? originalFileName : originalFileName + "." + suffix ) + ".json");
-        std::string infoString = std::string((std::istreambuf_iterator<char>(inputFile)),
-                       std::istreambuf_iterator<char>());;
-        std::string err;
-        json11::Json infoJson = json11::Json::parse(infoString, err);
-        assert (err.empty() && "Json parse error");
-        return std::move(derivationInfoFromJson(infoJson));
+        if (inputFile.good()) {
+            std::string infoString = std::string((std::istreambuf_iterator<char>(inputFile)),
+                           std::istreambuf_iterator<char>());;
+            std::string err;
+            json11::Json infoJson = json11::Json::parse(infoString, err);
+            assert (err.empty() && "Json parse error");
+            return std::move(derivationInfoFromJson(infoJson));
+        }
+        return {};  // if no cached result, start from the beginning; delta inputs should be empty too because this is the bootstrapping case TODO
     }
 
     // static void dumpDerivationInfo2JsonFile(const std::string& originalFileName, const std::string& suffix, const std::set<RuleApplication>* ruleApplications) {
