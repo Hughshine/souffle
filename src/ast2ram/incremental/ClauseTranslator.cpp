@@ -54,7 +54,9 @@
 #include "ram/Negation.h"
 #include "ram/NestedIntrinsicOperator.h"
 #include "ram/Query.h"
+#include "ram/RecordDerivation.h"
 #include "ram/Scan.h"
+#include "ram/SequantialOperation.h"
 #include "ram/Sequence.h"
 #include "ram/SignedConstant.h"
 #include "ram/StringConstant.h"
@@ -70,6 +72,14 @@
 #include <vector>
 
 namespace souffle::ast2ram::incremental {
+
+std::map<std::string, Own<ram::Expression>> cloneClauseVarMap(const std::map<std::string, Own<ram::Expression>>& varExprMap) {
+    std::map<std::string, Own<ram::Expression>> newVarExprMap{};
+    for (auto& [var, expr] : varExprMap) {
+        newVarExprMap.emplace(var, expr->cloning());
+    }
+    return newVarExprMap;
+}
 
 ClauseTranslator::ClauseTranslator(const TranslatorContext& context, TranslationMode mode)
         : ast2ram::ClauseTranslator(context, mode), valueIndex(mk<ValueIndex>()) {}
@@ -168,10 +178,112 @@ Own<ram::Statement> ClauseTranslator::translateRecursiveClause(
 Own<ram::Statement> ClauseTranslator::translateNonRecursiveClause(const ast::Clause& clause) {
     // Create the appropriate query
     if (isFact(clause)) {
-        return createRamFactQuery(clause);
+        // Currently we allow no input program changes, so the fact must already be inserted
+        return createRamFactQuery(clause);  // TODO: we can avoid the reinsertion
     }
-    return createRamRuleQuery(clause);
+    // INC: for each rule p :- s1, ..., sn, we need to create n queries
+    // each query corresponds to a delta rule, dp :- news_1, ..., ds_i, ..., olds_n
+    // note that s_1 ... s_i-1 have new facts, s_i+1 ... s_n should be the old version
+    // we create n delta rules (clauses), and invoke createRamRuleQuery on each o them
+    // ds_i here only contains added or removed tuples; we don't care about how its derivation set changes in details, because rule application is not a transitive information
+    // so delta relation is just newly inserted or newly deleted tuples (insert set and delete set has no overlap)
+    // but when we calculate delta relations, we need to update corresponding delta derivation information (rule application information) [i.e. delta derivation information is just "output"]
+    // whether a delta relation has a specific tuple, is decided by whether its derivation information is empty
+    return createRamDeltaRulesQuery(clause);
+    // return createRamRuleQuery(clause);
 }
+
+Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause& clause) {
+    assert(isRule(clause) && "clause should be rule");
+    VecOwn<ram::Statement> stmts;
+    // Index all variables and generators in the clause
+    indexClause(clause);  // TODO: what does it do?
+    const auto& bodyLiterals = clause.getBodyLiterals();  // TODO: do I need to clone it?
+    for (int i = 0; i < bodyLiterals.size(); i++) {
+        const auto& lit = bodyLiterals[i];
+        if (const auto& atom = as<ast::Atom>(lit)) {
+            // insert to delta insertion head
+            const auto head = clause.getHead();
+            auto headRelationName = getClauseAtomName(clause, head);
+            auto headOldRelationName = getOldRelationName(head->getQualifiedName());
+            auto headDeltaDervInsertRelationName = getIncDeltaDervInsertRelationName(head->getQualifiedName());
+            auto headDeltaDervDeleteRelationName = getIncDeltaDervDeleteRelationName(head->getQualifiedName());
+            auto headDeltaTupleInsertRelationName = getIncDeltaTupleInsertRelationName(head->getQualifiedName());
+            auto headDeltaTupleDeleteRelationName = getIncDeltaTupleDeleteRelationName(head->getQualifiedName());
+            auto clauseVarMap = getClauseVars(clause);
+
+            
+            // insert to delta insert relation, by joining new..., delta, old...
+
+
+
+            auto clauseStr = clause.toString();
+            // Propositions
+            if (head->getArity() == 0) {
+                assert (false && "proposition (0 arity relation) not supported");
+                // TODO: maybe there is a clever way
+            }
+
+            // Relations with functional dependency constraints
+            if (auto guardedConditions = getFunctionalDependencies(clause)) {
+                assert (false && "functional dependencies not supported");
+            }
+
+            // Everything else
+            {
+                // Insert
+                VecOwn<ram::Expression> values;
+                for (const auto* arg : head->getArguments()) {
+                    // TODO: take delta relation here...
+                    values.push_back(context.translateValue(*valueIndex, arg));  // TODO
+                }
+                Own<ram::Operation> op = mk<ram::Insert>(headDeltaDervInsertRelationName, std::move(clone(values)),
+                    context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)));
+                op = mk<ram::SequentialOperation>(std::move(op),
+                    mk<ram::RecordDerivation>(
+                        headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
+                        std::move(cloneClauseVarMap(clauseVarMap)), true, false));
+                op = addBodyLiteralConstraints(clause, std::move(op));
+                op = addVariableBindingConstraints(std::move(op));
+                op = addGeneratorLevels(std::move(op), clause);
+                op = addVariableIntroductions(clause, std::move(op));
+                op = addEntryPoint(clause, std::move(op));
+                appendStmt(stmts, std::move(mk<ram::Query>(std::move(op))));
+            }
+            {
+                // Delete
+                VecOwn<ram::Expression> values;
+                for (const auto* arg : head->getArguments()) {
+                    // TODO: take delta relation here...
+                    values.push_back(context.translateValue(*valueIndex, arg));  // TODO
+                }
+                Own<ram::Operation> op = mk<ram::Insert>(headDeltaDervDeleteRelationName, std::move(clone(values)),
+                    context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)));
+                op = mk<ram::SequentialOperation>(std::move(op),
+                    mk<ram::RecordDerivation>(
+                        headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
+                        std::move(cloneClauseVarMap(clauseVarMap)), false, false)); // delete
+                op = addBodyLiteralConstraints(clause, std::move(op));
+                op = addVariableBindingConstraints(std::move(op));
+                op = addGeneratorLevels(std::move(op), clause);
+                op = addVariableIntroductions(clause, std::move(op));
+                op = addEntryPoint(clause, std::move(op));
+                appendStmt(stmts, std::move(mk<ram::Query>(std::move(op))));
+            }
+            // delete to delta deletion head
+        } else if (const auto& negation = as<ast::Negation>(lit)) {
+            assert (false && "negation not supported");
+            const auto& atom = negation->getAtom();
+            // TODO: INC NEG
+        } else {
+            assert(false && "constraints are not supported");
+        }
+    }
+
+    // join delta and old, and calculate real delta and new
+    return mk<ram::Sequence>(std::move(stmts)); // TODO: stmts
+}
+
 
 Own<ram::Statement> ClauseTranslator::createRamFactQuery(const ast::Clause& clause) const {
     assert(isFact(clause) && "clause should be fact");
@@ -218,14 +330,6 @@ Own<ram::Operation> ClauseTranslator::addVariableBindingConstraints(Own<ram::Ope
     return op;
 }
 
-std::map<std::string, Own<ram::Expression>> cloneClauseVarMap(const std::map<std::string, Own<ram::Expression>>& varExprMap) {
-    std::map<std::string, Own<ram::Expression>> newVarExprMap{};
-    for (auto& [var, expr] : varExprMap) {
-        newVarExprMap.emplace(var, expr->cloning());
-    }
-    return newVarExprMap;
-}
-
 Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause) const {
     const auto head = clause.getHead();
     auto headRelationName = getClauseAtomName(clause, head);
@@ -242,14 +346,16 @@ Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause)
 
     // Propositions
     if (head->getArity() == 0) {
-        return mk<ram::Filter>(mk<ram::EmptinessCheck>(headRelationName),
-                mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap))));
+        assert (false && "proposition (0 arity relation) not supported"); // TODO: maybe there is a clever way
+        // return mk<ram::Filter>(mk<ram::EmptinessCheck>(headRelationName),
+                // mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap))));
     }
 
     // Relations with functional dependency constraints
     if (auto guardedConditions = getFunctionalDependencies(clause)) {
-        return mk<ram::GuardedInsert>(headRelationName, std::move(values), std::move(guardedConditions),
-            context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)));
+        // return mk<ram::GuardedInsert>(headRelationName, std::move(values), std::move(guardedConditions),
+        //     context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)));
+        assert (false && "functional dependencies not supported");
     }
 
     // Everything else

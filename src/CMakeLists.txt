@@ -179,6 +179,8 @@ set(SOUFFLE_SOURCES
         ast2ram/incremental/ValueTranslator.cpp
         ast/DeltaRelation.cpp
         ast/DeltaRelation.h
+        ram/RecordDerivation.h
+        ram/SequantialOperation.h
 )
 
 # --------------------------------------------------

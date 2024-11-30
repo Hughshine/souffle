@@ -49,6 +49,9 @@ std::string getConcreteRelationName(const ast::QualifiedName& name, std::string 
 const std::string& getRelationName(const ast::QualifiedName& name);
 
 /** Get the corresponding RAM delta relation name for the relation */
+std::string getOldRelationName(const ast::QualifiedName& name);
+
+/** Get the corresponding RAM delta relation name for the relation */
 std::string getDeltaRelationName(const ast::QualifiedName& name);
 
 /** Get the corresponding RAM 'new' relation name for the relation */
@@ -63,14 +66,14 @@ std::string getRejectRelationName(const ast::QualifiedName& name);
 /** Get the corresponding RAM 'delete' relation name for the relation */
 std::string getDeleteRelationName(const ast::QualifiedName& name);
 
-/** Get the corresponding RAM 'inc-delta' relation name for the relation  */
-std::string getIncDeltaRelationName(const ast::QualifiedName& name);
+/** INC */
+std::string getIncDeltaDervInsertRelationName(const ast::QualifiedName& name);
 
-/** Get the corresponding RAM 'inc-delta-insert' relation name for the relation  */
-std::string getIncDeltaInsertRelationName(const ast::QualifiedName& name);
+std::string getIncDeltaDervDeleteRelationName(const ast::QualifiedName& name);
 
-/** Get the corresponding RAM 'inc-delta-delete' relation name for the relation  */
-std::string getIncDeltaDeleteRelationName(const ast::QualifiedName& name);
+std::string getIncDeltaTupleInsertRelationName(const ast::QualifiedName& name);
+
+std::string getIncDeltaTupleDeleteRelationName(const ast::QualifiedName& name);
 
 /** Get base relation name, strip off any possible prefix */
 std::string getBaseRelationName(const ast::QualifiedName& name);
