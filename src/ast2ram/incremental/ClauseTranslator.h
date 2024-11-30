@@ -80,6 +80,7 @@ protected:
     /** Main clause translation */
     virtual Own<ram::Statement> createRamFactQuery(const ast::Clause& clause) const;
     virtual Own<ram::Statement> createRamRuleQuery(const ast::Clause& clause);
+    virtual Own<ram::Statement> createRamDeltaRulesQuery(const ast::Clause& clause);
 
     virtual Own<ram::Operation> createInsertion(const ast::Clause& clause) const;
     virtual Own<ram::Condition> createCondition(const ast::Clause& clause) const;

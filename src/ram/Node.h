@@ -121,6 +121,10 @@ public:
                 NK_GuardedInsert,
             NK_LastInsert,
 
+            NK_RecordDerivation,
+
+            NK_SequentialOperation,
+
             NK_NestedOperation,
                 NK_AbstractConditional,
                     NK_Break,

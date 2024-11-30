@@ -56,6 +56,9 @@
 #include <optional>
 #include <set>
 
+#include <ast2ram/incremental/ClauseTranslator.h>
+#include <ast2ram/incremental/TranslationStrategy.h>
+
 namespace souffle::ast2ram {
 
 TranslatorContext::TranslatorContext(const ast::TranslationUnit& tu) {
@@ -100,6 +103,8 @@ TranslatorContext::TranslatorContext(const ast::TranslationUnit& tu) {
     // Set up the correct strategy
     if (global->config().has("provenance")) {
         translationStrategy = mk<provenance::TranslationStrategy>();
+    } else if (global->config().has("inc")) {
+        translationStrategy = mk<incremental::TranslationStrategy>();
     } else {
         translationStrategy = mk<seminaive::TranslationStrategy>();
     }
