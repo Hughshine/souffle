@@ -181,6 +181,7 @@ set(SOUFFLE_SOURCES
         ast/DeltaRelation.h
         ram/RecordDerivation.h
         ram/SequantialOperation.h
+        ram/DeltaUnion.h
 )
 
 # --------------------------------------------------

@@ -42,6 +42,7 @@
 #include "ram/Break.h"
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
+#include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/EstimateJoinSize.h"
 #include "ram/ExistenceCheck.h"
@@ -248,11 +249,6 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
             }
             {
                 // Delete
-                VecOwn<ram::Expression> values;
-                for (const auto* arg : head->getArguments()) {
-                    // TODO: take delta relation here...
-                    values.push_back(context.translateValue(*valueIndex, arg));  // TODO
-                }
                 Own<ram::Operation> op = mk<ram::Insert>(headDeltaDervDeleteRelationName, std::move(clone(values)),
                     context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)));
                 op = mk<ram::SequentialOperation>(std::move(op),
@@ -275,6 +271,10 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
             assert(false && "constraints are not supported");
         }
     }
+
+    // TODO: add a delta union operator
+
+    appendStmt(stmts, mk<ram::DeltaUnion>(headRelationName));
 
     // join delta and old, and calculate real delta and new
     return mk<ram::Sequence>(std::move(stmts)); // TODO: stmts

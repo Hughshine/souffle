@@ -198,6 +198,7 @@ public:
                 NK_IO,
                 NK_LogRelationTimer,
                 NK_LogSize,
+                NK_DeltaUnion,
             NK_LastRelationStatement,
 
         NK_LastStatement,
