@@ -112,6 +112,7 @@ std::string ClauseTranslator::getClauseString(const ast::Clause& clause) const {
     return toString(*renamedClone);
 }
 
+// TODO: version 究竟是什么含义
 std::string ClauseTranslator::getClauseAtomName(const ast::Clause& clause, const ast::Atom* atom) const {
     return getAtomName(clause, atom, sccAtoms, version, isRecursive(), mode);
 }
@@ -198,26 +199,27 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
     VecOwn<ram::Statement> stmts;
     // Index all variables and generators in the clause
     indexClause(clause);  // TODO: what does it do?
+
+    const auto head = clause.getHead();
+    auto headRelationName = getClauseAtomName(clause, head);
+    auto headOldRelationName = getOldRelationName(head->getQualifiedName());
+    auto headDeltaDervInsertRelationName = getIncDeltaDervInsertRelationName(head->getQualifiedName());
+    auto headDeltaDervDeleteRelationName = getIncDeltaDervDeleteRelationName(head->getQualifiedName());
+    auto headDeltaTupleInsertRelationName = getIncDeltaTupleInsertRelationName(head->getQualifiedName());
+    auto headDeltaTupleDeleteRelationName = getIncDeltaTupleDeleteRelationName(head->getQualifiedName());
+    auto clauseStr = clause.toString();
+    auto clauseVarMap = getClauseVars(clause);
     const auto& bodyLiterals = clause.getBodyLiterals();  // TODO: do I need to clone it?
-    for (int i = 0; i < bodyLiterals.size(); i++) {
-        const auto& lit = bodyLiterals[i];
+    VecOwn<ram::Expression> values;  // how head argument is computed by its body (relation name is anonymous)
+    for (const auto* arg : head->getArguments()) {
+        values.push_back(context.translateValue(*valueIndex, arg));  // TODO
+    }
+
+    assert (bodyLiterals.size() == operators.size());
+    for (int i = 0; i < operators.size(); i++) {
+        const auto& lit = operators[i];
+        // INC: now we try to create delta rule for lit
         if (const auto& atom = as<ast::Atom>(lit)) {
-            // insert to delta insertion head
-            const auto head = clause.getHead();
-            auto headRelationName = getClauseAtomName(clause, head);
-            auto headOldRelationName = getOldRelationName(head->getQualifiedName());
-            auto headDeltaDervInsertRelationName = getIncDeltaDervInsertRelationName(head->getQualifiedName());
-            auto headDeltaDervDeleteRelationName = getIncDeltaDervDeleteRelationName(head->getQualifiedName());
-            auto headDeltaTupleInsertRelationName = getIncDeltaTupleInsertRelationName(head->getQualifiedName());
-            auto headDeltaTupleDeleteRelationName = getIncDeltaTupleDeleteRelationName(head->getQualifiedName());
-            auto clauseVarMap = getClauseVars(clause);
-
-            
-            // insert to delta insert relation, by joining new..., delta, old...
-
-
-
-            auto clauseStr = clause.toString();
             // Propositions
             if (head->getArity() == 0) {
                 assert (false && "proposition (0 arity relation) not supported");
@@ -229,14 +231,8 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
                 assert (false && "functional dependencies not supported");
             }
 
-            // Everything else
             {
                 // Insert
-                VecOwn<ram::Expression> values;
-                for (const auto* arg : head->getArguments()) {
-                    // TODO: take delta relation here...
-                    values.push_back(context.translateValue(*valueIndex, arg));  // TODO
-                }
                 Own<ram::Operation> op = mk<ram::Insert>(headDeltaDervInsertRelationName, std::move(clone(values)),
                     context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)));
                 op = mk<ram::SequentialOperation>(std::move(op),
@@ -246,7 +242,7 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
                 op = addBodyLiteralConstraints(clause, std::move(op));
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
-                op = addVariableIntroductions(clause, std::move(op));
+                op = addVariableIntroductions(clause, std::move(op), i, true);  // delta level, isInsert = true
                 op = addEntryPoint(clause, std::move(op));
                 appendStmt(stmts, std::move(mk<ram::Query>(std::move(op))));
             }
@@ -266,7 +262,7 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
                 op = addBodyLiteralConstraints(clause, std::move(op));
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
-                op = addVariableIntroductions(clause, std::move(op));
+                op = addVariableIntroductions(clause, std::move(op), i, false);
                 op = addEntryPoint(clause, std::move(op));
                 appendStmt(stmts, std::move(mk<ram::Query>(std::move(op))));
             }
@@ -294,19 +290,20 @@ Own<ram::Statement> ClauseTranslator::createRamFactQuery(const ast::Clause& clau
 }
 
 Own<ram::Statement> ClauseTranslator::createRamRuleQuery(const ast::Clause& clause) {
-    assert(isRule(clause) && "clause should be rule");
-
-    // Index all variables and generators in the clause
-    indexClause(clause);
-
-    // Set up the RAM statement bottom-up
-    auto op = createInsertion(clause);
-    op = addBodyLiteralConstraints(clause, std::move(op));
-    op = addVariableBindingConstraints(std::move(op));
-    op = addGeneratorLevels(std::move(op), clause);
-    op = addVariableIntroductions(clause, std::move(op));
-    op = addEntryPoint(clause, std::move(op));
-    return mk<ram::Query>(std::move(op));
+    assert (false && "only support delta rules, WIP");
+    // assert(isRule(clause) && "clause should be rule");
+    //
+    // // Index all variables and generators in the clause
+    // indexClause(clause);
+    //
+    // // Set up the RAM statement bottom-up
+    // auto op = createInsertion(clause);
+    // op = addBodyLiteralConstraints(clause, std::move(op));
+    // op = addVariableBindingConstraints(std::move(op));
+    // op = addGeneratorLevels(std::move(op), clause);
+    // op = addVariableIntroductions(clause, std::move(op), false);
+    // op = addEntryPoint(clause, std::move(op));
+    // return mk<ram::Query>(std::move(op));
 }
 
 Own<ram::Operation> ClauseTranslator::addEntryPoint(const ast::Clause& clause, Own<ram::Operation> op) const {
@@ -363,16 +360,36 @@ Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause)
         context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)));
 }
 
+std::string ClauseTranslator::getAtomNameForIncDeltaRule(const ast::Clause& clause, const ast::Atom* atom, const std::size_t curIndex, const std::size_t deltaIndex, const bool isInsert) const {
+    assert(!isRecursive() && "recursive not supported");
+    if (curIndex < deltaIndex) {
+        // new relation (should change the name
+        // this new relation is not the new relation for delta cases )
+        return getConcreteRelationName(atom->getQualifiedName());
+    }
+    if (curIndex > deltaIndex) {
+        // old relation
+        return getOldRelationName(atom->getQualifiedName());
+    }
+        // delta case
+    if (isInsert) {
+        return getIncDeltaTupleInsertRelationName(atom->getQualifiedName());
+    } else {
+        return getIncDeltaTupleDeleteRelationName(atom->getQualifiedName());
+    }
+}
+
 Own<ram::Operation> ClauseTranslator::addAtomScan(Own<ram::Operation> op, const ast::Atom* atom,
-        const ast::Clause& clause, std::size_t curLevel) const {
+        const ast::Clause& clause, const std::size_t curLevel, const std::size_t deltaLevel, const bool isInsert) const {
     const ast::Atom* head = clause.getHead();
 
     // add constraints
     op = addConstantConstraints(curLevel, atom->getArguments(), std::move(op));
 
+    auto relName = getAtomNameForIncDeltaRule(clause, atom, curLevel, deltaLevel, isInsert);
     // add check for emptiness for an atom
     op = mk<ram::Filter>(
-            mk<ram::Negation>(mk<ram::EmptinessCheck>(getClauseAtomName(clause, atom))), std::move(op));
+            mk<ram::Negation>(mk<ram::EmptinessCheck>(relName)), std::move(op));
 
     // check whether all arguments are unnamed variables
     bool isAllArgsUnnamed = all_of(
@@ -381,6 +398,7 @@ Own<ram::Operation> ClauseTranslator::addAtomScan(Own<ram::Operation> op, const 
     // add a scan level
     if (atom->getArity() != 0 && !isAllArgsUnnamed) {
         if (head->getArity() == 0) {
+            assert (false && "zero arity");
             op = mk<ram::Break>(mk<ram::Negation>(mk<ram::EmptinessCheck>(getClauseAtomName(clause, head))),
                     std::move(op));
         }
@@ -395,7 +413,8 @@ Own<ram::Operation> ClauseTranslator::addAtomScan(Own<ram::Operation> op, const 
             ss << stringify(toString(clause)) << ';';
             ss << curLevel << ';';
         }
-        op = mk<ram::Scan>(getClauseAtomName(clause, atom), curLevel, std::move(op), ss.str());
+
+        op = mk<ram::Scan>(relName, curLevel, std::move(op), ss.str());
     }
 
     return op;
@@ -457,24 +476,13 @@ Own<ram::Operation> ClauseTranslator::addAdtUnpack(
 }
 
 Own<ram::Operation> ClauseTranslator::addVariableIntroductions(
-        const ast::Clause& clause, Own<ram::Operation> op) {
+        const ast::Clause& clause, Own<ram::Operation> op, std::size_t deltaLevel, bool isInsert) {
     for (std::size_t p = operators.size(); p > 0; p--) {
         std::size_t i = p - 1;
         const auto* curOp = operators.at(i);
         if (const auto* atom = as<ast::Atom>(curOp)) {
             // add atom arguments through a scan
-            op = addAtomScan(std::move(op), atom, clause, i);
-        } else if (const auto* rec = as<ast::RecordInit>(curOp)) {
-            // add record arguments through an unpack
-            op = addRecordUnpack(std::move(op), rec, i);
-        } else if (const auto* adt = as<ast::BranchInit>(curOp)) {
-            // add adt arguments through an unpack
-            op = addAdtUnpack(std::move(op), adt, i);
-            if (!context.isADTBranchSimple(adt)) {
-                // for non-simple ADTs (arity > 1), we introduced two
-                // nesting levels
-                p--;
-            }
+            op = addAtomScan(std::move(op), atom, clause, i, deltaLevel, isInsert);
         } else {
             fatal("Unsupported AST node for creation of scan-level!");
         }

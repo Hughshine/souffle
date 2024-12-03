@@ -68,6 +68,7 @@ protected:
     std::string getClauseString(const ast::Clause& clause) const;
     std::string getClauseAtomName(const ast::Clause& clause, const ast::Atom* atom) const;
     std::map<std::string, Own<ram::Expression>> getClauseVars(const ast::Clause& clause) const;
+    std::string getAtomNameForIncDeltaRule(const ast::Clause& clause, const ast::Atom* atom, std::size_t curIndex, std::size_t deltaIndex, bool isInsert) const;
 
     virtual Own<ram::Operation> addNegatedAtom(
             Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const;
@@ -102,12 +103,12 @@ protected:
     virtual Own<ram::Operation> addBodyLiteralConstraints(
             const ast::Clause& clause, Own<ram::Operation> op) const;
     Own<ram::Operation> addGeneratorLevels(Own<ram::Operation> op, const ast::Clause& clause) const;
-    Own<ram::Operation> addVariableIntroductions(const ast::Clause& clause, Own<ram::Operation> op);
+    Own<ram::Operation> addVariableIntroductions(const ast::Clause& clause, Own<ram::Operation> op, std::size_t deltaLevel, bool isInsert);
     Own<ram::Operation> addEntryPoint(const ast::Clause& clause, Own<ram::Operation> op) const;
 
     /** Levelling methods */
     virtual Own<ram::Operation> addAtomScan(Own<ram::Operation> op, const ast::Atom* atom,
-            const ast::Clause& clause, std::size_t curLevel) const;
+            const ast::Clause& clause, std::size_t curLevel, std::size_t deltaLevel, bool isInsert) const;
     Own<ram::Operation> addRecordUnpack(
             Own<ram::Operation> op, const ast::RecordInit* rec, std::size_t curLevel) const;
     Own<ram::Operation> addAdtUnpack(
