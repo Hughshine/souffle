@@ -32,6 +32,7 @@
 #include "ram/Conjunction.h"
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
+#include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/Erase.h"
 #include "ram/ExistenceCheck.h"
@@ -69,10 +70,12 @@
 #include "ram/Program.h"
 #include "ram/ProvenanceExistenceCheck.h"
 #include "ram/Query.h"
+#include "ram/RecordDerivation.h"
 #include "ram/Relation.h"
 #include "ram/RelationOperation.h"
 #include "ram/RelationSize.h"
 #include "ram/Scan.h"
+#include "ram/SequantialOperation.h"
 #include "ram/Sequence.h"
 #include "ram/SignedConstant.h"
 #include "ram/Statement.h"
@@ -1868,6 +1871,18 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             }
 
             PRINT_END_COMMENT(out);
+        }
+
+        void visit_(type_identity<SequentialOperation>, const SequentialOperation& sequentialOperation, std::ostream& out) override {
+
+        }
+
+        void visit_(type_identity<RecordDerivation>, const RecordDerivation& recordDerivation, std::ostream& out) override {
+
+        }
+
+        void visit_(type_identity<DeltaUnion>, const DeltaUnion& deltaUnion, std::ostream& out) override {
+
         }
 
         void visit_(type_identity<Erase>, const Erase& erase, std::ostream& out) override {

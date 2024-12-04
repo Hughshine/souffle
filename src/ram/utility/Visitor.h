@@ -32,6 +32,7 @@
 #include "ram/Conjunction.h"
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
+#include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/Erase.h"
 #include "ram/EstimateJoinSize.h"
@@ -73,11 +74,13 @@
 #include "ram/Program.h"
 #include "ram/ProvenanceExistenceCheck.h"
 #include "ram/Query.h"
+#include "ram/RecordDerivation.h"
 #include "ram/Relation.h"
 #include "ram/RelationOperation.h"
 #include "ram/RelationSize.h"
 #include "ram/RelationStatement.h"
 #include "ram/Scan.h"
+#include "ram/SequantialOperation.h"
 #include "ram/Sequence.h"
 #include "ram/SignedConstant.h"
 #include "ram/Statement.h"
@@ -166,6 +169,9 @@ struct Visitor : souffle::detail::VisitorBase<R, NodeType, Params...> {
         SOUFFLE_VISITOR_FORWARD(Aggregate);
         SOUFFLE_VISITOR_FORWARD(ParallelIndexAggregate);
         SOUFFLE_VISITOR_FORWARD(IndexAggregate);
+        SOUFFLE_VISITOR_FORWARD(SequentialOperation);
+        SOUFFLE_VISITOR_FORWARD(RecordDerivation);
+
 
         // Statements
         SOUFFLE_VISITOR_FORWARD(Assign);
@@ -177,6 +183,7 @@ struct Visitor : souffle::detail::VisitorBase<R, NodeType, Params...> {
 
         SOUFFLE_VISITOR_FORWARD(Swap);
         SOUFFLE_VISITOR_FORWARD(MergeExtend);
+        SOUFFLE_VISITOR_FORWARD(DeltaUnion);
 
         // Control-flow
         SOUFFLE_VISITOR_FORWARD(Program);
@@ -200,9 +207,9 @@ protected:
     SOUFFLE_VISITOR_LINK(Clear, RelationStatement);
     SOUFFLE_VISITOR_LINK(LogSize, RelationStatement);
     SOUFFLE_VISITOR_LINK(EstimateJoinSize, RelationStatement);
-
     SOUFFLE_VISITOR_LINK(RelationStatement, Statement);
     SOUFFLE_VISITOR_LINK(Assign, Statement);
+    SOUFFLE_VISITOR_LINK(DeltaUnion, RelationStatement);
 
     SOUFFLE_VISITOR_LINK(Swap, BinRelationStatement);
     SOUFFLE_VISITOR_LINK(MergeExtend, BinRelationStatement);
@@ -223,6 +230,7 @@ protected:
     // -- operations --
     SOUFFLE_VISITOR_LINK(GuardedInsert, Insert);
     SOUFFLE_VISITOR_LINK(Insert, Operation);
+    SOUFFLE_VISITOR_LINK(RecordDerivation, Operation);
     SOUFFLE_VISITOR_LINK(Erase, Operation);
     SOUFFLE_VISITOR_LINK(SubroutineReturn, Operation);
     SOUFFLE_VISITOR_LINK(UnpackRecord, TupleOperation);
@@ -246,6 +254,7 @@ protected:
     SOUFFLE_VISITOR_LINK(Break, AbstractConditional);
     SOUFFLE_VISITOR_LINK(AbstractConditional, NestedOperation);
     SOUFFLE_VISITOR_LINK(NestedOperation, Operation);
+    SOUFFLE_VISITOR_LINK(SequentialOperation, Operation);
 
     SOUFFLE_VISITOR_LINK(Operation, Node);
 
