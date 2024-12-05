@@ -101,7 +101,7 @@ public:
         for (auto& [var, expr] : varExprMap) {
             newVarExprMap.emplace(var, expr->cloning());
         }
-        return new RecordDerivation(relation, std::move(newValues), clauseID, clauseStr, std::move(newVarExprMap));
+        return new RecordDerivation(relation, std::move(newValues), insert, complete, clauseID, clauseStr, std::move(newVarExprMap));
     }
 
     void apply(const NodeMapper& map) override {

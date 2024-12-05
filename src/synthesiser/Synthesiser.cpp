@@ -1887,19 +1887,19 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 
         void visit_(type_identity<RecordDerivation>, const RecordDerivation& recordDerivation, std::ostream& out) override {
             auto relName = recordDerivation.getRelation();
-            // case 2: insert to new/original rel, record derivation
-            // if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new") {
-            //     tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
-            // }
-            // retrieve the tuple first
             out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << relName << "\",tuple);\n";
-            out << "auto*& ruleSet = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
+            if (recordDerivation.isComplete()) {
+                out << "auto*& ruleSet = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
+            } else {
+                if (recordDerivation.isInsert()) {
+                    out << "auto*& ruleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedTuple];\n";
+                } else {
+                    out << "auto*& ruleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedTuple];\n";
+                }
+            }
             out << "if (ruleSet == nullptr) {\n";
-            // out << relName << "->"
-                // << "insert(tuple," << relName << ");\n";  // only insert tuple to rel when it wasn't recorded
             out << "ruleSet = new std::set<RuleApplication>();\n";
             out << "}\n";
-            // record derivation info about realTuple
             out << "std::map<std::string, souffle::RamDomain> varValues{};\n";
             for (const auto& [var, expr]: recordDerivation.varExprMap) {
                 out << "varValues.insert({\"" << var  << "\", "; rec(out, expr.get()); out << "});\n";
@@ -1910,6 +1910,27 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 
         void visit_(type_identity<DeltaUnion>, const DeltaUnion& deltaUnion, std::ostream& out) override {
             std::cout << "DeltaUnion..." << std::endl;
+            /**
+             * Rnew, Rrealinsert, Rrealdelete <= Rold, Rderinsert, Rderdelete
+             */
+            /*
+            forall t in Rderinsert
+                get deltader_insert for t
+                if t not in Rold
+                    Rrealinsert.insert(t)
+                    der for t = deltader_insert
+                else
+                    der for t = der + deltader_insert
+            forall t in Rderdelete
+                get delteder_delete for t
+                get der for t
+                der for t = der - deltader_delete
+                if der is empty:
+                    Rdrealdelete.insert(t)
+            Rnew = Rold + Rrealinsert - Rrealdelete
+             */
+
+
         }
 
         void visit_(type_identity<Erase>, const Erase& erase, std::ostream& out) override {
