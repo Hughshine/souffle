@@ -1874,15 +1874,19 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
         }
 
         void visit_(type_identity<SequentialOperation>, const SequentialOperation& sequentialOperation, std::ostream& out) override {
-
+            PRINT_BEGIN_COMMENT(out);
+            for (const auto& cur : sequentialOperation.getOperations()) {
+                dispatch(*cur, out);
+            }
+            PRINT_END_COMMENT(out);
         }
 
         void visit_(type_identity<RecordDerivation>, const RecordDerivation& recordDerivation, std::ostream& out) override {
-
+            std::cout << "RecordDerivation..." << std::endl;
         }
 
         void visit_(type_identity<DeltaUnion>, const DeltaUnion& deltaUnion, std::ostream& out) override {
-
+            std::cout << "DeltaUnion..." << std::endl;
         }
 
         void visit_(type_identity<Erase>, const Erase& erase, std::ostream& out) override {
@@ -2602,6 +2606,14 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 std::set<std::string> Synthesiser::accessedRelations(Statement& stmt) {
     std::set<std::string> accessed;
     visit(stmt, [&](const Insert& node) { accessed.insert(node.getRelation()); });
+    visit(stmt, [&](const DeltaUnion& node) {
+        accessed.insert(node.getOldRel());
+        accessed.insert(node.getNewRel());
+        accessed.insert(node.getDeltaDervInsertRel());
+        accessed.insert(node.getDeltaDervDeleteRel());
+        accessed.insert(node.getDeltaTupleInsertRel());
+        accessed.insert(node.getDeltaTupleDeleteRel());
+    });
     visit(stmt, [&](const RelationOperation& node) { accessed.insert(node.getRelation()); });
     visit(stmt, [&](const RelationStatement& node) { accessed.insert(node.getRelation()); });
     visit(stmt, [&](const AbstractExistenceCheck& node) { accessed.insert(node.getRelation()); });

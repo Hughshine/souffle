@@ -73,6 +73,10 @@ public:
         return toPtrVector(operations);
     }
 
+    NodeVec getChildren() const override {
+        return toPtrVector<Node const>(operations);;
+    }
+
     void apply(const NodeMapper& map) override {
         for (auto&& op : operations) {
             op = map(std::move(op));
