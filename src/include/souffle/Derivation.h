@@ -208,8 +208,10 @@ public:
         json11::Json::array result;
         for (const auto& [tuple, ruleApps]: derivationInfo) {
             json11::Json::array ruleAppsJson = json11::Json::array();
-            for (const auto& ruleApp: *ruleApps) {
-                ruleAppsJson.push_back(ruleApp.toJson());
+            if (ruleApps != nullptr) {
+                for (const auto& ruleApp: *ruleApps) {
+                    ruleAppsJson.push_back(ruleApp.toJson());
+                }
             }
             json11::Json item = json11::Json::object{
                 {"tuple", json11::Json::object{

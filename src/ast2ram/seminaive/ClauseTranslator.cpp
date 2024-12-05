@@ -246,7 +246,7 @@ Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause)
     auto recordDerivation = mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)),
                         context.getClauseNum(&clause), clauseStr,
-                        std::move(cloneClauseVarMap(clauseVarMap)), false, false);
+                        std::move(cloneClauseVarMap(clauseVarMap)), false, true);
 
 
     // Propositions
