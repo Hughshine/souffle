@@ -1851,25 +1851,27 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << relName << "->"
                     << "insert(tuple," << ctxName << ");\n";
             } else {
-                // case 2: insert to new/original rel, record derivation
-                if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new") {
-                    tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
-                }
-                // retrieve the tuple first
-                out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << tempRelName << "\",tuple);\n";
-                out << "auto*& ruleSet = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
-                out << "if (ruleSet == nullptr) {\n";
+                // TODO: is it ok to just insert the tuple?
                 out << relName << "->"
-                    << "insert(tuple," << ctxName << ");\n";  // only insert tuple to rel when it wasn't recorded
-                out << "ruleSet = new std::set<RuleApplication>();\n";
-                out << "}\n";
+                    << "insert(tuple," << ctxName << ");\n";
+                // if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new") {
+                //     tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
+                // }
+                // retrieve the tuple first
+                // out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << tempRelName << "\",tuple);\n";
+                // out << "auto*& ruleSet = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
+                // out << "if (ruleSet == nullptr) {\n";
+                // out << relName << "->"
+                    // << "insert(tuple," << ctxName << ");\n";  // only insert tuple to rel when it wasn't recorded
+                // out << "ruleSet = new std::set<RuleApplication>();\n";
+                // out << "}\n";
                 // record derivation info about realTuple
-                out << "std::map<std::string, souffle::RamDomain> varValues{};\n";
-                for (const auto& [var, expr]: insert.varExprMap) {
-                    out << "varValues.insert({\"" << var  << "\", "; rec(out, expr.get()); out << "});\n";
-                }
-                out << "RuleApplication ruleApplication{" << insert.getClauseID() << ", varValues};\n";
-                out << "ruleSet->insert(ruleApplication);\n";
+                // out << "std::map<std::string, souffle::RamDomain> varValues{};\n";
+                // for (const auto& [var, expr]: insert.varExprMap) {
+                //     out << "varValues.insert({\"" << var  << "\", "; rec(out, expr.get()); out << "});\n";
+                // }
+                // out << "RuleApplication ruleApplication{" << insert.getClauseID() << ", varValues};\n";
+                // out << "ruleSet->insert(ruleApplication);\n";
             }
 
             PRINT_END_COMMENT(out);
@@ -1884,7 +1886,26 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
         }
 
         void visit_(type_identity<RecordDerivation>, const RecordDerivation& recordDerivation, std::ostream& out) override {
-            std::cout << "RecordDerivation..." << std::endl;
+            auto relName = recordDerivation.getRelation();
+            // case 2: insert to new/original rel, record derivation
+            // if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new") {
+            //     tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
+            // }
+            // retrieve the tuple first
+            out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << relName << "\",tuple);\n";
+            out << "auto*& ruleSet = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
+            out << "if (ruleSet == nullptr) {\n";
+            // out << relName << "->"
+                // << "insert(tuple," << relName << ");\n";  // only insert tuple to rel when it wasn't recorded
+            out << "ruleSet = new std::set<RuleApplication>();\n";
+            out << "}\n";
+            // record derivation info about realTuple
+            out << "std::map<std::string, souffle::RamDomain> varValues{};\n";
+            for (const auto& [var, expr]: recordDerivation.varExprMap) {
+                out << "varValues.insert({\"" << var  << "\", "; rec(out, expr.get()); out << "});\n";
+            }
+            out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
+            out << "ruleSet->insert(ruleApplication);\n";
         }
 
         void visit_(type_identity<DeltaUnion>, const DeltaUnion& deltaUnion, std::ostream& out) override {
