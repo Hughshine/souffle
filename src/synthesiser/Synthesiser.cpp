@@ -382,11 +382,13 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << R"_(directiveMap["fact-dir"] = inputDirectory;)_";
                 out << "}\n";
                 if (inc == "false") {
+                    std::cout << "no inc..." << std::endl;
                     out << "IOSystem::getInstance().getReader(";
                     out << "directiveMap, symTable, recordTable";
                     out << ")->readAll(*" << synthesiser.getRelationName(synthesiser.lookup(io.getRelation()));
                     out << ");\n";
                 } else {
+                    std::cout << "inc..." << std::endl;
                     const std::string& isInsert = io.get("inc-insert");
                     const std::string& isDelete = io.get("inc-delete");
                     // TODO: update derivations to mapping
@@ -3391,7 +3393,9 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << R"_(souffle::ProfileEventSingleton::instance().makeConfigRecord("version", ")_"
              << glb.config().get("version") << R"_(");)_" << '\n';
     }
-    hook << "DerivationManager::untypedTuple2RuleApplications = DerivationManager::derivationInfoFromJsonFile(opt.getSourceFileName(),\"\");\n"; // Read old computation
+    if (glb.config().has("inc")) {
+        hook << "DerivationManager::untypedTuple2RuleApplications = DerivationManager::derivationInfoFromJsonFile(opt.getSourceFileName(),\"\");\n"; // Read old computation
+    }
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
     hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"\", DerivationManager::untypedTuple2RuleApplications);\n";  // Should be complete, take into new deltas into account
     hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"insert\", DerivationManager::untypedTuple2DeltaInsertRuleApplications);\n";  // TODO: Delta insert

@@ -800,6 +800,9 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
         for (const auto& [key, value] : load->getParameters()) {
             directives.insert(std::make_pair(key, unescape(value)));
         }
+        directives.insert(std::make_pair("incDelta", "false"));
+        directives.insert(std::make_pair("inc-insert", "false"));
+        directives.insert(std::make_pair("inc-delete", "false"));
         if (glb->config().has("no-warn")) {
             directives.insert(std::make_pair("no-warn", "true"));
         }
@@ -826,6 +829,9 @@ Own<ram::Statement> UnitTranslator::generateStoreRelation(const ast::Relation* r
         for (const auto& [key, value] : store->getParameters()) {
             directives.insert(std::make_pair(key, unescape(value)));
         }
+        directives.insert(std::make_pair("incDelta", "false"));
+        directives.insert(std::make_pair("inc-insert", "false"));
+        directives.insert(std::make_pair("inc-delete", "false"));
         addAuxiliaryArity(relation, directives);
 
         // Create the resultant store statement, with profile information
