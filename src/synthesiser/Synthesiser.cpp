@@ -398,24 +398,26 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     out << ");\n";
                     assert(!(isInsert == "true" && isDelete == "true") && "no same-time insertion and deletion");
                     if (isInsert == "true") {
-                        out << "for(auto it = " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->begin(); it != " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->end(); ++it) {\n";
-                        out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\""<< getBaseRelationName(io.getRelation()) <<"\", *it);\n";
-                        out << "auto*& deltaInsRuleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedTuple];\n";
-                        out << "if (deltaInsRuleSet == nullptr) {\n";
-                        out << "deltaInsRuleSet = new std::set<RuleApplication>();\n";
-                        out << "}\n";
-                        out << "deltaInsRuleSet->insert(naiveRuleApplication);\n";
-                        out << "}\n";
+                        // the relation name already have inser/delete info
+                        // do not give implicit derivation ifno for input facts?
+                        // out << "for(auto it = " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->begin(); it != " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->end(); ++it) {\n";
+                        // out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\""<< getBaseRelationName(io.getRelation()) <<"\", *it);\n";
+                        // out << "auto*& deltaInsRuleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedTuple];\n";
+                        // out << "if (deltaInsRuleSet == nullptr) {\n";
+                        // out << "deltaInsRuleSet = new std::set<RuleApplication>();\n";
+                        // out << "}\n";
+                        // out << "deltaInsRuleSet->insert(naiveRuleApplication);\n";
+                        // out << "}\n";
                     } else if (isDelete == "true") {
                         // TODO: could eliminate semoutenously inserted and deleted facts
-                        out << "for(auto it = " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->begin(); it != " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->end(); ++it) {\n";
-                        out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\""<< getBaseRelationName(io.getRelation()) <<"\", *it);\n";
-                        out << "auto*& deltaDelRuleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedTuple];\n";
-                        out << "if (deltaDelRuleSet == nullptr) {\n";
-                        out << "deltaDelRuleSet = new std::set<RuleApplication>();\n";
-                        out << "}\n";
-                        out << "deltaDelRuleSet->insert(naiveRuleApplication);\n";
-                        out << "}\n";
+                        // out << "for(auto it = " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->begin(); it != " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->end(); ++it) {\n";
+                        // out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\""<< getBaseRelationName(io.getRelation()) <<"\", *it);\n";
+                        // out << "auto*& deltaDelRuleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedTuple];\n";
+                        // out << "if (deltaDelRuleSet == nullptr) {\n";
+                        // out << "deltaDelRuleSet = new std::set<RuleApplication>();\n";
+                        // out << "}\n";
+                        // out << "deltaDelRuleSet->insert(naiveRuleApplication);\n";
+                        // out << "}\n";
                     }
                 }
                 out << "} catch (std::exception& e) {std::cerr << \"Error loading " << io.getRelation()
