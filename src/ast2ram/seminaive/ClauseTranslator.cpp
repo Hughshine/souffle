@@ -54,7 +54,9 @@
 #include "ram/Negation.h"
 #include "ram/NestedIntrinsicOperator.h"
 #include "ram/Query.h"
+#include "ram/RecordDerivation.h"
 #include "ram/Scan.h"
+#include "ram/SequantialOperation.h"
 #include "ram/Sequence.h"
 #include "ram/SignedConstant.h"
 #include "ram/StringConstant.h"
@@ -239,22 +241,37 @@ Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause)
 
     auto clauseStr = clause.toString();
 
+    // Prob: Record Derivation at the same time
+    // if complete, then there is no difference between "insert/delete"
+    auto recordDerivation = mk<ram::RecordDerivation>(
+                        headRelationName, std::move(clone(values)),
+                        context.getClauseNum(&clause), clauseStr,
+                        std::move(cloneClauseVarMap(clauseVarMap)), false, false);
+
 
     // Propositions
     if (head->getArity() == 0) {
-        return mk<ram::Filter>(mk<ram::EmptinessCheck>(headRelationName),
-                mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap))));
+        return mk<ram::Filter>(
+            mk<ram::EmptinessCheck>(headRelationName),
+            mk<ram::SequentialOperation>(
+                mk<ram::Insert>(headRelationName, std::move(values),
+                    context.getClauseNum(&clause), clauseStr,
+                    std::move(cloneClauseVarMap(clauseVarMap))),
+                    std::move(recordDerivation)));
     }
 
     // Relations with functional dependency constraints
     if (auto guardedConditions = getFunctionalDependencies(clause)) {
-        return mk<ram::GuardedInsert>(headRelationName, std::move(values), std::move(guardedConditions),
-            context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)));
+        return mk<ram::SequentialOperation>(mk<ram::GuardedInsert>(headRelationName,
+            std::move(values), std::move(guardedConditions),
+            context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap))),
+            std::move(recordDerivation));
     }
 
     // Everything else
-    return mk<ram::Insert>(headRelationName, std::move(values),
-        context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)));
+    return mk<ram::SequentialOperation>(mk<ram::Insert>(headRelationName, std::move(values),
+        context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)))
+        , std::move(recordDerivation));
 }
 
 Own<ram::Operation> ClauseTranslator::addAtomScan(Own<ram::Operation> op, const ast::Atom* atom,
