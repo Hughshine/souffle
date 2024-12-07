@@ -837,6 +837,18 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
         std::string ramIncDeltaDeleteRelationName = getIncDeltaTupleDeleteRelationName((relation->getQualifiedName()));
         Own<ram::Statement> loadIncDeltaDeleteStmt = mk<ram::IO>(ramIncDeltaDeleteRelationName, directives);
 
+        // TODO: join get "new" input relation
+        auto mergeToNewStmt =
+            mk<ram::Sequence>(
+                generateMergeRelationsWithFilter(relation,
+                    getConcreteRelationName(relation->getQualifiedName()),
+                    getOldRelationName(relation->getQualifiedName()),
+                    getIncDeltaTupleDeleteRelationName(relation->getQualifiedName())),
+                generateMergeRelations(relation,
+                    getConcreteRelationName(relation->getQualifiedName()),
+                    getIncDeltaTupleInsertRelationName(relation->getQualifiedName()))
+            );
+
         // join the information for deletion and insertion
         // ramIncDeltaRelation contains all tuples whose derivations change
         // std::string ramIncDeltaRelationName = getIncDeltaRelationName(relation->getQualifiedName());
@@ -847,7 +859,7 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
 
         //
 
-        loadStmt = mk<ram::Sequence>(std::move(loadStmt), std::move(loadIncDeltaInsertStmt), std::move(loadIncDeltaDeleteStmt));
+        loadStmt = mk<ram::Sequence>(std::move(loadStmt), std::move(loadIncDeltaInsertStmt), std::move(loadIncDeltaDeleteStmt), std::move(mergeToNewStmt));
         if (glb->config().has("profile")) {
             const std::string logTimerStatement =
                     LogStatement::tRelationLoadTime(ramRelationName, relation->getSrcLoc());
