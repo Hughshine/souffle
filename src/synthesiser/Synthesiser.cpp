@@ -130,14 +130,19 @@ using namespace ram;
 using namespace stream_write_qualified_char_as_number;
 
 const std::string getBaseRelationName(const std::string& name) {
-    return stripPrefix("@old_",
-            stripPrefix("@inc_delta_tuple_delete_",
-                stripPrefix("@inc_delta_tuple_insert_",
-                    stripPrefix("@inc_delta_derv_delete_",
-                        stripPrefix("@inc_delta_derv_insert_",
-                            stripPrefix("@new_",
-                                stripPrefix("@delta_",
-                                    stripPrefix("@info_", name))))))));
+    return
+    stripPrefix("@tmp4_",
+        stripPrefix("@tmp3_",
+            stripPrefix("@tmp2_",
+            stripPrefix("@tmp_",
+                stripPrefix("@old_",
+                    stripPrefix("@inc_delta_tuple_delete_",
+                        stripPrefix("@inc_delta_tuple_insert_",
+                            stripPrefix("@inc_delta_derv_delete_",
+                                stripPrefix("@inc_delta_derv_insert_",
+                                    stripPrefix("@new_",
+                                        stripPrefix("@delta_",
+                                            stripPrefix("@info_", name))))))))))));
 }
 
 /** Lookup frequency counter */
@@ -1911,7 +1916,6 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
         }
 
         void visit_(type_identity<DeltaUnion>, const DeltaUnion& deltaUnion, std::ostream& out) override {
-            std::cout << "DeltaUnion..." << std::endl;
             /**
              * Rnew, Rrealinsert, Rrealdelete <= Rold, Rderinsert, Rderdelete
              */

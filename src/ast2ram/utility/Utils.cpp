@@ -108,19 +108,39 @@ std::string getIncDeltaTupleDeleteRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "@inc_delta_tuple_delete_");
 }
 
+std::string getTmpRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@tmp_");
+}
+
+std::string getTmp2RelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@tmp2_");
+}
+
+std::string getTmp3RelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@tmp3_");
+}
+
+std::string getTmp4RelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@tmp4_");
+}
 const std::string& getRelationName(const ast::QualifiedName& name) {
     return name.toString();
 }
 
 std::string getBaseRelationName(const ast::QualifiedName& name) {
-    return stripPrefix("@old_",
-        stripPrefix("@inc_delta_tuple_delete_",
-            stripPrefix("@inc_delta_tuple_insert_",
-                stripPrefix("@inc_delta_derv_delete_",
-                    stripPrefix("@inc_delta_derv_insert_",
-                        stripPrefix("@new_",
-                            stripPrefix("@delta_",
-                                stripPrefix("@info_", name.toString()))))))));
+    return
+    stripPrefix("@tmp4_",
+        stripPrefix("@tmp3_",
+        stripPrefix("@tmp2_",
+            stripPrefix("@tmp_",
+        stripPrefix("@old_",
+            stripPrefix("@inc_delta_tuple_delete_",
+                stripPrefix("@inc_delta_tuple_insert_",
+                    stripPrefix("@inc_delta_derv_delete_",
+                        stripPrefix("@inc_delta_derv_insert_",
+                            stripPrefix("@new_",
+                                stripPrefix("@delta_",
+                                    stripPrefix("@info_", name.toString()))))))))))));
 }
 
 void appendStmt(VecOwn<ram::Statement>& stmtList, Own<ram::Statement> stmt) {

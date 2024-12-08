@@ -75,6 +75,11 @@ std::string getIncDeltaTupleInsertRelationName(const ast::QualifiedName& name);
 
 std::string getIncDeltaTupleDeleteRelationName(const ast::QualifiedName& name);
 
+std::string getTmpRelationName(const ast::QualifiedName& name);
+std::string getTmp2RelationName(const ast::QualifiedName& name);
+std::string getTmp3RelationName(const ast::QualifiedName& name);
+std::string getTmp4RelationName(const ast::QualifiedName& name);
+
 /** Get base relation name, strip off any possible prefix */
 std::string getBaseRelationName(const ast::QualifiedName& name);
 

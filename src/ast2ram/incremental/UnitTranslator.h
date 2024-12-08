@@ -96,6 +96,9 @@ protected:
     virtual Own<ram::Statement> generateMergeRelationsWithFilter(const ast::Relation* rel,
             const std::string& destRelation, const std::string& srcRelation,
             const std::string& filterRelation) const;
+    virtual Own<ram::Statement> generateMergeRelationsWithNegativeFilter(const ast::Relation* rel,
+        const std::string& destRelation, const std::string& srcRelation,
+        const std::string& filterRelation) const;
     virtual Own<ram::Statement> generateEraseTuples(
             const ast::Relation* rel, const std::string& destRelation, const std::string& srcRelation) const;
     virtual Own<ram::Statement> generateDebugRelation(const ast::Relation* rel,

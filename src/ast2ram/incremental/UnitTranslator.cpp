@@ -268,6 +268,36 @@ Own<ram::Statement> UnitTranslator::generateMergeRelationsWithFilter(const ast::
     return stmt;
 }
 
+Own<ram::Statement> UnitTranslator::generateMergeRelationsWithNegativeFilter(const ast::Relation* rel,
+        const std::string& destRelation, const std::string& srcRelation,
+        const std::string& filterRelation) const {
+    VecOwn<ram::Expression> values;
+    VecOwn<ram::Expression> values2;
+
+    // Proposition - insert if not empty
+    if (rel->getArity() == 0) {
+        auto insertion = mk<ram::Insert>(destRelation, std::move(values));
+        return mk<ram::Query>(mk<ram::Filter>(
+                (mk<ram::EmptinessCheck>(srcRelation)), std::move(insertion)));
+    }
+
+    // Predicate - insert all values
+    for (std::size_t i = 0; i < rel->getArity(); i++) {
+        values.push_back(mk<ram::TupleElement>(0, i));
+        values2.push_back(mk<ram::TupleElement>(0, i));
+    }
+    auto insertion = mk<ram::Insert>(destRelation, std::move(values));
+    auto filtered =
+            mk<ram::Filter>(mk<ram::ExistenceCheck>(filterRelation, std::move(values2)),
+                    std::move(insertion));
+    auto stmt = mk<ram::Query>(mk<ram::Scan>(srcRelation, 0, std::move(filtered)));
+
+    if (rel->getRepresentation() == RelationRepresentation::EQREL) {
+        return mk<ram::Sequence>(mk<ram::MergeExtend>(destRelation, srcRelation), std::move(stmt));
+    }
+    return stmt;
+}
+
 Own<ram::Statement> UnitTranslator::generateMergeRelations(
         const ast::Relation* rel, const std::string& destRelation, const std::string& srcRelation) const {
     VecOwn<ram::Expression> values;
@@ -828,20 +858,69 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
         directives["incDelta"] = "true";
         directives["inc-insert"] = "true";
 
+        std::string tmpName = getTmpRelationName(relation->getQualifiedName()); // insert
+        std::string tmp2Name = getTmp2RelationName(relation->getQualifiedName()); // delete
+        std::string tmp3Name = getTmp3RelationName(relation->getQualifiedName()); // insert2
+        std::string tmp4Name = getTmp4RelationName(relation->getQualifiedName()); // delete3
+
         std::string ramIncDeltaInsertRelationName = getIncDeltaTupleInsertRelationName((relation->getQualifiedName()));
-        Own<ram::Statement> loadIncDeltaInsertStmt = mk<ram::IO>(ramIncDeltaInsertRelationName, directives);
+        Own<ram::Statement> loadIncDeltaInsertStmt = mk<ram::IO>(tmpName, directives);
 
         directives["inc-insert"] = "false";
         directives["inc-delete"] = "true";
 
         std::string ramIncDeltaDeleteRelationName = getIncDeltaTupleDeleteRelationName((relation->getQualifiedName()));
-        Own<ram::Statement> loadIncDeltaDeleteStmt = mk<ram::IO>(ramIncDeltaDeleteRelationName, directives);
+        Own<ram::Statement> loadIncDeltaDeleteStmt = mk<ram::IO>(tmp2Name, directives);
 
-        // TODO: join get "new" input relation
+        // remove redundancy in new and old
+        // tmp = delta_R_insert - delta_R_delete
+        // delta_R_delete = delta_R_delete - delta_R_insert
+        // delta_R_insert = tmp
+        // remove all insert that already in old
+        // remove all delete that not in old
+
+
+        // do not use swap for non-tmp relations... souffle does not handle them correctly
+        auto removeRedundancyStmt = mk<ram::Sequence>(
+            generateMergeRelationsWithFilter(
+                relation,
+                tmp3Name, //ramIncDeltaInsertRelationName
+                tmpName,
+                tmp2Name
+            ),
+            generateMergeRelationsWithFilter(
+                relation,
+                tmp4Name,
+                tmp2Name,
+                tmpName
+            ),
+            mk<ram::Clear>(tmpName),
+            mk<ram::Clear>(tmp2Name), // TODO: there is some small efficiency issues... hard to swap pointers directly
+            // generateMergeRelations(relation, tmpName, ramIncDeltaInsertRelationName),
+            // mk<ram::Clear>(ramIncDeltaInsertRelationName),
+            // generateMergeRelations(relation, tmp2Name, ramIncDeltaDeleteRelationName),
+            // mk<ram::Clear>(ramIncDeltaDeleteRelationName),
+            generateMergeRelationsWithNegativeFilter(
+                relation,
+                ramIncDeltaDeleteRelationName,
+                tmp4Name,
+                getOldRelationName(relation->getQualifiedName())
+            ),
+            mk<ram::Clear>(tmp4Name),
+            generateMergeRelationsWithFilter(
+                relation,
+                ramIncDeltaInsertRelationName,
+                tmp3Name,
+                getOldRelationName(relation->getQualifiedName())
+            ),
+            mk<ram::Clear>(tmp3Name)
+        );
+
+        // join get "new" input relation
         auto mergeToNewStmt =
             mk<ram::Sequence>(
                 generateMergeRelationsWithFilter(relation,
-                    getConcreteRelationName(relation->getQualifiedName()),
+                    getConcreteRelationName(relation->getQualifiedName()),  // new relation
                     getOldRelationName(relation->getQualifiedName()),
                     getIncDeltaTupleDeleteRelationName(relation->getQualifiedName())),
                 generateMergeRelations(relation,
@@ -859,7 +938,7 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
 
         //
 
-        loadStmt = mk<ram::Sequence>(std::move(loadStmt), std::move(loadIncDeltaInsertStmt), std::move(loadIncDeltaDeleteStmt), std::move(mergeToNewStmt));
+        loadStmt = mk<ram::Sequence>(std::move(loadStmt), std::move(loadIncDeltaInsertStmt), std::move(loadIncDeltaDeleteStmt), std::move(removeRedundancyStmt), std::move(mergeToNewStmt));
         if (glb->config().has("profile")) {
             const std::string logTimerStatement =
                     LogStatement::tRelationLoadTime(ramRelationName, relation->getSrcLoc());
@@ -942,7 +1021,10 @@ Own<ram::Relation> UnitTranslator::createRamRelation(
     if (representation == RelationRepresentation::BTREE_DELETE && ramRelationName[0] == '@') {
         representation = RelationRepresentation::DEFAULT;
     }
-
+    // if (ramRelationName == getIncDeltaTupleDeleteRelationName(baseRelation->getQualifiedName())) {
+    //     std::cout << "delete!!!" << std::endl;
+    //     representation = RelationRepresentation::BTREE_DELETE;
+    // }
     std::vector<std::string> attributeNames;
     std::vector<std::string> attributeTypeQualifiers;
     for (const auto& attribute : baseRelation->getAttributes()) {
@@ -985,6 +1067,18 @@ VecOwn<ram::Relation> UnitTranslator::createRamRelations(const std::vector<std::
 
             std::string incDeltaTupleDeleteName = getIncDeltaTupleDeleteRelationName(rel->getQualifiedName());
             ramRelations.push_back(createRamRelation(rel, incDeltaTupleDeleteName));
+
+            std::string tmpName = getTmpRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, tmpName));
+
+            std::string tmp2Name = getTmp2RelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, tmp2Name));
+
+            std::string tmp3Name = getTmp3RelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, tmp3Name));
+
+            std::string tmp4Name = getTmp4RelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, tmp4Name));
 
             if (rel->getAuxiliaryArity() > 0) {
                 assert(false && "does not support lub relation");
