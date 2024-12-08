@@ -894,26 +894,22 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
                 tmp2Name,
                 tmpName
             ),
-            mk<ram::Clear>(tmpName),
-            mk<ram::Clear>(tmp2Name), // TODO: there is some small efficiency issues... hard to swap pointers directly
-            // generateMergeRelations(relation, tmpName, ramIncDeltaInsertRelationName),
-            // mk<ram::Clear>(ramIncDeltaInsertRelationName),
-            // generateMergeRelations(relation, tmp2Name, ramIncDeltaDeleteRelationName),
-            // mk<ram::Clear>(ramIncDeltaDeleteRelationName),
             generateMergeRelationsWithNegativeFilter(
                 relation,
                 ramIncDeltaDeleteRelationName,
                 tmp4Name,
                 getOldRelationName(relation->getQualifiedName())
             ),
-            mk<ram::Clear>(tmp4Name),
             generateMergeRelationsWithFilter(
                 relation,
                 ramIncDeltaInsertRelationName,
                 tmp3Name,
                 getOldRelationName(relation->getQualifiedName())
             ),
-            mk<ram::Clear>(tmp3Name)
+            mk<ram::Clear>(tmpName),
+            mk<ram::Clear>(tmp2Name),
+            mk<ram::Clear>(tmp3Name),
+            mk<ram::Clear>(tmp4Name)
         );
 
         // join get "new" input relation

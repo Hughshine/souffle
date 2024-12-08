@@ -387,13 +387,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << R"_(directiveMap["fact-dir"] = inputDirectory;)_";
                 out << "}\n";
                 if (inc == "false") {
-                    std::cout << "no inc..." << std::endl;
                     out << "IOSystem::getInstance().getReader(";
                     out << "directiveMap, symTable, recordTable";
                     out << ")->readAll(*" << synthesiser.getRelationName(synthesiser.lookup(io.getRelation()));
                     out << ");\n";
                 } else {
-                    std::cout << "inc..." << std::endl;
                     const std::string& isInsert = io.get("inc-insert");
                     const std::string& isDelete = io.get("inc-delete");
                     // TODO: update derivations to mapping
