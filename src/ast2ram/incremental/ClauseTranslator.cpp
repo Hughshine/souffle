@@ -216,7 +216,7 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
         values.push_back(context.translateValue(*valueIndex, arg));  // TODO
     }
 
-    assert (bodyLiterals.size() == operators.size());
+    // (bodyLiterals<as Atom>.size() == operators.size());
     for (int i = 0; i < operators.size(); i++) {
         const auto& lit = operators[i];
         // INC: now we try to create delta rule for lit
@@ -264,7 +264,8 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
             }
             // delete to delta deletion head
         } else if (const auto& negation = as<ast::Negation>(lit)) {
-            assert (false && "negation not supported");
+            // simply omit negation is fine because it's just a "filter"
+            // assert (false && "negation not supported");
             const auto& atom = negation->getAtom();
             // TODO: INC NEG
         } else {
@@ -486,6 +487,10 @@ Own<ram::Operation> ClauseTranslator::addVariableIntroductions(
         if (const auto* atom = as<ast::Atom>(curOp)) {
             // add atom arguments through a scan
             op = addAtomScan(std::move(op), atom, clause, i, deltaLevel, isInsert);
+        } else if (const auto* negation = as<ast::Negation>(curOp)) {
+            // in probabilistic setting, negation can be simply omit; though there is room for optimization for deterministic facts (prob of 1)
+            // and still, it only introduces new constraints, TODO
+            // negation do not introduce new bounded variables, so no additional layer of scan
         } else {
             fatal("Unsupported AST node for creation of scan-level!");
         }

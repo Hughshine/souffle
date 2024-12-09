@@ -11,7 +11,9 @@
 .output A
 
 
-A(y) :- B(x, y), C(x).
+// A(y) :- B(x, y), C(x).
+
+A(y) :- B(x, y), !C(x).
 
 // A(x) :- C(x).
 
