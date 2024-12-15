@@ -1,0 +1,11 @@
+.decl C(x:number)
+.input C
+
+.decl B(x:number, y:number)
+.input B
+
+.decl A(x:number)
+.output A
+
+A(y) :- B(x, y), C(x).
+A(x) :- B(x, y), C(y).

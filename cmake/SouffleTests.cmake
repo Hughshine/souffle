@@ -344,8 +344,9 @@ endfunction()
 
 # Run a souffle test, both as interpred and as compiled
 # For additional parameters, see souffle_run_test_helper above
+# PROB do not have interpreter mode
 function(SOUFFLE_RUN_TEST)
-    souffle_run_test_helper(${ARGV})
+#    souffle_run_test_helper(${ARGV})
     souffle_run_test_helper(${ARGV} COMPILED)
 endfunction()
 
