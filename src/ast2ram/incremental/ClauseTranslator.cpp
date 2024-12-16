@@ -275,10 +275,10 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
 
     // TODO: add a delta union operator
 
-    appendStmt(stmts, mk<ram::DeltaUnion>(headRelationName,
-        headOldRelationName, headRelationName,
-        headDeltaDervInsertRelationName, headDeltaDervDeleteRelationName,
-        headDeltaTupleInsertRelationName, headDeltaTupleDeleteRelationName));
+    // appendStmt(stmts, mk<ram::DeltaUnion>(headRelationName,
+    //     headOldRelationName, headRelationName,
+    //     headDeltaDervInsertRelationName, headDeltaDervDeleteRelationName,
+    //     headDeltaTupleInsertRelationName, headDeltaTupleDeleteRelationName));
 
     // join delta and old, and calculate real delta and new
     return mk<ram::Sequence>(std::move(stmts)); // TODO: stmts

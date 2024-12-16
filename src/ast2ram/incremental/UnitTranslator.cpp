@@ -35,6 +35,7 @@
 #include "ram/Conjunction.h"
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
+#include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/Erase.h"
 #include "ram/ExistenceCheck.h"
@@ -140,6 +141,20 @@ Own<ram::Statement> UnitTranslator::generateNonRecursiveRelation(const ast::Rela
 
         // Add rule to result
         appendStmt(result, std::move(rule));
+    }
+
+    if (context->getProgram()->getClauses(rel).size() > 0) {
+        auto headRelationName = getConcreteRelationName(rel.getQualifiedName());
+        auto headOldRelationName = getOldRelationName(rel.getQualifiedName());
+        auto headDeltaDervInsertRelationName = getIncDeltaDervInsertRelationName(rel.getQualifiedName());
+        auto headDeltaDervDeleteRelationName = getIncDeltaDervDeleteRelationName(rel.getQualifiedName());
+        auto headDeltaTupleInsertRelationName = getIncDeltaTupleInsertRelationName(rel.getQualifiedName());
+        auto headDeltaTupleDeleteRelationName = getIncDeltaTupleDeleteRelationName(rel.getQualifiedName());
+
+        appendStmt(result, mk<ram::DeltaUnion>(headRelationName,
+            headOldRelationName, headRelationName,
+            headDeltaDervInsertRelationName, headDeltaDervDeleteRelationName,
+            headDeltaTupleInsertRelationName, headDeltaTupleDeleteRelationName));
     }
 
     // Add logging for entire relation

@@ -1,0 +1,20 @@
+// Stratum 1
+.decl I(x:number, y:number)
+.input I
+
+.decl A(x:number, y:number)
+A(x,y) :- I(x,y).
+
+// Stratum 2
+.decl B(x:number, y:number)
+B(x,y) :- I(x,y), !A(x,y).
+
+// Stratum 3
+.decl C(x:number, y:number)
+C(x,y) :- I(x,y).
+C(x,y) :- I(x,z), I(z,y).
+C(x,y) :- I(x,a), I(a,b), I(b,y).
+
+.output A
+.output B
+.output C
