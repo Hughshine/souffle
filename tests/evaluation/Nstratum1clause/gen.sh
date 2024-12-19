@@ -2,7 +2,7 @@
 OUTPUT_FILE="input/I.facts"
 
 # Number of lines to generate
-NUM_LINES=100000
+NUM_LINES=1000000
 
 # Generate the pairs
 for ((i=1; i<=NUM_LINES; i++)); do

@@ -12,6 +12,63 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <chrono>
+#include <iostream>
+#include <string>
+#include <functional>
+
+// TODO: move to another file
+class FunctionTimer {
+private:
+    using Clock = std::chrono::high_resolution_clock;
+    using TimePoint = std::chrono::time_point<Clock>;
+    using Duration = std::chrono::duration<double>;
+
+    std::string function_name_;
+    TimePoint start_time_;
+    bool print_on_destruction_;
+
+public:
+    // Constructor with optional function name
+    explicit FunctionTimer(const std::string& name = "Function", bool print_on_destruction = true)
+        : function_name_(name),
+          start_time_(Clock::now()),
+          print_on_destruction_(print_on_destruction) {}
+
+    // Destructor automatically prints time if enabled
+    ~FunctionTimer() {
+        if (print_on_destruction_) {
+            printElapsedTime();
+        }
+    }
+
+    // Get elapsed time in seconds
+    double getElapsedTime() const {
+        TimePoint end_time = Clock::now();
+        Duration duration = end_time - start_time_;
+        return duration.count();
+    }
+
+    // Print elapsed time
+    void printElapsedTime() const {
+        double elapsed = getElapsedTime();
+        std::cout << function_name_ << " took " << elapsed << " seconds" << std::endl;
+    }
+
+    // Reset the timer
+    void reset() {
+        start_time_ = Clock::now();
+    }
+};
+
+// Utility function to time any function call
+template<typename Func, typename... Args>
+double timeFunction(const std::string& name, Func&& func, Args&&... args) {
+    FunctionTimer timer(name, false);
+    std::invoke(std::forward<Func>(func), std::forward<Args>(args)...);
+    return timer.getElapsedTime();
+}
+
 
 struct UntypedTuple {
     std::string relation_name;

@@ -386,6 +386,8 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << R"_(if (!inputDirectory.empty()) {)_";
                 out << R"_(directiveMap["fact-dir"] = inputDirectory;)_";
                 out << "}\n";
+                out << "{\n";
+                out << "FunctionTimer timer(\"reading relation "<< synthesiser.getRelationName(synthesiser.lookup(io.getRelation()))<< "\");\n";
                 if (inc == "false") {
                     out << "IOSystem::getInstance().getReader(";
                     out << "directiveMap, symTable, recordTable";
@@ -423,6 +425,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                         // out << "}\n";
                     }
                 }
+                out << "}\n";
                 out << "} catch (std::exception& e) {std::cerr << \"Error loading " << io.getRelation()
                     << " data: \" << e.what() "
                        "<< "
@@ -438,10 +441,13 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << R"_(else if (!outputDirectory.empty()) {)_";
                 out << R"_(directiveMap["output-dir"] = outputDirectory;)_";
                 out << "}\n";
-                out << "IOSystem::getInstance().getWriter(";
-                out << "directiveMap, symTable, recordTable";
-                out << ")->writeAll(*" << synthesiser.getRelationName(synthesiser.lookup(io.getRelation()))
-                    << ");\n";
+                out << "{\n";
+                    out << "FunctionTimer timer(\"writing relation "<< synthesiser.getRelationName(synthesiser.lookup(io.getRelation()))<< "\");\n";
+                    out << "IOSystem::getInstance().getWriter(";
+                    out << "directiveMap, symTable, recordTable";
+                    out << ")->writeAll(*" << synthesiser.getRelationName(synthesiser.lookup(io.getRelation()))
+                        << ");\n";
+                out << "}\n";
                 out << "} catch (std::exception& e) {std::cerr << e.what();exit(1);}\n";
             } else {
                 assert("Wrong i/o operation");
@@ -663,6 +669,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
         void visit_(type_identity<Call>, const Call& call, std::ostream& out) override {
             PRINT_BEGIN_COMMENT(out);
             out << "{\n";
+            out << "FunctionTimer timer(\"" <<  call.getName() << "\");\n";
             out << " std::vector<RamDomain> args, ret;\n";
             out << synthesiser.convertStratumIdent(call.getName()) << ".run(args, ret);\n";
             out << "}\n";
@@ -3482,14 +3489,20 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
              << glb.config().get("version") << R"_(");)_" << '\n';
     }
     if (glb.config().has("inc")) {
+    hook << "{\n";
+    hook << "FunctionTimer timer(\"reading derivations\");\n";
         hook << "DerivationManager::untypedTuple2RuleApplications = DerivationManager::derivationInfoFromJsonFile(opt.getSourceFileName(),\"\");\n"; // Read old computation
+    hook << "}\n";
     }
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
+    hook << "{\n";
+    hook << "FunctionTimer timer(\"dumping derivations\");\n";
     hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"\", DerivationManager::untypedTuple2RuleApplications);\n";  // Should be complete, take into new deltas into account
     hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"insert\", DerivationManager::untypedTuple2DeltaInsertRuleApplications);\n";  // TODO: Delta insert
     hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"delete\", DerivationManager::untypedTuple2DeltaDeleteRuleApplications);\n";  // TODO: Delta delete
     // TODO: for debug; remove this later
     hook << "DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFileDir());\n";
+    hook << "}\n";
     if (glb.config().get("provenance") == "explain") {
         hook << "explain(obj, false);\n";
     } else if (glb.config().get("provenance") == "explore") {
