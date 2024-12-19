@@ -12,7 +12,7 @@
  *
  ***********************************************************************/
 
-#include "ast2ram/incremental/UnitTranslator.h"
+#include "ast2ram/seminaive-with-delta/UnitTranslator.h"
 #include "Global.h"
 #include "LogStatement.h"
 #include "ast/Clause.h"
@@ -35,7 +35,6 @@
 #include "ram/Conjunction.h"
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
-#include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/Erase.h"
 #include "ram/ExistenceCheck.h"
@@ -90,7 +89,7 @@
 #include <utility>
 #include <vector>
 
-namespace souffle::ast2ram::incremental {
+namespace souffle::ast2ram::seminaive_with_delta {
 
 UnitTranslator::UnitTranslator() : ast2ram::UnitTranslator() {}
 
@@ -143,20 +142,6 @@ Own<ram::Statement> UnitTranslator::generateNonRecursiveRelation(const ast::Rela
         appendStmt(result, std::move(rule));
     }
 
-    if (context->getProgram()->getClauses(rel).size() > 0) {
-        auto headRelationName = getConcreteRelationName(rel.getQualifiedName());
-        auto headOldRelationName = getOldRelationName(rel.getQualifiedName());
-        auto headDeltaDervInsertRelationName = getIncDeltaDervInsertRelationName(rel.getQualifiedName());
-        auto headDeltaDervDeleteRelationName = getIncDeltaDervDeleteRelationName(rel.getQualifiedName());
-        auto headDeltaTupleInsertRelationName = getIncDeltaTupleInsertRelationName(rel.getQualifiedName());
-        auto headDeltaTupleDeleteRelationName = getIncDeltaTupleDeleteRelationName(rel.getQualifiedName());
-
-        appendStmt(result, mk<ram::DeltaUnion>(headRelationName,
-            headOldRelationName, headRelationName,
-            headDeltaDervInsertRelationName, headDeltaDervDeleteRelationName,
-            headDeltaTupleInsertRelationName, headDeltaTupleDeleteRelationName));
-    }
-
     // Add logging for entire relation
     if (glb->config().has("profile")) {
         const std::string& relationName = toString(rel.getQualifiedName());
@@ -185,48 +170,39 @@ Own<ram::Statement> UnitTranslator::generateStratum(std::size_t scc) const {
     VecOwn<ram::Statement> current;
 
     // Load all internal input relations from the facts dir with a .facts extension
-    // INC: Also load all delta changes for IDB by files having .facts.insert and .facts.delete extension
-    // TODO: here we suppose EDB does not change during fixpoint computation
-    // TODO: i.e. they are not the heads of any rules
     for (const auto& relation : context->getInputRelationsInSCC(scc)) {
         appendStmt(current, generateLoadRelation(relation));
-    }
-
-    // Load all cached external output relations from the output dir
-    // Cached derivation info maintained separately
-    for (const auto& relation : context->getOutputRelationsInSCC(scc)) {
-        appendStmt(current, generateLoadRelationForIDB(relation));
     }
 
     // Compute the current stratum
     const auto& sccRelations = context->getRelationsInSCC(scc);
     if (context->isRecursiveSCC(scc)) {
-        // appendStmt(current, generateRecursiveStratum(sccRelations, scc));
-        assert(false && "recursion not supported");
+        appendStmt(current, generateRecursiveStratum(sccRelations, scc));
     } else {
         assert(sccRelations.size() == 1 && "only one relation should exist in non-recursive stratum");
         const auto* rel = *sccRelations.begin();
-        appendStmt(current, generateNonRecursiveRelation(*rel));  // TODO
+        appendStmt(current, generateNonRecursiveRelation(*rel));
 
         // lub auxiliary arities using the @lub relation
         if (rel->getAuxiliaryArity() > 0) {
-            assert (false && "lub auxiliary not supported");
+            std::string mainRelation = getConcreteRelationName(rel->getQualifiedName());
+            std::string newRelation = getNewRelationName(rel->getQualifiedName());
+            std::string deltaRelation = getDeltaRelationName(rel->getQualifiedName());
+            appendStmt(current, generateStratumLubSequence(*rel, false));
+            std::map<std::string, std::string> directives;
+            appendStmt(current, mk<ram::Clear>(newRelation));
         }
 
-        if (context->hasSubsumptiveClause(rel->getQualifiedName())) {
-            assert (false && "subsumption clause not supported");
-        }
+        // issue delete sequence for non-recursive subsumptions
+        appendStmt(current, generateNonRecursiveDelete(*rel));
     }
 
-    // Get all non-recursive relation statements, TODO
-    const auto nonRecursiveJoinSizeStatements = context->getNonRecursiveJoinSizeStatementsInSCC(scc);
-    assert(nonRecursiveJoinSizeStatements.empty() && "does not support join size statement currently");
-    // auto joinSizeSequence = mk<ram::Sequence>(std::move(nonRecursiveJoinSizeStatements));
-    // appendStmt(current, std::move(joinSizeSequence));
+    // Get all non-recursive relation statements
+    auto nonRecursiveJoinSizeStatements = context->getNonRecursiveJoinSizeStatementsInSCC(scc);
+    auto joinSizeSequence = mk<ram::Sequence>(std::move(nonRecursiveJoinSizeStatements));
+    appendStmt(current, std::move(joinSizeSequence));
 
     // Store all internal output relations to the output dir with a .csv extension
-    // Note: delta derivations will be dumped after all calculations
-    // Note: do we also need to provide delta EDB? It seems this is already enough
     for (const auto& relation : context->getOutputRelationsInSCC(scc)) {
         appendStmt(current, generateStoreRelation(relation));
     }
@@ -274,36 +250,6 @@ Own<ram::Statement> UnitTranslator::generateMergeRelationsWithFilter(const ast::
     auto insertion = mk<ram::Insert>(destRelation, std::move(values));
     auto filtered =
             mk<ram::Filter>(mk<ram::Negation>(mk<ram::ExistenceCheck>(filterRelation, std::move(values2))),
-                    std::move(insertion));
-    auto stmt = mk<ram::Query>(mk<ram::Scan>(srcRelation, 0, std::move(filtered)));
-
-    if (rel->getRepresentation() == RelationRepresentation::EQREL) {
-        return mk<ram::Sequence>(mk<ram::MergeExtend>(destRelation, srcRelation), std::move(stmt));
-    }
-    return stmt;
-}
-
-Own<ram::Statement> UnitTranslator::generateMergeRelationsWithNegativeFilter(const ast::Relation* rel,
-        const std::string& destRelation, const std::string& srcRelation,
-        const std::string& filterRelation) const {
-    VecOwn<ram::Expression> values;
-    VecOwn<ram::Expression> values2;
-
-    // Proposition - insert if not empty
-    if (rel->getArity() == 0) {
-        auto insertion = mk<ram::Insert>(destRelation, std::move(values));
-        return mk<ram::Query>(mk<ram::Filter>(
-                (mk<ram::EmptinessCheck>(srcRelation)), std::move(insertion)));
-    }
-
-    // Predicate - insert all values
-    for (std::size_t i = 0; i < rel->getArity(); i++) {
-        values.push_back(mk<ram::TupleElement>(0, i));
-        values2.push_back(mk<ram::TupleElement>(0, i));
-    }
-    auto insertion = mk<ram::Insert>(destRelation, std::move(values));
-    auto filtered =
-            mk<ram::Filter>(mk<ram::ExistenceCheck>(filterRelation, std::move(values2)),
                     std::move(insertion));
     auto stmt = mk<ram::Query>(mk<ram::Scan>(srcRelation, 0, std::move(filtered)));
 
@@ -846,6 +792,37 @@ void UnitTranslator::addAuxiliaryArity(
     directives.insert(std::make_pair("auxArity", "0"));
 }
 
+
+Own<ram::Statement> UnitTranslator::generateMergeRelationsWithNegativeFilter(const ast::Relation* rel,
+        const std::string& destRelation, const std::string& srcRelation,
+        const std::string& filterRelation) const {
+    VecOwn<ram::Expression> values;
+    VecOwn<ram::Expression> values2;
+
+    // Proposition - insert if not empty
+    if (rel->getArity() == 0) {
+        auto insertion = mk<ram::Insert>(destRelation, std::move(values));
+        return mk<ram::Query>(mk<ram::Filter>(
+                (mk<ram::EmptinessCheck>(srcRelation)), std::move(insertion)));
+    }
+
+    // Predicate - insert all values
+    for (std::size_t i = 0; i < rel->getArity(); i++) {
+        values.push_back(mk<ram::TupleElement>(0, i));
+        values2.push_back(mk<ram::TupleElement>(0, i));
+    }
+    auto insertion = mk<ram::Insert>(destRelation, std::move(values));
+    auto filtered =
+            mk<ram::Filter>(mk<ram::ExistenceCheck>(filterRelation, std::move(values2)),
+                    std::move(insertion));
+    auto stmt = mk<ram::Query>(mk<ram::Scan>(srcRelation, 0, std::move(filtered)));
+
+    if (rel->getRepresentation() == RelationRepresentation::EQREL) {
+        return mk<ram::Sequence>(mk<ram::MergeExtend>(destRelation, srcRelation), std::move(stmt));
+    }
+    return stmt;
+}
+
 Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* relation) const {
     VecOwn<ram::Statement> loadStmts;
     for (const auto* load : context->getLoadDirectives(relation->getQualifiedName())) {
@@ -854,13 +831,13 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
         for (const auto& [key, value] : load->getParameters()) {
             directives.insert(std::make_pair(key, unescape(value)));
         }
+        directives.insert(std::make_pair("incDelta", "false"));
+        directives.insert(std::make_pair("inc-insert", "false"));
+        directives.insert(std::make_pair("inc-delete", "false"));
         if (glb->config().has("no-warn")) {
             directives.insert(std::make_pair("no-warn", "true"));
         }
         addAuxiliaryArity(relation, directives);
-        directives.insert(std::make_pair("incDelta", "false"));
-        directives.insert(std::make_pair("inc-insert", "false"));
-        directives.insert(std::make_pair("inc-delete", "false"));
 
         // base relation
         std::string ramRelationName = getRelationName(relation->getQualifiedName());
@@ -886,15 +863,6 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
         std::string ramIncDeltaDeleteRelationName = getIncDeltaTupleDeleteRelationName((relation->getQualifiedName()));
         Own<ram::Statement> loadIncDeltaDeleteStmt = mk<ram::IO>(tmp2Name, directives);
 
-        // remove redundancy in new and old
-        // tmp = delta_R_insert - delta_R_delete
-        // delta_R_delete = delta_R_delete - delta_R_insert
-        // delta_R_insert = tmp
-        // remove all insert that already in old
-        // remove all delete that not in old
-
-
-        // do not use swap for non-tmp relations... souffle does not handle them correctly
         auto removeRedundancyStmt = mk<ram::Sequence>(
             generateMergeRelationsWithFilter(
                 relation,
@@ -926,28 +894,16 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
             mk<ram::Clear>(tmp4Name)
         );
 
-        // join get "new" input relation
-        auto mergeToNewStmt =
-            mk<ram::Sequence>(
-                generateMergeRelationsWithFilter(relation,
-                    getConcreteRelationName(relation->getQualifiedName()),  // new relation
-                    getOldRelationName(relation->getQualifiedName()),
-                    getIncDeltaTupleDeleteRelationName(relation->getQualifiedName())),
-                generateMergeRelations(relation,
-                    getConcreteRelationName(relation->getQualifiedName()),
-                    getIncDeltaTupleInsertRelationName(relation->getQualifiedName()))
-            );
-
-        // join the information for deletion and insertion
-        // ramIncDeltaRelation contains all tuples whose derivations change
-        // std::string ramIncDeltaRelationName = getIncDeltaRelationName(relation->getQualifiedName());
-        // Own<ram::Statement> combineDeltaInsertAndDeleteStmt = mk<ram::Sequence>(
-        //     mk<ram::Swap>(ramIncDeltaRelationName, ramIncDeltaInsertRelationName),
-        //     generateMergeRelations(relation, ramIncDeltaRelationName, ramIncDeltaDeleteRelationName)
-        // );
-
-        //
-
+    auto mergeToNewStmt =
+        mk<ram::Sequence>(
+            generateMergeRelationsWithFilter(relation,
+                getConcreteRelationName(relation->getQualifiedName()),  // new relation
+                getOldRelationName(relation->getQualifiedName()),
+                getIncDeltaTupleDeleteRelationName(relation->getQualifiedName())),
+            generateMergeRelations(relation,
+                getConcreteRelationName(relation->getQualifiedName()),
+                getIncDeltaTupleInsertRelationName(relation->getQualifiedName()))
+        );
         loadStmt = mk<ram::Sequence>(std::move(loadStmt), std::move(loadIncDeltaInsertStmt), std::move(loadIncDeltaDeleteStmt), std::move(removeRedundancyStmt), std::move(mergeToNewStmt));
         if (glb->config().has("profile")) {
             const std::string logTimerStatement =
@@ -959,39 +915,6 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
     return mk<ram::Sequence>(std::move(loadStmts));
 }
 
-
-Own<ram::Statement> UnitTranslator::generateLoadRelationForIDB(const ast::Relation* relation) const {
-    VecOwn<ram::Statement> storeStmts;
-    for (const auto* store : context->getStoreDirectives(relation->getQualifiedName())) {
-        // Set up the corresponding directive map
-        std::map<std::string, std::string> directives;
-        for (const auto& [key, value] : store->getParameters()) {
-            directives.insert(std::make_pair(key, unescape(value)));
-        }
-        directives["operation"] = "input";
-        directives["fact-dir"] = directives["output-dir"];
-        directives.insert(std::make_pair("incDelta", "false")); // TODO
-        directives.insert(std::make_pair("inc-insert", "false"));
-        directives.insert(std::make_pair("inc-delete", "false"));
-        directives.insert(std::make_pair("suffix", "")); // TODO: read from old
-
-        addAuxiliaryArity(relation, directives);
-
-        // load IDB to "old relation"
-        std::string ramRelationName = getOldRelationName(relation->getQualifiedName());
-        Own<ram::Statement> loadStmt = mk<ram::IO>(ramRelationName, directives);
-
-        if (glb->config().has("profile")) {
-            const std::string logTimerStatement =
-                    LogStatement::tRelationSaveTime(ramRelationName, relation->getSrcLoc());
-            loadStmt = mk<ram::LogRelationTimer>(std::move(loadStmt), logTimerStatement, ramRelationName);
-        }
-        appendStmt(storeStmts, std::move(loadStmt));
-    }
-    // TODO: dump delta relations for inc computation
-    return mk<ram::Sequence>(std::move(storeStmts));
-}
-
 Own<ram::Statement> UnitTranslator::generateStoreRelation(const ast::Relation* relation) const {
     VecOwn<ram::Statement> storeStmts;
     for (const auto* store : context->getStoreDirectives(relation->getQualifiedName())) {
@@ -1000,11 +923,9 @@ Own<ram::Statement> UnitTranslator::generateStoreRelation(const ast::Relation* r
         for (const auto& [key, value] : store->getParameters()) {
             directives.insert(std::make_pair(key, unescape(value)));
         }
-        directives.insert(std::make_pair("incDelta", "false")); // TODO
+        directives.insert(std::make_pair("incDelta", "false"));
         directives.insert(std::make_pair("inc-insert", "false"));
         directives.insert(std::make_pair("inc-delete", "false"));
-        directives.insert(std::make_pair("suffix", "-debug-new")); // TODO: try not overlap the old for development
-
         addAuxiliaryArity(relation, directives);
 
         // Create the resultant store statement, with profile information
@@ -1031,10 +952,7 @@ Own<ram::Relation> UnitTranslator::createRamRelation(
     if (representation == RelationRepresentation::BTREE_DELETE && ramRelationName[0] == '@') {
         representation = RelationRepresentation::DEFAULT;
     }
-    // if (ramRelationName == getIncDeltaTupleDeleteRelationName(baseRelation->getQualifiedName())) {
-    //     std::cout << "delete!!!" << std::endl;
-    //     representation = RelationRepresentation::BTREE_DELETE;
-    // }
+
     std::vector<std::string> attributeNames;
     std::vector<std::string> attributeTypeQualifiers;
     for (const auto& attribute : baseRelation->getAttributes()) {
@@ -1055,22 +973,40 @@ VecOwn<ram::Relation> UnitTranslator::createRamRelations(const std::vector<std::
             std::string mainName = getConcreteRelationName(rel->getQualifiedName());
             ramRelations.push_back(createRamRelation(rel, mainName));
 
-            // Add relation that cache old result
+            if (rel->getAuxiliaryArity() > 0) {
+                assert(false && "does not support lub relation");
+            }
+
+            if (isRecursive || rel->getAuxiliaryArity() > 0) {
+                // Add new relation
+                std::string newName = getNewRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, newName));
+            }
+
+            // Recursive relations also require @delta and @new variants, with the same signature
+            if (isRecursive) {
+                // Add delta relation
+                std::string deltaName = getDeltaRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, deltaName));
+
+                // Add auxiliary relation for subsumption
+                if (context->hasSubsumptiveClause(rel->getQualifiedName())) {
+                    // Add reject relation
+                    std::string rejectName = getRejectRelationName(rel->getQualifiedName());
+                    ramRelations.push_back(createRamRelation(rel, rejectName));
+
+                    // Add deletion relation
+                    std::string toEraseName = getDeleteRelationName(rel->getQualifiedName());
+                    ramRelations.push_back(createRamRelation(rel, toEraseName));
+                }
+            } else if (context->hasSubsumptiveClause(rel->getQualifiedName())) {
+                // Add deletion relation for non recursive subsumptive relations
+                std::string toEraseName = getDeleteRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, toEraseName));
+            }
+
             std::string oldName = getOldRelationName(rel->getQualifiedName());
             ramRelations.push_back(createRamRelation(rel, oldName));
-
-            // INC: Add delta relation for derivation-changing tuples in incremental computation
-            // We will have @inc_delta_derv_[insert|delete]_ and @inc_delta_tuple_[insert|delete}_ relations
-            // The former one tracks those tuples that change its derivations
-            // The later one tracks the inserted and deleted tuples for real
-            // i.e., newly inserted tuples and newly deleted tuples
-            // Only those tuples cause further derivation info (rule application) changes in our setting
-
-            std::string incDeltaDervInsertName = getIncDeltaDervInsertRelationName(rel->getQualifiedName());
-            ramRelations.push_back(createRamRelation(rel, incDeltaDervInsertName));
-
-            std::string incDeltaDervDeleteName = getIncDeltaDervDeleteRelationName(rel->getQualifiedName());
-            ramRelations.push_back(createRamRelation(rel, incDeltaDervDeleteName));
 
             std::string incDeltaTupleInsertName = getIncDeltaTupleInsertRelationName(rel->getQualifiedName());
             ramRelations.push_back(createRamRelation(rel, incDeltaTupleInsertName));
@@ -1090,44 +1026,7 @@ VecOwn<ram::Relation> UnitTranslator::createRamRelations(const std::vector<std::
             std::string tmp4Name = getTmp4RelationName(rel->getQualifiedName());
             ramRelations.push_back(createRamRelation(rel, tmp4Name));
 
-            if (rel->getAuxiliaryArity() > 0) {
-                assert(false && "does not support lub relation");
-                // Add lub relation
-                std::string lubName = getLubRelationName(rel->getQualifiedName());
-                ramRelations.push_back(createRamRelation(rel, lubName));
-            }
-
-            if (isRecursive || rel->getAuxiliaryArity() > 0) {
-                assert(false && "does not support recursion yet");
-                // Add new relation
-                std::string newName = getNewRelationName(rel->getQualifiedName());
-                ramRelations.push_back(createRamRelation(rel, newName));
-            }
-
-            // TODO: for inc, need extra delta relations for delta rules
-            // Recursive relations also require @delta and @new variants, with the same signature
-            if (isRecursive) {
-                assert(false && "does not support recursion yet");
-                // Add delta relation
-                std::string deltaName = getDeltaRelationName(rel->getQualifiedName());
-                ramRelations.push_back(createRamRelation(rel, deltaName));
-
-                // Add auxiliary relation for subsumption
-                if (context->hasSubsumptiveClause(rel->getQualifiedName())) {
-                    // Add reject relation
-                    std::string rejectName = getRejectRelationName(rel->getQualifiedName());
-                    ramRelations.push_back(createRamRelation(rel, rejectName));
-
-                    // Add deletion relation
-                    std::string toEraseName = getDeleteRelationName(rel->getQualifiedName());
-                    ramRelations.push_back(createRamRelation(rel, toEraseName));
-                }
-            } else if (context->hasSubsumptiveClause(rel->getQualifiedName())) {
-                assert(false && "does not support SubsumptiveClause");
-                // Add deletion relation for non recursive subsumptive relations
-                std::string toEraseName = getDeleteRelationName(rel->getQualifiedName());
-                ramRelations.push_back(createRamRelation(rel, toEraseName));
-            }
+            // TODO
         }
     }
     return ramRelations;
@@ -1138,7 +1037,6 @@ Own<ram::Sequence> UnitTranslator::generateProgram(const ast::TranslationUnit& t
     if (context->getNumberOfSCCs() == 0) {
         return mk<ram::Sequence>();
     }
-    // TODO
     const auto& sccOrdering =
             translationUnit.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>().order();
     VecOwn<ram::Statement> res;

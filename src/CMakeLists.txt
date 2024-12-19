@@ -182,6 +182,11 @@ set(SOUFFLE_SOURCES
         ram/RecordDerivation.h
         ram/SequantialOperation.h
         ram/DeltaUnion.h
+        ast2ram/seminaive-with-delta/ConstraintTranslator.cpp
+        ast2ram/seminaive-with-delta/ClauseTranslator.cpp
+        ast2ram/seminaive-with-delta/TranslationStrategy.cpp
+        ast2ram/seminaive-with-delta/UnitTranslator.cpp
+        ast2ram/seminaive-with-delta/ValueTranslator.cpp
 )
 
 # --------------------------------------------------

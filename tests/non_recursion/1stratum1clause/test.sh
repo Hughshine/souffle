@@ -14,7 +14,11 @@ echo "Building full compilation" &
 echo "Building incremental compilation" &
 ../../../cmake-build-debug/src/souffle test.dl --inc -F./input -D./output -o test-incr
 
-## 3. run full and check its result
+## 3. build full with delta compilation version
+echo "Building full-with-delta compilation" &
+../../../cmake-build-debug/src/souffle test.dl --full-with-delta -F./input -D./output -o test-full-with-delta
+
+## 4. run full and check its result
 echo "Running full compilation" &
 ./test-full
 if cmp -s test.dl.json result/test.dl.json.full; then
@@ -23,7 +27,7 @@ else
   echo "FAIL: Full compilation" &
 fi
 
-# 4. run incr and check its result
+# 5. run incr and check its result
 echo "Running incr compilation" &
 ./test-incr
 if cmp -s test.dl.json result/test.dl.json.incr; then
@@ -32,3 +36,11 @@ else
   echo "FAIL: incremental compilation" &
 fi
 
+# 6. run full-with-delta and check its result
+echo "Running full-with-delta compilation" &
+./test-full-with-delta
+if cmp -s test.dl.json result/test.dl.json.incr; then
+  echo "SUCCESS: full-with-delta compilation" &
+else
+  echo "FAIL: full-with-delta compilation" &
+fi
