@@ -76,6 +76,25 @@ std::string getNewRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "@new_");
 }
 
+/**
+ * For inc + recursion
+ */
+std::string getDeltaDeletionRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@delta_tuple_delete");
+}
+
+std::string getDeltaInsertionRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@delta_tuple_insert");
+}
+
+std::string getNewDeletionRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@new_derv_delete");
+}
+
+std::string getNewInsertionRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@new_derv_insert");
+}
+
 std::string getLubRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "@lub_");
 }
@@ -129,6 +148,10 @@ const std::string& getRelationName(const ast::QualifiedName& name) {
 
 std::string getBaseRelationName(const ast::QualifiedName& name) {
     return
+    stripPrefix("@inc_delta_tuple_delete_",
+    stripPrefix("@inc_delta_tuple_insert_",
+    stripPrefix("@inc_delta_derv_delete_",
+    stripPrefix("@inc_delta_derv_insert_",
     stripPrefix("@tmp4_",
         stripPrefix("@tmp3_",
         stripPrefix("@tmp2_",
@@ -140,7 +163,7 @@ std::string getBaseRelationName(const ast::QualifiedName& name) {
                         stripPrefix("@inc_delta_derv_insert_",
                             stripPrefix("@new_",
                                 stripPrefix("@delta_",
-                                    stripPrefix("@info_", name.toString()))))))))))));
+                                    stripPrefix("@info_", name.toString()))))))))))))))));
 }
 
 void appendStmt(VecOwn<ram::Statement>& stmtList, Own<ram::Statement> stmt) {

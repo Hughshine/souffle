@@ -1090,6 +1090,9 @@ VecOwn<ram::Relation> UnitTranslator::createRamRelations(const std::vector<std::
             std::string tmp4Name = getTmp4RelationName(rel->getQualifiedName());
             ramRelations.push_back(createRamRelation(rel, tmp4Name));
 
+            // for recursion: delta and new, now have deletion and insertion version
+            // delta - real tuple change, new - derivation change & record derivation
+
             if (rel->getAuxiliaryArity() > 0) {
                 assert(false && "does not support lub relation");
                 // Add lub relation
@@ -1097,31 +1100,25 @@ VecOwn<ram::Relation> UnitTranslator::createRamRelations(const std::vector<std::
                 ramRelations.push_back(createRamRelation(rel, lubName));
             }
 
-            if (isRecursive || rel->getAuxiliaryArity() > 0) {
-                assert(false && "does not support recursion yet");
-                // Add new relation
-                std::string newName = getNewRelationName(rel->getQualifiedName());
-                ramRelations.push_back(createRamRelation(rel, newName));
+            if (rel->getAuxiliaryArity() > 0) {
+                assert(false && "does not support AUXILIARY ARITY");
             }
 
             // TODO: for inc, need extra delta relations for delta rules
             // Recursive relations also require @delta and @new variants, with the same signature
             if (isRecursive) {
-                assert(false && "does not support recursion yet");
+                // Note that this UnitTranslator is only for incremental case
+
                 // Add delta relation
-                std::string deltaName = getDeltaRelationName(rel->getQualifiedName());
-                ramRelations.push_back(createRamRelation(rel, deltaName));
+                std::string deltaDelName = getDeltaDeletionRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, deltaDelName));
+                std::string deltaInsertName = getDeltaDeletionRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, deltaInsertName));
+                std::string newDelName = getNewDeletionRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, newDelName));
+                std::string newInsertName = getNewInsertionRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, newInsertName));
 
-                // Add auxiliary relation for subsumption
-                if (context->hasSubsumptiveClause(rel->getQualifiedName())) {
-                    // Add reject relation
-                    std::string rejectName = getRejectRelationName(rel->getQualifiedName());
-                    ramRelations.push_back(createRamRelation(rel, rejectName));
-
-                    // Add deletion relation
-                    std::string toEraseName = getDeleteRelationName(rel->getQualifiedName());
-                    ramRelations.push_back(createRamRelation(rel, toEraseName));
-                }
             } else if (context->hasSubsumptiveClause(rel->getQualifiedName())) {
                 assert(false && "does not support SubsumptiveClause");
                 // Add deletion relation for non recursive subsumptive relations
