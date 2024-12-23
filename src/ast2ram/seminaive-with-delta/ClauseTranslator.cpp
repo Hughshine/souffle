@@ -567,14 +567,7 @@ Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
     }
 
     if (isA<ast::SubsumptiveClause>(clause)) {
-        if (mode == SubsumeRejectNewNew || mode == SubsumeDeleteCurrentCurrent) {
-            // find the dominated / dominating heads
-            const auto& body = clause.getBodyLiterals();
-            auto dominatedHeadAtom = dynamic_cast<const ast::Atom*>(body[0]);
-            auto dominatingHeadAtom = dynamic_cast<const ast::Atom*>(body[1]);
-            op = addDistinct(std::move(op), dominatedHeadAtom, dominatingHeadAtom);
-        }
-        return op;
+        assert (false && "no subsumptive clause");
     }
 
     if (isRecursive()) {
@@ -585,9 +578,9 @@ Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
         }
         // also add in prev stuff
         // TODO: don't know if should avoid below constraint generation too
-        for (std::size_t i = version + 1; i < sccAtoms.size(); i++) {
-            op = addNegatedDeltaAtom(std::move(op), sccAtoms.at(i));
-        }
+        // for (std::size_t i = version + 1; i < sccAtoms.size(); i++) {
+        //     op = addNegatedDeltaAtom(std::move(op), sccAtoms.at(i));
+        // }
     }
 
     return op;

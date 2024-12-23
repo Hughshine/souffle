@@ -1902,7 +1902,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
         }
 
         void visit_(type_identity<RecordDerivation>, const RecordDerivation& recordDerivation, std::ostream& out) override {
-            auto relName = recordDerivation.getRelation();
+            auto relName = getBaseRelationName(recordDerivation.getRelation());
             out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << relName << "\",tuple);\n";
             if (recordDerivation.isComplete()) {
                 out << "auto*& ruleSet = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";

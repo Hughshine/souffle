@@ -1,23 +1,8 @@
-// Stratum 1
-.decl I(x:number, y:number)
-.input I
+.decl edge(x:number, y:number)
+.input edge
 
-.decl A(x:number, y:number)
-A(x,y) :- I(x,y).
+.decl path(x:number, y:number)
+.output path
 
-// Stratum 2
-.decl B(x:number, y:number)
-B(x,y) :- I(x,z), A(z,y).
-
-// Stratum 3
-.decl C(x:number, y:number)
-C(x,y) :- B(x,z), A(z,y).
-
-// Stratum 4
-.decl D(x:number, y:number)
-D(x,y) :- C(x,z), A(z,y).
-
-.output A
-.output B
-.output C
-.output D
+path(x, y) :- edge(x, y).
+path(x, y) :- path(x, z), edge(z, y).

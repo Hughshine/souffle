@@ -38,7 +38,7 @@ namespace souffle::ast2ram {
 
 std::string getAtomName(const ast::Clause& clause, const ast::Atom* atom,
         const std::vector<ast::Atom*>& sccAtoms, std::size_t version, bool isRecursive,
-        TranslationMode mode) {
+        TranslationMode mode, bool isIncremental) {
     if (isA<ast::SubsumptiveClause>(clause)) {
         assert(false && "subsumptive clause not supported");
     }
@@ -50,14 +50,17 @@ std::string getAtomName(const ast::Clause& clause, const ast::Atom* atom,
         }
         return getConcreteRelationName(atom->getQualifiedName());
     }
-    assert (false && "recursive clause not supported");
-    if (clause.getHead() == atom) {
-        return getNewRelationName(atom->getQualifiedName());
+    if (!isIncremental) {
+        if (clause.getHead() == atom) {
+            return getNewRelationName(atom->getQualifiedName());
+        }
+        if (sccAtoms.at(version) == atom) {
+            return getDeltaRelationName(atom->getQualifiedName());
+        }
+        return getConcreteRelationName(atom->getQualifiedName());
+    } else {
+        assert (false && "INC: recursive clause not supported");
     }
-    if (sccAtoms.at(version) == atom) {
-        return getDeltaRelationName(atom->getQualifiedName());
-    }
-    return getConcreteRelationName(atom->getQualifiedName());
 }
 
 std::string getConcreteRelationName(const ast::QualifiedName& name, const std::string prefix) {

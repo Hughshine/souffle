@@ -585,9 +585,9 @@ Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
         }
         // also add in prev stuff
         // TODO: don't know if should avoid below constraint generation too
-        for (std::size_t i = version + 1; i < sccAtoms.size(); i++) {
-            op = addNegatedDeltaAtom(std::move(op), sccAtoms.at(i));
-        }
+        // for (std::size_t i = version + 1; i < sccAtoms.size(); i++) {
+        //     op = addNegatedDeltaAtom(std::move(op), sccAtoms.at(i));
+        // }
     }
 
     return op;
