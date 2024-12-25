@@ -348,9 +348,9 @@ Own<ram::Statement> TranslatorContext::translateNonRecursiveClause(
 }
 
 Own<ram::Statement> TranslatorContext::translateRecursiveClause(const ast::Clause& clause,
-        const ast::RelationSet& scc, std::size_t version, TranslationMode mode) const {
+        const ast::RelationSet& scc, std::size_t version, TranslationMode mode, bool isDelete) const {
     auto clauseTranslator = Own<ClauseTranslator>(translationStrategy->createClauseTranslator(*this, mode));
-    return clauseTranslator->translateRecursiveClause(clause, scc, version);
+    return clauseTranslator->translateRecursiveClause(clause, scc, version, isDelete);
 }
 
 Own<ram::Expression> TranslatorContext::translateValue(

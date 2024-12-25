@@ -57,7 +57,7 @@ public:
     /** Entry points */
     Own<ram::Statement> translateNonRecursiveClause(const ast::Clause& clause);
     Own<ram::Statement> translateRecursiveClause(
-            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version);
+            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false);
 
 protected:
     std::size_t version{0};
@@ -66,7 +66,7 @@ protected:
     bool isRecursive() const;
 
     std::string getClauseString(const ast::Clause& clause) const;
-    std::string getClauseAtomName(const ast::Clause& clause, const ast::Atom* atom) const;
+    std::string getClauseAtomName(const ast::Clause& clause, const ast::Atom* atom, const bool isDelete = false) const;
     std::map<std::string, Own<ram::Expression>> getClauseVars(const ast::Clause& clause) const;
 
     virtual Own<ram::Operation> addNegatedAtom(

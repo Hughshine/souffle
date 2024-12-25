@@ -56,11 +56,11 @@ protected:
             const ast::Relation* baseRelation, std::string ramRelationName) const;
     virtual VecOwn<ram::Relation> createRamRelations(const std::vector<std::size_t>& sccOrdering) const;
     Own<ram::Statement> translateRecursiveClauses(
-            const ast::RelationSet& scc, const ast::Relation* rel) const;
+            const ast::RelationSet& scc, const ast::Relation* rel, bool isDelete = false) const;
     Own<ram::Statement> translateSubsumptiveRecursiveClauses(
             const ast::RelationSet& scc, const ast::Relation* rel) const;
     VecOwn<ram::Statement> generateClauseVersions(
-            const ast::Clause* clause, const ast::RelationSet& scc) const;
+            const ast::Clause* clause, const ast::RelationSet& scc, bool isDelete = false) const;
     std::vector<ast::Atom*> getSccAtoms(const ast::Clause* clause, const ast::RelationSet& scc) const;
 
     virtual void addAuxiliaryArity(
@@ -82,10 +82,10 @@ protected:
     Own<ram::Statement> generateStratum(std::size_t scc) const;
     Own<ram::Statement> generateStratumPreamble(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateNonRecursiveDelete(const ast::Relation& rel) const;
-    Own<ram::Statement> generateStratumPostamble(const ast::RelationSet& scc) const;
-    Own<ram::Statement> generateStratumLoopBody(const ast::RelationSet& scc) const;
-    Own<ram::Statement> generateStratumTableUpdates(const ast::RelationSet& scc) const;
-    Own<ram::Statement> generateStratumExitSequence(const ast::RelationSet& scc) const;
+    Own<ram::Statement> generateStratumPostamble(const ast::RelationSet& scc, bool isDelete) const;
+    Own<ram::Statement> generateStratumLoopBody(const ast::RelationSet& scc, bool isDelete = false) const;
+    Own<ram::Statement> generateStratumTableUpdates(const ast::RelationSet& scc, bool isDelete = false) const;
+    Own<ram::Statement> generateStratumExitSequence(const ast::RelationSet& scc, bool isDelete = false) const;
     Own<ram::Statement> generateStratumLubSequence(const ast::Relation& rel, bool inRecursiveLoop) const;
 
     /** Other helper generations */

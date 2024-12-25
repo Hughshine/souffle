@@ -51,13 +51,13 @@ namespace souffle::ast2ram::incremental {
 
 class ClauseTranslator : public ast2ram::ClauseTranslator {
 public:
-    ClauseTranslator(const TranslatorContext& context, TranslationMode mode = DEFAULT);
+    ClauseTranslator(const TranslatorContext& context, TranslationMode mode = Incremental);
     ~ClauseTranslator();
 
     /** Entry points */
     Own<ram::Statement> translateNonRecursiveClause(const ast::Clause& clause);
     Own<ram::Statement> translateRecursiveClause(
-            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version);
+            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false);
 
 protected:
     std::size_t version{0};
@@ -69,6 +69,7 @@ protected:
     std::string getClauseAtomName(const ast::Clause& clause, const ast::Atom* atom) const;
     std::map<std::string, Own<ram::Expression>> getClauseVars(const ast::Clause& clause) const;
     std::string getAtomNameForIncDeltaRule(const ast::Clause& clause, const ast::Atom* atom, std::size_t curIndex, std::size_t deltaIndex, bool isInsert) const;
+    std::string getAtomNameForRecIncDeltaRule(const ast::Clause& clause, const ast::Atom* atom, const std::size_t curIndex, const std::size_t deltaIndex, const bool isInsert) const;
 
     virtual Own<ram::Operation> addNegatedAtom(
             Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const;
@@ -82,6 +83,7 @@ protected:
     virtual Own<ram::Statement> createRamFactQuery(const ast::Clause& clause) const;
     virtual Own<ram::Statement> createRamRuleQuery(const ast::Clause& clause);
     virtual Own<ram::Statement> createRamDeltaRulesQuery(const ast::Clause& clause);
+    virtual Own<ram::Statement> createRamRecDeltaRulesQuery(const ast::Clause& clause, bool isDelete = false);
 
     virtual Own<ram::Operation> createInsertion(const ast::Clause& clause) const;
     virtual Own<ram::Condition> createCondition(const ast::Clause& clause) const;
@@ -109,6 +111,8 @@ protected:
     /** Levelling methods */
     virtual Own<ram::Operation> addAtomScan(Own<ram::Operation> op, const ast::Atom* atom,
             const ast::Clause& clause, std::size_t curLevel, std::size_t deltaLevel, bool isInsert) const;
+    virtual Own<ram::Operation> addAtomScanRec(Own<ram::Operation> op, const ast::Atom* atom,
+        const ast::Clause& clause, const std::size_t curLevel, const std::size_t deltaLevel, const bool isInsert) const;
     Own<ram::Operation> addRecordUnpack(
             Own<ram::Operation> op, const ast::RecordInit* rec, std::size_t curLevel) const;
     Own<ram::Operation> addAdtUnpack(

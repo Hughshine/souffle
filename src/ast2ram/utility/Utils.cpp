@@ -38,7 +38,7 @@ namespace souffle::ast2ram {
 
 std::string getAtomName(const ast::Clause& clause, const ast::Atom* atom,
         const std::vector<ast::Atom*>& sccAtoms, std::size_t version, bool isRecursive,
-        TranslationMode mode, bool isIncremental) {
+        TranslationMode mode, bool isIncremental, bool isDelete) {
     if (isA<ast::SubsumptiveClause>(clause)) {
         assert(false && "subsumptive clause not supported");
     }
@@ -59,7 +59,26 @@ std::string getAtomName(const ast::Clause& clause, const ast::Atom* atom,
         }
         return getConcreteRelationName(atom->getQualifiedName());
     } else {
-        assert (false && "INC: recursive clause not supported");
+        // TODO: should be, return DervDel (new) for head
+        // return tuple delta delete for sccAtom (if is deletion)
+        // return tuple delete for non sccAtoms
+        if (isDelete) {
+            if (clause.getHead() == atom) {
+                return getNewDeletionRelationName(atom->getQualifiedName());
+            }
+            if (sccAtoms.at(version) == atom) {
+                return getDeltaDeletionRelationName(atom->getQualifiedName());
+            }
+            return getIncDeltaDervDeleteRelationName(atom->getQualifiedName());
+        } else {
+            if (clause.getHead() == atom) {
+                return getNewInsertionRelationName(atom->getQualifiedName());
+            }
+            if (sccAtoms.at(version) == atom) {
+                return getDeltaInsertionRelationName(atom->getQualifiedName());
+            }
+            return getIncDeltaDervInsertRelationName(atom->getQualifiedName());
+        }
     }
 }
 
@@ -83,19 +102,19 @@ std::string getNewRelationName(const ast::QualifiedName& name) {
  * For inc + recursion
  */
 std::string getDeltaDeletionRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@delta_tuple_delete");
+    return getConcreteRelationName(name, "@delta_tuple_delete_");
 }
 
 std::string getDeltaInsertionRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@delta_tuple_insert");
+    return getConcreteRelationName(name, "@delta_tuple_insert_");
 }
 
 std::string getNewDeletionRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@new_derv_delete");
+    return getConcreteRelationName(name, "@new_derv_delete_");
 }
 
 std::string getNewInsertionRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@new_derv_insert");
+    return getConcreteRelationName(name, "@new_derv_insert_");
 }
 
 std::string getLubRelationName(const ast::QualifiedName& name) {

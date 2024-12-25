@@ -42,20 +42,20 @@ namespace souffle::ram {
 class RecordDerivation : public Operation {
 public:
 
-    RecordDerivation(std::string rel, VecOwn<Expression> expressions, bool insert = true, bool complete = true)
+    RecordDerivation(std::string rel, VecOwn<Expression> expressions, bool insert = true, bool complete = true, bool isRecursive = false)
             : RecordDerivation(std::move(rel),
-                std::move(expressions), insert, complete, -1, "UNKNOWN CLAUSE", {}) {}
+                std::move(expressions), insert, complete, isRecursive, -1, "UNKNOWN CLAUSE", {}) {}
 
     RecordDerivation(std::string rel, VecOwn<Expression> expressions,
-            std::size_t clauseID, std::string clauseStr, bool insert = true, bool complete = true)
+            std::size_t clauseID, std::string clauseStr, bool insert = true, bool complete = true, bool isRecursive = false)
             : RecordDerivation(std::move(rel), std::move(expressions)
-                , insert, complete, clauseID, std::move(clauseStr), {}) {}
+                , insert, complete, isRecursive, clauseID, std::move(clauseStr), {}) {}
 
     RecordDerivation(std::string rel, VecOwn<Expression> expressions,
             std::size_t clauseID, std::string clauseStr, std::map<std::string, Own<Expression>>&& varExprMap,
-            bool insert = true, bool complete = true)
+            bool insert = true, bool complete = true, bool isRecursive = false)
             : RecordDerivation(std::move(rel), std::move(expressions)
-                , insert, complete, clauseID, std::move(clauseStr), std::move(varExprMap)) {}
+                , insert, complete, isRecursive, clauseID, std::move(clauseStr), std::move(varExprMap)) {}
 
 
     /** @brief Get relation */
@@ -101,7 +101,7 @@ public:
         for (auto& [var, expr] : varExprMap) {
             newVarExprMap.emplace(var, expr->cloning());
         }
-        return new RecordDerivation(relation, std::move(newValues), insert, complete, clauseID, clauseStr, std::move(newVarExprMap));
+        return new RecordDerivation(relation, std::move(newValues), insert, complete, isRecursive, clauseID, clauseStr, std::move(newVarExprMap));
     }
 
     void apply(const NodeMapper& map) override {
@@ -117,11 +117,11 @@ public:
 
 
 // protected:
-    RecordDerivation(std::string rel, VecOwn<Expression> expressions, bool insert, bool complete,
+    RecordDerivation(std::string rel, VecOwn<Expression> expressions, bool insert, bool complete, bool isRecursive,
         std::size_t clauseID, std::string clauseStr, std::map<std::string, Own<ram::Expression>>&& varExprMap) //
             : Operation(NK_RecordDerivation), relation(std::move(rel)), expressions(std::move(expressions)),
             clauseID(clauseID), clauseStr(std::move(clauseStr)), varExprMap(std::move(varExprMap)),
-                insert(insert), complete(complete) {
+                insert(insert), complete(complete), isRecursive(isRecursive) {
             // clauseID(std::move(clauseID)), clauseStr(std::move(clauseStr)) {
         assert(allValidPtrs(expressions));
         // TODO
@@ -134,6 +134,7 @@ public:
             << "WITH MAPPING " << "<placeholder>" << ", "
             << (insert?"INSERT":"DELETE") << ", "
             << (complete?"COMPLETE":"DELTA") << ", "
+            << (isRecursive?"Recursive":"Non-Recursive") << ", "
             << std::endl;
     }
 
@@ -158,6 +159,7 @@ public:
 
     bool insert; // true for insert, false for delete
     bool complete; // true for complete, false for delta
+    bool isRecursive; // true for recursive, false for non-recursive
 };
 
 }  // namespace souffle::ram

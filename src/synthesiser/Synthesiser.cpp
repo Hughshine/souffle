@@ -1903,32 +1903,47 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 
         void visit_(type_identity<RecordDerivation>, const RecordDerivation& recordDerivation, std::ostream& out) override {
             auto relName = getBaseRelationName(recordDerivation.getRelation());
+            bool isRecursive = recordDerivation.isRecursive;
             out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << relName << "\",tuple);\n";
             if (recordDerivation.isComplete()) {
                 out << "auto*& ruleSet = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
             } else {
                 if (recordDerivation.isInsert()) {
                     out << "auto*& ruleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedTuple];\n";
+                    if (isRecursive) {
+                        out << "auto*& ruleSet2 = DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications[untypedTuple];\n";
+                    }
                 } else {
                     out << "auto*& ruleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedTuple];\n";
+                    if (isRecursive) {
+                        out << "auto*& ruleSet2 = DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications[untypedTuple];\n";
+                    }
                 }
             }
             out << "if (ruleSet == nullptr) {\n";
             out << "ruleSet = new std::set<RuleApplication>();\n";
             out << "}\n";
+            if (isRecursive) {
+                out << "if (ruleSet2 == nullptr) {\n";
+                out << "ruleSet2 = new std::set<RuleApplication>();\n";
+                out << "}\n";
+            }
             out << "std::map<std::string, souffle::RamDomain> varValues{};\n";
             for (const auto& [var, expr]: recordDerivation.varExprMap) {
                 out << "varValues.insert({\"" << var  << "\", "; rec(out, expr.get()); out << "});\n";
             }
             out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
             out << "ruleSet->insert(ruleApplication);\n";
+            if (isRecursive) {
+                out << "ruleSet2->insert(ruleApplication);\n";
+            }
         }
 
         void visit_(type_identity<DeltaUnion>, const DeltaUnion& deltaUnion, std::ostream& out) override {
             /**
              * Rnew, Rrealinsert, Rrealdelete <= Rold, Rderinsert, Rderdelete
              */
-            /*
+            /* for non-recursion case
             forall t in Rderinsert
                 get deltader_insert for t
                 if t not in Rold
@@ -1944,50 +1959,93 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     Rdrealdelete.insert(t)
             Rnew = Rold + Rrealinsert - Rrealdelete
             */
+            /* for recursive case, we separate deletion and insertion, so there is delta union for del / ins
+             * note that here Rold is just Rnew, since we do not make use of Rold in recursive case
+             * Rnew = Rnew - Rrealdelete
+             * Rnew = Rnew + Rrealinsert
+             **/
+            bool insertOnly = false, deleteOnly = false, both = false;
+            if (deltaUnion.getDeltaDervDeleteRel() != "" && deltaUnion.getDeltaTupleDeleteRel() != ""
+                && !(deltaUnion.getDeltaDervInsertRel() != "" && deltaUnion.getDeltaTupleInsertRel() != "")) {
+                deleteOnly = true;
+            } else if (deltaUnion.getDeltaDervInsertRel() != "" && deltaUnion.getDeltaTupleInsertRel() != ""
+                && !(deltaUnion.getDeltaDervDeleteRel() != "" && deltaUnion.getDeltaTupleDeleteRel() != "")) {
+                insertOnly = true;
+            } else {
+                both = true;
+            }
+            assert ((deleteOnly && insertOnly) == false);
+            // if (deltaUnion.getDel)
             // INSERT
-            out << "for(const auto& tupleDeltaDervInsert: *" <<
-                synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaDervInsertRel())) << ") {" << std::endl;
-            out << "auto untypedDeltaDervTupleInsert = UntypedTuple::fromTypedTuple(\""
-                << deltaUnion.getRelation() << "\",tupleDeltaDervInsert);\n";
-            out << "auto*& untypedDeltaDervTupleInsertRuleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
-            out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
-            out << "if (untypedDeltaDervTupleRuleSet == nullptr) {" << std::endl;
+            if (both || insertOnly) {
+                out << "for(const auto& tupleDeltaDervInsert: *" <<
+                    synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaDervInsertRel())) << ") {" << std::endl;
+                out << "auto untypedDeltaDervTupleInsert = UntypedTuple::fromTypedTuple(\""
+                    << deltaUnion.getRelation() << "\",tupleDeltaDervInsert);\n";
+                if (insertOnly) { // also means recursive...
+                    out << "auto*& untypedDeltaDervTupleInsertRuleSet = DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
+                } else {
+                    out << "auto*& untypedDeltaDervTupleInsertRuleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
+                }
+                out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
+                out << "if (untypedDeltaDervTupleRuleSet == nullptr) {" << std::endl;
                 out << "untypedDeltaDervTupleRuleSet = untypedDeltaDervTupleInsertRuleSet;\n" << std::endl;
                 out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleInsertRel())) << "->insert(tupleDeltaDervInsert);\n "<< std::endl;
-            out << "} else {" << std::endl;
+                out << "} else {" << std::endl;
                 out << "untypedDeltaDervTupleRuleSet->insert(untypedDeltaDervTupleInsertRuleSet->begin(), untypedDeltaDervTupleInsertRuleSet->end());\n" << std::endl;
-            out << "}" << std::endl;
-            out << "}" << std::endl;
+                out << "}" << std::endl;
+                out << "}" << std::endl;
+                if (insertOnly) {
+                    out << "DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();\n";
+
+                }
+            }
             // DELETE
-            out << "for(const auto& tupleDeltaDervDelete: *" <<
-    synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaDervDeleteRel())) << ") {" << std::endl;
-            out << "auto untypedDeltaDervTupleDelete = UntypedTuple::fromTypedTuple(\""
-                << deltaUnion.getRelation() << "\",tupleDeltaDervDelete);\n";
-            out << "auto*& untypedDeltaDervTupleDeleteRuleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
-            out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
-            out << "for(const auto& deletedRuleAppl: *untypedDeltaDervTupleDeleteRuleSet) {" << std::endl;
-            out << "untypedDeltaDervTupleRuleSet->erase(deletedRuleAppl);\n" << std::endl;
-            out << "}" << std::endl;
-            out << "if (untypedDeltaDervTupleRuleSet->empty()) {" << std::endl;
-            out << "delete untypedDeltaDervTupleRuleSet;\n" << std::endl;
-            // out << "untypedDeltaDervTupleRuleSet = nullptr;\n" << std::endl;
-            out << "DerivationManager::untypedTuple2RuleApplications.erase(untypedDeltaDervTupleDelete);\n" << std::endl;
-            out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel())) << "->insert(tupleDeltaDervDelete);\n "<< std::endl;
-            out << "}" << std::endl;
-            out << "}" << std::endl;
+            if (both || deleteOnly) {
+                out << "for(const auto& tupleDeltaDervDelete: *" <<
+        synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaDervDeleteRel())) << ") {" << std::endl;
+                out << "auto untypedDeltaDervTupleDelete = UntypedTuple::fromTypedTuple(\""
+                    << deltaUnion.getRelation() << "\",tupleDeltaDervDelete);\n";
+                if (deleteOnly) {
+                    out << "auto*& untypedDeltaDervTupleDeleteRuleSet = DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
+                } else {
+                    out << "auto*& untypedDeltaDervTupleDeleteRuleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
+                }
+                out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
+                out << "for(const auto& deletedRuleAppl: *untypedDeltaDervTupleDeleteRuleSet) {" << std::endl;
+                out << "untypedDeltaDervTupleRuleSet->erase(deletedRuleAppl);\n" << std::endl;
+                out << "}" << std::endl;
+                out << "if (untypedDeltaDervTupleRuleSet->empty()) {" << std::endl;
+                out << "delete untypedDeltaDervTupleRuleSet;\n" << std::endl;
+                // out << "untypedDeltaDervTupleRuleSet = nullptr;\n" << std::endl;
+                out << "DerivationManager::untypedTuple2RuleApplications.erase(untypedDeltaDervTupleDelete);\n" << std::endl;
+                out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel())) << "->insert(tupleDeltaDervDelete);\n "<< std::endl;
+                out << "}" << std::endl;
+                out << "}" << std::endl;
+                out << "DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();\n";
+            }
             // ADD EVERYTHING UP TO NEW
             // out <<
-            out << "for(const auto& oldTuple: *" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getOldRel())) << ") {\n" << std::endl;
+            if (both) {
+                out << "for(const auto& oldTuple: *" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getOldRel())) << ") {\n" << std::endl;
                 out << "if (!" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel()))
                     << "->contains(oldTuple)) {"  << std::endl;
                 out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getNewRel())) << "->insert(oldTuple);\n" << std::endl;
-            out << "}}\n" << std::endl;
-            out << "for(const auto& insertedTuple: *" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleInsertRel())) << ") {\n" << std::endl;
+                out << "}}\n" << std::endl;
+                out << "for(const auto& insertedTuple: *" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleInsertRel())) << ") {\n" << std::endl;
                 out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getNewRel())) << "->insert(insertedTuple);\n" << std::endl;
-            out << "}\n" << std::endl;
-            // out << "for(const auto& deletedTuple: *" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel())) << ") {\n" << std::endl;
-            //     out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getNewRel())) << "->erase(deletedTuple);\n" << std::endl;
-            // out << "}\n" << std::endl;
+                out << "}\n" << std::endl;
+            } else if (deleteOnly) {
+                out << "for(const auto& deletedTuple: *" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel())) << ") {\n" << std::endl;
+                    out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getNewRel())) << "->erase(deletedTuple);\n" << std::endl;
+                out << "}\n" << std::endl;
+            } else if (insertOnly) {
+                out << "for(const auto& insertedTuple: *" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleInsertRel())) << ") {\n" << std::endl;
+                out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getNewRel())) << "->insert(insertedTuple);\n" << std::endl;
+                out << "}\n" << std::endl;
+            } else {
+                assert (false);
+            }
         }
 
         void visit_(type_identity<Erase>, const Erase& erase, std::ostream& out) override {
@@ -2708,12 +2766,24 @@ std::set<std::string> Synthesiser::accessedRelations(Statement& stmt) {
     std::set<std::string> accessed;
     visit(stmt, [&](const Insert& node) { accessed.insert(node.getRelation()); });
     visit(stmt, [&](const DeltaUnion& node) {
-        accessed.insert(node.getOldRel());
-        accessed.insert(node.getNewRel());
-        accessed.insert(node.getDeltaDervInsertRel());
-        accessed.insert(node.getDeltaDervDeleteRel());
-        accessed.insert(node.getDeltaTupleInsertRel());
-        accessed.insert(node.getDeltaTupleDeleteRel());
+        if (node.getOldRel() != "") {
+            accessed.insert(node.getOldRel());
+        }
+        if (node.getNewRel() != "") {
+            accessed.insert(node.getNewRel());
+        }
+        if (node.getDeltaDervInsertRel() != "") {
+            accessed.insert(node.getDeltaDervInsertRel());
+        }
+        if (node.getDeltaDervDeleteRel() != "") {
+            accessed.insert(node.getDeltaDervDeleteRel());
+        }
+        if (node.getDeltaTupleDeleteRel() != "") {
+            accessed.insert(node.getDeltaTupleDeleteRel());
+        }
+        if (node.getDeltaTupleInsertRel() != "") {
+            accessed.insert(node.getDeltaTupleInsertRel());
+        }
     });
     visit(stmt, [&](const RelationOperation& node) { accessed.insert(node.getRelation()); });
     visit(stmt, [&](const RelationStatement& node) { accessed.insert(node.getRelation()); });

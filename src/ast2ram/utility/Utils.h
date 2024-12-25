@@ -40,7 +40,7 @@ struct Location;
 
 /** Get the corresponding atom name given the clause and other state */
 std::string getAtomName(const ast::Clause& clause, const ast::Atom* atom,
-        const std::vector<ast::Atom*>& sccAtoms, std::size_t version, bool isRecursive, TranslationMode mode, bool isIncremental = false);
+        const std::vector<ast::Atom*>& sccAtoms, std::size_t version, bool isRecursive, TranslationMode mode, bool isIncremental = false, bool isDelete = false);
 
 /** Get the corresponding concretised RAM relation name for the relation */
 std::string getConcreteRelationName(const ast::QualifiedName& name, std::string prefix = "");

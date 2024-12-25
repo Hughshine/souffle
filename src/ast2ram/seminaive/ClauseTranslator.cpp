@@ -104,8 +104,8 @@ std::string ClauseTranslator::getClauseString(const ast::Clause& clause) const {
     return toString(*renamedClone);
 }
 
-std::string ClauseTranslator::getClauseAtomName(const ast::Clause& clause, const ast::Atom* atom) const {
-    return getAtomName(clause, atom, sccAtoms, version, isRecursive(), mode);
+std::string ClauseTranslator::getClauseAtomName(const ast::Clause& clause, const ast::Atom* atom, const bool isDelete) const {
+    return getAtomName(clause, atom, sccAtoms, version, isRecursive(), mode, isDelete);
 }
 
 // TODO: change to heap
@@ -134,7 +134,7 @@ std::map<std::string, Own<ram::Expression>> ClauseTranslator::getClauseVars(cons
 }
 
 Own<ram::Statement> ClauseTranslator::translateRecursiveClause(
-        const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version) {
+        const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool /*isDelete*/) {
     // Update version config
     sccAtoms = filter(ast::getBodyLiterals<ast::Atom>(clause),
             [&](auto* atom) { return contains(scc, context.getProgram()->getRelation(*atom)); });

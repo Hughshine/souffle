@@ -238,6 +238,15 @@ public:
         // {testUntypedTuple, &testRules}
     };
 
+    // for incremental + recursive computation: delta insert
+    static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2DeltaDeltaInsertRuleApplications = {
+        // {testUntypedTuple, &testRules}
+    };
+    // for incremental + recursive computation: delta deleteC
+    static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2DeltaDeltaDeleteRuleApplications = {
+        // {testUntypedTuple, &testRules}
+    };
+
     static std::string ruleApplications2Str(const std::set<RuleApplication>* ruleApplications) {
         assert(ruleApplications != nullptr && !ruleApplications->empty() && "null ruleSet");
         std::string result = "[";
