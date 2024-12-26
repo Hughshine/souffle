@@ -622,12 +622,31 @@ std::string ClauseTranslator::getAtomNameForIncDeltaRule(const ast::Clause& clau
 
 std::string ClauseTranslator::getAtomNameForRecIncDeltaRule(const ast::Clause& clause, const ast::Atom* atom, const std::size_t curIndex, const std::size_t deltaIndex, const bool isInsert) const {
     if (curIndex < deltaIndex) {
-        // for rec and inc, "old" means different things...
-        return getConcreteRelationName(atom->getQualifiedName());
+        // for rec and inc, "old" means different things (for sccAtoms...)...
+        bool inScc = false;
+        for (int i = 0; i < sccAtoms.size(); ++i) {
+            if (sccAtoms[i] == atom) {
+                inScc = true; break;
+            }
+        }
+        if (inScc) {
+            return getConcreteRelationName(atom->getQualifiedName());
+        } else {
+            return getOldRelationName(atom->getQualifiedName());
+        }
     }
     if (curIndex > deltaIndex) {
-        // old relation
-        return getConcreteRelationName(atom->getQualifiedName());
+        bool inScc = false;
+        for (int i = 0; i < sccAtoms.size(); ++i) {
+            if (sccAtoms[i] == atom) {
+                inScc = true; break;
+            }
+        }
+        if (inScc) {
+            return getConcreteRelationName(atom->getQualifiedName());
+        } else {
+            return getOldRelationName(atom->getQualifiedName());
+        }
     }
     // delta case
     // TODO: non sccAtoms should be different
