@@ -155,8 +155,12 @@ public:
     /** Translation strategy */
     Own<ram::Statement> translateNonRecursiveClause(
             const ast::Clause& clause, TranslationMode mode = DEFAULT) const;
+    Own<ram::Statement> translateNonRecursiveClauseDel(
+          const ast::Clause& clause, TranslationMode mode = DEFAULT) const;
+    Own<ram::Statement> translateNonRecursiveClauseIns(
+        const ast::Clause& clause, TranslationMode mode = DEFAULT) const;
     Own<ram::Statement> translateRecursiveClause(const ast::Clause& clause, const ast::RelationSet& scc,
-            std::size_t version, TranslationMode mode = DEFAULT, bool isDelete = false) const;
+            std::size_t version, TranslationMode mode = DEFAULT, bool isDelete = false, bool isPrefill = false) const;
 
     Own<ram::Condition> translateConstraint(const ValueIndex& index, const ast::Literal* lit) const;
 

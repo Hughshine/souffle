@@ -187,6 +187,7 @@ set(SOUFFLE_SOURCES
         ast2ram/seminaive-with-delta/TranslationStrategy.cpp
         ast2ram/seminaive-with-delta/UnitTranslator.cpp
         ast2ram/seminaive-with-delta/ValueTranslator.cpp
+        ram/EmptyStatement.h
 )
 
 # --------------------------------------------------

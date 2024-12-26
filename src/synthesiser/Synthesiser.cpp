@@ -34,6 +34,7 @@
 #include "ram/DebugInfo.h"
 #include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
+#include "ram/EmptyStatement.h"
 #include "ram/Erase.h"
 #include "ram/ExistenceCheck.h"
 #include "ram/Exit.h"
@@ -1910,20 +1911,20 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             } else {
                 if (recordDerivation.isInsert()) {
                     out << "auto*& ruleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedTuple];\n";
-                    if (isRecursive) {
+                    // if (isRecursive) {
                         out << "auto*& ruleSet2 = DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications[untypedTuple];\n";
-                    }
+                    // }
                 } else {
                     out << "auto*& ruleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedTuple];\n";
-                    if (isRecursive) {
+                    // if (isRecursive) {
                         out << "auto*& ruleSet2 = DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications[untypedTuple];\n";
-                    }
+                    // }
                 }
             }
             out << "if (ruleSet == nullptr) {\n";
             out << "ruleSet = new std::set<RuleApplication>();\n";
             out << "}\n";
-            if (isRecursive) {
+            if (!recordDerivation.isComplete()) {
                 out << "if (ruleSet2 == nullptr) {\n";
                 out << "ruleSet2 = new std::set<RuleApplication>();\n";
                 out << "}\n";
@@ -1934,9 +1935,13 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             }
             out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
             out << "ruleSet->insert(ruleApplication);\n";
-            if (isRecursive) {
+            if (!recordDerivation.isComplete()) {
                 out << "ruleSet2->insert(ruleApplication);\n";
             }
+        }
+
+        void visit_(type_identity<EmptyStatement>, const EmptyStatement& emptyStmt, std::ostream& out) override {
+
         }
 
         void visit_(type_identity<DeltaUnion>, const DeltaUnion& deltaUnion, std::ostream& out) override {
@@ -1982,11 +1987,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaDervInsertRel())) << ") {" << std::endl;
                 out << "auto untypedDeltaDervTupleInsert = UntypedTuple::fromTypedTuple(\""
                     << deltaUnion.getRelation() << "\",tupleDeltaDervInsert);\n";
-                if (insertOnly) { // also means recursive...
+                // if (insertOnly) { // also means recursive...
                     out << "auto*& untypedDeltaDervTupleInsertRuleSet = DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
-                } else {
-                    out << "auto*& untypedDeltaDervTupleInsertRuleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
-                }
+                // } else {
+                //     out << "auto*& untypedDeltaDervTupleInsertRuleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
+                // }
                 out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
                 out << "if (untypedDeltaDervTupleRuleSet == nullptr) {" << std::endl;
                 out << "untypedDeltaDervTupleRuleSet = untypedDeltaDervTupleInsertRuleSet;\n" << std::endl;
@@ -1995,10 +2000,9 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "untypedDeltaDervTupleRuleSet->insert(untypedDeltaDervTupleInsertRuleSet->begin(), untypedDeltaDervTupleInsertRuleSet->end());\n" << std::endl;
                 out << "}" << std::endl;
                 out << "}" << std::endl;
-                if (insertOnly) {
-                    out << "DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();\n";
-
-                }
+                // if (insertOnly) {
+                out << "DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();\n";
+                // }
             }
             // DELETE
             if (both || deleteOnly) {
@@ -2006,11 +2010,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
         synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaDervDeleteRel())) << ") {" << std::endl;
                 out << "auto untypedDeltaDervTupleDelete = UntypedTuple::fromTypedTuple(\""
                     << deltaUnion.getRelation() << "\",tupleDeltaDervDelete);\n";
-                if (deleteOnly) {
+                // if (deleteOnly) {
                     out << "auto*& untypedDeltaDervTupleDeleteRuleSet = DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
-                } else {
-                    out << "auto*& untypedDeltaDervTupleDeleteRuleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
-                }
+                // } else {
+                //     out << "auto*& untypedDeltaDervTupleDeleteRuleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
+                // }
                 out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
                 out << "for(const auto& deletedRuleAppl: *untypedDeltaDervTupleDeleteRuleSet) {" << std::endl;
                 out << "untypedDeltaDervTupleRuleSet->erase(deletedRuleAppl);\n" << std::endl;

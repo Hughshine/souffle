@@ -20,6 +20,7 @@
 #include "souffle/utility/ContainerUtil.h"
 
 #include "ast/Relation.h"
+#include "ram/EmptyStatement.h"
 
 namespace souffle::ast {
 class Clause;
@@ -77,10 +78,18 @@ public:
 
     /** Translate a non-recursive clause */
     virtual Own<ram::Statement> translateNonRecursiveClause(const ast::Clause& clause) = 0;
+    virtual Own<ram::Statement> translateNonRecursiveClauseDel(const ast::Clause& clause) {
+        assert(false);
+        return mk<ram::EmptyStatement>();
+    }
+    virtual Own<ram::Statement> translateNonRecursiveClauseIns(const ast::Clause& clause) {
+        assert(false);
+        return mk<ram::EmptyStatement>();
+    }
 
     /** Translate a recursive clause */
     virtual Own<ram::Statement> translateRecursiveClause(
-            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false) = 0; // isDelete flag is only useful for incremental computation
+            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false, bool isPrefill = false) = 0; // isDelete flag is only useful for incremental computation
 
 protected:
     /** Translation context */

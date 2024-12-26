@@ -347,10 +347,23 @@ Own<ram::Statement> TranslatorContext::translateNonRecursiveClause(
     return clauseTranslator->translateNonRecursiveClause(clause);
 }
 
-Own<ram::Statement> TranslatorContext::translateRecursiveClause(const ast::Clause& clause,
-        const ast::RelationSet& scc, std::size_t version, TranslationMode mode, bool isDelete) const {
+Own<ram::Statement> TranslatorContext::translateNonRecursiveClauseDel(
+        const ast::Clause& clause, TranslationMode mode) const {
     auto clauseTranslator = Own<ClauseTranslator>(translationStrategy->createClauseTranslator(*this, mode));
-    return clauseTranslator->translateRecursiveClause(clause, scc, version, isDelete);
+    return clauseTranslator->translateNonRecursiveClauseDel(clause);
+}
+
+
+Own<ram::Statement> TranslatorContext::translateNonRecursiveClauseIns(
+        const ast::Clause& clause, TranslationMode mode) const {
+    auto clauseTranslator = Own<ClauseTranslator>(translationStrategy->createClauseTranslator(*this, mode));
+    return clauseTranslator->translateNonRecursiveClauseIns(clause);
+}
+
+Own<ram::Statement> TranslatorContext::translateRecursiveClause(const ast::Clause& clause,
+        const ast::RelationSet& scc, std::size_t version, TranslationMode mode, bool isDelete, bool isPrefill) const {
+    auto clauseTranslator = Own<ClauseTranslator>(translationStrategy->createClauseTranslator(*this, mode));
+    return clauseTranslator->translateRecursiveClause(clause, scc, version, isDelete, isPrefill);
 }
 
 Own<ram::Expression> TranslatorContext::translateValue(

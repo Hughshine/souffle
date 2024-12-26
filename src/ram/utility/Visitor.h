@@ -34,6 +34,7 @@
 #include "ram/DebugInfo.h"
 #include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
+#include "ram/EmptyStatement.h"
 #include "ram/Erase.h"
 #include "ram/EstimateJoinSize.h"
 #include "ram/ExistenceCheck.h"
@@ -184,6 +185,7 @@ struct Visitor : souffle::detail::VisitorBase<R, NodeType, Params...> {
         SOUFFLE_VISITOR_FORWARD(Swap);
         SOUFFLE_VISITOR_FORWARD(MergeExtend);
         SOUFFLE_VISITOR_FORWARD(DeltaUnion);
+        SOUFFLE_VISITOR_FORWARD(EmptyStatement);
 
         // Control-flow
         SOUFFLE_VISITOR_FORWARD(Program);
@@ -210,6 +212,7 @@ protected:
     SOUFFLE_VISITOR_LINK(RelationStatement, Statement);
     SOUFFLE_VISITOR_LINK(Assign, Statement);
     SOUFFLE_VISITOR_LINK(DeltaUnion, RelationStatement);
+    SOUFFLE_VISITOR_LINK(EmptyStatement, Statement);
 
     SOUFFLE_VISITOR_LINK(Swap, BinRelationStatement);
     SOUFFLE_VISITOR_LINK(MergeExtend, BinRelationStatement);
