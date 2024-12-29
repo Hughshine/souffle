@@ -904,7 +904,21 @@ head
       atom->setAnnotations($annotations);
       $$.emplace_back(std::move(atom));
     }
+  | annotations FLOAT DOUBLECOLON atom
+    {
+      @$ = @$.from(@atom);
+      auto atom = $atom;
+      atom->setAnnotations($annotations);
+      $$.emplace_back(std::move(atom));
+    }
   | head COMMA annotations atom
+    {
+      $$ = $1;
+      auto atom = $atom;
+      atom->setAnnotations($annotations);
+      $$.emplace_back(std::move(atom));
+    }
+  | head COMMA annotations FLOAT DOUBLECOLON atom
     {
       $$ = $1;
       auto atom = $atom;
