@@ -557,6 +557,27 @@ Own<ram::Operation> ClauseTranslator::addNegatedAtom(
             mk<ram::Negation>(mk<ram::ExistenceCheck>(name, std::move(values))), std::move(op));
 }
 
+Own<ram::Operation> ClauseTranslator::addNegatedAtomDerived(
+        Own<ram::Operation> op, const ast::Clause& /* clause */, const ast::Atom* atom) const {
+    // std::size_t arity = atom->getArity();
+    // std::string name = getConcreteRelationName(atom->getQualifiedName());
+    //
+    // if (arity == 0) {
+    //     // for a nullary, negation is a simple emptiness check
+    //     return mk<ram::Filter>(mk<ram::EmptinessCheck>(name), std::move(op));
+    // }
+    //
+    // // else, we construct the atom and create a negation
+    // VecOwn<ram::Expression> values;
+    // auto args = atom->getArguments();
+    // for (std::size_t i = 0; i < arity; i++) {
+    //     values.push_back(context.translateValue(*valueIndex, args[i]));
+    // }
+    // return mk<ram::Filter>(
+    // mk<ram::Negation>(mk<ram::ExistenceCheck>(name, std::move(values))), std::move(op));
+    return std::move(op);
+}
+
 Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
         const ast::Clause& clause, Own<ram::Operation> op) const {
     for (const auto* lit : clause.getBodyLiterals()) {
@@ -580,7 +601,10 @@ Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
     if (isRecursive()) {
         if (clause.getHead()->getArity() > 0) {
             // also negate the head
-            // op = addNegatedAtom(std::move(op), clause, clause.getHead());
+            // TODO: we still need to negate the head's derivation
+            // TODO: to avoid forever loop for same derivation
+            // TODO: addNegatedAtomDerived()
+            op = addNegatedAtomDerived(std::move(op), clause, clause.getHead());
             // do not negate head (not in head), because we are tracking multiple derivations
         }
         // also add in prev stuff

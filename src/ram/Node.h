@@ -91,6 +91,7 @@ public:
             NK_False,
             NK_Negation,
             NK_True,
+            NK_DerivationCheck,
         NK_LastCondition,
 
         NK_Expression,

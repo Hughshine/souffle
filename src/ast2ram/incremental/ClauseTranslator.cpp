@@ -632,7 +632,11 @@ std::string ClauseTranslator::getAtomNameForRecIncDeltaRule(const ast::Clause& c
         if (inScc) {
             return getConcreteRelationName(atom->getQualifiedName());
         } else {
-            return getOldRelationName(atom->getQualifiedName());
+            // if (isInsert) {
+                return getConcreteRelationName(atom->getQualifiedName());
+            // }
+            // TODO: maybe for deletion, we can also use concrete relation for delta recursive case because deletion is sound & complete?
+            // return getOldRelationName(atom->getQualifiedName());
         }
     }
     if (curIndex > deltaIndex) {
@@ -645,7 +649,10 @@ std::string ClauseTranslator::getAtomNameForRecIncDeltaRule(const ast::Clause& c
         if (inScc) {
             return getConcreteRelationName(atom->getQualifiedName());
         } else {
-            return getOldRelationName(atom->getQualifiedName());
+            // if (isInsert) {
+                return getConcreteRelationName(atom->getQualifiedName());
+            // }
+            // return getOldRelationName(atom->getQualifiedName());
         }
     }
     // delta case

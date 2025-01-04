@@ -98,6 +98,7 @@
 #include "ram/UserDefinedAggregator.h"
 #include "ram/UserDefinedOperator.h"
 #include "ram/Variable.h"
+#include "ram/DerivationCheck.h"
 #include "souffle/utility/FunctionalUtil.h"
 #include "souffle/utility/MiscUtil.h"
 #include "souffle/utility/Visitor.h"
@@ -148,6 +149,7 @@ struct Visitor : souffle::detail::VisitorBase<R, NodeType, Params...> {
         SOUFFLE_VISITOR_FORWARD(Conjunction);
         SOUFFLE_VISITOR_FORWARD(Negation);
         SOUFFLE_VISITOR_FORWARD(Constraint);
+        SOUFFLE_VISITOR_FORWARD(DerivationCheck);
 
         // Operations
         SOUFFLE_VISITOR_FORWARD(Filter);
@@ -172,7 +174,6 @@ struct Visitor : souffle::detail::VisitorBase<R, NodeType, Params...> {
         SOUFFLE_VISITOR_FORWARD(IndexAggregate);
         SOUFFLE_VISITOR_FORWARD(SequentialOperation);
         SOUFFLE_VISITOR_FORWARD(RecordDerivation);
-
 
         // Statements
         SOUFFLE_VISITOR_FORWARD(Assign);
@@ -271,6 +272,7 @@ protected:
     SOUFFLE_VISITOR_LINK(ExistenceCheck, AbstractExistenceCheck);
     SOUFFLE_VISITOR_LINK(EmptinessCheck, Condition);
     SOUFFLE_VISITOR_LINK(AbstractExistenceCheck, Condition);
+    SOUFFLE_VISITOR_LINK(DerivationCheck, Condition);
 
     SOUFFLE_VISITOR_LINK(Condition, Node);
 

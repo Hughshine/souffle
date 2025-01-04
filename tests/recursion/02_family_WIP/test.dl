@@ -1,0 +1,37 @@
+.decl parent(x:String, y:String)
+.input parent
+
+// Base facts - Stratum 0
+parent(john, mary).
+parent(mary, ann).
+parent(mary, tom).
+parent(tom, jim).
+parent(ann, lisa).
+parent(jim, bob).
+
+.decl siblings(x:String, y:String)
+.output siblings
+
+// Direct siblings - Stratum 1
+siblings(X, Y) :- parent(P, X), parent(P, Y), X \= Y.
+
+.decl ancestor(x:String, y:String)
+.output ancestor
+// Ancestor relation (recursive) - Stratum 1
+ancestor(X, Y) :- parent(X, Y).
+ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).
+
+// Count of descendants (using negation) - Stratum 2
+.decl has_no_children(x:String)
+.output has_no_children
+has_no_children(X) :- \+ parent(X, _).
+.decl has_descendants(x:String)
+.output has_descendants
+has_descendants(X) :- parent(X, _).
+
+// Extended family relation combining multiple predicates - Stratum 3
+.decl extended_family(x:String, y:String)
+.output extended_family
+extended_family(X, Y) :- ancestor(X, Y).
+extended_family(X, Y) :- siblings(X, Y).
+extended_family(X, Y) :- siblings(X, Z), ancestor(Z, Y).

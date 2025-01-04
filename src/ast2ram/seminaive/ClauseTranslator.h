@@ -71,6 +71,10 @@ protected:
 
     virtual Own<ram::Operation> addNegatedAtom(
             Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const;
+
+    virtual Own<ram::Operation> addNegatedAtomDerived(
+                Own<ram::Operation> op, const ast::Clause& /* clause */, const ast::Atom* atom) const;
+
     virtual Own<ram::Operation> addNegatedDeltaAtom(Own<ram::Operation> op, const ast::Atom* atom) const;
     virtual Own<ram::Operation> addDistinct(
             Own<ram::Operation> op, const ast::Atom* atom1, const ast::Atom* atom2) const;

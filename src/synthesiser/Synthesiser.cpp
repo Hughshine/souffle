@@ -2257,6 +2257,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             PRINT_END_COMMENT(out);
         }
 
+        void visit_(type_identity<DerivationCheck>, const DerivationCheck& derivationCheck, std::ostream& out) override {
+            PRINT_BEGIN_COMMENT(out);
+            PRINT_END_COMMENT(out);
+        }
+
         void visit_(type_identity<ProvenanceExistenceCheck>, const ProvenanceExistenceCheck& provExists,
                 std::ostream& out) override {
             PRINT_BEGIN_COMMENT(out);

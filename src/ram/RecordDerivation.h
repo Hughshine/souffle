@@ -141,6 +141,7 @@ public:
     bool equal(const Node& node) const override {
         const auto& other = asAssert<RecordDerivation>(node);
         return relation == other.relation && equal_targets(expressions, other.expressions);
+        // TODO: equal mapping?
     }
 
     NodeVec getChildren() const override {
