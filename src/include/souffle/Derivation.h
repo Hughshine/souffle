@@ -248,6 +248,12 @@ public:
     };
 
     static bool ruleAppExistsInCompleteSet(const UntypedTuple& untypedTuple, const RuleApplication& ruleAppl) {
+        if (untypedTuple2RuleApplications[untypedTuple] == nullptr) {
+            return false;
+        }
+        if (untypedTuple2RuleApplications[untypedTuple]->find(ruleAppl) != untypedTuple2RuleApplications[untypedTuple]->end()) {
+            return true;
+        }
         return false;
     };
 

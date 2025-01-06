@@ -2289,8 +2289,9 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     << "}}),"
                     << "RuleApplication{"
                     << derivationCheck.clauseID
-                    << ","
-                    << "{}})";
+                    << ",";
+                    derivationCheck.outputVarExprMapString(out, rec);
+                out << "})";
                 out << "))";
                 PRINT_END_COMMENT(out);
                 return;

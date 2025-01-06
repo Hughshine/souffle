@@ -77,6 +77,19 @@ public:
         return n->getKind() == NK_DerivationCheck;
     }
 
+    void outputVarExprMapString(std::ostream& ss, std::function<void(std::ostream&, const Expression*)>& rec) const {
+        ss << "{";
+        bool first = true;
+        for (auto& [var, expr] : varExprMap) {
+            if (!first) {ss << ",";}
+            ss << "{\"" << var << "\",";
+            rec(ss, expr.get());
+            ss << "}";
+            first = false;
+        }
+        ss << "}";
+    }
+
 // protected:
 
     DerivationCheck(std::string rel, VecOwn<Expression> expressions, std::size_t clauseID, /*bool isDelete, bool isComplete,*/ std::map<std::string, Own<ram::Expression>>&& varExprMap) //
