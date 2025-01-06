@@ -75,7 +75,7 @@ protected:
 
     virtual Own<ram::Operation> addNegatedAtom(
             Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const;
-    virtual Own<ram::Operation> addNegatedDeltaAtom(Own<ram::Operation> op, const ast::Atom* atom) const;
+    virtual Own<ram::Operation> addNegatedDeltaAtom(Own<ram::Operation> op, const ast::Atom* atom, bool isDelete) const;
     virtual Own<ram::Operation> addDistinct(
             Own<ram::Operation> op, const ast::Atom* atom1, const ast::Atom* atom2) const;
 
@@ -106,7 +106,7 @@ protected:
     /** Core clause translation stages */
     Own<ram::Operation> addVariableBindingConstraints(Own<ram::Operation> op) const;
     virtual Own<ram::Operation> addBodyLiteralConstraints(
-            const ast::Clause& clause, Own<ram::Operation> op) const;
+            const ast::Clause& clause, Own<ram::Operation> op, bool isDelete) const;
     Own<ram::Operation> addGeneratorLevels(Own<ram::Operation> op, const ast::Clause& clause) const;
     Own<ram::Operation> addVariableIntroductions(const ast::Clause& clause, Own<ram::Operation> op, std::size_t deltaLevel, bool isInsert);
     Own<ram::Operation> addEntryPoint(const ast::Clause& clause, Own<ram::Operation> op) const;

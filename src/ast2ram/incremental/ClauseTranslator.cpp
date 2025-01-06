@@ -255,7 +255,7 @@ Own<ram::Statement> ClauseTranslator::createRamRecDeltaRulesQuery(const ast::Cla
                     mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
                         std::move(cloneClauseVarMap(clauseVarMap)), false, false, true)); // delete
-                op = addBodyLiteralConstraints(clause, std::move(op));
+                op = addBodyLiteralConstraints(clause, std::move(op), isDelete);
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
                 op = addVariableIntroductions(clause, std::move(op), i, false);
@@ -299,7 +299,7 @@ Own<ram::Statement> ClauseTranslator::createRamRecDeltaRulesQuery(const ast::Cla
                     mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
                         std::move(cloneClauseVarMap(clauseVarMap)), true, false, true)); // insert
-                op = addBodyLiteralConstraints(clause, std::move(op));
+                op = addBodyLiteralConstraints(clause, std::move(op), isDelete);
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
                 op = addVariableIntroductions(clause, std::move(op), i, true);
@@ -362,7 +362,7 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
                     mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
                         std::move(cloneClauseVarMap(clauseVarMap)), true, false));
-                op = addBodyLiteralConstraints(clause, std::move(op));
+                op = addBodyLiteralConstraints(clause, std::move(op), false);
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
                 op = addVariableIntroductions(clause, std::move(op), i, true);  // delta level, isInsert = true
@@ -377,7 +377,7 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
                     mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
                         std::move(cloneClauseVarMap(clauseVarMap)), false, false)); // delete
-                op = addBodyLiteralConstraints(clause, std::move(op));
+                op = addBodyLiteralConstraints(clause, std::move(op), true);
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
                 op = addVariableIntroductions(clause, std::move(op), i, false);
@@ -438,7 +438,7 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQueryDel(const ast::Cla
                     mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
                         std::move(cloneClauseVarMap(clauseVarMap)), false, false)); // delete
-                op = addBodyLiteralConstraints(clause, std::move(op));
+                op = addBodyLiteralConstraints(clause, std::move(op), true);
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
                 op = addVariableIntroductions(clause, std::move(op), i, false);
@@ -500,7 +500,7 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQueryIns(const ast::Cla
                     mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
                         std::move(cloneClauseVarMap(clauseVarMap)), true, false));
-                op = addBodyLiteralConstraints(clause, std::move(op));
+                op = addBodyLiteralConstraints(clause, std::move(op), false);
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
                 op = addVariableIntroductions(clause, std::move(op), i, true);  // delta level, isInsert = true
@@ -958,10 +958,14 @@ Own<ram::Operation> ClauseTranslator::addDistinct(
 }
 
 Own<ram::Operation> ClauseTranslator::addNegatedDeltaAtom(
-        Own<ram::Operation> op, const ast::Atom* atom) const {
+        Own<ram::Operation> op, const ast::Atom* atom, const bool isDelete) const {
     std::size_t arity = atom->getArity();
-    std::string name = getDeltaRelationName(atom->getQualifiedName());
-
+    std::string name;
+    if (isDelete) {
+        name = getDeltaDeletionRelationName(atom->getQualifiedName());
+    } else {
+        name = getDeltaInsertionRelationName(atom->getQualifiedName());
+    }
     if (arity == 0) {
         // for a nullary, negation is a simple emptiness check
         return mk<ram::Filter>(mk<ram::EmptinessCheck>(name), std::move(op));
@@ -999,7 +1003,8 @@ Own<ram::Operation> ClauseTranslator::addNegatedAtom(
 }
 
 Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
-        const ast::Clause& clause, Own<ram::Operation> op) const {
+        const ast::Clause& clause, Own<ram::Operation> op, const bool isDelete) const {
+    // note that for non-recursive cases, isDelete flag is useless
     for (const auto* lit : clause.getBodyLiterals()) {
         // constraints become literals
         if (auto condition = context.translateConstraint(*valueIndex, lit)) {
@@ -1007,27 +1012,19 @@ Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
         }
     }
 
-    if (isA<ast::SubsumptiveClause>(clause)) {
-        if (mode == SubsumeRejectNewNew || mode == SubsumeDeleteCurrentCurrent) {
-            // find the dominated / dominating heads
-            const auto& body = clause.getBodyLiterals();
-            auto dominatedHeadAtom = dynamic_cast<const ast::Atom*>(body[0]);
-            auto dominatingHeadAtom = dynamic_cast<const ast::Atom*>(body[1]);
-            op = addDistinct(std::move(op), dominatedHeadAtom, dominatingHeadAtom);
-        }
-        return op;
-    }
-
     if (isRecursive()) {
         if (clause.getHead()->getArity() > 0) {
-            // also negate the head
+            // also negate the head, but for prob, we should only negate the "derivation".
             // op = addNegatedAtom(std::move(op), clause, clause.getHead());
-            // do not negate head (not in head), because we are tracking multiple derivations
         }
         // also add in prev stuff
-        // TODO: don't know if should avoid below constraint generation too
+        // every former delta rule do not need to scan the delta of later atoms
+        // since they have their own delta rules
+        // only for optimization I suppose
+        // we do not need to change this for prob, but we should change it for inc
+        // because we have different name for delta relation for inc
         for (std::size_t i = version + 1; i < sccAtoms.size(); i++) {
-            op = addNegatedDeltaAtom(std::move(op), sccAtoms.at(i));
+            op = addNegatedDeltaAtom(std::move(op), sccAtoms.at(i), isDelete);
         }
     }
 
