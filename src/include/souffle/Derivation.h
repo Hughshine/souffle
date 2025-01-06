@@ -247,6 +247,10 @@ public:
         // {testUntypedTuple, &testRules}
     };
 
+    static bool ruleAppExistsInCompleteSet(const UntypedTuple& untypedTuple, const RuleApplication& ruleAppl) {
+        return false;
+    };
+
     static std::string ruleApplications2Str(const std::set<RuleApplication>* ruleApplications) {
         assert(ruleApplications != nullptr && !ruleApplications->empty() && "null ruleSet");
         std::string result = "[";

@@ -266,6 +266,15 @@ std::optional<std::size_t> LevelAnalysis::getLevel(const Node* node) const {
             return level;
         }
 
+        // existence check
+        maybe_level visit_(type_identity<DerivationCheck>, const DerivationCheck& exists) override {
+            maybe_level level = std::nullopt;
+            for (const auto& cur : exists.getValues()) {
+                level = max(level, dispatch(*cur));
+            }
+            return level;
+        }
+
         // provenance existence check
         maybe_level visit_(type_identity<ProvenanceExistenceCheck>,
                 const ProvenanceExistenceCheck& provExists) override {

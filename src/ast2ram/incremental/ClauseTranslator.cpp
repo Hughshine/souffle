@@ -1015,7 +1015,7 @@ Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
     if (isRecursive()) {
         if (clause.getHead()->getArity() > 0) {
             // also negate the head, but for prob, we should only negate the "derivation".
-            // op = addNegatedAtom(std::move(op), clause, clause.getHead());
+            // op = addNegatedAtomDerived(std::move(op), clause, clause.getHead());
         }
         // also add in prev stuff
         // every former delta rule do not need to scan the delta of later atoms

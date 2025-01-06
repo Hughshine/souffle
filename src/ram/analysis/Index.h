@@ -17,6 +17,7 @@
 #pragma once
 
 #include "ram/AbstractExistenceCheck.h"
+#include "ram/DerivationCheck.h"
 #include "ram/EstimateJoinSize.h"
 #include "ram/ExistenceCheck.h"
 #include "ram/IndexOperation.h"
@@ -522,6 +523,9 @@ public:
      */
     SearchSignature getSearchSignature(const ExistenceCheck* existCheck) const;
 
+    SearchSignature getSearchSignature(const DerivationCheck* derivationCheck) const;
+
+
     /**
      * @Brief Get the index signature for a provenance existence check
      * @param Provenance-existence check
@@ -544,7 +548,7 @@ public:
      * the existence check.
      */
     bool isTotalSignature(const AbstractExistenceCheck* existCheck) const;
-
+    bool isTotalSignature(const DerivationCheck* derivationCheck) const;
 private:
     /** relation analysis for looking up relations by name */
     RelationAnalysis* relAnalysis;

@@ -42,6 +42,7 @@
 #include "ram/Break.h"
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
+#include "ram/DerivationCheck.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/EstimateJoinSize.h"
 #include "ram/ExistenceCheck.h"
@@ -558,7 +559,7 @@ Own<ram::Operation> ClauseTranslator::addNegatedAtom(
 }
 
 Own<ram::Operation> ClauseTranslator::addNegatedAtomDerived(
-        Own<ram::Operation> op, const ast::Clause& /* clause */, const ast::Atom* atom) const {
+        Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const {
     // std::size_t arity = atom->getArity();
     // std::string name = getConcreteRelationName(atom->getQualifiedName());
     //
@@ -575,7 +576,19 @@ Own<ram::Operation> ClauseTranslator::addNegatedAtomDerived(
     // }
     // return mk<ram::Filter>(
     // mk<ram::Negation>(mk<ram::ExistenceCheck>(name, std::move(values))), std::move(op));
-    return std::move(op);
+    const auto head = clause.getHead();
+    auto headRelationName = getConcreteRelationName(head->getQualifiedName());
+
+    auto clauseVarMap = getClauseVars(clause);
+
+    VecOwn<ram::Expression> values;
+    for (const auto* arg : head->getArguments()) {
+        values.push_back(context.translateValue(*valueIndex, arg));
+    }
+
+    auto clauseStr = clause.toString();
+    return mk<ram::Filter>(
+    mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause), std::move(cloneClauseVarMap(clauseVarMap)))), std::move(op));
 }
 
 Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
@@ -608,10 +621,9 @@ Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
             // do not negate head (not in head), because we are tracking multiple derivations
         }
         // also add in prev stuff
-        // TODO: don't know if should avoid below constraint generation too
-        // for (std::size_t i = version + 1; i < sccAtoms.size(); i++) {
-        //     op = addNegatedDeltaAtom(std::move(op), sccAtoms.at(i));
-        // }
+        for (std::size_t i = version + 1; i < sccAtoms.size(); i++) {
+            op = addNegatedDeltaAtom(std::move(op), sccAtoms.at(i));
+        }
     }
 
     return op;

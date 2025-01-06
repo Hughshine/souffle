@@ -31,33 +31,46 @@ namespace souffle::ram {
  *
  * For example:
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~
- * (Derived t0 in A with delete/insert ruleapp)
- * will be an existence check plus a derivation check
+ * (Derived t0 in A with ruleapp)
+ * will be an existence check plus a derivation check in concrete relation with complete derivation set, during recursion;
  * may need further optimization
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~
  */
 class DerivationCheck : public Condition {
 public:
-    DerivationCheck() : Condition(NK_DerivationCheck) {
-        // assert(operand != nullptr && "operand of negation is a null-pointer");
-        assert( false && "not impl");
-    }
+    // DerivationCheck() : Condition(NK_DerivationCheck) {
+    //     // assert(operand != nullptr && "operand of negation is a null-pointer");
+    //     assert( false && "not impl");
+    // }
 
     /** @brief Get operand of negation */
     // const Condition& getOperand() const {
     //     return *operand;
     // }
 
+    /** @brief Get relation */
+    const std::string& getRelation() const {
+        return rel;
+    }
+
     DerivationCheck* cloning() const override {
-        return new DerivationCheck();
+        VecOwn<Expression> newValues;
+        for (auto& expr : expressions) {
+            newValues.emplace_back(expr->cloning());
+        }
+        std::map<std::string, Own<ram::Expression>> newVarExprMap{};
+        for (auto& [var, expr] : varExprMap) {
+            newVarExprMap.emplace(var, expr->cloning());
+        }
+        return new DerivationCheck(rel, std::move(newValues), clauseID, std::move(newVarExprMap));
     }
 
     // TODO: when do we call this function???
     void apply(const NodeMapper& map) override {
-        assert(false && "did not expect this");
         for (auto& expr : expressions) {
             expr = map(std::move(expr));
         }
+        // TODO: do we need to map varValueMap?
     }
 
     static bool classof(const Node* n) {
@@ -66,10 +79,10 @@ public:
 
 // protected:
 
-    DerivationCheck(std::string rel, VecOwn<Expression> expressions, std::size_t clauseID, bool isDelete, bool isComplete, std::map<std::string, Own<ram::Expression>>&& varExprMap) //
-        : Condition(NK_RecordDerivation), rel(std::move(rel)), expressions(std::move(expressions)),
+    DerivationCheck(std::string rel, VecOwn<Expression> expressions, std::size_t clauseID, /*bool isDelete, bool isComplete,*/ std::map<std::string, Own<ram::Expression>>&& varExprMap) //
+        : Condition(NK_DerivationCheck), rel(std::move(rel)), expressions(std::move(expressions)),
         varExprMap(std::move(varExprMap)),
-        isComplete(isComplete), isDelete(isDelete),
+        // isComplete(isComplete), isDelete(isDelete),
         clauseID(clauseID)
     {
         assert(allValidPtrs(expressions));
@@ -81,9 +94,9 @@ public:
         << join(expressions, ", ", print_deref<Own<Expression>>())
         << " DERIVED BY RULE" << std::to_string(clauseID)
         << " OF REL " << rel
-        << ", WITH MAPPING " << "<placeholder>" << ","
-        << (!isDelete?"INSERT":"DELETE") << ", "
-        << (isComplete?"COMPLETE":"DELTA") << ", "
+        << ", WITH MAPPING " << "<placeholder>"
+        // << (!isDelete?"INSERT":"DELETE") << ", "
+        // << (isComplete?"COMPLETE":"DELTA") << ", "
         << ")";
     }
 
@@ -99,12 +112,16 @@ public:
         return toPtrVector<Node const>(expressions); // TODO: varExprMap?
     }
 
+    const std::vector<Expression*> getValues() const {
+        return toPtrVector(expressions);
+    }
+
     std::string rel;
     VecOwn<ram::Expression> expressions;
     std::map<std::string, Own<ram::Expression>> varExprMap;  // TODO
 
-    bool isComplete;
-    bool isDelete;
+    // bool isComplete;
+    // bool isDelete;
     size_t clauseID;
 };
 

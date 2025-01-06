@@ -230,6 +230,8 @@ ram::RelationSet Synthesiser::getReferencedRelations(const Operation& op) {
             res.insert(lookup(provExists->getRelation()));
         } else if (auto insert = as<Insert>(node)) {
             res.insert(lookup(insert->getRelation()));
+        } else if (auto derExists = as<DerivationCheck>(node)) {
+            res.insert(lookup((derExists->getRelation())));
         }
     });
     return res;
@@ -474,6 +476,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 next = &filter->getOperation();
                 // Check terms of outer filter operation whether they can be pushed before
                 // the context-generation for speed imrovements
+                // TODO: check this optimization opportunity
                 auto conditions = toConjunctionList(&filter->getCondition());
                 for (auto const& cur : conditions) {
                     bool needContext = false;
@@ -2259,6 +2262,53 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 
         void visit_(type_identity<DerivationCheck>, const DerivationCheck& derivationCheck, std::ostream& out) override {
             PRINT_BEGIN_COMMENT(out);
+            // get some details
+            const auto* rel = synthesiser.lookup(derivationCheck.getRelation());
+            auto relName = synthesiser.getRelationName(rel);
+            auto ctxName = "READ_OP_CONTEXT(" + synthesiser.getOpContextName(*rel) + ")";
+            auto arity = rel->getArity();
+            assert(arity > 0 && "AstToRamTranslator failed");
+            std::string after;
+            // if (glb.config().has("profile") && glb.config().has("profile-frequency") &&
+            //         !synthesiser.lookup(derivationCheck.getRelation())->isTemp()) {
+            //     out << R"_((reads[)_" << synthesiser.lookupReadIdx(rel->getName()) << R"_(]++,)_";
+            //     after = ")";
+            //         }
+
+            // if it is total we use the contains function
+            if (isa->isTotalSignature(&derivationCheck)) {
+                out << "(" << relName << "->"
+                    << "contains(Tuple<RamDomain," << arity << ">{{" << join(derivationCheck.getValues(), ",", rec)
+                    << "}}," << ctxName << ")" << ")";
+                out << "&& ";
+                out << "((";
+                out << "DerivationManager::ruleAppExistsInCompleteSet("
+                    << "UntypedTuple::fromTypedTuple("
+                    << "\"" << getBaseRelationName(derivationCheck.getRelation()) << "\""
+                    << ", Tuple<RamDomain," << arity << ">{{" << join(derivationCheck.getValues(), ",", rec)
+                    << "}}),"
+                    << "RuleApplication{"
+                    << derivationCheck.clauseID
+                    << ","
+                    << "{}})";
+                out << "))";
+                PRINT_END_COMMENT(out);
+                return;
+            }
+
+            assert (false && "unnamed arg TBD");
+
+            // auto rangePatternLower = derivationCheck.getValues();
+            // auto rangePatternUpper = derivationCheck.getValues();
+            //
+            // auto rangeBounds = getPaddedRangeBounds(*rel, rangePatternLower, rangePatternUpper);
+            // // else we conduct a range query
+            // out << "(!" << relName << "->"
+            //     << "lowerUpperRange";
+            // out << "_" << isa->getSearchSignature(&derivationCheck);
+            // out << "(" << rangeBounds.first.str() << "," << rangeBounds.second.str() << "," << ctxName
+            //     << ").empty())";
+            // out << "&&" << "DerivationManager::untypedTuple2RuleApplications.contain(" << ");";
             PRINT_END_COMMENT(out);
         }
 
