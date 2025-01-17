@@ -779,12 +779,16 @@ Own<ram::Statement> UnitTranslator::generateStratumTableUpdates(const ast::Relat
                 mk<ram::Clear>(getDeltaDeletionRelationName(rel->getQualifiedName())),
                     mk<ram::DeltaUnion>(mainRelation, "", mainRelation,
                         "", getNewDeletionRelationName(rel->getQualifiedName()), "", getDeltaDeletionRelationName(rel->getQualifiedName())),
+                        // TODO: 需要把delta同时插入到inc_delta_tuple里；rec的delta和inc的delta不同
+                        generateMergeRelations(rel, getIncDeltaTupleDeleteRelationName(rel->getQualifiedName()), getDeltaDeletionRelationName(rel->getQualifiedName())),
                     mk<ram::Clear>(getNewDeletionRelationName(rel->getQualifiedName())));
             } else {
                 updateRelTable = mk<ram::Sequence>(
                     mk<ram::Clear>(getDeltaInsertionRelationName(rel->getQualifiedName())), // clear old delta, use delta union to update it with new
                     mk<ram::DeltaUnion>(mainRelation, "", mainRelation,
-                        getNewInsertionRelationName(rel->getQualifiedName()), "", getDeltaInsertionRelationName(rel->getQualifiedName()), ""),  mk<ram::Clear>(getNewInsertionRelationName(rel->getQualifiedName())));
+                        getNewInsertionRelationName(rel->getQualifiedName()), "", getDeltaInsertionRelationName(rel->getQualifiedName()), ""),
+                        generateMergeRelations(rel, getIncDeltaTupleInsertRelationName(rel->getQualifiedName()), getDeltaInsertionRelationName(rel->getQualifiedName())),
+                        mk<ram::Clear>(getNewInsertionRelationName(rel->getQualifiedName())));
             }
         } else {
             assert (false && "no subsumptive clause");
