@@ -638,10 +638,10 @@ std::string ClauseTranslator::getAtomNameForRecIncDeltaRule(const ast::Clause& c
                 return getOldRelationName(atom->getQualifiedName());
             }
         } else {
-            // if (isInsert) {
+            if (isInsert) {
                 return getConcreteRelationName(atom->getQualifiedName());
-            // }
-            // return getOldRelationName(atom->getQualifiedName());
+            }
+            return getOldRelationName(atom->getQualifiedName());
         }
     }
     // if (curIndex > deltaIndex) {
@@ -1024,6 +1024,23 @@ Own<ram::Operation> ClauseTranslator::addNegatedAtomDerived(
     return mk<ram::Filter>(
     mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause), std::move(cloneClauseVarMap(clauseVarMap)))), std::move(op));
 }
+Own<ram::Operation> ClauseTranslator::addAtomDerived(
+        Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const {
+    const auto head = clause.getHead();
+    auto headRelationName = getConcreteRelationName(head->getQualifiedName());
+
+    auto clauseVarMap = getClauseVars(clause);
+
+    VecOwn<ram::Expression> values;
+    for (const auto* arg : head->getArguments()) {
+        values.push_back(context.translateValue(*valueIndex, arg));
+    }
+
+    auto clauseStr = clause.toString();
+    return mk<ram::Filter>(
+    (mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause), std::move(cloneClauseVarMap(clauseVarMap)))), std::move(op));
+}
+
 
 
 Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
@@ -1039,7 +1056,11 @@ Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
     if (isRecursive()) {
         if (clause.getHead()->getArity() > 0) {
             // also negate the head, but for prob, we should only negate the "derivation".
-            op = addNegatedAtomDerived(std::move(op), clause, clause.getHead());
+            if (!isDelete) {
+                op = addNegatedAtomDerived(std::move(op), clause, clause.getHead());
+            } else {
+                op = addAtomDerived(std::move(op), clause, clause.getHead());
+            }
         }
         // also add in prev stuff
         // every former delta rule do not need to scan the delta of later atoms
