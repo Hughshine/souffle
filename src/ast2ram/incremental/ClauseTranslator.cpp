@@ -239,7 +239,7 @@ Own<ram::Statement> ClauseTranslator::createRamRecDeltaRulesQuery(const ast::Cla
                             break;
                         }
                     }
-                    if (!inScc) {break;}
+                    if (!inScc) {continue;}
                 }
                 // Propositions
                 if (head->getArity() == 0) {
@@ -283,7 +283,7 @@ Own<ram::Statement> ClauseTranslator::createRamRecDeltaRulesQuery(const ast::Cla
                             break;
                         }
                     }
-                    if (!inScc) {break;}
+                    if (!inScc) {continue;}
                 }
                 // Propositions
                 if (head->getArity() == 0) {

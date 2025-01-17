@@ -1053,7 +1053,9 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratum(
                 mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(inc)), false);  // counter每一次迭代后的累加
         // Add in the main fixpoint loop
         auto loopBody = generateStratumLoopBody(scc, true);
+        // loopBody->print(std::cout);
         auto exitSequence = generateStratumExitSequence(scc, true);  // 每次迭代后，如果new都为空，说明迭代结束，离开循环体；否则更新tables，开始下一次迭代
+        // exitSequence->print(std::cout);
         auto updateSequence = generateStratumTableUpdates(scc, true); // 每次迭代后，将new->真正的table，new->delta, new清空
         auto fixpointLoop = mk<ram::Loop>(mk<ram::Sequence>(std::move(loopBody),
                 std::move(exitSequence), std::move(updateSequence), std::move(increment_counter)));
