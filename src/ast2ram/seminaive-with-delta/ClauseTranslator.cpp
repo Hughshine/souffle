@@ -42,6 +42,7 @@
 #include "ram/Break.h"
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
+#include "ram/DerivationCheck.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/EstimateJoinSize.h"
 #include "ram/ExistenceCheck.h"
@@ -557,6 +558,24 @@ Own<ram::Operation> ClauseTranslator::addNegatedAtom(
             mk<ram::Negation>(mk<ram::ExistenceCheck>(name, std::move(values))), std::move(op));
 }
 
+
+Own<ram::Operation> ClauseTranslator::addNegatedAtomDerived(
+        Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const {
+    const auto head = clause.getHead();
+    auto headRelationName = getConcreteRelationName(head->getQualifiedName());
+
+    auto clauseVarMap = getClauseVars(clause);
+
+    VecOwn<ram::Expression> values;
+    for (const auto* arg : head->getArguments()) {
+        values.push_back(context.translateValue(*valueIndex, arg));
+    }
+
+    auto clauseStr = clause.toString();
+    return mk<ram::Filter>(
+    mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause), std::move(cloneClauseVarMap(clauseVarMap)))), std::move(op));
+}
+
 Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
         const ast::Clause& clause, Own<ram::Operation> op) const {
     for (const auto* lit : clause.getBodyLiterals()) {
@@ -572,9 +591,7 @@ Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
 
     if (isRecursive()) {
         if (clause.getHead()->getArity() > 0) {
-            // also negate the head
-            // op = addNegatedAtom(std::move(op), clause, clause.getHead());
-            // do not negate head (not in head), because we are tracking multiple derivations
+            op = addNegatedAtomDerived(std::move(op), clause, clause.getHead());
         }
         // also add in prev stuff
         // TODO: don't know if should avoid below constraint generation too

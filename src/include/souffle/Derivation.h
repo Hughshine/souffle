@@ -16,6 +16,7 @@
 #include <iostream>
 #include <string>
 #include <functional>
+#include <filesystem>
 
 // TODO: move to another file
 class FunctionTimer {
@@ -331,21 +332,24 @@ public:
     }
 
 
-    static void derivationInfo2JsonFile(const std::string& originalFileName, const std::string& suffix, const std::map<UntypedTuple, std::set<RuleApplication>*>& derivationInfo) {
+    static void derivationInfo2JsonFile(const std::string& originalFileName, const std::string& suffix, const std::map<UntypedTuple, std::set<RuleApplication>*>& derivationInfo, const std::string& outputDir = "") {
         json11::Json result = derivationInfo2Json(derivationInfo);
+        std::string realFilename = std::filesystem::path(originalFileName).filename().string();
 
         std::ofstream outputFile(
-            suffix.empty()
-                ? originalFileName + ".json"
-                : originalFileName + "." + suffix + ".json"
-            );
+            outputDir + "/" +
+            (suffix.empty()
+                ? realFilename + ".json"
+                : realFilename + "." + suffix + ".json"
+            ));
 
         outputFile << result.dump();
     }
 
 
-    static std::map<UntypedTuple, std::set<RuleApplication>*> derivationInfoFromJsonFile(const std::string& originalFileName, const std::string& suffix) {
-        std::ifstream inputFile((suffix.empty() ? originalFileName : originalFileName + "." + suffix ) + ".json");
+    static std::map<UntypedTuple, std::set<RuleApplication>*> derivationInfoFromJsonFile(const std::string& originalFileName, const std::string& suffix, const std::string& inputDir = "") {
+        std::string realFilename = std::filesystem::path(originalFileName).filename().string();
+        std::ifstream inputFile(inputDir + "/" + (suffix.empty() ? realFilename : realFilename + "." + suffix ) + ".json");
         if (inputFile.good()) {
             std::string infoString = std::string((std::istreambuf_iterator<char>(inputFile)),
                            std::istreambuf_iterator<char>());;
@@ -354,6 +358,8 @@ public:
             assert (err.empty() && "Json parse error");
             return std::move(derivationInfoFromJson(infoJson));
         }
+        std::cout << "derivation info inputDir: " << inputDir + "/" + (suffix.empty() ? realFilename : realFilename + "." + suffix ) + ".json" << std::endl;
+        assert (false && "not impl");
         return {};  // if no cached result, start from the beginning; delta inputs should be empty too because this is the bootstrapping case TODO
     }
 
@@ -363,13 +369,15 @@ public:
 
     static void dumpDerivationInfo(const std::string& filename, const std::string& outputDir) {
         // TODO: should change to souffle's IO system later
-        std::string baseFilename = filename;
+        std::string baseFilename = std::filesystem::path(filename).filename().string();
+
+        // std::cout << "derivation info outputDir: " << outputDir << std::endl;
         if (baseFilename.size() >= 3 && baseFilename.substr(baseFilename.size() - 3) == ".dl") {
             baseFilename = baseFilename.substr(0, baseFilename.size() - 3);
         }
         {
             std::string derivationInfoFilename = baseFilename + "-derivation-info.txt";
-            std::ofstream os{derivationInfoFilename};
+            std::ofstream os{outputDir + "/" + derivationInfoFilename};
             for (const auto& [tuple, ruleApplicationSet] : untypedTuple2RuleApplications) {
                 os << UntypedTuple::toString(tuple) << '\t';
                 os << ruleApplications2Str(ruleApplicationSet) << std::endl;
@@ -378,7 +386,7 @@ public:
         }
         {
             std::string deltaInsDerivationInfoFilename = baseFilename + "-delta-insert-derivation-info.txt";
-            std::ofstream os{deltaInsDerivationInfoFilename};
+            std::ofstream os{outputDir + "/" + deltaInsDerivationInfoFilename};
             for (const auto& [tuple, ruleApplicationSet] : untypedTuple2DeltaInsertRuleApplications) {
                 os << UntypedTuple::toString(tuple) << '\t';
                 os << ruleApplications2Str(ruleApplicationSet) << std::endl;
@@ -387,7 +395,7 @@ public:
         }
         {
             std::string deltaDelDerivationInfoFilename = baseFilename + "-delta-delete-derivation-info.txt";
-            std::ofstream os{deltaDelDerivationInfoFilename};
+            std::ofstream os{outputDir + "/" + deltaDelDerivationInfoFilename};
             for (const auto& [tuple, ruleApplicationSet] : untypedTuple2DeltaDeleteRuleApplications) {
                 os << UntypedTuple::toString(tuple) << '\t';
                 os << ruleApplications2Str(ruleApplicationSet) << std::endl;

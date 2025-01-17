@@ -43,6 +43,7 @@
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
 #include "ram/DeltaUnion.h"
+#include "ram/DerivationCheck.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/EstimateJoinSize.h"
 #include "ram/ExistenceCheck.h"
@@ -620,9 +621,10 @@ std::string ClauseTranslator::getAtomNameForIncDeltaRule(const ast::Clause& clau
     }
 }
 
-std::string ClauseTranslator::getAtomNameForRecIncDeltaRule(const ast::Clause& clause, const ast::Atom* atom, const std::size_t curIndex, const std::size_t deltaIndex, const bool isInsert) const {
-    if (curIndex < deltaIndex) {
+std::string ClauseTranslator::getAtomNameForRecIncDeltaRule(const ast::Clause& clause, const ast::Atom* atom, const std::size_t curIndex, const std::size_t deltaIndex, const bool isInsert/*, const bool isPrefill*/) const {
+    if (curIndex < deltaIndex || curIndex > deltaIndex) {
         // for rec and inc, "old" means different things (for sccAtoms...)...
+        // for rec, delta rules make no difference to < and >
         bool inScc = false;
         for (int i = 0; i < sccAtoms.size(); ++i) {
             if (sccAtoms[i] == atom) {
@@ -630,24 +632,11 @@ std::string ClauseTranslator::getAtomNameForRecIncDeltaRule(const ast::Clause& c
             }
         }
         if (inScc) {
-            return getConcreteRelationName(atom->getQualifiedName());
-        } else {
-            // if (isInsert) {
+            if (isInsert) {
                 return getConcreteRelationName(atom->getQualifiedName());
-            // }
-            // TODO: maybe for deletion, we can also use concrete relation for delta recursive case because deletion is sound & complete?
-            // return getOldRelationName(atom->getQualifiedName());
-        }
-    }
-    if (curIndex > deltaIndex) {
-        bool inScc = false;
-        for (int i = 0; i < sccAtoms.size(); ++i) {
-            if (sccAtoms[i] == atom) {
-                inScc = true; break;
+            } else {
+                return getOldRelationName(atom->getQualifiedName());
             }
-        }
-        if (inScc) {
-            return getConcreteRelationName(atom->getQualifiedName());
         } else {
             // if (isInsert) {
                 return getConcreteRelationName(atom->getQualifiedName());
@@ -655,6 +644,22 @@ std::string ClauseTranslator::getAtomNameForRecIncDeltaRule(const ast::Clause& c
             // return getOldRelationName(atom->getQualifiedName());
         }
     }
+    // if (curIndex > deltaIndex) {
+    //     bool inScc = false;
+    //     for (int i = 0; i < sccAtoms.size(); ++i) {
+    //         if (sccAtoms[i] == atom) {
+    //             inScc = true; break;
+    //         }
+    //     }
+    //     if (inScc) {
+    //         return getConcreteRelationName(atom->getQualifiedName());
+    //     } else {
+    //         if (isInsert) {
+    //             return getConcreteRelationName(atom->getQualifiedName());
+    //         }
+    //         return getOldRelationName(atom->getQualifiedName());
+    //     }
+    // }
     // delta case
     // TODO: non sccAtoms should be different
     if (isInsert) {
@@ -1002,6 +1007,25 @@ Own<ram::Operation> ClauseTranslator::addNegatedAtom(
             mk<ram::Negation>(mk<ram::ExistenceCheck>(name, std::move(values))), std::move(op));
 }
 
+
+Own<ram::Operation> ClauseTranslator::addNegatedAtomDerived(
+        Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const {
+    const auto head = clause.getHead();
+    auto headRelationName = getConcreteRelationName(head->getQualifiedName());
+
+    auto clauseVarMap = getClauseVars(clause);
+
+    VecOwn<ram::Expression> values;
+    for (const auto* arg : head->getArguments()) {
+        values.push_back(context.translateValue(*valueIndex, arg));
+    }
+
+    auto clauseStr = clause.toString();
+    return mk<ram::Filter>(
+    mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause), std::move(cloneClauseVarMap(clauseVarMap)))), std::move(op));
+}
+
+
 Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
         const ast::Clause& clause, Own<ram::Operation> op, const bool isDelete) const {
     // note that for non-recursive cases, isDelete flag is useless
@@ -1015,7 +1039,7 @@ Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
     if (isRecursive()) {
         if (clause.getHead()->getArity() > 0) {
             // also negate the head, but for prob, we should only negate the "derivation".
-            // op = addNegatedAtomDerived(std::move(op), clause, clause.getHead());
+            op = addNegatedAtomDerived(std::move(op), clause, clause.getHead());
         }
         // also add in prev stuff
         // every former delta rule do not need to scan the delta of later atoms

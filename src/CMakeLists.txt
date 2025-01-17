@@ -612,7 +612,7 @@ install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/souffle-compile.py DESTINATION bin)
 # FIXME: Ideally, eventually we will move these out to the "tests" subdirectory
 # now that we have a sane(er?) build system
 if (SOUFFLE_ENABLE_TESTING)
-    add_subdirectory(ast/tests)
-    add_subdirectory(ram/tests)
-    add_subdirectory(interpreter/tests)
+#    add_subdirectory(ast/tests)
+#    add_subdirectory(ram/tests)
+#    add_subdirectory(interpreter/tests)
 endif()

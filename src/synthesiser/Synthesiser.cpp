@@ -3436,6 +3436,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         loadAll.body() << "std::map<std::string, std::string> directiveMap(";
         printDirectives(loadAll.body(), load->getDirectives());
         loadAll.body() << ");\n";
+        // for IDB in inc, we should always use outputDirArg... that makes more sense TODO
         loadAll.body() << R"_(if (!inputDirectoryArg.empty()) {)_";
         loadAll.body() << R"_(directiveMap["fact-dir"] = inputDirectoryArg;)_";
         loadAll.body() << "}\n";
@@ -3583,8 +3584,16 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // parse arguments
     hook << "souffle::CmdOptions opt(";
     hook << "R\"(" << glb.config().get("") << ")\",\n";
-    hook << "R\"()\",\n";
-    hook << "R\"()\",\n";
+    // if (glb.config().has("fact-dir")) {
+    //     hook << "R\"(" << glb.config().get("fact-dir") << ")\",\n";
+    // } else {
+        hook << "R\"()\",\n";
+    // }
+    // if (glb.config().has("output-dir")) {
+    //     hook << "R\"(" << glb.config().get("output-dir") << ")\",\n";
+    // } else {
+        hook << "R\"()\",\n";
+    // }
     if (glb.config().has("profile")) {
         hook << "true,\n";
         hook << "R\"(" << glb.config().get("profile") << ")\",\n";
@@ -3625,17 +3634,17 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     if (glb.config().has("inc")) {
     hook << "{\n";
     hook << "FunctionTimer timer(\"reading derivations\");\n";
-        hook << "DerivationManager::untypedTuple2RuleApplications = DerivationManager::derivationInfoFromJsonFile(opt.getSourceFileName(),\"\");\n"; // Read old computation
+        hook << R"(DerivationManager::untypedTuple2RuleApplications = DerivationManager::derivationInfoFromJsonFile(opt.getSourceFileName(),"", opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n"; // Read old computation
     hook << "}\n";
     }
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
     hook << "{\n";
     hook << "FunctionTimer timer(\"dumping derivations\");\n";
-    hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"\", DerivationManager::untypedTuple2RuleApplications);\n";  // Should be complete, take into new deltas into account
-    hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"insert\", DerivationManager::untypedTuple2DeltaInsertRuleApplications);\n";  // TODO: Delta insert
-    hook << "DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), \"delete\", DerivationManager::untypedTuple2DeltaDeleteRuleApplications);\n";  // TODO: Delta delete
+    hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "", DerivationManager::untypedTuple2RuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // Should be complete, take into new deltas into account
+    hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "insert", DerivationManager::untypedTuple2DeltaInsertRuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // TODO: Delta insert
+    hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "delete", DerivationManager::untypedTuple2DeltaDeleteRuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // TODO: Delta delete
     // TODO: for debug; remove this later
-    hook << "DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFileDir());\n";
+    hook << R"(DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") << "\":opt.getOutputFileDir());\n";
     hook << "}\n";
     if (glb.config().get("provenance") == "explain") {
         hook << "explain(obj, false);\n";

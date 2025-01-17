@@ -40,7 +40,7 @@ if (SOUFFLE_GIT)
 
         # If building from a shallow clone where tag is not available.
         if (NOT ${SOUFFLE_VERSION} MATCHES "^[0-9.]+$")
-            message(WARNING "Cannot find a valid tag: cmake project version will be incomplete")
+            # message(WARNING "Cannot find a valid tag: cmake project version will be incomplete")
             set (SOUFFLE_VERSION "")
         endif()
     endif()
@@ -72,11 +72,13 @@ else()
     set(SOUFFLE_MASTER_PROJECT Off)
 endif()
 
-if (SOUFFLE_MASTER_PROJECT AND BUILD_TESTING)
-    set(SOUFFLE_ENABLE_TESTING_DEFAULT ON)
-else()
-    set(SOUFFLE_ENABLE_TESTING_DEFAULT OFF)
-endif()
+
+set(SOUFFLE_ENABLE_TESTING_DEFAULT ON)
+#if (SOUFFLE_MASTER_PROJECT AND BUILD_TESTING)
+#    set(SOUFFLE_ENABLE_TESTING_DEFAULT ON)
+#else()
+#    set(SOUFFLE_ENABLE_TESTING_DEFAULT OFF)
+#endif()
 
 # --------------------------------------------------
 # User options available from the command line/cache
@@ -368,11 +370,11 @@ endif(SOUFFLE_CODE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 # including CTest
 add_subdirectory(src)
 
-if (SOUFFLE_ENABLE_TESTING)
-    find_package(Python3 3.7 REQUIRED)
-    # add_subdirectory(src/tests)
-    add_subdirectory(tests)
-endif()
+#if (SOUFFLE_ENABLE_TESTING)
+find_package(Python3 3.10 REQUIRED)
+# add_subdirectory(src/tests)
+add_subdirectory(tests)
+#endif()
 
 
 # --------------------------------------------------

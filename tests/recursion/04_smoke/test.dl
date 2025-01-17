@@ -1,0 +1,25 @@
+.decl person(x:number)
+.input person
+
+.decl friend(x:number, y:number)
+.input friend
+
+.decl stress(x:number)
+.output stress
+
+.decl influences(x:number, y:number)
+.output influences
+
+.decl smokes(x:number)
+.output smokes
+
+.decl asthma(x:number)
+.output asthma
+
+0.3::stress(X):- person(X).
+0.2::influences(X,Y):-person(X), person(Y).
+
+smokes(X) :- stress(X).
+smokes(X) :- friend(X,Y), influences(Y,X), smokes(Y).
+
+0.4::asthma(X) :- smokes(X).

@@ -21,9 +21,9 @@ function(add_test_helper)
     if(_PERF)
         list(APPEND args_list "--perf")
     endif()
-#    message("ARGS: ${args_list}")
-#    message("NAME: ${_NAME}")
-#    message("CMAKE_CURRENT_SOURCE_DIR: ${CMAKE_CURRENT_SOURCE_DIR}")
+    #    message("ARGS: ${args_list}")
+    #    message("NAME: ${_NAME}")
+    #    message("CMAKE_CURRENT_SOURCE_DIR: ${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME ${_NAME}
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_script.py --dir ${_DIR} ${args_list}
     )
@@ -34,28 +34,20 @@ function(add_test_helper)
 endfunction()
 
 add_test_helper(
-        NAME 1stratum1clause
+        NAME 01path
         FULL DELTA DIFF
-        DIR 1stratum1clause
+        DIR 01_path
 )
 
 
 add_test_helper(
-        NAME 1stratumNclause
+        NAME 03hub
         FULL DELTA DIFF
-        DIR 1stratumNclause
+        DIR 03_hub
 )
 
-
 add_test_helper(
-        NAME Nstratum1clause
+        NAME 04smoke
         FULL DELTA DIFF
-        DIR Nstratum1clause
-)
-
-
-add_test_helper(
-        NAME NstratumNclause
-        FULL DELTA DIFF
-        DIR NstratumNclause
+        DIR 04_smoke
 )

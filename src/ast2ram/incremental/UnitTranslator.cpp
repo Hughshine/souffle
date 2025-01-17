@@ -215,6 +215,7 @@ Own<ram::Statement> UnitTranslator::generateNonRecursiveRelationIns(const ast::R
         appendStmt(result, std::move(rule));
     }
 
+    // TODO: perhaps we could keep delta union for insertion, because it's monotonic
     if (context->getProgram()->getClauses(rel).size() > 0) {
         auto headRelationName = getConcreteRelationName(rel.getQualifiedName());
         auto headOldRelationName = getOldRelationName(rel.getQualifiedName());
@@ -525,7 +526,6 @@ Own<ram::Statement> UnitTranslator::translateRecursiveClauses(
             appendStmt(code, std::move(clauseVersion));
         }
     }
-    // TODO: add deltaUnion
     return mk<ram::Sequence>(std::move(code));
 }
 

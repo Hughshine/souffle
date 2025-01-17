@@ -614,11 +614,7 @@ Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
     if (isRecursive()) {
         if (clause.getHead()->getArity() > 0) {
             // also negate the head
-            // TODO: we still need to negate the head's derivation
-            // TODO: to avoid forever loop for same derivation
-            // TODO: addNegatedAtomDerived()
             op = addNegatedAtomDerived(std::move(op), clause, clause.getHead());
-            // do not negate head (not in head), because we are tracking multiple derivations
         }
         // also add in prev stuff
         for (std::size_t i = version + 1; i < sccAtoms.size(); i++) {
