@@ -1,3 +1,5 @@
+after your cmake build (follow souffle's original build guideline), you can use ctest [-j8] for testing. 
+
 # Welcome!
 
 This is the official repository for the [Soufflé](https://souffle-lang.github.io) language project.
