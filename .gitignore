@@ -54,6 +54,8 @@ debian/changelog
 
 __pycache__
 
-experiments/*
-!experiments/*.dl
-!experiments/facts
+experiments/**/*.o
+experiments/**/*.txt
+experiments/**/test-*
+experiments/**/*.dot
+experiments/**/main

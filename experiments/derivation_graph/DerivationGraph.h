@@ -1,0 +1,169 @@
+#pragma once
+
+#include <vector>
+#include <string>
+#include <memory>
+#include <fstream>
+#include <sstream>
+#include "souffle/Derivation.h"
+#include "Rule.h"
+
+// example rule application sets
+// rule 1: path(x,y) :- edge(x,y).
+// rule 2: path(x,y) :- path(x,z), edge(z,y).
+// facts: edge(1,2), edge(2,3)
+// (derived) paths: path(1,2), path(2,3), path(1,3)
+//inline Clauses rules
+
+
+inline UntypedTuple tuple1{"edge", {1, 2}};
+inline UntypedTuple tuple2{"edge", {2, 3}};
+inline UntypedTuple tuple3{"path", {1, 2}};
+inline UntypedTuple tuple4{"path", {2, 3}};
+inline UntypedTuple tuple5{"path", {1, 3}};
+
+inline std::map<UntypedTuple, std::set<RuleApplication>*> exampleRuleApps{
+        {tuple3, new std::set<RuleApplication>{
+                RuleApplication{1, {{"x", 1}, {"y", 2}}}
+        }},
+        {tuple4, new std::set<RuleApplication>{
+                RuleApplication{1, {{"x", 2}, {"y", 3}}}
+        }},
+        {tuple5, new std::set<RuleApplication>{
+                RuleApplication{2, {{"x", 1}, {"y", 3}, {"z", 2}}}
+        }}
+};
+
+
+// Forward declarations
+class Node;
+class Hyperedge;
+class DerivationGraph;
+
+using NodePtr = std::shared_ptr<Node>;
+using EdgePtr = std::shared_ptr<Hyperedge>;
+
+class Node {
+public:
+    friend class DerivationGraph;
+
+    const UntypedTuple& getTuple() const { return tuple; }
+    const std::vector<EdgePtr>& getIncomingEdges() const { return incomingEdges; }
+    const std::vector<EdgePtr>& getOutgoingEdges() const { return outgoingEdges; }
+    size_t getId() const { return id; }
+
+private:
+    explicit Node(const UntypedTuple& t, size_t nodeId)
+        : tuple(t), id(nodeId) {}
+
+    UntypedTuple tuple;
+    std::vector<EdgePtr> incomingEdges;
+    std::vector<EdgePtr> outgoingEdges;
+    size_t id;
+
+    void addIncomingEdge(EdgePtr edge);
+    void addOutgoingEdge(EdgePtr edge);
+};
+
+class Hyperedge {
+public:
+    friend class DerivationGraph;
+
+    const std::vector<NodePtr>& getInputs() const { return inputs; }
+    NodePtr getOutput() const { return output; }
+    size_t getId() const { return id; }
+
+private:
+    Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId)
+        : inputs(inputs), output(output), id(edgeId) {}
+
+    std::vector<NodePtr> inputs;
+    NodePtr output;
+    size_t id;
+};
+
+class DerivationGraph {
+public:
+    DerivationGraph() : nextNodeId(0), nextEdgeId(0) {}
+
+    NodePtr createNode(const UntypedTuple& tuple) {
+        auto node = std::shared_ptr<Node>(new Node(tuple, nextNodeId++));
+        nodes.push_back(node);
+        return node;
+    }
+
+    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output) {
+        auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++));
+
+        for (const auto& input : inputs) {
+            input->addOutgoingEdge(edge);
+        }
+        output->addIncomingEdge(edge);
+
+        edges.push_back(edge);
+        return edge;
+    }
+
+    const std::vector<NodePtr>& getNodes() const { return nodes; }
+    const std::vector<EdgePtr>& getEdges() const { return edges; }
+
+    void dumpDot(const std::string& filename) const {
+        std::ofstream out(filename);
+        if (!out.is_open()) {
+            throw std::runtime_error("Cannot open file: " + filename);
+        }
+
+        out << "digraph DerivationGraph {\n";
+        out << "  rankdir=LR;\n";
+
+        out << "  node [shape=box, style=filled, fillcolor=lightblue];\n";
+
+        for (const auto& node : nodes) {
+            out << "  node" << node->getId() << " [label=\""
+                << node->getTuple().toString()
+                << "\"];\n";
+        }
+
+        out << "  node [shape=point, fillcolor=red, width=0.2];\n";
+
+        for (const auto& edge : edges) {
+            out << "  edge" << edge->getId() << " [label=\"\"];\n";
+
+            for (const auto& input : edge->getInputs()) {
+                out << "  node" << input->getId()
+                    << " -> edge" << edge->getId() << ";\n";
+            }
+
+            out << "  edge" << edge->getId()
+                << " -> node" << edge->getOutput()->getId() << ";\n";
+        }
+
+        out << "}\n";
+        out.close();
+    }
+
+    static DerivationGraph createExample() {
+        DerivationGraph graph;
+
+        auto edge1 = graph.createNode(UntypedTuple{"edge", {1, 2}});
+        auto edge2 = graph.createNode(UntypedTuple{"edge", {2, 3}});
+
+        auto path1 = graph.createNode(UntypedTuple{"path", {1, 2}});
+        auto path2 = graph.createNode(UntypedTuple{"path", {2, 3}});
+
+        auto path3 = graph.createNode(UntypedTuple{"path", {1, 3}});
+
+        graph.createHyperedge({edge1}, path1);
+        graph.createHyperedge({edge2}, path2);
+
+        graph.createHyperedge({edge1, path2}, path3);
+
+        return graph;
+    }
+
+private:
+    std::vector<NodePtr> nodes;
+    std::vector<EdgePtr> edges;
+    size_t nextNodeId;
+    size_t nextEdgeId;
+};
