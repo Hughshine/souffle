@@ -155,7 +155,7 @@ inline UntypedTuple testUntypedTuple1{"T", {0, -1, -2, -42}};
 inline UntypedTuple testUntypedTuple2{"S", {0, 1, 2, 42}};
 
 struct RuleApplication {
-    souffle::RamDomain ruleId;
+    souffle::RamDomain ruleId{};
     std::map<std::string, souffle::RamDomain> varValues;
     static std::string toString(const RuleApplication& ruleApplication) {
         std::string result = std::to_string(ruleApplication.ruleId) + "[" +
