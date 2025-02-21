@@ -7,6 +7,7 @@
 #include <sstream>
 #include "souffle/Derivation.h"
 #include "Rule.h"
+#include "souffle/RamTypes.h"
 
 // example rule application sets
 // rule 1: path(x,y) :- edge(x,y).
@@ -87,6 +88,10 @@ public:
     DerivationGraph() : nextNodeId(0), nextEdgeId(0) {}
 
     NodePtr createNode(const UntypedTuple& tuple) {
+        if (auto it = std::find_if(nodes.begin(), nodes.end(),
+                 [&tuple](const NodePtr& node) { return node->getTuple() == tuple;}); it != nodes.end()) {
+            return *it;
+        }
         auto node = std::shared_ptr<Node>(new Node(tuple, nextNodeId++));
         nodes.push_back(node);
         return node;
@@ -104,8 +109,34 @@ public:
         return edge;
     }
 
+
+    EdgePtr createHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& ruleManager) {
+		const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
+        assert(rule != nullptr && "Rule not found");
+    	UntypedTuple headTuple{rule->getHead().getRelation(), rule->getHead().instantiatedFields(ruleApp.varValues)};
+        auto headNode = createNode(headTuple);
+        std::vector<NodePtr> bodyNodes;
+        for (const auto& bodyAtom : rule->getBodyAtoms()) {
+            UntypedTuple bodyTuple{bodyAtom.getRelation(), bodyAtom.instantiatedFields(ruleApp.varValues)};
+            auto bodyNode = createNode(bodyTuple);
+            bodyNodes.push_back(bodyNode);
+        }
+        return createHyperedge(bodyNodes, headNode);
+    }
+
     const std::vector<NodePtr>& getNodes() const { return nodes; }
     const std::vector<EdgePtr>& getEdges() const { return edges; }
+
+    static DerivationGraph* createFrom(std::map<UntypedTuple, std::set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager) {
+        auto graph = new DerivationGraph();
+        for (const auto& [tuple, ruleAppSet] : ruleApps) {
+            auto node = graph->createNode(tuple);
+            for (const auto& ruleApp : *ruleAppSet) {
+				auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
+            }
+        }
+        return graph;
+    }
 
     void dumpDot(const std::string& filename) const {
         std::ofstream out(filename);

@@ -10,10 +10,10 @@ int main() {
     RuleManager ruleManager = ExampleRuleComponents::ruleManager;
     std::cout << ruleManager.toString() << std::endl;
 
-    auto graph = DerivationGraph::createExample();
+    auto graph = DerivationGraph::createFrom(exampleRuleApps, ExampleRuleComponents::ruleManager);
 
     // Dump to DOT file
-    graph.dumpDot("derivation.dot");
+    graph->dumpDot("derivation.dot");
 
     return 0;
 }

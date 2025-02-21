@@ -12,6 +12,7 @@
 #include <memory>
 #include <sstream>
 #include <map>
+#include "souffle/RamTypes.h"
 
 class Tuple;
 class Atom;
@@ -111,6 +112,23 @@ public:
             }
         }
         return vars;
+    }
+
+    std::vector<souffle::RamDomain> instantiatedFields(const std::map<std::string, int>& varValues) const {
+        std::vector<souffle::RamDomain> result;  // TODO
+        for (const auto& field : fields) {
+            if (std::holds_alternative<VariableField>(field.field)) {
+                const std::string& varName = std::get<VariableField>(field.field).name;
+                if (varValues.find(varName) != varValues.end()) {
+                    result.push_back(varValues.at(varName));
+                } else {
+					assert(false && "Variable not found in map");
+                }
+        } else if (std::holds_alternative<IntegerField>(field.field)) {
+	            result.push_back(std::get<IntegerField>(field.field).value);
+            }
+        }
+        return result;
     }
 private:
     std::string relation;

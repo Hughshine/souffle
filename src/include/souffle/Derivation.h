@@ -124,6 +124,21 @@ struct UntypedTuple {
         return false;
     }
 
+    bool operator==(const UntypedTuple& other) const {
+        if (relation_name != other.relation_name) {
+            return false;
+        }
+        if (fields.size() != other.fields.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < fields.size(); i++) {
+            if (fields[i] != other.fields[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // TODO: avoid non-reference passing
     template<std::size_t N>
     static UntypedTuple fromTypedTuple(const std::string& relationName, const souffle::Tuple<souffle::RamDomain, N>& typedTuple) {
