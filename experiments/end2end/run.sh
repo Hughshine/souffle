@@ -12,7 +12,7 @@ RPATH="-Wl,-rpath,/usr/lib/x86_64-linux-gnu"
 
 # Compile command
 $COMPILER $INCLUDES $STD_FLAG $CXX_FLAGS $DEBUG_FLAGS $DEFINITIONS \
-    main.cpp $LINK_OPTIONS $RPATH -o test
+    main.cpp DerivationGraph.cpp Rule.cpp $LINK_OPTIONS $RPATH -o test
 
 rm -f *.o
 

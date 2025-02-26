@@ -1,4 +1,3 @@
-
 # --- JSON_DATA_TEXT variable is inserted before this line ---
 
 ## Example of JSON_DATA_TEXT
@@ -74,6 +73,9 @@ parser.add_argument('-L', action='append', default=[], metavar='LIBDIR', dest='l
 parser.add_argument('-g', action='store_true', dest='debug', help="Debug build type")
 parser.add_argument('-s', metavar='LANG', dest='swiglang', choices=["java", "python"], help="use SWIG interface to generate into LANG language")
 parser.add_argument('-v', action='store_true', dest='verbose', help="Verbose output")
+parser.add_argument('-I', action='append', default=[], metavar='INCDIR', dest='inc_dirs', type=lambda p: pathlib.Path(p).absolute(), help="Additional include directories")
+parser.add_argument('--with-cudd', action='store_true', dest='with_cudd', help="Link with CUDD library")
+parser.add_argument('--cudd-dir', metavar='CUDDDIR', dest='cudd_dir', type=lambda p: pathlib.Path(p).absolute(), default='/usr/local', help="CUDD installation directory (default: /usr/local)")
 parser.add_argument('source', nargs='+', metavar='SOURCE', type=lambda p: pathlib.Path(p).absolute(), help="C++ source files")
 parser.add_argument('-o', metavar='BINARY', dest='output', type=lambda p: pathlib.Path(p).absolute(), help="Binary file name")
 
@@ -96,17 +98,65 @@ for f in args.source:
 # Search for Souffle includes directory
 souffle_include_dir = None
 if (scriptdir / "include" / "souffle").exists():
-    souffle_include_dir = scriptdir / "include" / "souffle"
+    souffle_include_dir = scriptdir / "include"
 elif (scriptdir / ".." / "include" / "souffle").exists():
-    souffle_include_dir = scriptdir / ".." / "include" / "souffle"
+    souffle_include_dir = scriptdir / ".." / "include"
 elif SOURCE_INCLUDE_DIR and (pathlib.Path(SOURCE_INCLUDE_DIR) / "souffle").exists():
-    souffle_include_dir = (pathlib.Path(SOURCE_INCLUDE_DIR) / "souffle")
+    souffle_include_dir = pathlib.Path(SOURCE_INCLUDE_DIR)
+
+# If we can't find the Souffle include directory in standard locations,
+# try to find it using the location of the source file
+if not souffle_include_dir:
+    # Try to find include directory by looking at parent directories of source file
+    source_parent = args.source[0].parent
+    for parent in [source_parent] + list(source_parent.parents):
+        if (parent / "include" / "souffle").exists():
+            souffle_include_dir = parent / "include"
+            break
+
+if not souffle_include_dir:
+    parent_path = pathlib.Path("/home/hugh/research/datalog/souffle/src/include")
+    if parent_path.exists():
+        souffle_include_dir = parent_path
+
+# If we still can't find the include directory, look for it in common system locations
+if not souffle_include_dir:
+    for path in ["/usr/include", "/usr/local/include"]:
+        if pathlib.Path(path).exists() and (pathlib.Path(path) / "souffle").exists():
+            souffle_include_dir = pathlib.Path(path)
+            break
+
+# Add CUDD configuration if requested
+additional_includes = []
+additional_lib_dirs = []
+additional_libs = []
+additional_link_options = ""
+
+# Now add each include directory to the additional includes
+for inc_dir in args.inc_dirs:
+    additional_includes.append(f"-I{inc_dir}")
+
+# If souffle_include_dir exists, add it to the additional includes
+if souffle_include_dir:
+    additional_includes.append(f"-I{souffle_include_dir}")
+
+# If with_cudd flag is set, add CUDD library and includes
+if args.with_cudd:
+    cudd_dir = args.cudd_dir
+    additional_includes.append(f"-I{cudd_dir}/include")
+    additional_lib_dirs.append(cudd_dir / "lib")
+    # Add CUDD static library to link options
+    additional_link_options += f" {cudd_dir}/lib/libcudd.a -lm"
+    # Add CUDD to rpath if not already there
+    cudd_lib_path = str(cudd_dir / "lib")
+    if cudd_lib_path not in RPATHS:
+        RPATHS.append(cudd_lib_path)
 
 if args.swiglang:
-    if not (souffle_include_dir and (souffle_include_dir / "swig").exists()):
+    if not (souffle_include_dir and (souffle_include_dir / "souffle" / "swig").exists()):
         raise RuntimeError("Cannot find 'souffle/swig' include directory")
 
-    swig_include_dir = (souffle_include_dir / "swig")
+    swig_include_dir = (souffle_include_dir / "souffle" / "swig")
     with tempfile.TemporaryDirectory() as tmpdir:
         shutil.copy(swig_include_dir / "SwigInterface.h", tmpdir)
         shutil.copy(swig_include_dir / "SwigInterface.i", tmpdir)
@@ -135,6 +185,7 @@ if args.swiglang:
         cmd.append(conf['definitions'])
         cmd.append(conf['compile_options'])
         cmd.append(conf['includes'])
+        cmd.append(" ".join(additional_includes))  # Add our additional includes
         cmd.append(conf['std_flag'])
         cmd.append(conf['cxx_flags'])
         if args.debug:
@@ -156,6 +207,7 @@ if args.swiglang:
         cmd.append(conf['definitions'])
         cmd.append(conf['compile_options'])
         cmd.append(conf['includes'])
+        cmd.append(" ".join(additional_includes))  # Add our additional includes
         cmd.append(conf['std_flag'])
         cmd.append(conf['cxx_flags'])
         if args.debug:
@@ -163,9 +215,10 @@ if args.swiglang:
         else:
             cmd.append(conf['release_cxx_flags'])
         cmd.append(conf['link_options'])
+        cmd.append(additional_link_options)  # Add our additional link options
         cmd.extend(list(map(lambda rpath: RPATH_FMT.format(rpath), RPATHS)))
-        cmd.extend(list(map(lambda libdir: LIBDIR_FMT.format(libdir), args.lib_dirs)))
-        cmd.extend(list(map(lambda libname: LIBNAME_FMT.format(libname), args.lib_names)))
+        cmd.extend(list(map(lambda libdir: LIBDIR_FMT.format(libdir), args.lib_dirs + additional_lib_dirs)))
+        cmd.extend(list(map(lambda libname: LIBNAME_FMT.format(libname), args.lib_names + additional_libs)))
         cmd.append(swig_ldflags)
         cmd = " ".join(cmd)
         launch_command(cmd, "Link of SWIG C++", verbose=args.verbose)
@@ -188,6 +241,7 @@ else:
     cmd.append(conf['definitions'])
     cmd.append(conf['compile_options'])
     cmd.append(conf['includes'])
+    cmd.append(" ".join(additional_includes))  # Add our additional includes
     cmd.append(conf['std_flag'])
     cmd.append(conf['cxx_flags'])
 
@@ -201,9 +255,10 @@ else:
         cmd.append(str(f))
 
     cmd.append(conf['link_options'])
+    cmd.append(additional_link_options)  # Add our additional link options
     cmd.extend(list(map(lambda rpath: RPATH_FMT.format(rpath), RPATHS)))
-    cmd.extend(list(map(lambda libdir: LIBDIR_FMT.format(libdir), args.lib_dirs)))
-    cmd.extend(list(map(lambda libname: LIBNAME_FMT.format(libname), args.lib_names)))
+    cmd.extend(list(map(lambda libdir: LIBDIR_FMT.format(libdir), args.lib_dirs + additional_lib_dirs)))
+    cmd.extend(list(map(lambda libname: LIBNAME_FMT.format(libname), args.lib_names + additional_libs)))
 
     cmd = " ".join(cmd)
 

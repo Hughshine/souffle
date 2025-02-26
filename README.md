@@ -1,5 +1,9 @@
 after your cmake build (follow souffle's original build guideline), you can use ctest [-j8] for testing. 
 
+```
+python ../../cmake-build-debug/src/souffle-compile.py main.cpp -o test --with-cudd -v
+```
+
 # Welcome!
 
 This is the official repository for the [Soufflé](https://souffle-lang.github.io) language project.
