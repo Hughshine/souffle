@@ -155,11 +155,12 @@ int main() {
     WeightedBDDManager bddManager;
 
 
-    bddManager.setVariableWeight(1, 0.5, 0.5);
-    bddManager.setVariableWeight(3, 0.5, 0.5);
-    bddManager.setVariableWeight(5, 0.9, 0.1);
-    bddManager.setVariableWeight(6, 0.9, 0.1);
-    bddManager.setVariableWeight(7, 0.9, 0.1);
+    // TODO: automatically set weights based on facts and rule probabilities
+    bddManager.setVariableWeight(1, 0.5, 0.5);  // edge(1, 2)
+    bddManager.setVariableWeight(3, 0.5, 0.5);  // edge(2, 3)
+    bddManager.setVariableWeight(5, 0.9, 0.1);  // rule1
+    bddManager.setVariableWeight(6, 0.9, 0.1);  // rule2
+    bddManager.setVariableWeight(7, 0.9, 0.1);  // rule1
 
     for (const auto& [node, formula] : nodeFormulas) {
         std::cout << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
