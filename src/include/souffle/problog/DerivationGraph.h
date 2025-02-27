@@ -61,6 +61,12 @@ public:
     const std::vector<EdgePtr>& getOutgoingEdges() const { return outgoingEdges; }
     size_t getId() const { return id; }
 
+    std::string toString() const {
+        return tuple.toString();
+//        std::stringstream ss;
+//        ss << "Node(" << tuple.toString() << ")";
+//        return ss.str();
+    }
 private:
     explicit Node(const UntypedTuple& t, size_t nodeId)
         : tuple(t), id(nodeId) {}
@@ -72,7 +78,6 @@ private:
 
     void addIncomingEdge(EdgePtr edge);
     void addOutgoingEdge(EdgePtr edge);
-
 };
 
 class Hyperedge {
@@ -82,19 +87,31 @@ public:
     const std::vector<NodePtr>& getInputs() const { return inputs; }
     NodePtr getOutput() const { return output; }
     size_t getId() const { return id; }
+    const Rule* getRule() const { return rule; }
+    std::string toString() const {
+        if (rule == nullptr) {
+            return "Hyperedge(" + std::to_string(id) + ")";
+        } else {
+            return "Rule" + std::to_string(rule->getRuleId()) + "("+ std::to_string(id) + ")";
+        }
+    }
 
 private:
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId)
-        : inputs(inputs), output(output), id(edgeId) {}
+        : inputs(inputs), output(output), id(edgeId), rule(nullptr) {}
+    Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, const Rule* rule)
+        : inputs(inputs), output(output), id(edgeId), rule(rule) {}
 
     std::vector<NodePtr> inputs;
     NodePtr output;
     size_t id;
+    const Rule* rule;
 };
 
 class DerivationGraph {
 public:
     DerivationGraph() : nextNodeId(0), nextEdgeId(0) {}
+    DerivationGraph(const RuleManager* rm) : nextNodeId(0), nextEdgeId(0), ruleManager(rm) {}
 
     NodePtr createNode(const UntypedTuple& tuple) {
         if (auto it = std::find_if(nodes.begin(), nodes.end(),
@@ -118,9 +135,20 @@ public:
         return edge;
     }
 
+    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, const Rule* rule) {
+        auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, rule));
 
-    EdgePtr createHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& ruleManager) {
-		const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
+        for (const auto& input : inputs) {
+            input->addOutgoingEdge(edge);
+        }
+        output->addIncomingEdge(edge);
+
+        edges.push_back(edge);
+        return edge;
+    }
+
+    EdgePtr createHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& rm) {
+		const Rule* rule = rm.getRule(ruleApp.ruleId);
         assert(rule != nullptr && "Rule not found");
     	UntypedTuple headTuple{rule->getHead().getRelation(), rule->getHead().instantiatedFields(ruleApp.varValues)};
         auto headNode = createNode(headTuple);
@@ -130,14 +158,14 @@ public:
             auto bodyNode = createNode(bodyTuple);
             bodyNodes.push_back(bodyNode);
         }
-        return createHyperedge(bodyNodes, headNode);
+        return createHyperedge(bodyNodes, headNode, rule);
     }
 
     const std::vector<NodePtr>& getNodes() const { return nodes; }
     const std::vector<EdgePtr>& getEdges() const { return edges; }
 
     static DerivationGraph* createFrom(std::map<UntypedTuple, std::set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager) {
-        auto graph = new DerivationGraph();
+        auto graph = new DerivationGraph(&ruleManager);
         for (const auto& [tuple, ruleAppSet] : ruleApps) {
             auto node = graph->createNode(tuple);
             for (const auto& ruleApp : *ruleAppSet) {
@@ -201,11 +229,16 @@ public:
         return graph;
     }
 
+    void setRuleManager(RuleManager* rm) {
+        ruleManager = rm;
+    }
+
 private:
     std::vector<NodePtr> nodes;
     std::vector<EdgePtr> edges;
     size_t nextNodeId;
     size_t nextEdgeId;
+    const RuleManager* ruleManager;
 };
 
 void Node::addIncomingEdge(EdgePtr edge) {

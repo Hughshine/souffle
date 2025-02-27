@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <cmath>
+#include <optional>
 #include "souffle/problog/formula/FormulaManager.h"
 
 extern "C" {
@@ -18,37 +19,47 @@ extern "C" {
 
 class BddNodeRef {
 public:
-    BddNodeRef(DdManager* m, DdNode* n) : manager(m), node(n) {
-        if (node) Cudd_Ref(node);
+    BddNodeRef(DdManager* m, DdNode* n) : manager(m), ddNode(n) {
+        if (ddNode) Cudd_Ref(ddNode);
     }
-    
+
+    BddNodeRef(DdManager* m, DdNode* n, const Node& node) : manager(m), ddNode(n), node(node) {
+        if (ddNode) Cudd_Ref(ddNode);
+    }
+
+    BddNodeRef(DdManager* m, DdNode* n, const Hyperedge& edge) : manager(m), ddNode(n), edge(edge) {
+        if (ddNode) Cudd_Ref(ddNode);
+    }
+
     BddNodeRef(BddNodeRef&& other) noexcept
-        : manager(other.manager), node(other.node) {
-        other.node = nullptr;
+        : manager(other.manager), ddNode(other.ddNode) {
+        other.ddNode = nullptr;
     }
     
     BddNodeRef& operator=(BddNodeRef&& other) noexcept {
         if (this != &other) {
-            if (node) Cudd_RecursiveDeref(manager, node);
+            if (ddNode) Cudd_RecursiveDeref(manager, ddNode);
             manager = other.manager;
-            node = other.node;
-            other.node = nullptr;
+            ddNode = other.ddNode;
+            other.ddNode = nullptr;
         }
         return *this;
     }
     
     ~BddNodeRef() {
-        if (node) Cudd_RecursiveDeref(manager, node);
+        if (ddNode) Cudd_RecursiveDeref(manager, ddNode);
     }
     
     BddNodeRef(const BddNodeRef&) = delete;
     BddNodeRef& operator=(const BddNodeRef&) = delete;
     
-    DdNode* get() const { return node; }
+    DdNode* get() const { return ddNode; }
     
 private:
     DdManager* manager;
-    DdNode* node;
+    DdNode* ddNode;
+    std::optional<Node> node;
+    std::optional<Hyperedge> edge;
 };
 
 struct VariableWeight {
@@ -63,6 +74,9 @@ public:
 
     // Basic BDD operations
     BddNodeRef createVar(int index) override;
+    BddNodeRef createVar(int index, const Node& node) override;
+    BddNodeRef createVar(int index, const Hyperedge& edge) override;
+
     BddNodeRef makeAnd(const BddNodeRef& a, const BddNodeRef& b) override;
     BddNodeRef makeAnd(const std::vector<BddNodeRef>& nodes) override;
     BddNodeRef makeOr(const BddNodeRef& a, const BddNodeRef& b) override;
@@ -105,6 +119,19 @@ BddNodeRef WeightedBDDManager::createVar(int index) {
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
     return BddNodeRef(manager.get(), var);
 }
+
+BddNodeRef WeightedBDDManager::createVar(int index, const Node& node) {
+    DdNode* var = Cudd_bddIthVar(manager.get(), index);
+    return BddNodeRef(manager.get(), var, node);
+}
+
+BddNodeRef WeightedBDDManager::createVar(int index, const Hyperedge& edge) {
+    DdNode* var = Cudd_bddIthVar(manager.get(), index);
+    return BddNodeRef(manager.get(), var, edge);
+}
+
+//BddNodeRef createVar(int index, const UntypedTuple& tuple) override;
+
 
 BddNodeRef WeightedBDDManager::makeAnd(const BddNodeRef& a, const BddNodeRef& b) {
     DdNode* result = Cudd_bddAnd(manager.get(), a.get(), b.get());

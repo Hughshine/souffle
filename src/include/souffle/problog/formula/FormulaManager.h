@@ -1,6 +1,8 @@
 #ifndef FORMULAMANAGER_H
 #define FORMULAMANAGER_H
 #include <cassert>
+#include "souffle/Derivation.h"
+#include "souffle/problog/DerivationGraph.h"
 
 template<typename NodeRef>
 class FormulaManager {
@@ -8,6 +10,8 @@ public:
     virtual ~FormulaManager() = default;
 
     virtual NodeRef createVar(int index) = 0;
+    virtual NodeRef createVar(int index, const Node& tuple) = 0;  // TODO: may change to pointer
+    virtual NodeRef createVar(int index, const Hyperedge& edge) = 0;
     virtual NodeRef makeAnd(const NodeRef& a, const NodeRef& b) = 0;
     virtual NodeRef makeAnd(const std::vector<NodeRef>& nodes) = 0;
     virtual NodeRef makeOr(const NodeRef& a, const NodeRef& b) = 0;

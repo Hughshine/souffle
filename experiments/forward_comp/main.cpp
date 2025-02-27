@@ -14,18 +14,25 @@ void buildFormulas(
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
 ) {
     // Initialize formulas for input facts (nodes)
+    std::map<NodePtr, FormulaNodeRef> baseNodeFormulas;
+    std::map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
     for (const auto& node : graph.getNodes()) {
         // Create a variable using the node's unique ID
-        nodeFormulas[node] = formulaManager.createVar(node->getId());
+        if (node->getIncomingEdges().empty()) {
+            nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
+            baseNodeFormulas.insert({node, nodeFormulas[node]});
+        }
+    }
 
-        // For input facts (nodes with no incoming edges), the formula is just the variable
-        // For derived facts, this initial formula will be overwritten during propagation
+    for (const auto& [node, formula] : nodeFormulas) {
+        std::cout << "Node " << node->getTuple().toString() << ": ";
     }
 
     // Initialize formulas for rule instantiations (hyperedges)
     for (const auto& edge : graph.getEdges()) {
-        // Create a variable using the edge's unique ID
-        edgeFormulas[edge] = formulaManager.createVar(edge->getId());
+        // Create a variable using the edge's unique ID; need to plus the size of graph.getNodes() to avoid conflict with node's id
+        edgeFormulas[edge] = formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
+        baseEdgeFormulas.insert({edge, edgeFormulas[edge]});
     }
 
     // Worklist algorithm
@@ -48,9 +55,8 @@ void buildFormulas(
 
         // Compute new formula for the edge (conjunction of input node formulas and rule formula)
         std::vector<FormulaNodeRef> inputFormulas;
-
         // Add the rule formula (the edge's base formula)
-        inputFormulas.push_back(edgeFormulas[edge]);
+        inputFormulas.push_back(baseEdgeFormulas[edge]);
 
         // Add the input node formulas
         bool allInputsAvailable = true;
@@ -58,6 +64,7 @@ void buildFormulas(
             auto it = nodeFormulas.find(input);
             if (it != nodeFormulas.end()) {
                 inputFormulas.push_back(it->second);
+//                formulaManager.printInfo(it->second, "input");
             } else {
                 // Input node formula not available yet, skip this edge for now
                 allInputsAvailable = false;
@@ -147,8 +154,13 @@ int main() {
     std::map<EdgePtr, LogicNodeRef> edgeFormulas;
     LogicFormulaManager formulaManager;
     buildFormulas(*graph, formulaManager, nodeFormulas, edgeFormulas);
+
     for (const auto& [node, formula] : nodeFormulas) {
         std::cout << "Node " << node->getTuple().toString() << ": ";
+        formulaManager.printInfo(formula, "formula");
+    }
+    for (const auto& [edge, formula] : edgeFormulas) {
+        std::cout << "Edge " << edge->getId() << ": ";
         formulaManager.printInfo(formula, "formula");
     }
 
