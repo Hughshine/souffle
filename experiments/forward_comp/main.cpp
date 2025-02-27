@@ -3,8 +3,139 @@
 #include "souffle/problog/DerivationGraph.h"
 #include "souffle/problog/RuleManager.h"
 #include "souffle/problog/formula/FormulaManager.h"
+#include "souffle/problog/formula/LogicFormulaManager.h"
+#include <queue>
 
+template<typename FormulaNodeRef>
+void buildFormulas(
+    const DerivationGraph& graph,
+    FormulaManager<FormulaNodeRef>& formulaManager,
+    std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
+    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
+) {
+    // Initialize formulas for input facts (nodes)
+    for (const auto& node : graph.getNodes()) {
+        // Create a variable using the node's unique ID
+        nodeFormulas[node] = formulaManager.createVar(node->getId());
 
+        // For input facts (nodes with no incoming edges), the formula is just the variable
+        // For derived facts, this initial formula will be overwritten during propagation
+    }
+
+    // Initialize formulas for rule instantiations (hyperedges)
+    for (const auto& edge : graph.getEdges()) {
+        // Create a variable using the edge's unique ID
+        edgeFormulas[edge] = formulaManager.createVar(edge->getId());
+    }
+
+    // Worklist algorithm
+    std::queue<EdgePtr> worklist;
+    std::set<EdgePtr> inWorklist; // Track edges in the worklist to avoid duplicates
+
+    // Initialize worklist with all edges
+    for (const auto& edge : graph.getEdges()) {
+        worklist.push(edge);
+        inWorklist.insert(edge);
+    }
+
+    while (!worklist.empty()) {
+        auto edge = worklist.front();
+        worklist.pop();
+        inWorklist.erase(edge);
+
+        // Store the old edge formula to check if it changes
+        FormulaNodeRef oldEdgeFormula = edgeFormulas[edge];
+
+        // Compute new formula for the edge (conjunction of input node formulas and rule formula)
+        std::vector<FormulaNodeRef> inputFormulas;
+
+        // Add the rule formula (the edge's base formula)
+        inputFormulas.push_back(edgeFormulas[edge]);
+
+        // Add the input node formulas
+        bool allInputsAvailable = true;
+        for (const auto& input : edge->getInputs()) {
+            auto it = nodeFormulas.find(input);
+            if (it != nodeFormulas.end()) {
+                inputFormulas.push_back(it->second);
+            } else {
+                // Input node formula not available yet, skip this edge for now
+                allInputsAvailable = false;
+                break;
+            }
+        }
+
+        if (!allInputsAvailable) {
+            // Put the edge back in the worklist for later processing
+            worklist.push(edge);
+            inWorklist.insert(edge);
+            continue;
+        }
+
+        // Compute the conjunction of all input formulas
+        FormulaNodeRef newEdgeFormula;
+        if (inputFormulas.size() == 1) {
+            newEdgeFormula = inputFormulas[0];
+        } else {
+            newEdgeFormula = formulaManager.makeAnd(inputFormulas);
+        }
+
+        // Check if the edge formula actually changed
+        bool edgeFormulaChanged = !formulaManager.isSame(oldEdgeFormula, newEdgeFormula);
+
+        if (edgeFormulaChanged) {
+            // Update the edge formula
+            edgeFormulas[edge] = newEdgeFormula;
+
+            // Update the output node formula
+            auto output = edge->getOutput();
+
+            // Store the old node formula to check if it changes
+            FormulaNodeRef oldNodeFormula;
+            bool nodeHasFormula = nodeFormulas.find(output) != nodeFormulas.end();
+            if (nodeHasFormula) {
+                oldNodeFormula = nodeFormulas[output];
+            }
+
+            // Collect formulas from all incoming edges
+            std::vector<FormulaNodeRef> incomingFormulas;
+            for (const auto& inEdge : output->getIncomingEdges()) {
+                auto it = edgeFormulas.find(inEdge);
+                if (it != edgeFormulas.end()) {
+                    incomingFormulas.push_back(it->second);
+                }
+            }
+
+            // Compute the disjunction of all incoming edge formulas
+            FormulaNodeRef newNodeFormula;
+            if (incomingFormulas.empty()) {
+                // This shouldn't happen, but use the node's base formula if it does
+                newNodeFormula = nodeFormulas[output];
+            } else if (incomingFormulas.size() == 1) {
+                newNodeFormula = incomingFormulas[0];
+            } else {
+                newNodeFormula = formulaManager.makeOr(incomingFormulas);
+            }
+
+            // Check if the node formula actually changed
+            bool nodeFormulaChanged = !nodeHasFormula ||
+                                     !formulaManager.isSame(oldNodeFormula, newNodeFormula);
+
+            if (nodeFormulaChanged) {
+                // Update the node formula
+                nodeFormulas[output] = newNodeFormula;
+
+                // Add outgoing edges to the worklist
+                for (const auto& outEdge : output->getOutgoingEdges()) {
+                    if (inWorklist.find(outEdge) == inWorklist.end()) {
+                        worklist.push(outEdge);
+                        inWorklist.insert(outEdge);
+                    }
+                }
+            }
+        }
+    }
+}
 
 int main() {
     RuleManager ruleManager = ExampleRuleComponents::ruleManager;
@@ -12,8 +143,14 @@ int main() {
     auto graph = DerivationGraph::createFrom(exampleRuleApps, ExampleRuleComponents::ruleManager);
     // Dump to DOT file
     graph->dumpDot("derivation.dot");
-
-
+    std::map<NodePtr, LogicNodeRef> nodeFormulas;
+    std::map<EdgePtr, LogicNodeRef> edgeFormulas;
+    LogicFormulaManager formulaManager;
+    buildFormulas(*graph, formulaManager, nodeFormulas, edgeFormulas);
+    for (const auto& [node, formula] : nodeFormulas) {
+        std::cout << "Node " << node->getTuple().toString() << ": ";
+        formulaManager.printInfo(formula, "formula");
+    }
 
     return 0;
 }
