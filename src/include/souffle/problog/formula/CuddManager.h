@@ -68,7 +68,7 @@ public:
     BddNodeRef makeOr(const BddNodeRef& a, const BddNodeRef& b) override;
     BddNodeRef makeOr(const std::vector<BddNodeRef>& nodes) override;
     BddNodeRef makeNot(const BddNodeRef& a) override;
-
+    bool isSame(const BddNodeRef& a, const BddNodeRef& b) override;
     // Weight-related operations
     void setVariableWeight(int varIndex, double posWeight, double negWeight) override;
     double computeWeightedModelCount(const BddNodeRef& node) override;
@@ -141,6 +141,11 @@ BddNodeRef WeightedBDDManager::makeOr(const std::vector<BddNodeRef>& nodes) {
 BddNodeRef WeightedBDDManager::makeNot(const BddNodeRef& a) {
     DdNode* result = Cudd_Not(a.get());
     return BddNodeRef(manager.get(), result);
+}
+
+
+bool WeightedBDDManager::isSame(const BddNodeRef& a, const BddNodeRef& b) {
+    return a.get() == b.get();
 }
 
 void WeightedBDDManager::setVariableWeight(int varIndex, double posWeight, double negWeight) {
