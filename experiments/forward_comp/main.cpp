@@ -5,6 +5,7 @@
 #include "souffle/problog/formula/FormulaManager.h"
 #include "souffle/problog/formula/LogicFormulaManager.h"
 #include <queue>
+#include "souffle/problog/formula/CuddManager.h"
 
 template<typename FormulaNodeRef>
 void buildFormulas(
@@ -22,10 +23,6 @@ void buildFormulas(
             nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
             baseNodeFormulas.insert({node, nodeFormulas[node]});
         }
-    }
-
-    for (const auto& [node, formula] : nodeFormulas) {
-        std::cout << "Node " << node->getTuple().toString() << ": ";
     }
 
     // Initialize formulas for rule instantiations (hyperedges)
@@ -155,13 +152,28 @@ int main() {
     LogicFormulaManager formulaManager;
     buildFormulas(*graph, formulaManager, nodeFormulas, edgeFormulas);
 
+    WeightedBDDManager bddManager;
+
+
+    bddManager.setVariableWeight(1, 0.5, 0.5);
+    bddManager.setVariableWeight(3, 0.5, 0.5);
+    bddManager.setVariableWeight(5, 0.9, 0.1);
+    bddManager.setVariableWeight(6, 0.9, 0.1);
+    bddManager.setVariableWeight(7, 0.9, 0.1);
+
     for (const auto& [node, formula] : nodeFormulas) {
-        std::cout << "Node " << node->getTuple().toString() << ": ";
+        std::cout << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
         formulaManager.printInfo(formula, "formula");
+        auto bdd = transform(formula, formulaManager, bddManager);
+        auto prob = bddManager.computeWeightedModelCount(bdd);
+        std::cout << "Probability: " << prob << std::endl;
     }
     for (const auto& [edge, formula] : edgeFormulas) {
-        std::cout << "Edge " << edge->getId() << ": ";
+        std::cout << "Edge" << edge->getId() << " : ";
         formulaManager.printInfo(formula, "formula");
+        auto bdd = transform(formula, formulaManager, bddManager);
+        auto prob = bddManager.computeWeightedModelCount(bdd);
+        std::cout << "Probability: " << prob << std::endl;
     }
 
     return 0;

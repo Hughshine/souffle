@@ -34,7 +34,7 @@ public:
 
 template<typename SrcNodeRef, typename DstNodeRef>
 DstNodeRef transformFormula(
-    SrcNodeRef& src,
+    const SrcNodeRef& src,
     FormulaManager<SrcNodeRef>& srcMgr,
     FormulaManager<DstNodeRef>& dstMgr) {
 
@@ -48,7 +48,9 @@ DstNodeRef transformFormula(
 
     if ( src.isVar() ) {
         int varIndex = src.getVarIndex() ;
-        return dstMgr.createVar(varIndex);
+        DstNodeRef var = dstMgr.createVar(varIndex);
+        // TODO: automatically passing weights
+        return var;
     }
     else if ( src.isNot() ) {
         SrcNodeRef child = src.getOperands()[0];
@@ -88,11 +90,13 @@ DstNodeRef transformFormula(
 
 template<typename SrcNodeRef, typename DstNodeRef>
 DstNodeRef transform(
-    SrcNodeRef& src,
+    const SrcNodeRef& src,
     FormulaManager<SrcNodeRef>& srcMgr,
     FormulaManager<DstNodeRef>& dstMgr) {
     // std::unordered_map<SrcNodeRef, DstNodeRef> cache;
     return transformFormula(src, srcMgr, dstMgr);
 }
+
+
 
 #endif //FORMULAMANAGER_H

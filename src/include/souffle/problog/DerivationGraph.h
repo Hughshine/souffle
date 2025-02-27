@@ -60,7 +60,7 @@ public:
     const std::vector<EdgePtr>& getIncomingEdges() const { return incomingEdges; }
     const std::vector<EdgePtr>& getOutgoingEdges() const { return outgoingEdges; }
     size_t getId() const { return id; }
-
+    double getProbability() const { return probability; }
     std::string toString() const {
         return tuple.toString();
 //        std::stringstream ss;
@@ -68,13 +68,14 @@ public:
 //        return ss.str();
     }
 private:
-    explicit Node(const UntypedTuple& t, size_t nodeId)
-        : tuple(t), id(nodeId) {}
+    explicit Node(const UntypedTuple& t, size_t nodeId, double prob = 1.0)
+        : tuple(t), id(nodeId), probability(prob) {}
 
     UntypedTuple tuple;
     std::vector<EdgePtr> incomingEdges;
     std::vector<EdgePtr> outgoingEdges;
     size_t id;
+    double probability;
 
     void addIncomingEdge(EdgePtr edge);
     void addOutgoingEdge(EdgePtr edge);
@@ -100,11 +101,16 @@ private:
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId)
         : inputs(inputs), output(output), id(edgeId), rule(nullptr) {}
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, const Rule* rule)
-        : inputs(inputs), output(output), id(edgeId), rule(rule) {}
+        : inputs(inputs), output(output), id(edgeId), rule(rule) {
+        if (rule) {
+            probability = rule->getProbability();
+        }
+    }
 
     std::vector<NodePtr> inputs;
     NodePtr output;
     size_t id;
+    double probability;
     const Rule* rule;
 };
 
