@@ -16,47 +16,90 @@ extern "C" {
 }
 
 // Cudd Version. Should rename.
-
 class BddNodeRef {
 public:
-    BddNodeRef(DdManager* m, DdNode* n) : manager(m), ddNode(n) {
+    // Default constructor
+    BddNodeRef() : manager(nullptr), ddNode(nullptr) {}
+
+    // Primary constructor
+    BddNodeRef(std::shared_ptr<DdManager> m, DdNode* n) : manager(m), ddNode(n) {
         if (ddNode) Cudd_Ref(ddNode);
     }
 
-    BddNodeRef(DdManager* m, DdNode* n, const Node& node) : manager(m), ddNode(n), node(node) {
+    // Constructor with Node
+    BddNodeRef(std::shared_ptr<DdManager> m, DdNode* n, const Node& node)
+        : manager(m), ddNode(n), node(node) {
         if (ddNode) Cudd_Ref(ddNode);
     }
 
-    BddNodeRef(DdManager* m, DdNode* n, const Hyperedge& edge) : manager(m), ddNode(n), edge(edge) {
+    // Constructor with Hyperedge
+    BddNodeRef(std::shared_ptr<DdManager> m, DdNode* n, const Hyperedge& edge)
+        : manager(m), ddNode(n), edge(edge) {
         if (ddNode) Cudd_Ref(ddNode);
     }
 
-    BddNodeRef(BddNodeRef&& other) noexcept
-        : manager(other.manager), ddNode(other.ddNode) {
-        other.ddNode = nullptr;
+    // Copy constructor
+    BddNodeRef(const BddNodeRef& other)
+        : manager(other.manager), ddNode(other.ddNode),
+          node(other.node), edge(other.edge) {
+        if (ddNode) Cudd_Ref(ddNode);
     }
-    
-    BddNodeRef& operator=(BddNodeRef&& other) noexcept {
+
+    // Copy assignment operator
+    BddNodeRef& operator=(const BddNodeRef& other) {
         if (this != &other) {
-            if (ddNode) Cudd_RecursiveDeref(manager, ddNode);
+            // Release existing resources
+            if (ddNode && manager) Cudd_RecursiveDeref(manager.get(), ddNode);
+
+            // Copy from other
             manager = other.manager;
             ddNode = other.ddNode;
+            node = other.node;
+            edge = other.edge;
+
+            // Increment reference count for new node
+            if (ddNode) Cudd_Ref(ddNode);
+        }
+        return *this;
+    }
+
+    // Move constructor
+    BddNodeRef(BddNodeRef&& other) noexcept
+        : manager(std::move(other.manager)),
+          ddNode(other.ddNode),
+          node(std::move(other.node)),
+          edge(std::move(other.edge)) {
+        other.ddNode = nullptr;
+    }
+
+    // Move assignment operator
+    BddNodeRef& operator=(BddNodeRef&& other) noexcept {
+        if (this != &other) {
+            // Release existing resources
+            if (ddNode && manager) Cudd_RecursiveDeref(manager.get(), ddNode);
+
+            // Move from other
+            manager = std::move(other.manager);
+            ddNode = other.ddNode;
+            node = std::move(other.node);
+            edge = std::move(other.edge);
+
+            // Reset other
             other.ddNode = nullptr;
         }
         return *this;
     }
-    
+
+    // Destructor
     ~BddNodeRef() {
-        if (ddNode) Cudd_RecursiveDeref(manager, ddNode);
+        if (ddNode && manager) Cudd_RecursiveDeref(manager.get(), ddNode);
     }
-    
-    BddNodeRef(const BddNodeRef&) = delete;
-    BddNodeRef& operator=(const BddNodeRef&) = delete;
-    
+
+    // Getter for the BDD node
     DdNode* get() const { return ddNode; }
-    
+
 private:
-    DdManager* manager;
+    std::shared_ptr<DdManager> manager;  // Shared ownership of manager
     DdNode* ddNode;
     std::optional<Node> node;
     std::optional<Hyperedge> edge;
@@ -66,11 +109,10 @@ struct VariableWeight {
     double posWeight;  // Weight when variable is true
     double negWeight;  // Weight when variable is false
 };
-
 class WeightedBDDManager: public DDManager<BddNodeRef> {
 public:
     WeightedBDDManager();
-    ~WeightedBDDManager () override;
+    ~WeightedBDDManager() override = default;
 
     // Basic BDD operations
     BddNodeRef createVar(int index) override;
@@ -83,6 +125,7 @@ public:
     BddNodeRef makeOr(const std::vector<BddNodeRef>& nodes) override;
     BddNodeRef makeNot(const BddNodeRef& a) override;
     bool isSame(const BddNodeRef& a, const BddNodeRef& b) override;
+
     // Weight-related operations
     void setVariableWeight(int varIndex, double posWeight, double negWeight) override;
     double computeWeightedModelCount(const BddNodeRef& node) override;
@@ -94,82 +137,76 @@ public:
     DdManager* getManager() const { return manager.get(); }
 
 private:
-    double recursiveWeightedModelCount(DdNode* node, 
+    double recursiveWeightedModelCount(DdNode* node,
                                      std::unordered_map<DdNode*, double>& cache);
 
-    struct ManagerDeleter {
-        void operator()(DdManager* m) { if (m) Cudd_Quit(m); }
-    };
-    std::unique_ptr<DdManager, ManagerDeleter> manager;
+    std::shared_ptr<DdManager> manager;
     std::unordered_map<int, VariableWeight> weights;
 };
 
+// Implementation
 
 WeightedBDDManager::WeightedBDDManager() {
     DdManager* m = Cudd_Init(0, 0, CUDD_UNIQUE_SLOTS, CUDD_CACHE_SLOTS, 0);
     if (m == nullptr) {
         throw std::runtime_error("Failed to initialize CUDD manager");
     }
-    manager.reset(m);
+    manager = std::shared_ptr<DdManager>(m, [](DdManager* m) {
+        if (m) Cudd_Quit(m);
+    });
 }
-
-WeightedBDDManager::~WeightedBDDManager() = default;
 
 BddNodeRef WeightedBDDManager::createVar(int index) {
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
-    return BddNodeRef(manager.get(), var);
+    return BddNodeRef(manager, var);
 }
 
 BddNodeRef WeightedBDDManager::createVar(int index, const Node& node) {
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
-    return BddNodeRef(manager.get(), var, node);
+    return BddNodeRef(manager, var, node);
 }
 
 BddNodeRef WeightedBDDManager::createVar(int index, const Hyperedge& edge) {
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
-    return BddNodeRef(manager.get(), var, edge);
+    return BddNodeRef(manager, var, edge);
 }
-
-//BddNodeRef createVar(int index, const UntypedTuple& tuple) override;
-
 
 BddNodeRef WeightedBDDManager::makeAnd(const BddNodeRef& a, const BddNodeRef& b) {
     DdNode* result = Cudd_bddAnd(manager.get(), a.get(), b.get());
-    return BddNodeRef(manager.get(), result);
+    return BddNodeRef(manager, result);
 }
 
 BddNodeRef WeightedBDDManager::makeAnd(const std::vector<BddNodeRef>& nodes) {
     if (nodes.empty()) {
-        return BddNodeRef(manager.get(), Cudd_ReadOne(manager.get()));
+        return BddNodeRef(manager, Cudd_ReadOne(manager.get()));
     }
     DdNode* result = nodes[0].get();
     for (size_t i = 1; i < nodes.size(); i++) {
         result = Cudd_bddAnd(manager.get(), result, nodes[i].get());
     }
-    return BddNodeRef(manager.get(), result);
+    return BddNodeRef(manager, result);
 }
 
 BddNodeRef WeightedBDDManager::makeOr(const BddNodeRef& a, const BddNodeRef& b) {
     DdNode* result = Cudd_bddOr(manager.get(), a.get(), b.get());
-    return BddNodeRef(manager.get(), result);
+    return BddNodeRef(manager, result);
 }
 
 BddNodeRef WeightedBDDManager::makeOr(const std::vector<BddNodeRef>& nodes) {
     if (nodes.empty()) {
-        return BddNodeRef(manager.get(), Cudd_ReadZero(manager.get()));
+        return BddNodeRef(manager, Cudd_ReadZero(manager.get()));
     }
     DdNode* result = nodes[0].get();
     for (size_t i = 1; i < nodes.size(); i++) {
         result = Cudd_bddOr(manager.get(), result, nodes[i].get());
     }
-    return BddNodeRef(manager.get(), result);
+    return BddNodeRef(manager, result);
 }
 
 BddNodeRef WeightedBDDManager::makeNot(const BddNodeRef& a) {
     DdNode* result = Cudd_Not(a.get());
-    return BddNodeRef(manager.get(), result);
+    return BddNodeRef(manager, result);
 }
-
 
 bool WeightedBDDManager::isSame(const BddNodeRef& a, const BddNodeRef& b) {
     return a.get() == b.get();

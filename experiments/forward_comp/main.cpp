@@ -147,12 +147,12 @@ int main() {
     auto graph = DerivationGraph::createFrom(exampleRuleApps, ExampleRuleComponents::ruleManager);
     // Dump to DOT file
     graph->dumpDot("derivation.dot");
-    std::map<NodePtr, LogicNodeRef> nodeFormulas;
-    std::map<EdgePtr, LogicNodeRef> edgeFormulas;
-    LogicFormulaManager formulaManager;
-    buildFormulas(*graph, formulaManager, nodeFormulas, edgeFormulas);
-
+    std::map<NodePtr, BddNodeRef> nodeFormulas;
+    std::map<EdgePtr, BddNodeRef> edgeFormulas;
+//    LogicFormulaManager formulaManager;
     WeightedBDDManager bddManager;
+    buildFormulas(*graph, bddManager, nodeFormulas, edgeFormulas);
+
 
 
     // TODO: automatically set weights based on facts and rule probabilities
@@ -162,20 +162,20 @@ int main() {
     bddManager.setVariableWeight(6, 0.9, 0.1);  // rule2
     bddManager.setVariableWeight(7, 0.9, 0.1);  // rule1
 
-    for (const auto& [node, formula] : nodeFormulas) {
+    for (const auto& [node, bdd] : nodeFormulas) {
         std::cout << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
-        formulaManager.printInfo(formula, "formula");
-        auto bdd = transform(formula, formulaManager, bddManager);
+//        formulaManager.printInfo(formula, "formula");
+//        auto bdd = transform(formula, formulaManager, bddManager);
         auto prob = bddManager.computeWeightedModelCount(bdd);
         std::cout << "Probability: " << prob << std::endl;
     }
-    for (const auto& [edge, formula] : edgeFormulas) {
+    for (const auto& [edge, bdd] : edgeFormulas) {
         std::cout << "Edge" << edge->getId() << " : ";
-        formulaManager.printInfo(formula, "formula");
-        auto bdd = transform(formula, formulaManager, bddManager);
+//        formulaManager.printInfo(formula, "formula");
+//        auto bdd = transform(formula, formulaManager, bddManager);
         auto prob = bddManager.computeWeightedModelCount(bdd);
         std::cout << "Probability: " << prob << std::endl;
     }
-
+    std::cout << "Done" << std::endl;
     return 0;
 }
