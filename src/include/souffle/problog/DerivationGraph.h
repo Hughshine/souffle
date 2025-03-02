@@ -25,23 +25,23 @@
 //inline Clauses rules
 
 
-inline UntypedTuple tuple1{"edge", {1, 2}};
-inline UntypedTuple tuple2{"edge", {2, 3}};
-inline UntypedTuple tuple3{"path", {1, 2}};
-inline UntypedTuple tuple4{"path", {2, 3}};
-inline UntypedTuple tuple5{"path", {1, 3}};
-
-inline std::map<UntypedTuple, std::set<RuleApplication>*> exampleRuleApps{
-        {tuple3, new std::set<RuleApplication>{
-                RuleApplication{1, {{"x", 1}, {"y", 2}}}
-        }},
-        {tuple4, new std::set<RuleApplication>{
-                RuleApplication{1, {{"x", 2}, {"y", 3}}}
-        }},
-        {tuple5, new std::set<RuleApplication>{
-                RuleApplication{2, {{"x", 1}, {"y", 3}, {"z", 2}}}
-        }}
-};
+//inline UntypedTuple tuple1{"edge", {1, 2}};
+//inline UntypedTuple tuple2{"edge", {2, 3}};
+//inline UntypedTuple tuple3{"path", {1, 2}};
+//inline UntypedTuple tuple4{"path", {2, 3}};
+//inline UntypedTuple tuple5{"path", {1, 3}};
+//
+//inline std::map<UntypedTuple, std::set<RuleApplication>*> exampleRuleApps{
+//        {tuple3, new std::set<RuleApplication>{
+//                RuleApplication{1, {{"x", 1}, {"y", 2}}}
+//        }},
+//        {tuple4, new std::set<RuleApplication>{
+//                RuleApplication{1, {{"x", 2}, {"y", 3}}}
+//        }},
+//        {tuple5, new std::set<RuleApplication>{
+//                RuleApplication{2, {{"x", 1}, {"y", 3}, {"z", 2}}}
+//        }}
+//};
 
 
 // Forward declarations
@@ -170,7 +170,7 @@ public:
     const std::vector<NodePtr>& getNodes() const { return nodes; }
     const std::vector<EdgePtr>& getEdges() const { return edges; }
 
-    static DerivationGraph* createFrom(std::map<UntypedTuple, std::set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager) {
+    static DerivationGraph* createFrom(const std::map<UntypedTuple, std::set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager)  {
         auto graph = new DerivationGraph(&ruleManager);
         for (const auto& [tuple, ruleAppSet] : ruleApps) {
             auto node = graph->createNode(tuple);

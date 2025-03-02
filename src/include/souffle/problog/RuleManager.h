@@ -15,6 +15,7 @@
 #include "souffle/RamTypes.h"
 #include "souffle/problog/Atom.h"
 #include "souffle/problog/Rule.h"
+#include "souffle/Derivation.h"
 
 class RuleManager {
 public:
@@ -53,6 +54,10 @@ public:
     static const Rule rule2;
 
     static const RuleManager ruleManager;
+
+    static const std::map<UntypedTuple, std::set<RuleApplication>*> exampleRuleApps;
+    static const std::map<UntypedTuple, std::set<RuleApplication>*> exampleRuleApps2;
+
 };
 
 
@@ -203,5 +208,51 @@ const Rule ExampleRuleComponents::rule2 = Rule(
 );
 
 const RuleManager ExampleRuleComponents::ruleManager = RuleManager({rule1, rule2});
+
+const UntypedTuple tuple1{"edge", {1, 2}};
+const UntypedTuple tuple2{"edge", {2, 3}};
+const UntypedTuple tuple3{"path", {1, 2}};
+const UntypedTuple tuple4{"path", {2, 3}};
+const UntypedTuple tuple5{"path", {1, 3}};
+
+const std::map<UntypedTuple, std::set<RuleApplication>*> ExampleRuleComponents::exampleRuleApps{
+            {tuple3, new std::set<RuleApplication>{
+                RuleApplication{1, {{"x", 1}, {"y", 2}}}
+            }},
+            {tuple4, new std::set<RuleApplication>{
+                RuleApplication{1, {{"x", 2}, {"y", 3}}}
+            }},
+            {tuple5, new std::set<RuleApplication>{
+                RuleApplication{2, {{"x", 1}, {"y", 3}, {"z", 2}}}
+            }}
+};
+
+const UntypedTuple tuple6{"edge", {3, 2}};
+const UntypedTuple tuple7{"path", {3, 2}};
+const UntypedTuple tuple8{"path", {2, 2}};
+const UntypedTuple tuple9{"path", {3, 3}};
+const std::map<UntypedTuple, std::set<RuleApplication>*> ExampleRuleComponents::exampleRuleApps2{
+                {tuple3, new std::set<RuleApplication>{  // path(1,2)	[1[x->1,y->2],2[x->1,y->2,z->3]]
+                    RuleApplication{1, {{"x", 1}, {"y", 2}}},
+                    RuleApplication{2, {{"x", 1}, {"y", 2}, {"z", 3}}}
+                }},
+                {tuple4, new std::set<RuleApplication>{  // path(2,3)	[1[x->2,y->3],2[x->2,y->3,z->2]]
+                    RuleApplication{1, {{"x", 2}, {"y", 3}}},
+                    RuleApplication{2, {{"x", 2}, {"y", 3}, {"z", 2}}}
+                }},
+                {tuple5, new std::set<RuleApplication>{  //path(1,3)	[2[x->1,y->3,z->2]]
+                    RuleApplication{2, {{"x", 1}, {"y", 3}, {"z", 2}}}
+                }},
+                {tuple7, new std::set<RuleApplication>{  // path(3,2)	[1[x->3,y->2],2[x->3,y->2,z->3]]
+                    RuleApplication{1, {{"x", 3}, {"y", 2}}},
+                    RuleApplication{2, {{"x", 3}, {"y", 2}, {"z", 3}}}
+                }},
+                {tuple8, new std::set<RuleApplication>{  // path(2,2)   [2[x->2,y->2,z->3]]
+                    RuleApplication{2, {{"x", 2}, {"y", 2}, {"z", 3}}}
+                }},
+                {tuple9, new std::set<RuleApplication>{  // path(3,3)   [2[x->3,y->3,z->2]]
+                    RuleApplication{2, {{"x", 3}, {"y", 3}, {"z", 2}}}
+                }}
+};
 
 #endif //RULEMANAGER_H

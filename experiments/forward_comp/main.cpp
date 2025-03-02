@@ -144,7 +144,7 @@ void buildFormulas(
 int main() {
     RuleManager ruleManager = ExampleRuleComponents::ruleManager;
     std::cout << ruleManager.toString() << std::endl;
-    auto graph = DerivationGraph::createFrom(exampleRuleApps, ExampleRuleComponents::ruleManager);
+    auto graph = DerivationGraph::createFrom(ExampleRuleComponents::exampleRuleApps2, ExampleRuleComponents::ruleManager);
     // Dump to DOT file
     graph->dumpDot("derivation.dot");
     std::map<NodePtr, BddNodeRef> nodeFormulas;
