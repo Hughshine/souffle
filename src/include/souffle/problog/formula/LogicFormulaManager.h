@@ -283,7 +283,7 @@ public:
     // Check if two formulas are the same (now uses pointer equality which works
     // because equivalent formulas share the same node instance)
     bool isSame(const LogicNodeRef& a, const LogicNodeRef& b) override {
-        return a.getNode() == b.getNode();
+        return a.getNode() == b.getNode();  // TODO: this is not right; not semantic equality
     }
 
     // Print debug information about a node

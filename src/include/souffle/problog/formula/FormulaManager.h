@@ -1,6 +1,7 @@
 #ifndef FORMULAMANAGER_H
 #define FORMULAMANAGER_H
 #include <cassert>
+#include <cstring>
 #include "souffle/Derivation.h"
 #include "souffle/problog/DerivationGraph.h"
 
@@ -18,6 +19,10 @@ public:
     virtual NodeRef makeOr(const std::vector<NodeRef>& nodes) = 0;
     virtual NodeRef makeNot(const NodeRef& a) = 0;
     virtual bool isSame(const NodeRef& a, const NodeRef& b) = 0;
+
+    virtual std::string toString(const NodeRef& node) = 0;
+
+    virtual double computeWeightedModelCount(const NodeRef& node) = 0;
 
     virtual void printInfo(const NodeRef& node, const std::string& name) = 0;
 };

@@ -60,7 +60,6 @@ public:
 
 };
 
-
 RuleManager::RuleManager(std::vector<Rule> rules) {
     for (const auto& rule : rules) {
         addRule(rule);

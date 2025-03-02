@@ -93,8 +93,18 @@ public:
         if (rule == nullptr) {
             return "Hyperedge(" + std::to_string(id) + ")";
         } else {
+
             return "Rule" + std::to_string(rule->getRuleId()) + "("+ std::to_string(id) + ")";
         }
+    // inputs to outputs
+//        std::stringstream ss;
+//        ss << "Hyperedge(" << id << "): ";
+//        for (const auto& input : inputs) {
+//            ss << input->getTuple().toString() << " ";
+//        }
+//        ss << " -> " << output->getTuple().toString();
+
+//        return ss.str();
     }
 
 private:

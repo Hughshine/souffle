@@ -17,6 +17,7 @@ extern "C" {
 
 // Cudd Version. Should rename.
 class BddNodeRef {
+friend class WeightedBDDManager;
 public:
     // Default constructor
     BddNodeRef() : manager(nullptr), ddNode(nullptr) {}
@@ -126,6 +127,8 @@ public:
     BddNodeRef makeNot(const BddNodeRef& a) override;
     bool isSame(const BddNodeRef& a, const BddNodeRef& b) override;
 
+    std::string toString(const BddNodeRef& nodeRef);
+
     // Weight-related operations
     void setVariableWeight(int varIndex, double posWeight, double negWeight) override;
     double computeWeightedModelCount(const BddNodeRef& node) override;
@@ -142,6 +145,13 @@ private:
 
     std::shared_ptr<DdManager> manager;
     std::unordered_map<int, VariableWeight> weights;
+
+    std::string toStringRecursive(DdNode* node,
+                            std::unordered_map<DdNode*, std::string>& cache);
+    std::string getVariableName(int varIndex);
+    std::unordered_map<int, BddNodeRef> variableRegistry;
+
+
 };
 
 // Implementation
@@ -158,16 +168,22 @@ WeightedBDDManager::WeightedBDDManager() {
 
 BddNodeRef WeightedBDDManager::createVar(int index) {
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
+    BddNodeRef ref(manager, var);
+    variableRegistry[index] = ref;
     return BddNodeRef(manager, var);
 }
 
 BddNodeRef WeightedBDDManager::createVar(int index, const Node& node) {
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
+    BddNodeRef ref(manager, var, node);
+    variableRegistry[index] = ref;
     return BddNodeRef(manager, var, node);
 }
 
 BddNodeRef WeightedBDDManager::createVar(int index, const Hyperedge& edge) {
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
+    BddNodeRef ref(manager, var, edge);
+    variableRegistry[index] = ref;
     return BddNodeRef(manager, var, edge);
 }
 
@@ -238,7 +254,6 @@ double WeightedBDDManager::recursiveWeightedModelCount(
 
     // Get node's variable index
     int varIndex = Cudd_NodeReadIndex(node);
-
     // Get then and else cofactors
     DdNode* T = Cudd_T(node);
     DdNode* E = Cudd_E(node);
@@ -260,10 +275,99 @@ double WeightedBDDManager::recursiveWeightedModelCount(
 
     // Combine results
     double result = posWeight * tWeight + negWeight * eWeight;
-
     // Cache and return result
     cache[node] = result;
     return result;
+}
+
+std::string WeightedBDDManager::toString(const BddNodeRef& nodeRef) {
+    if (nodeRef.get() == nullptr) {
+        return "NULL";
+    }
+
+    static std::unordered_map<DdNode*, std::string> cache;
+    return toStringRecursive(nodeRef.get(), cache);
+}
+
+std::string WeightedBDDManager::getVariableName(int varIndex) {
+    auto it = variableRegistry.find(varIndex);
+    if (it != variableRegistry.end()) {
+        const BddNodeRef& ref = it->second;
+        // Direct access to private members thanks to friendship
+        if (ref.node.has_value()) {
+            return ref.node.value().toString();
+        } else if (ref.edge.has_value()) {
+            return ref.edge.value().toString();
+        }
+    }
+    // Fallback to default naming
+    return "x" + std::to_string(varIndex);
+}
+
+std::string WeightedBDDManager::toStringRecursive(
+    DdNode* node,
+    std::unordered_map<DdNode*, std::string>& cache) {
+
+    // Check cache first
+    auto it = cache.find(node);
+    if (it != cache.end()) {
+        return it->second;
+    }
+
+    // Handle constant nodes
+    if (Cudd_IsConstant(node)) {
+        return Cudd_IsComplement(node) ? "0" : "1";
+    }
+
+    // Get the variable index for this node
+    int index = Cudd_NodeReadIndex(Cudd_Regular(node));
+    std::string varName = getVariableName(index);
+
+    // Get then and else cofactors
+    DdNode* tNode = Cudd_T(Cudd_Regular(node));
+    DdNode* eNode = Cudd_E(Cudd_Regular(node));
+
+    // Account for complement if needed
+    if (Cudd_IsComplement(node)) {
+        tNode = Cudd_Not(tNode);
+        eNode = Cudd_Not(eNode);
+    }
+
+    // Recursively convert cofactors to formulas
+    std::string tFormula = toStringRecursive(tNode, cache);
+    std::string eFormula = toStringRecursive(eNode, cache);
+
+    // Apply simplifications for more readable formulas
+    std::string formula;
+
+    if (tFormula == "1" && eFormula == "0") {
+        formula = varName;
+    }
+    else if (tFormula == "0" && eFormula == "1") {
+        formula = "¬" + varName;
+    }
+    else if (tFormula == eFormula) {
+        formula = tFormula;
+    }
+    else if (tFormula == "1") {
+        formula = varName + " ∨ (¬" + varName + " ∧ " + eFormula + ")";
+    }
+    else if (tFormula == "0") {
+        formula = "¬" + varName + " ∧ " + eFormula;
+    }
+    else if (eFormula == "1") {
+        formula = "¬" + varName + " ∨ (" + varName + " ∧ " + tFormula + ")";
+    }
+    else if (eFormula == "0") {
+        formula = varName + " ∧ " + tFormula;
+    }
+    else {
+        formula = "(" + varName + " ∧ " + tFormula + ") ∨ (¬" + varName + " ∧ " + eFormula + ")";
+    }
+
+    // Cache and return result
+    cache[node] = formula;
+    return formula;
 }
 
 BddNodeRef WeightedBDDManager::createWeightedExample() {
