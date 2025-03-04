@@ -673,10 +673,7 @@ DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFile
 }
 try
     {
-        // Read Prob, very naive implementation
-//        prob
-        // map: untyped tuple -> double; can optimize so that each rel has a map
-        //
+
         std::map<UntypedTuple, double> fact_prob;
         {
             std::string rel = "edge";
@@ -699,10 +696,6 @@ try
                 fact_prob[tuple] = prob;
             }
         }
-//        for (const auto& [tuple, prob] : fact_prob) {
-//            std::cout << tuple.toString() << " " << prob << std::endl;
-//        }
-
         // This calculation works; should be synthesized. TODO
         RuleManager ruleManager = ExampleRuleComponents::ruleManager;
         std::cout << ruleManager.toString() << std::endl;

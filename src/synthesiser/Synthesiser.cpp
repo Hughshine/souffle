@@ -258,7 +258,7 @@ void Synthesiser::emitRules(std::ostream& out) {
 }
 
 void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
-    out << "auto graph = DerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager);\n";
+    out << "auto graph = DerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
     out << "graph->dumpDot(\"derivation_graph.dot\");\n";
     out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
@@ -3678,10 +3678,31 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     if (glb.config().has("inc")) {
         assert (false && "incremental problog calculation not implemented yet");
     } else {
+        hook << "try {\n";
+        hook << "std::map<UntypedTuple, double> fact_prob;\n";
+        for (auto input : loadIOs) {
+            auto rel = input->getRelation();
+            hook << "{\n";
+            hook << "std::string rel = \"" << rel << "\";\n";
+            hook << "std::ifstream factFile(\"input/\" + rel + \".facts\");";
+            hook << "std::ifstream probFile(\"input/\" + rel + \".prob\");";
+            hook << "std::string factLine, probLine;";
+            hook << "while (std::getline(factFile, factLine) && std::getline(probFile, probLine)) {";
+            hook << "std::istringstream fs(factLine);";
+            hook << "std::istringstream ps(probLine);";
+            hook << "double prob; ps >> prob;\n";
+            hook << "assert (prob >= 0 && prob <= 1);\n";
+            hook << "souffle::RamDomain field;\n";
+            hook << "std::vector<souffle::RamDomain> fields;\n";
+            hook << "while (fs >> field) {fields.push_back(field);}\n";
+            hook << "UntypedTuple tuple{rel, fields};\n";
+            hook << "fact_prob[tuple] = prob;\n";
+            hook << "}\n";
+            hook << "}\n";
+        }
         db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
         db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
         db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
-        hook << "try {\n";
         // synthesize rules
         emitRules(hook);
         // synthesize forward compilation
