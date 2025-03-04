@@ -28,6 +28,8 @@ void buildFormulas(
         if (node->getIncomingEdges().empty()) {
             nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
             baseNodeFormulas.insert({node, nodeFormulas[node]});
+            std::cout << "Setting weight for node " << node->getId() << " with probability " << node->getProbability() << std::endl;
+            formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1-node->getProbability());
         }
     }
 

@@ -129,13 +129,14 @@ public:
     DerivationGraph() : nextNodeId(0), nextEdgeId(0) {}
     DerivationGraph(const RuleManager* rm) : nextNodeId(0), nextEdgeId(0), ruleManager(rm) {}
 
-    NodePtr createNode(const UntypedTuple& tuple) {
+    NodePtr createNode(const UntypedTuple& tuple, const double weight = 1.0) {
         if (auto it = std::find_if(nodes.begin(), nodes.end(),
                  [&tuple](const NodePtr& node) { return node->getTuple() == tuple;}); it != nodes.end()) {
             return *it;
         }
         auto node = std::shared_ptr<Node>(new Node(tuple, nextNodeId++));
         nodes.push_back(node);
+        node.get()->probability = weight;
         return node;
     }
 
@@ -180,13 +181,17 @@ public:
     const std::vector<NodePtr>& getNodes() const { return nodes; }
     const std::vector<EdgePtr>& getEdges() const { return edges; }
 
-    static DerivationGraph* createFrom(const std::map<UntypedTuple, std::set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager)  {
+    static DerivationGraph* createFrom(const std::map<UntypedTuple, std::set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::map<UntypedTuple, double>& fact_prob)  {
         auto graph = new DerivationGraph(&ruleManager);
         for (const auto& [tuple, ruleAppSet] : ruleApps) {
             auto node = graph->createNode(tuple);
             for (const auto& ruleApp : *ruleAppSet) {
 				auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
             }
+        }
+        for (const auto& [tuple, prob] : fact_prob) {
+            auto node = graph->createNode(tuple);  // actually "find node" here
+            node->probability = prob;
         }
         return graph;
     }

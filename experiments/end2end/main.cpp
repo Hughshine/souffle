@@ -672,10 +672,41 @@ DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "delete", De
 DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFileDir()==""?"./output":opt.getOutputFileDir());
 }
 try
-    {  // This calculation works; should be synthesized. TODO
+    {
+        // Read Prob, very naive implementation
+//        prob
+        // map: untyped tuple -> double; can optimize so that each rel has a map
+        //
+        std::map<UntypedTuple, double> fact_prob;
+        {
+            std::string rel = "edge";
+            std::ifstream factFile("input/" + rel + ".facts");
+            std::ifstream probFile("input/" + rel + ".prob");
+            std::string factLine;
+            std::string probLine;
+            while (std::getline(factFile, factLine) && std::getline(probFile, probLine)) {
+
+                std::istringstream fs(factLine);
+                std::istringstream ps(probLine);
+                double prob; ps >> prob;
+                assert (prob >= 0 && prob <= 1);
+                souffle::RamDomain field;
+                std::vector<souffle::RamDomain> fields;
+                while (fs >> field) {
+                    fields.push_back(field);
+                }
+                auto tuple = UntypedTuple{rel, fields};
+                fact_prob[tuple] = prob;
+            }
+        }
+//        for (const auto& [tuple, prob] : fact_prob) {
+//            std::cout << tuple.toString() << " " << prob << std::endl;
+//        }
+
+        // This calculation works; should be synthesized. TODO
         RuleManager ruleManager = ExampleRuleComponents::ruleManager;
         std::cout << ruleManager.toString() << std::endl;
-        auto graph = DerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ExampleRuleComponents::ruleManager);
+        auto graph = DerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ExampleRuleComponents::ruleManager, fact_prob);
         // Dump to DOT file
         graph->dumpDot("derivation.dot");
 

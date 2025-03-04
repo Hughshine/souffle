@@ -22,6 +22,7 @@ public:
 
     virtual std::string toString(const NodeRef& node) = 0;
 
+    virtual void setVariableWeight(int varIndex, double posWeight, double negWeight) = 0;
     virtual double computeWeightedModelCount(const NodeRef& node) = 0;
 
     virtual void printInfo(const NodeRef& node, const std::string& name) = 0;
