@@ -215,6 +215,8 @@ void compileToBinary(
         argv.push_back(srcFile.string());
     }
 
+    argv.push_back("--with-cudd");
+
     argv.push_back("-o");
     argv.push_back(binary.string());
 

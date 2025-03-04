@@ -121,12 +121,14 @@ protected:
 
     /** Generate code */
     void emitCode(std::ostream& out, const ram::Statement& stmt);
-
+    void emitRules(std::ostream& out);
+    void emitProblogPipelineCudd(std::ostream& out);
     /** Lookup frequency counter */
     unsigned lookupFreqIdx(const std::string& txt);
 
     /** Lookup read counter */
     std::size_t lookupReadIdx(const std::string& txt);
+
 
     /** Lookup relation by relation name */
     const ram::Relation* lookup(const std::string& relName) {

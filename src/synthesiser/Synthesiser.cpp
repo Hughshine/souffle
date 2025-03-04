@@ -252,6 +252,33 @@ std::optional<std::size_t> Synthesiser::compileRegex(const std::string& pattern)
     }
 }
 
+void Synthesiser::emitRules(std::ostream& out) {
+    out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
+    out << "std::cout << ruleManager.toString();\n";
+}
+
+void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
+    out << "auto graph = DerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager);\n";
+    out << "graph->dumpDot(\"derivation_graph.dot\");\n";
+    out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
+    out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
+    out << "WeightedBDDManager bddManager;\n";
+    out << "buildFormulas(*graph, bddManager, nodeFormulas, edgeFormulas);\n";
+    // print result to cout; TODO print to files
+    out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+    out << "    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
+    out << "    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
+    out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
+    out << "    std::cout << \"Probability: \" << prob << std::endl;\n";
+    out << "}\n";
+    // out << "for (const auto& [edge, bdd] : edgeFormulas) {\n";
+    // out << "    std::cout << edge->toString() << \" : \";\n";
+    // out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
+    // out << "    std::cout << \"Probability: \" << prob << std::endl;\n";
+    // out << "}\n";
+    out << "std::cout << \"Done\" << std::endl;\n";
+}
+
 void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
     class CodeEmitter : public ram::Visitor<void, Node const, std::ostream&> {
         using ram::Visitor<void, Node const, std::ostream&>::visit_;
@@ -3646,6 +3673,23 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // TODO: for debug; remove this later
     hook << R"(DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") << "\":opt.getOutputFileDir());\n";
     hook << "}\n";
+
+    // problog calculation
+    if (glb.config().has("inc")) {
+        assert (false && "incremental problog calculation not implemented yet");
+    } else {
+        db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
+        db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
+        db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
+        hook << "try {\n";
+        // synthesize rules
+        emitRules(hook);
+        // synthesize forward compilation
+        emitProblogPipelineCudd(hook);
+        hook << "} catch (std::exception& e) {std::cerr << \"Problog colc failed\" << e.what() << std::endl;}\n";
+    }
+
+
     if (glb.config().get("provenance") == "explain") {
         hook << "explain(obj, false);\n";
     } else if (glb.config().get("provenance") == "explore") {

@@ -675,7 +675,7 @@ try
     {  // This calculation works; should be synthesized. TODO
         RuleManager ruleManager = ExampleRuleComponents::ruleManager;
         std::cout << ruleManager.toString() << std::endl;
-        auto graph = DerivationGraph::createFrom(ExampleRuleComponents::exampleRuleApps2, ExampleRuleComponents::ruleManager);
+        auto graph = DerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ExampleRuleComponents::ruleManager);
         // Dump to DOT file
         graph->dumpDot("derivation.dot");
 
