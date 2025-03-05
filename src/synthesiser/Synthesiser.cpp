@@ -123,6 +123,11 @@
 #include <utility>
 #include <vector>
 
+#include <ast/Constant.h>
+#include <ast/Negation.h>
+#include <ast/NumericConstant.h>
+#include <ast/StringConstant.h>
+
 namespace souffle::synthesiser {
 
 using json11::Json;
@@ -253,10 +258,38 @@ std::optional<std::size_t> Synthesiser::compileRegex(const std::string& pattern)
 }
 
 void Synthesiser::emitRules (std::ostream& out) {
+    out << "class RuleComponents {" << std::endl;
     for (auto clause: this->astProgram->getClauses()) {
-        std::cout << clause->getClauseId() << std::endl;
-        std::cout << clause->getProbability() << std::endl;
+        std::size_t atomId = 0;
+        for (auto bodyLiteral: clause->getBodyLiterals()) {
+            if (isA<ast::Atom>(bodyLiteral)) {
+                ast::Atom* atom = as<ast::Atom>(bodyLiteral);
+                std::vector<std::string> fieldVars{};
+                for (auto field: atom->getArguments()) {
+                    if (isA<ast::Variable>(field)) {
+
+                    }
+                    // if (isA<ast::NumericConstant>(field)) {
+                    //     auto num = as<ast::NumericConstant>(field);
+                    //     out <<
+                    // } else if (isA<ast::StringConstant>(field)) {
+                    //
+                    // } else
+                }
+            } else if (isA<ast::Negation>(bodyLiteral)) {
+                ast::Atom* atom = as<ast::Atom>(bodyLiteral);
+                for (auto field: atom->getArguments()) {
+
+                }
+            } else {
+                assert (false && "Not impl yet, atom");
+            }
+        }
+        // std::cout << clause->getClauseId() << std::endl;
+        // std::cout << clause->getProbability() << std::endl;
     }
+    out << "};" << std::endl;
+
 
     out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
     out << "std::cout << ruleManager.toString();\n";
