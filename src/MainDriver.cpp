@@ -953,7 +953,6 @@ int main(Global& glb, const char* souffle_executable) {
 
     /* set up additional global options based on pragma declaratives */
     (mk<ast::transform::PragmaChecker>())->apply(*astTranslationUnit);
-
     if (hasShowOpt("initial-ast", "initial-datalog")) {
         std::cout << astTranslationUnit->getProgram() << std::endl;
         // no other show options specified -> bail, we're done.
@@ -1008,6 +1007,7 @@ int main(Global& glb, const char* souffle_executable) {
     if (hasShowOpt("transformed-ast", "transformed-datalog")) {
         std::cout << astTranslationUnit->getProgram() << std::endl;
     }
+    auto& astProgram = astTranslationUnit->getProgram();
 
     // Output the precedence graph in graphviz dot format
     if (hasShowOpt("precedence-graph")) {
@@ -1091,7 +1091,7 @@ int main(Global& glb, const char* souffle_executable) {
         } else {
             // ------- compiler -------------
             auto synthesiser = mk<synthesiser::Synthesiser>(*ramTranslationUnit);
-
+            synthesiser->setProgram(astProgram);
             // Find the base filename for code generation and execution
             std::string baseFilename;
             if (compile_mode) {

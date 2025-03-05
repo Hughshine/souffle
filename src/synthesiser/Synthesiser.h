@@ -32,6 +32,7 @@
 #include <regex>
 #include <set>
 #include <string>
+#include <ast/Program.h>
 
 namespace souffle::synthesiser {
 
@@ -41,11 +42,29 @@ const std::string getBaseRelationName(const std::string& name);
  * A RAM synthesiser: synthesises a C++ program from a RAM program.
  */
 class Synthesiser {
+public:
+    void setProgram(const ast::Program& program) {
+        // Cast the Node pointer to a Program pointer
+        auto* programPtr = dynamic_cast<ast::Program*>(program.cloneImpl().release());
+
+        // Make sure the cast succeeded
+        if (!programPtr) {
+            throw std::runtime_error("Failed to clone Program");
+        }
+
+        // Create a new Own<Program> from the raw pointer
+        this->astProgram = Own<ast::Program>(programPtr);
+    }
+
+    /** astProgram */
+    Own<ast::Program> astProgram;
 private:
     /** Record Table */
 
     /** RAM translation unit */
     ram::TranslationUnit& translationUnit;
+
+
 
     /** Global */
     Global& glb;

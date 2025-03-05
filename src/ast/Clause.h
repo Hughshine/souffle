@@ -91,6 +91,14 @@ public:
 
     std::string toString() const;
 
+    void setProbability(const double p) {
+        probability = p;
+    }
+
+    double getProbability() const {
+        return this->probability;
+    }
+
 protected:
     void print(std::ostream& os) const override;
 
@@ -109,6 +117,9 @@ protected:
 
     /** User defined execution plan (if not defined, plan is null) */
     Own<ExecutionPlan> plan;
+
+    /** probability */
+    double probability = 1.0;
 };
 
 }  // namespace souffle::ast
