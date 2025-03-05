@@ -83,11 +83,13 @@ TranslatorContext::TranslatorContext(const ast::TranslationUnit& tu) {
     for (const ast::Relation* rel : program->getRelations()) {
         for (auto&& clause : program->getClauses(*rel)) {
             if (!isFact(*clause)) {
+                clause->setClauseId(count);
                 clauseNums[clause] = count++;
             }
         }
         for (auto&& clause : program->getClauses(*rel)) {
             if (isFact(*clause)) {
+                clause->setClauseId(count);
                 clauseNums[clause] = count++;
             }
         }

@@ -99,6 +99,13 @@ public:
         return this->probability;
     }
 
+    void setClauseId(const std::size_t id) {
+        clauseId = id;
+    }
+
+    std::size_t getClauseId() const {
+        return clauseId;
+    }
 protected:
     void print(std::ostream& os) const override;
 
@@ -117,6 +124,9 @@ protected:
 
     /** User defined execution plan (if not defined, plan is null) */
     Own<ExecutionPlan> plan;
+
+    /** */
+    std::size_t clauseId = 0;
 
     /** probability */
     double probability = 1.0;

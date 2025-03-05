@@ -1,3 +1,5 @@
+You should install Cudd first.
+
 after your cmake build (follow souffle's original build guideline), you can use ctest [-j8] for testing. 
 
 ```

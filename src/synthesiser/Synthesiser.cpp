@@ -252,7 +252,12 @@ std::optional<std::size_t> Synthesiser::compileRegex(const std::string& pattern)
     }
 }
 
-void Synthesiser::emitRules(std::ostream& out) {
+void Synthesiser::emitRules (std::ostream& out) {
+    for (auto clause: this->astProgram->getClauses()) {
+        std::cout << clause->getClauseId() << std::endl;
+        std::cout << clause->getProbability() << std::endl;
+    }
+
     out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
     out << "std::cout << ruleManager.toString();\n";
 }

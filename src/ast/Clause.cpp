@@ -114,6 +114,8 @@ bool Clause::equal(const Node& node) const {
 
 Clause* Clause::cloning() const {
     auto* cl = new Clause(clone(head), clone(bodyLiterals), clone(plan), getSrcLoc());
+    cl->setClauseId(clauseId);
+    cl->setProbability(probability);
     return cl;
 }
 
