@@ -258,41 +258,74 @@ std::optional<std::size_t> Synthesiser::compileRegex(const std::string& pattern)
 }
 
 void Synthesiser::emitRules (std::ostream& out) {
-    out << "class RuleComponents {" << std::endl;
+    // out << "class RuleComponents {" << std::endl;
+    std::vector<std::string> ruleNames;
     for (auto clause: this->astProgram->getClauses()) {
         std::cout << clause->getProbability() << std::endl;
+        auto ruleId = clause->getClauseId();
         std::size_t atomId = 0;
+        std::vector<std::string> atomNames;
+        std::string headAtomName = "rule" + std::to_string(ruleId) + "_head";
+        {
+            ast::Atom* headAtom = as<ast::Atom>(clause->getHead());
+            std::vector<std::string> fieldVars{};  // only consider variables for now
+            for (auto field: headAtom->getArguments()) {
+                if (isA<ast::Variable>(field)) {
+                    auto var = as<ast::Variable>(field);
+                    fieldVars.push_back(var->getName());
+                }
+            }
+            out << "const Atom " << headAtomName << " = Atom{\"" << headAtom->getQualifiedName().toString() << "\", {";
+            for (auto var: fieldVars) {
+                out << "SymbolicField::makeVariable(\"" << var << "\"), ";
+            }
+            out << "}};" << std::endl;
+        }
         for (auto bodyLiteral: clause->getBodyLiterals()) {
+            atomId ++;
             if (isA<ast::Atom>(bodyLiteral)) {
                 ast::Atom* atom = as<ast::Atom>(bodyLiteral);
-                std::vector<std::string> fieldVars{};
+                std::vector<std::string> fieldVars{};  // only consider variables for now
                 for (auto field: atom->getArguments()) {
                     if (isA<ast::Variable>(field)) {
-
+                        auto var = as<ast::Variable>(field);
+                        fieldVars.push_back(var->getName());
                     }
-                    // if (isA<ast::NumericConstant>(field)) {
-                    //     auto num = as<ast::NumericConstant>(field);
-                    //     out <<
-                    // } else if (isA<ast::StringConstant>(field)) {
-                    //
-                    // } else
                 }
+                std::string atomName = "atom_" + std::to_string(ruleId) + "_" + std::to_string(atomId);
+                atomNames.push_back(atomName);
+                out << "const Atom " << atomName << " = Atom{\"" << atom->getQualifiedName().toString() << "\", {";
+                for (auto var: fieldVars) {
+                    out << "SymbolicField::makeVariable(\"" << var << "\"), ";
+                }
+                out << "}};" << std::endl;
             } else if (isA<ast::Negation>(bodyLiteral)) {
                 ast::Atom* atom = as<ast::Atom>(bodyLiteral);
+                std::vector<std::string> fieldVars{};  // only consider variables for now
                 for (auto field: atom->getArguments()) {
-
+                    if (isA<ast::Variable>(field)) {
+                        auto var = as<ast::Variable>(field);
+                        fieldVars.push_back(var->getName());
+                    }
                 }
+                std::string atomName = "atom_" + std::to_string(clause->getClauseId()) + "_" + std::to_string(atomId);
+                atomNames.push_back(atomName);
+                out << "static const Atom " << atomName << " = Atom{\"" << atom->getQualifiedName().toString() << "\", {";
+                for (auto var: fieldVars) {
+                    out << "SymbolicField::makeVariable(\"" << var << "\"), ";
+                }
+                out << "}, true};" << std::endl;
             } else {
                 assert (false && "Not impl yet, atom");
             }
         }
-        // std::cout << clause->getClauseId() << std::endl;
-        // std::cout << clause->getProbability() << std::endl;
+        std::string ruleName = "rule" + std::to_string(ruleId);
+        ruleNames.push_back(ruleName);
+        out << "const Rule " << ruleName << " = Rule(" << std::to_string(ruleId) + "," + headAtomName
+        << ", {" << join(atomNames, ", ") << "}, " << std::to_string(clause->getProbability()) << ");" << std::endl;
     }
-    out << "};" << std::endl;
-
-
-    out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
+    out << "RuleManager ruleManager = RuleManager({" << join(ruleNames, ", ") << "});" << std::endl;
+    // out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
     out << "std::cout << ruleManager.toString();\n";
 }
 
@@ -3739,6 +3772,8 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
             hook << "}\n";
             hook << "}\n";
         }
+        db.addGlobalInclude("\"souffle/problog/Atom.h\"");
+        db.addGlobalInclude("\"souffle/problog/Rule.h\"");
         db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
         db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
         db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
