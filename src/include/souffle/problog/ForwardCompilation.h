@@ -37,6 +37,7 @@ void buildFormulas(
     for (const auto& edge : graph.getEdges()) {
         // Create a variable using the edge's unique ID; need to plus the size of graph.getNodes() to avoid conflict with node's id
         auto baseEdgeFormula = formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
+        formulaManager.setVariableWeight(graph.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
         baseEdgeFormulas.insert({edge, baseEdgeFormula});
     }
 
