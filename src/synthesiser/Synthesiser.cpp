@@ -260,6 +260,7 @@ std::optional<std::size_t> Synthesiser::compileRegex(const std::string& pattern)
 void Synthesiser::emitRules (std::ostream& out) {
     out << "class RuleComponents {" << std::endl;
     for (auto clause: this->astProgram->getClauses()) {
+        std::cout << clause->getProbability() << std::endl;
         std::size_t atomId = 0;
         for (auto bodyLiteral: clause->getBodyLiterals()) {
             if (isA<ast::Atom>(bodyLiteral)) {

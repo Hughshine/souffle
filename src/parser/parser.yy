@@ -887,6 +887,7 @@ rule_def
           cur->addAnnotations(inner_annotations);
           cur->setHead(std::move(curhead));
           cur->setSrcLoc(@$);
+ 		  cur->setProbability(head->getProbability());
           $$.emplace_back(std::move(cur));
         }
       }
@@ -909,6 +910,7 @@ head
       @$ = @$.from(@atom);
       auto atom = $atom;
       atom->setAnnotations($annotations);
+	  atom->setProbability(std::stof($FLOAT));  // Store probability in the atom
       $$.emplace_back(std::move(atom));
     }
   | head COMMA annotations atom
@@ -923,6 +925,7 @@ head
       $$ = $1;
       auto atom = $atom;
       atom->setAnnotations($annotations);
+	  atom->setProbability(std::stof($FLOAT));  // Store probability in the atom
       $$.emplace_back(std::move(atom));
     }
   ;

@@ -62,6 +62,10 @@ public:
 
     static bool classof(const Node*);
 
+    double probability = 1.0f;  // only for the parsing of head atom.. simple change
+    void setProbability(double p) { probability = p; }
+    double getProbability() const { return probability; }
+
 protected:
     void print(std::ostream& os) const override;
 
