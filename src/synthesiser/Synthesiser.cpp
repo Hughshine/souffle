@@ -290,6 +290,8 @@ void Synthesiser::emitRules (std::ostream& out) {
                     if (isA<ast::Variable>(field)) {
                         auto var = as<ast::Variable>(field);
                         fieldVars.push_back(var->getName());
+                    } else {
+                        assert (false && "Not impl yet, atom");
                     }
                 }
                 std::string atomName = "atom_" + std::to_string(ruleId) + "_" + std::to_string(atomId);
