@@ -43,7 +43,7 @@ const std::string getBaseRelationName(const std::string& name);
  */
 class Synthesiser {
 public:
-    void setProgram(const ast::Program& program) {
+    void setInitProgram(const ast::Program& program) {
         // Cast the Node pointer to a Program pointer
         auto* programPtr = dynamic_cast<ast::Program*>(program.cloneImpl().release());
 
@@ -53,11 +53,26 @@ public:
         }
 
         // Create a new Own<Program> from the raw pointer
-        this->astProgram = Own<ast::Program>(programPtr);
+        this->initialAstProgram = Own<ast::Program>(programPtr);
+    }
+
+
+    void setNewProgram(const ast::Program& program) {
+        // Cast the Node pointer to a Program pointer
+        auto* programPtr = dynamic_cast<ast::Program*>(program.cloneImpl().release());
+
+        // Make sure the cast succeeded
+        if (!programPtr) {
+            throw std::runtime_error("Failed to clone Program");
+        }
+
+        // Create a new Own<Program> from the raw pointer
+        this->newAstProgram = Own<ast::Program>(programPtr);
     }
 
     /** astProgram */
-    Own<ast::Program> astProgram;
+    Own<ast::Program> initialAstProgram;
+    Own<ast::Program> newAstProgram;
 private:
     /** Record Table */
 

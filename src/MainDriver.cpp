@@ -453,75 +453,81 @@ static WarnSet process_warn_opts(const Global& glb) {
 }
 
 Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) {
+    // TODO: should check the transformer sequence; keep the useful ones; modify the others to fit the prob setting
     // clang-format off
     // Equivalence pipeline
     auto equivalencePipeline =
             mk<ast::transform::PipelineTransformer>(mk<ast::transform::NameUnnamedVariablesTransformer>(),
-                    mk<ast::transform::FixpointTransformer>(mk<ast::transform::MinimiseProgramTransformer>()),
-                    mk<ast::transform::ReplaceSingletonVariablesTransformer>(),
-                    mk<ast::transform::RemoveRelationCopiesTransformer>(),
-                    mk<ast::transform::RemoveEmptyRelationsTransformer>(),
-                    mk<ast::transform::RemoveRedundantRelationsTransformer>());
+                    // mk<ast::transform::FixpointTransformer>(mk<ast::transform::MinimiseProgramTransformer>()),
+                    // mk<ast::transform::ReplaceSingletonVariablesTransformer>(),
+                    // mk<ast::transform::RemoveRelationCopiesTransformer>(),
+                    mk<ast::transform::RemoveEmptyRelationsTransformer>()
+                    // ,mk<ast::transform::RemoveRedundantRelationsTransformer>()
+                    );
 
     // Magic-Set pipeline
-    auto magicPipeline = mk<ast::transform::PipelineTransformer>(
-            mk<ast::transform::ConditionalTransformer>(
-                    glb.config().has("magic-transform"), mk<ast::transform::ExpandEqrelsTransformer>()),
-            mk<ast::transform::MagicSetTransformer>(), mk<ast::transform::ResolveAliasesTransformer>(),
-            mk<ast::transform::RemoveRelationCopiesTransformer>(),
-            mk<ast::transform::RemoveEmptyRelationsTransformer>(),
-            mk<ast::transform::RemoveRedundantRelationsTransformer>(), clone(equivalencePipeline));
-
-    // Partitioning pipeline
-    auto partitionPipeline =
-            mk<ast::transform::PipelineTransformer>(mk<ast::transform::NameUnnamedVariablesTransformer>(),
-                    mk<ast::transform::PartitionBodyLiteralsTransformer>(),
-                    mk<ast::transform::ReplaceSingletonVariablesTransformer>());
-
-    // Provenance pipeline
-    auto provenancePipeline = mk<ast::transform::ConditionalTransformer>(glb.config().has("provenance"),
-            mk<ast::transform::PipelineTransformer>(mk<ast::transform::ExpandEqrelsTransformer>(),
-                    mk<ast::transform::NameUnnamedVariablesTransformer>()));
-
-    // Main pipeline // TODO: Maybe some passes is unused or invalid or should be changed under prob setting
+    // auto magicPipeline = mk<ast::transform::PipelineTransformer>(
+    //         mk<ast::transform::ConditionalTransformer>(
+    //                 glb.config().has("magic-transform"), mk<ast::transform::ExpandEqrelsTransformer>()),
+    //         mk<ast::transform::MagicSetTransformer>(), mk<ast::transform::ResolveAliasesTransformer>(),
+    //         // mk<ast::transform::RemoveRelationCopiesTransformer>(),
+    //         mk<ast::transform::RemoveEmptyRelationsTransformer>(),
+    //         mk<ast::transform::RemoveRedundantRelationsTransformer>(), clone(equivalencePipeline));
+    //
+    // // Partitioning pipeline
+    // auto partitionPipeline =
+    //         mk<ast::transform::PipelineTransformer>(mk<ast::transform::NameUnnamedVariablesTransformer>(),
+    //                 mk<ast::transform::PartitionBodyLiteralsTransformer>()
+    //                 // ,  mk<ast::transform::ReplaceSingletonVariablesTransformer>()
+    //                 );
+    //
+    // // Provenance pipeline
+    // auto provenancePipeline = mk<ast::transform::ConditionalTransformer>(glb.config().has("provenance"),
+    //         mk<ast::transform::PipelineTransformer>(mk<ast::transform::ExpandEqrelsTransformer>(),
+    //                 mk<ast::transform::NameUnnamedVariablesTransformer>()));
+    //
+    // // Main pipeline // TODO: Maybe some passes is unused or invalid or should be changed under prob setting
     auto pipeline = mk<ast::transform::PipelineTransformer>(mk<ast::transform::ComponentChecker>(),
             mk<ast::transform::ComponentInstantiationTransformer>(),
-            mk<ast::transform::LatticeTransformer>(),
+            // mk<ast::transform::LatticeTransformer>(),
             mk<ast::transform::DebugDeltaRelationTransformer>(),
             mk<ast::transform::IODefaultsTransformer>(),
-            mk<ast::transform::SimplifyAggregateTargetExpressionTransformer>(),
-            mk<ast::transform::UniqueAggregationVariablesTransformer>(),
-            mk<ast::transform::FixpointTransformer>(mk<ast::transform::PipelineTransformer>(  // TODO: useless
-                    mk<ast::transform::ResolveAnonymousRecordAliasesTransformer>(),
-                    mk<ast::transform::FoldAnonymousRecords>())),
-            mk<ast::transform::SubsumptionQualifierTransformer>(), mk<ast::transform::SemanticChecker>(),  // TODO: useless
-            mk<ast::transform::GroundWitnessesTransformer>(),  // TODO: we (pdatalog) will never support aggregation and other datalog extensions right?
-            mk<ast::transform::UniqueAggregationVariablesTransformer>(),
-            mk<ast::transform::MaterializeSingletonAggregationTransformer>(),
-            mk<ast::transform::FixpointTransformer>(
-                    mk<ast::transform::MaterializeAggregationQueriesTransformer>()),
-            mk<ast::transform::RemoveRedundantSumsTransformer>(),
-            mk<ast::transform::NormaliseGeneratorsTransformer>(),
+            // mk<ast::transform::SimplifyAggregateTargetExpressionTransformer>(),
+            // mk<ast::transform::UniqueAggregationVariablesTransformer>(),
+            // mk<ast::transform::FixpointTransformer>(mk<ast::transform::PipelineTransformer>(  // TODO: useless
+            //         mk<ast::transform::ResolveAnonymousRecordAliasesTransformer>(),
+            //         mk<ast::transform::FoldAnonymousRecords>())),
+            // mk<ast::transform::SubsumptionQualifierTransformer>(), mk<ast::transform::SemanticChecker>(),  // TODO: useless
+            // mk<ast::transform::GroundWitnessesTransformer>(),  // TODO: we (pdatalog) will never support aggregation and other datalog extensions right?
+            // mk<ast::transform::UniqueAggregationVariablesTransformer>(),
+            // mk<ast::transform::MaterializeSingletonAggregationTransformer>(),
+            // mk<ast::transform::FixpointTransformer>(
+            //         mk<ast::transform::MaterializeAggregationQueriesTransformer>()),
+            // mk<ast::transform::RemoveRedundantSumsTransformer>(),
+            // mk<ast::transform::NormaliseGeneratorsTransformer>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
             mk<ast::transform::RemoveBooleanConstraintsTransformer>(),
-            mk<ast::transform::ResolveAliasesTransformer>(), mk<ast::transform::MinimiseProgramTransformer>(),
-            mk<ast::transform::InlineUnmarkExcludedTransform>(),
-            mk<ast::transform::InlineRelationsTransformer>(), mk<ast::transform::GroundedTermsChecker>(),
+            mk<ast::transform::ResolveAliasesTransformer>(),
+            // mk<ast::transform::MinimiseProgramTransformer>(),
+            // mk<ast::transform::InlineUnmarkExcludedTransform>(),
+            // mk<ast::transform::InlineRelationsTransformer>(),
+            mk<ast::transform::GroundedTermsChecker>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
             mk<ast::transform::SimplifyConstantBinaryConstraintsTransformer>(),
             mk<ast::transform::RemoveBooleanConstraintsTransformer>(),
-            mk<ast::transform::RemoveRedundantRelationsTransformer>(),
-            mk<ast::transform::RemoveRelationCopiesTransformer>(),
+            // mk<ast::transform::RemoveRedundantRelationsTransformer>(),
+            // mk<ast::transform::RemoveRelationCopiesTransformer>(),
             mk<ast::transform::RemoveEmptyRelationsTransformer>(),
-            mk<ast::transform::ReplaceSingletonVariablesTransformer>(),
-            mk<ast::transform::FixpointTransformer>(mk<ast::transform::PipelineTransformer>(
-                    mk<ast::transform::ReduceExistentialsTransformer>(),
-                    mk<ast::transform::RemoveRedundantRelationsTransformer>())),
-            mk<ast::transform::RemoveRelationCopiesTransformer>(), std::move(partitionPipeline),
-            std::move(equivalencePipeline), mk<ast::transform::RemoveRelationCopiesTransformer>(),
-            std::move(magicPipeline), mk<ast::transform::RemoveEmptyRelationsTransformer>(),
-            mk<ast::transform::AddNullariesToAtomlessAggregatesTransformer>(),
-            mk<ast::transform::ExecutionPlanChecker>(), std::move(provenancePipeline),
+            // mk<ast::transform::ReplaceSingletonVariablesTransformer>(),
+            // mk<ast::transform::FixpointTransformer>(mk<ast::transform::PipelineTransformer>(
+            //         mk<ast::transform::ReduceExistentialsTransformer>(),
+            //         mk<ast::transform::RemoveRedundantRelationsTransformer>())),
+            // mk<ast::transform::RemoveRelationCopiesTransformer>(), std::move(partitionPipeline),
+            std::move(equivalencePipeline),
+            // mk<ast::transform::RemoveRelationCopiesTransformer>(),
+            // std::move(magicPipeline), mk<ast::transform::RemoveEmptyRelationsTransformer>(),
+            // mk<ast::transform::AddNullariesToAtomlessAggregatesTransformer>(),
+            // mk<ast::transform::ExecutionPlanChecker>(), // std::move(provenancePipeline),
             mk<ast::transform::IOAttributesTransformer>());
     // clang-format on
 
@@ -544,24 +550,25 @@ Own<ast2ram::UnitTranslator> getUnitTranslator(Global& glb) {
 
 Own<ram::transform::Transformer> ramTransformerSequence(Global& glb) {
     using namespace ram::transform;
+    // TODO: should check the transformer sequence; one of them is not compatible with unnamed variables in prob
     // clang-format off
-    Own<Transformer> ramTransform = mk<TransformerSequence>(
-            mk<LoopTransformer>(mk<TransformerSequence>(mk<ExpandFilterTransformer>(),
-                    mk<HoistConditionsTransformer>(), mk<MakeIndexTransformer>())),
-            mk<IfConversionTransformer>(), mk<IfExistsConversionTransformer>(),
-            mk<CollapseFiltersTransformer>(), mk<TupleIdTransformer>(),
-            mk<LoopTransformer>(
-                    mk<TransformerSequence>(mk<HoistAggregateTransformer>(), mk<TupleIdTransformer>())),
-            mk<ExpandFilterTransformer>(), mk<HoistConditionsTransformer>(),
-            mk<CollapseFiltersTransformer>(), mk<EliminateDuplicatesTransformer>(),
-            mk<ReorderConditionsTransformer>(), mk<LoopTransformer>(mk<ReorderFilterBreak>()),
-            mk<ConditionalTransformer>(
-                    // job count of 0 means all cores are used.
-                    [&]() -> bool { return std::stoi(glb.config().get("jobs")) != 1; },
-                    mk<ParallelTransformer>()),
-            mk<ReportIndexTransformer>());
+    // Own<Transformer> ramTransform = mk<TransformerSequence>(
+    //         mk<LoopTransformer>(mk<TransformerSequence>(mk<ExpandFilterTransformer>(),
+    //                 mk<HoistConditionsTransformer>(), mk<MakeIndexTransformer>())),
+    //         mk<IfConversionTransformer>(), mk<IfExistsConversionTransformer>(),
+    //         mk<CollapseFiltersTransformer>(), mk<TupleIdTransformer>(),
+    //         mk<LoopTransformer>(
+    //                 mk<TransformerSequence>(mk<HoistAggregateTransformer>(), mk<TupleIdTransformer>())),
+    //         mk<ExpandFilterTransformer>(), mk<HoistConditionsTransformer>(),
+    //         mk<CollapseFiltersTransformer>(), mk<EliminateDuplicatesTransformer>(),
+    //         mk<ReorderConditionsTransformer>(), mk<LoopTransformer>(mk<ReorderFilterBreak>()),
+    //         mk<ConditionalTransformer>(
+    //                 // job count of 0 means all cores are used.
+    //                 [&]() -> bool { return std::stoi(glb.config().get("jobs")) != 1; },
+    //                 mk<ParallelTransformer>()),
+    //         mk<ReportIndexTransformer>());
     // clang-format on
-
+    Own<Transformer> ramTransform = mk<TransformerSequence>();
     return ramTransform;
 }
 
@@ -958,7 +965,17 @@ int main(Global& glb, const char* souffle_executable) {
         // no other show options specified -> bail, we're done.
         if (glb.config().getMany("show").size() == 1) return 0;
     }
+    // auto* initAstProgramPtrRaw = dynamic_cast<ast::Program*>(astTranslationUnit->getProgram().cloneImpl().release());
+    //
+    // // Make sure the cast succeeded
+    // if (!initAstProgramPtrRaw) {
+    //     throw std::runtime_error("Failed to clone Program");
+    // }
+    //
+    // // Create a new Own<Program> from the raw pointer
+    // auto initAstProgramPtr = Own<ast::Program>(initAstProgramPtrRaw);
 
+    // astTranslationUnit->getProgram()->
     /* construct the transformation pipeline */
     auto pipeline = astTransformationPipeline(glb);
 
@@ -1007,7 +1024,7 @@ int main(Global& glb, const char* souffle_executable) {
     if (hasShowOpt("transformed-ast", "transformed-datalog")) {
         std::cout << astTranslationUnit->getProgram() << std::endl;
     }
-    auto& astProgram = astTranslationUnit->getProgram();
+    auto& newAstProgram = astTranslationUnit->getProgram();
 
     // Output the precedence graph in graphviz dot format
     if (hasShowOpt("precedence-graph")) {
@@ -1091,7 +1108,8 @@ int main(Global& glb, const char* souffle_executable) {
         } else {
             // ------- compiler -------------
             auto synthesiser = mk<synthesiser::Synthesiser>(*ramTranslationUnit);
-            synthesiser->setProgram(astProgram);
+            // synthesiser->setInitProgram(*initAstProgramPtr);
+            synthesiser->setNewProgram(newAstProgram);
             // Find the base filename for code generation and execution
             std::string baseFilename;
             if (compile_mode) {

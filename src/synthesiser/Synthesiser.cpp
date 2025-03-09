@@ -116,17 +116,18 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <ranges>
 #include <sstream>
 #include <tuple>
 #include <type_traits>
 #include <typeinfo>
 #include <utility>
 #include <vector>
-
 #include <ast/Constant.h>
 #include <ast/Negation.h>
 #include <ast/NumericConstant.h>
 #include <ast/StringConstant.h>
+#include <ast/UnnamedVariable.h>
 
 namespace souffle::synthesiser {
 
@@ -260,7 +261,12 @@ std::optional<std::size_t> Synthesiser::compileRegex(const std::string& pattern)
 void Synthesiser::emitRules (std::ostream& out) {
     // out << "class RuleComponents {" << std::endl;
     std::vector<std::string> ruleNames;
-    for (auto clause: this->astProgram->getClauses()) {
+    // const auto& initialClauses = this->initialAstProgram->getClauses();
+    const auto& newClauses = this->newAstProgram->getClauses();
+    // assert (initialClauses.size() == newClauses.size() && "Initial and new program should have the same number of clauses; no optimization for now");
+    for (size_t i = 0; i < newClauses.size(); ++i) {
+        // auto& initClause = initialClauses[i];
+        auto& clause = newClauses[i];
         std::cout << clause->getProbability() << std::endl;
         auto ruleId = clause->getClauseId();
         std::size_t atomId = 0;
@@ -281,16 +287,25 @@ void Synthesiser::emitRules (std::ostream& out) {
             }
             out << "}};" << std::endl;
         }
-        for (auto bodyLiteral: clause->getBodyLiterals()) {
+        // const auto& initialBodyLiterals = initClause->getBodyLiterals();
+        const auto& bodyLiterals = clause->getBodyLiterals();
+        for (size_t i = 0; i < bodyLiterals.size(); ++i) {
+            auto& bodyLiteral = bodyLiterals[i];
             atomId ++;
             if (isA<ast::Atom>(bodyLiteral)) {
                 ast::Atom* atom = as<ast::Atom>(bodyLiteral);
                 std::vector<std::string> fieldVars{};  // only consider variables for now
-                for (auto field: atom->getArguments()) {
+                const auto& fields = atom->getArguments();
+                for (size_t j = 0; j < fields.size(); ++j) {
+                    auto field = fields[j];
                     if (isA<ast::Variable>(field)) {
                         auto var = as<ast::Variable>(field);
                         fieldVars.push_back(var->getName());
-                    } else {
+                    } /*else if (isA<ast::UnnamedVariable>(field)) {
+                        assert (false && "No unnamedVariable");
+                        auto var = as<ast::Variable>(initialField);
+                        fieldVars.push_back(var->getName());
+                    } */else {
                         assert (false && "Not impl yet, atom");
                     }
                 }
