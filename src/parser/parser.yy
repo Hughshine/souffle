@@ -801,7 +801,17 @@ dependency_list
  * Fact
  */
 fact
-  : annotations atom DOT
+  : annotations FLOAT DOUBLECOLON atom DOT
+	{
+	  @$ = @$.from(@2);
+	  auto atm = $atom;
+	  auto prob = std::stof($FLOAT);
+	  atm->setProbability(prob);  // Store probability in the atom
+	  $$ = mk<ast::Clause>(std::move(atm), VecOwn<ast::Literal> {}, nullptr, @$);
+	  $$->setProbability(prob);
+	  $$->setAnnotations($annotations);
+	}
+  | annotations atom DOT
     {
       @$ = @$.from(@2);
       $$ = mk<ast::Clause>($atom, VecOwn<ast::Literal> {}, nullptr, @$);

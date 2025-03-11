@@ -267,6 +267,9 @@ void Synthesiser::emitRules (std::ostream& out) {
     for (size_t i = 0; i < newClauses.size(); ++i) {
         // auto& initClause = initialClauses[i];
         auto& clause = newClauses[i];
+        // if (ast::isFact(*clause)) {
+        //     continue;
+        // }
         std::cout << clause->getProbability() << std::endl;
         auto ruleId = clause->getClauseId();
         std::size_t atomId = 0;
@@ -274,16 +277,53 @@ void Synthesiser::emitRules (std::ostream& out) {
         std::string headAtomName = "rule" + std::to_string(ruleId) + "_head";
         {
             ast::Atom* headAtom = as<ast::Atom>(clause->getHead());
-            std::vector<std::string> fieldVars{};  // only consider variables for now
+            std::vector<std::pair<char, std::string>> fields;
+            // std::vector<std::string> fieldVars{};  // only consider variables for now
             for (auto field: headAtom->getArguments()) {
                 if (isA<ast::Variable>(field)) {
                     auto var = as<ast::Variable>(field);
-                    fieldVars.push_back(var->getName());
+                    fields.emplace_back('V', var->getName());
+                } else if (isA<ast::NumericConstant>(field)) {
+                    auto constant = as<ast::NumericConstant>(field);
+                    if (!constant->getFixedType().has_value()) {
+                        // assert (false && "Fixed type should be set for numeric constant");
+                        fields.emplace_back('I', constant->getConstant());
+                        continue;
+                    }
+                    switch (constant->getFixedType().value()) {
+                        case ast::NumericConstant::Type::Int:
+                            fields.emplace_back('I', constant->getConstant());
+                            break;
+                        case ast::NumericConstant::Type::Float:
+                            fields.emplace_back('F', constant->getConstant());
+                            break;
+                        case ast::NumericConstant::Type::Uint:
+                            fields.emplace_back('U', constant->getConstant());
+                            break;
+                    }
+                } else if (isA<ast::StringConstant>(field)) {
+                    auto constant = as<ast::StringConstant>(field);
+                    fields.emplace_back('S', constant->getConstant());
+                } else {
+                    assert (false && "Not impl yet, atom");
                 }
             }
             out << "const Atom " << headAtomName << " = Atom{\"" << headAtom->getQualifiedName().toString() << "\", {";
-            for (auto var: fieldVars) {
-                out << "SymbolicField::makeVariable(\"" << var << "\"), ";
+            for (auto [tag, field]: fields) {
+                switch (tag) {
+                    case 'V':
+                        out << "SymbolicField::makeVariable(\"" << field << "\"), ";
+                        break;
+                    case 'I':
+                    case 'F':
+                    case 'U':
+                        out << "SymbolicField{" << field << "}, "; break;
+                    case 'S':
+                        out << "SymbolicField{StringField{" << field << "}}, "; break;
+                    default:
+                        assert (false && "Unknown field type");
+                }
+                // out << "SymbolicField::makeVariable(\"" << var << "\"), ";
             }
             out << "}};" << std::endl;
         }
@@ -3789,6 +3829,16 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
             hook << "}\n";
             hook << "}\n";
         }
+        // for (auto clause : newAstProgram->getClauses()) {
+        //     if (ast::isFact(*clause)) {
+        //         // perhaps we should distinguish input-rule-fact and output-rule-fact
+        //         // and
+        //         // hook << "fact_prob
+        //
+        //
+        //         std::cout << clause->toString() << " " << clause->getProbability() << "\n";
+        //     }
+        // }
         db.addGlobalInclude("\"souffle/problog/Atom.h\"");
         db.addGlobalInclude("\"souffle/problog/Rule.h\"");
         db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
