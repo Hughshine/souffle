@@ -6,6 +6,9 @@ after your cmake build (follow souffle's original build guideline), you can use 
 python ../../cmake-build-debug/src/souffle-compile.py main.cpp -o test --with-cudd -v
 ```
 
+Optimization potential lies in the following areas:
+1. facts written in .dl files are not optimized.
+
 # Welcome!
 
 This is the official repository for the [Soufflé](https://souffle-lang.github.io) language project.
