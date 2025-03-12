@@ -13,8 +13,15 @@
 .decl res(X:number)
 .output res
 
+.decl e()
+.output e
+
 0.2::a(1).
 0.4::d(1,2).
+0.5::e().
 0.5::b(X) :- a(X).
 0.2::c(X) :- b(X), d(X,Y).
-0.9::res(X) :- b(X),c(X).
+0.9::res(X) :- b(X),c(X),e().
+
+query(res(_)).
+

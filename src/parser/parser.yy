@@ -238,6 +238,7 @@
 %token L_NOT                     "lnot"
 %token <std::string> OUTER_DOC_COMMENT "outer doc comment"
 %token <std::string> INNER_DOC_COMMENT "inner doc comment"
+%token QUERY                     "query predicate"
 
 /* -- Non-Terminal Types -- */
 %type <RuleBody>                          aggregate_body
@@ -380,6 +381,12 @@ unit
       auto fact = $fact;
       driver.addClause(std::move(fact));
     }
+  | unit QUERY LPAREN atom RPAREN DOT
+	{
+	  // Simply parse the query syntax without doing anything with it
+	  // This allows Souffle to accept ProbLog files with queries
+	  // TODO
+	}
   | unit annotations component_decl
     {
       auto component_decl = $component_decl;
@@ -1004,6 +1011,12 @@ atom
     {
       $$ = mk<ast::Atom>($qualified_name, $arg_list, @$);
     }
+/**  | qualified_name
+	{
+	  $$ = mk<ast::Atom>($qualified_name, VecOwn<ast::Argument>{}, @$);
+	}
+	// try avoid () for non-ary tuples, not work; conflict
+*/
   ;
 
 /**
