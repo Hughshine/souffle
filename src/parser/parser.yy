@@ -387,6 +387,10 @@ unit
 	  // This allows Souffle to accept ProbLog files with queries
 	  // TODO
 	}
+  /*| unit QUERY qualified_name DOT %prec ZERO_ARITY  // New rule for 0-arity query
+	{
+	  // Parse query without parentheses
+	}*/
   | unit annotations component_decl
     {
       auto component_decl = $component_decl;
@@ -447,10 +451,10 @@ qualified_name
     {
       $$ = driver.mkQN($IDENT);
     }
-  | qualified_name DOT IDENT
+/*  | qualified_name DOT IDENT %prec DOT_IN_NAME
     {
       $$ = $1; $$.append($IDENT);
-    }
+    } */
   ;
 
 /**
@@ -818,10 +822,27 @@ fact
 	  $$->setProbability(prob);
 	  $$->setAnnotations($annotations);
 	}
+  | annotations FLOAT DOUBLECOLON qualified_name DOT  // New rule for 0-arity facts
+	{
+	  @$ = @$.from(@qualified_name);
+	  auto atm = mk<ast::Atom>($qualified_name, VecOwn<ast::Argument>{}, @$);
+	  auto prob = std::stof($FLOAT);
+	  atm->setProbability(prob);
+	  $$ = mk<ast::Clause>(std::move(atm), VecOwn<ast::Literal> {}, nullptr, @$);
+	  $$->setProbability(prob);
+	  $$->setAnnotations($annotations);
+	}
   | annotations atom DOT
     {
       @$ = @$.from(@2);
       $$ = mk<ast::Clause>($atom, VecOwn<ast::Literal> {}, nullptr, @$);
+      $$->setAnnotations($annotations);
+    }
+  | annotations qualified_name DOT  // New rule for 0-arity facts
+    {
+      @$ = @$.from(@qualified_name);
+      auto atm = mk<ast::Atom>($qualified_name, VecOwn<ast::Argument>{}, @$);
+      $$ = mk<ast::Clause>(std::move(atm), VecOwn<ast::Literal> {}, nullptr, @$);
       $$->setAnnotations($annotations);
     }
   ;
@@ -930,6 +951,14 @@ head
 	  atom->setProbability(std::stof($FLOAT));  // Store probability in the atom
       $$.emplace_back(std::move(atom));
     }
+  | annotations FLOAT DOUBLECOLON qualified_name  // New rule for 0-arity atoms in heads
+    {
+      @$ = @$.from(@qualified_name);
+      auto atom = mk<ast::Atom>($qualified_name, VecOwn<ast::Argument>{}, @$);
+      atom->setAnnotations($annotations);
+      atom->setProbability(std::stof($FLOAT));
+      $$.emplace_back(std::move(atom));
+    }
   | head COMMA annotations atom
     {
       $$ = $1;
@@ -970,7 +999,8 @@ disjunction
   ;
 
 conjunction
-  : term
+  :
+  term
     {
       $$ = $term;
     }
@@ -989,6 +1019,7 @@ term
     {
       $$ = RuleBody::atom($atom);
     }
+
   | constraint
     {
       $$ = RuleBody::constraint($constraint);
@@ -1011,12 +1042,10 @@ atom
     {
       $$ = mk<ast::Atom>($qualified_name, $arg_list, @$);
     }
-/**  | qualified_name
+  | qualified_name
 	{
 	  $$ = mk<ast::Atom>($qualified_name, VecOwn<ast::Argument>{}, @$);
 	}
-	// try avoid () for non-ary tuples, not work; conflict
-*/
   ;
 
 /**
