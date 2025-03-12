@@ -11,6 +11,7 @@ set_property(GLOBAL PROPERTY CTEST_PARALLEL_LEVEL 8)
 
 add_subdirectory(non_recursion)
 add_subdirectory(recursion)
+add_subdirectory(cycle)
 #add_subdirectory(from_problog)
 #add_subdirectory(from_datalog)
 #add_subdirectory(evaluation)

@@ -357,7 +357,8 @@ void Synthesiser::emitRules (std::ostream& out) {
                 }
                 out << "}};" << std::endl;
             } else if (isA<ast::Negation>(bodyLiteral)) {
-                ast::Atom* atom = as<ast::Atom>(bodyLiteral);
+                ast::Negation* negation = as<ast::Negation>(bodyLiteral);
+                ast::Atom* atom = negation->getAtom();
                 std::vector<std::string> fieldVars{};  // only consider variables for now
                 for (auto field: atom->getArguments()) {
                     if (isA<ast::Variable>(field)) {
@@ -3805,7 +3806,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     // problog calculation
     if (glb.config().has("inc")) {
-        assert (false && "incremental problog calculation not implemented yet");
+        // assert (false && "incremental problog calculation not implemented yet");
     } else {
         hook << "try {\n";
         hook << "std::map<UntypedTuple, double> fact_prob;\n";

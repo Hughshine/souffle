@@ -90,21 +90,21 @@ public:
     size_t getId() const { return id; }
     const Rule* getRule() const { return rule; }
     std::string toString() const {
-        if (rule == nullptr) {
-            return "Hyperedge(" + std::to_string(id) + ")";
-        } else {
-
-            return "Rule" + std::to_string(rule->getRuleId()) + "("+ std::to_string(id) + ")";
-        }
-    // inputs to outputs
-//        std::stringstream ss;
-//        ss << "Hyperedge(" << id << "): ";
-//        for (const auto& input : inputs) {
-//            ss << input->getTuple().toString() << " ";
+//        if (rule == nullptr) {
+//            return "Hyperedge(" + std::to_string(id) + ")";
+//        } else {
+//
+//            return "Rule" + std::to_string(rule->getRuleId()) + "("+ std::to_string(id) + ")";
 //        }
-//        ss << " -> " << output->getTuple().toString();
+    // inputs to outputs
+        std::stringstream ss;
+        ss << "Hyperedge(" << id << "): ";
+        for (const auto& input : inputs) {
+            ss << input->getTuple().toString() << " ";
+        }
+        ss << " -> " << output->getTuple().toString();
 
-//        return ss.str();
+        return ss.str();
     }
 
 private:

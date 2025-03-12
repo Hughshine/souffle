@@ -100,10 +100,10 @@ class TestBasic(unittest.TestCase):
 
         # now compile c++
         cls.cpp_script_path = cls.build_dir + '/src/souffle-compile.py'
-        cls.cpp_comp_full_cmds = ['python', cls.cpp_script_path, 'test-full.cpp', '-o', 'test-full']
+        cls.cpp_comp_full_cmds = ['python', cls.cpp_script_path, 'test-full.cpp', '-o', 'test-full', '--with-cudd']
         cls.cpp_comp_full_with_delta_cmds = \
-            ['python', cls.cpp_script_path, 'test-full-with-delta.cpp', '-o', 'test-full-with-delta']
-        cls.cpp_comp_inc_cmds = ['python', cls.cpp_script_path, 'test-inc.cpp', '-o', 'test-inc']
+            ['python', cls.cpp_script_path, 'test-full-with-delta.cpp', '-o', 'test-full-with-delta', '--with-cudd']
+        cls.cpp_comp_inc_cmds = ['python', cls.cpp_script_path, 'test-inc.cpp', '-o', 'test-inc', '--with-cudd']
 
         # 1. cpp comp full
         print(f'{cls.test_dir}: {cls.cpp_comp_full_cmds} ...\n', flush=True)
