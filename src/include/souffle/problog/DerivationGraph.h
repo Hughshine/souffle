@@ -52,6 +52,8 @@ class DerivationGraph;
 using NodePtr = std::shared_ptr<Node>;
 using EdgePtr = std::shared_ptr<Hyperedge>;
 
+// TODO: derivation graph now does not support negation...
+
 class Node {
 public:
     friend class DerivationGraph;
@@ -89,6 +91,7 @@ public:
     NodePtr getOutput() const { return output; }
     size_t getId() const { return id; }
     const Rule* getRule() const { return rule; }
+    const std::vector<bool>& getBodyNegations() const { return bodyNegations; }
     std::string toString() const {
 //        if (rule == nullptr) {
 //            return "Hyperedge(" + std::to_string(id) + ")";
@@ -110,14 +113,21 @@ public:
 private:
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId)
         : inputs(inputs), output(output), id(edgeId), rule(nullptr) {}
-    Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, const Rule* rule)
+    Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, const Rule* rule, std::vector<bool>& bodyNegations)
         : inputs(inputs), output(output), id(edgeId), rule(rule) {
         if (rule) {
             probability = rule->getProbability();
         }
+        if (bodyNegations.size() > 0) {
+            this->bodyNegations = bodyNegations;
+        } else {
+            this->bodyNegations = std::vector<bool>(rule->getBodyAtoms().size(), false);
+        }
+
     }
 
     std::vector<NodePtr> inputs;
+    std::vector<bool> bodyNegations;
     NodePtr output;
     size_t id;
     double probability;
@@ -152,8 +162,8 @@ public:
         return edge;
     }
 
-    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, const Rule* rule) {
-        auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, rule));
+    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, const Rule* rule, std::vector<bool>& bodyNegations) {
+        auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, rule, bodyNegations));
 
         for (const auto& input : inputs) {
             input->addOutgoingEdge(edge);
@@ -170,12 +180,14 @@ public:
     	UntypedTuple headTuple{rule->getHead().getRelation(), rule->getHead().instantiatedFields(ruleApp.varValues)};
         auto headNode = createNode(headTuple);
         std::vector<NodePtr> bodyNodes;
+        std::vector<bool> bodyNegations;
         for (const auto& bodyAtom : rule->getBodyAtoms()) {
             UntypedTuple bodyTuple{bodyAtom.getRelation(), bodyAtom.instantiatedFields(ruleApp.varValues)};
             auto bodyNode = createNode(bodyTuple);
             bodyNodes.push_back(bodyNode);
+            bodyNegations.push_back(bodyAtom.isNegatedAtom());
         }
-        return createHyperedge(bodyNodes, headNode, rule);
+        return createHyperedge(bodyNodes, headNode, rule, bodyNegations);
     }
 
     const std::vector<NodePtr>& getNodes() const { return nodes; }

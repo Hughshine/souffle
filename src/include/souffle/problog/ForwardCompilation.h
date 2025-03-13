@@ -28,11 +28,11 @@ void buildFormulas(
         if (node->getIncomingEdges().empty()) {
             nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
             baseNodeFormulas.insert({node, nodeFormulas[node]});
-            std::cout << "Setting weight for node " << node->getId() << " with probability " << node->getProbability() << std::endl;
+//            std::cout << "Setting weight for node " << node->getId() << " with probability " << node->getProbability() << std::endl;
             formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1-node->getProbability());
         }
     }
-    std::cout << "Weight set for nodes" << std::endl;
+//    std::cout << "Weight set for nodes" << std::endl;
 
     // Initialize formulas for rule instantiations (hyperedges)
     for (const auto& edge : graph.getEdges()) {
@@ -41,7 +41,7 @@ void buildFormulas(
         formulaManager.setVariableWeight(graph.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
         baseEdgeFormulas.insert({edge, baseEdgeFormula});
     }
-    std::cout << "Initialize formulas for rule instantiations (hyperedges)" << std::endl;
+//    std::cout << "Initialize formulas for rule instantiations (hyperedges)" << std::endl;
 
     // Worklist algorithm
     std::queue<EdgePtr> worklist;
@@ -52,7 +52,7 @@ void buildFormulas(
         worklist.push(edge);
         inWorklist.insert(edge);
     }
-    std::cout << "Initialize worklist with all edges" << std::endl;
+//    std::cout << "Initialize worklist with all edges" << std::endl;
 
     while (!worklist.empty()) {
         auto edge = worklist.front();
@@ -69,28 +69,29 @@ void buildFormulas(
 
         // Add the input node formulas
         bool allInputsAvailable = true;
-        for (const auto& input : edge->getInputs()) {
+        for (auto i = 0; i < edge->getInputs().size(); i++) {
+            auto input = edge->getInputs()[i];
+            auto isNegated = edge->getBodyNegations()[i];
             auto it = nodeFormulas.find(input);
             if (it != nodeFormulas.end()) {
-                inputFormulas.push_back(it->second);
-//                formulaManager.printInfo(it->second, "input");
+                if (!isNegated) {
+                    inputFormulas.push_back(it->second);
+                } else {
+                    inputFormulas.push_back(formulaManager.makeNot(it->second));
+                }
             } else {
                 // Input node formula not available yet, skip this edge for now
                 allInputsAvailable = false;
                 break;
             }
         }
-        std::cout << "111 \n";
 
         if (!allInputsAvailable) {
             // Put the edge back in the worklist for later processing
             worklist.push(edge);
             inWorklist.insert(edge);
-            std::cout << "222 \n";
-
             continue;
         }
-        std::cout << "222 \n";
 
         // Compute the conjunction of all input formulas
         FormulaNodeRef newEdgeFormula;
@@ -99,17 +100,15 @@ void buildFormulas(
         } else {
             newEdgeFormula = formulaManager.makeAnd(inputFormulas);
         }
-        std::cout << "333 \n";
 
         // Check if the edge formula actually changed
         bool edgeFormulaChanged = !formulaManager.isSame(oldEdgeFormula, newEdgeFormula);
-        std::cout << "444 \n";
 
         if (edgeFormulaChanged) {
             // Update the edge formula
-            std::cout << "Edge" << edge->getId() << " " << edge->toString() << " changed.\n";
-            std::cout << "Old formula: " << formulaManager.toString(oldEdgeFormula) << std::endl;
-            std::cout << "New formula: " << formulaManager.toString(newEdgeFormula) << std::endl;
+//            std::cout << "Edge" << edge->getId() << " " << edge->toString() << " changed.\n";
+//            std::cout << "Old formula: " << formulaManager.toString(oldEdgeFormula) << std::endl;
+//            std::cout << "New formula: " << formulaManager.toString(newEdgeFormula) << std::endl;
             edgeFormulas[edge] = newEdgeFormula;
 
             // Update the output node formula
@@ -124,20 +123,19 @@ void buildFormulas(
 
             // Collect formulas from all incoming edges
             std::vector<FormulaNodeRef> incomingFormulas;
-            std::cout << "Output node " << output->getId() << " " << output->getTuple().toString() << std::endl;
+//            std::cout << "Output node " << output->getId() << " " << output->getTuple().toString() << std::endl;
             for (const auto& inEdge : output->getIncomingEdges()) {
 
-                std::cout << "Incoming edge " << inEdge->getId() << " " << inEdge->toString() << std::endl;
+//                std::cout << "Incoming edge " << inEdge->getId() << " " << inEdge->toString() << std::endl;
                 auto it = edgeFormulas.find(inEdge);
                 if (it != edgeFormulas.end()) {
-                    std::cout << "Incoming edge formula: " << formulaManager.toString(it->second) << std::endl;
+//                    std::cout << "Incoming edge formula: " << formulaManager.toString(it->second) << std::endl;
                     if (it->second.get()) {
                         // TODO: don't know why it can be NULL
                         incomingFormulas.push_back(it->second);
                     }
                 }
             }
-            std::cout << "555 \n";
 
             // Compute the disjunction of all incoming edge formulas
             FormulaNodeRef newNodeFormula;
@@ -151,12 +149,10 @@ void buildFormulas(
                 }
                 newNodeFormula = formulaManager.makeOr(incomingFormulas);
             }
-            std::cout << "666 \n";
 
             // Check if the node formula actually changed
             bool nodeFormulaChanged = !nodeHasFormula ||
                                      !formulaManager.isSame(oldNodeFormula, newNodeFormula);
-            std::cout << "777 \n";
 
             if (nodeFormulaChanged) {
                 // Update the node formula
@@ -178,7 +174,6 @@ void buildFormulas(
                     }
                 }
             }
-            std::cout << "888 \n";
 
         }
     }
