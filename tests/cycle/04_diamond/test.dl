@@ -1,3 +1,15 @@
+.decl a(x:number, y:number)
+.input a
+
+.decl b(x:number, y:number)
+.output b
+
+.decl c(x:number, y:number)
+.output c
+
+.decl res(x:number, y:number)
+.output res
+
 0.2::a(1,2).
 0.5::a(3,5).
 0.7::a(2,3).
