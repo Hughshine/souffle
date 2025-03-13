@@ -394,13 +394,18 @@ void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
     out << "WeightedBDDManager bddManager;\n";
     out << "buildFormulas(*graph, bddManager, nodeFormulas, edgeFormulas);\n";
+    out << "{" << std::endl;
+    out << "FunctionTimer timer(\" wmc and output probability \");\n";
     // print result to cout; TODO print to files
     out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+    out << "//    std::cout << \"Node\" << node->getId() ;\n";
     out << "    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
-    out << "    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
+    out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
     out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
     out << "    std::cout << \"Probability: \" << prob << std::endl;\n";
     out << "}\n";
+    out << "}" << std::endl;
+
     // out << "for (const auto& [edge, bdd] : edgeFormulas) {\n";
     // out << "    std::cout << edge->toString() << \" : \";\n";
     // out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
@@ -3809,7 +3814,10 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         // assert (false && "incremental problog calculation not implemented yet");
     } else {
         hook << "try {\n";
+
         hook << "std::map<UntypedTuple, double> fact_prob;\n";
+        hook << "{\n";
+        hook << "FunctionTimer timer(\" reading fact probability \");\n";
         for (auto input : loadIOs) {
             auto rel = input->getRelation();
             hook << "{\n";
@@ -3840,6 +3848,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         //         std::cout << clause->toString() << " " << clause->getProbability() << "\n";
         //     }
         // }
+        hook << "}\n";
         db.addGlobalInclude("\"souffle/problog/Atom.h\"");
         db.addGlobalInclude("\"souffle/problog/Rule.h\"");
         db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");

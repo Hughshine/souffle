@@ -194,6 +194,8 @@ public:
     const std::vector<EdgePtr>& getEdges() const { return edges; }
 
     static DerivationGraph* createFrom(const std::map<UntypedTuple, std::set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::map<UntypedTuple, double>& fact_prob)  {
+        FunctionTimer timer(" creating derivation graph ");
+
         auto graph = new DerivationGraph(&ruleManager);
         for (const auto& [tuple, ruleAppSet] : ruleApps) {
             auto node = graph->createNode(tuple);

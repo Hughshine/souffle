@@ -20,6 +20,8 @@ void buildFormulas(
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
 ) {
+    FunctionTimer timer(" forward compilation, building formulas ");
+
     // Initialize formulas for input facts (nodes)
     std::map<NodePtr, FormulaNodeRef> baseNodeFormulas;
     std::map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
@@ -144,9 +146,9 @@ void buildFormulas(
             } else if (incomingFormulas.size() == 1) {
                 newNodeFormula = incomingFormulas[0];
             } else {
-                for (const auto& formula : incomingFormulas) {
-                    std::cout << formulaManager.toString(formula) << std::endl;
-                }
+//                for (const auto& formula : incomingFormulas) {
+//                    std::cout << formulaManager.toString(formula) << std::endl;
+//                }
                 newNodeFormula = formulaManager.makeOr(incomingFormulas);
             }
 

@@ -158,6 +158,7 @@ private:
 
 WeightedBDDManager::WeightedBDDManager() {
     DdManager* m = Cudd_Init(0, 0, CUDD_UNIQUE_SLOTS, CUDD_CACHE_SLOTS, 0);
+//    DdManager* m = Cudd_Init(0, 0, 4096, 2*CUDD_CACHE_SLOTS, 0);
     if (m == nullptr) {
         throw std::runtime_error("Failed to initialize CUDD manager");
     }
@@ -175,6 +176,9 @@ BddNodeRef WeightedBDDManager::createVar(int index) {
 
 BddNodeRef WeightedBDDManager::createVar(int index, const Node& node) {
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
+    if (var == nullptr) {
+        throw std::runtime_error("Failed to create BDD variable");
+    }
     BddNodeRef ref(manager, var, node);
     variableRegistry[index] = ref;
     return BddNodeRef(manager, var, node);
@@ -182,6 +186,9 @@ BddNodeRef WeightedBDDManager::createVar(int index, const Node& node) {
 
 BddNodeRef WeightedBDDManager::createVar(int index, const Hyperedge& edge) {
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
+    if (var == nullptr) {
+        throw std::runtime_error("Failed to create BDD variable");
+    }
     BddNodeRef ref(manager, var, edge);
     variableRegistry[index] = ref;
     return BddNodeRef(manager, var, edge);
@@ -189,6 +196,9 @@ BddNodeRef WeightedBDDManager::createVar(int index, const Hyperedge& edge) {
 
 BddNodeRef WeightedBDDManager::makeAnd(const BddNodeRef& a, const BddNodeRef& b) {
     DdNode* result = Cudd_bddAnd(manager.get(), a.get(), b.get());
+    if (result == nullptr) {
+        throw std::runtime_error("makeAnd failed");
+    }
     return BddNodeRef(manager, result);
 }
 
@@ -199,12 +209,18 @@ BddNodeRef WeightedBDDManager::makeAnd(const std::vector<BddNodeRef>& nodes) {
     DdNode* result = nodes[0].get();
     for (size_t i = 1; i < nodes.size(); i++) {
         result = Cudd_bddAnd(manager.get(), result, nodes[i].get());
+        if (result == nullptr) {
+            throw std::runtime_error("makeAnd failed");
+        }
     }
     return BddNodeRef(manager, result);
 }
 
 BddNodeRef WeightedBDDManager::makeOr(const BddNodeRef& a, const BddNodeRef& b) {
     DdNode* result = Cudd_bddOr(manager.get(), a.get(), b.get());
+    if (result == nullptr) {
+        throw std::runtime_error("makeOr failed");
+    }
     return BddNodeRef(manager, result);
 }
 
@@ -215,6 +231,9 @@ BddNodeRef WeightedBDDManager::makeOr(const std::vector<BddNodeRef>& nodes) {
     DdNode* result = nodes[0].get();
     for (size_t i = 1; i < nodes.size(); i++) {
         result = Cudd_bddOr(manager.get(), result, nodes[i].get());
+        if (result == nullptr) {
+            throw std::runtime_error("makeOr failed");
+        }
     }
     return BddNodeRef(manager, result);
 }
