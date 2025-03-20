@@ -9,6 +9,15 @@ python ../../cmake-build-debug/src/souffle-compile.py main.cpp -o test --with-cu
 Optimization potential lies in the following areas:
 1. facts written in .dl files are not optimized.
 
+Testing:
+
+You should install problog for comparison. 
+```
+pip install --pre problog
+```
+
+
+
 # Welcome!
 
 This is the official repository for the [Soufflé](https://souffle-lang.github.io) language project.
