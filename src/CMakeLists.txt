@@ -491,6 +491,8 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   endif ()
 endif()
 
+list(APPEND SOUFFLE_COMPILED_LIBS -lreadline)
+
 if (SOUFFLE_USE_SQLITE)
   list(APPEND SOUFFLE_COMPILED_LIBS ${SQLite3_LIBRARY})
   if (COMMAND cmake_path)

@@ -15,7 +15,7 @@ if not JSON_DATA_TEXT:
       "debug_cxx_flags": "-g",
       "definitions": "-DRAM_DOMAIN_SIZE=64 -DUSE_NCURSES -DUSE_LIBZ -DUSE_SQLITE",
       "compile_options": "",
-      "link_options": "-pthread -ldl -lstdc++fs /usr/lib/x86_64-linux-gnu/libsqlite3.so /usr/lib/x86_64-linux-gnu/libz.so /usr/lib/x86_64-linux-gnu/libncurses.so",
+      "link_options": "-pthread -ldl -lreadline -lstdc++fs /usr/lib/x86_64-linux-gnu/libsqlite3.so /usr/lib/x86_64-linux-gnu/libz.so /usr/lib/x86_64-linux-gnu/libncurses.so",
       "rpaths": "/usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu",
       "outname_fmt": "-o {}",
       "libdir_fmt": "-L{}",

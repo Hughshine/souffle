@@ -4,20 +4,20 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include <regex>
+#include <readline/readline.h>
+#include <readline/history.h>
 #include "souffle/SouffleInterface.h"
 
 class IncrementalCLI {
 private:
-    /**
-     * Parse a tuple from a string
-     * @param str The string to parse (format: "relation_name(val1, val2, ...)")
-     * @return Pair of relation name and vector of values as strings
-     */
+    std::vector<std::string> commandHistory;
+
     std::pair<std::string, std::vector<std::string>> parseTuple(const std::string& str) {
         std::string relName;
         std::vector<std::string> values;
 
-        // Modified regex to require relation names to start with a letter
+        // Look for a pattern with proper word boundaries
         std::regex tupleRegex("\\b([a-zA-Z][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)");
         std::smatch matches;
 
@@ -44,23 +44,42 @@ private:
     }
 
 public:
-    /**
-     * Constructor
-     */
-    IncrementalCLI() {}
+    IncrementalCLI() {
+        // Initialize readline
+        using_history();
 
-    /**
-     * Process a single command
-     * @param command The command to process
-     * @return True if processing should continue, false to exit
-     */
+        // Set up completion if desired (optional)
+        // rl_attempted_completion_function = completionFunction;
+    }
+
+    ~IncrementalCLI() {
+        // Clean up readline history
+        clear_history();
+    }
+
     bool processCommand(const std::string& command) {
+        // Skip empty commands
+        if (command.empty()) {
+            return true;
+        }
+
         // Split command into parts
         std::istringstream iss(command);
         std::string cmd;
         iss >> cmd;
 
-        if (cmd == "insert") {
+        if (cmd == "help" || cmd == "h") {
+            std::cout << "Incremental Souffle CLI Commands:\n"
+                      << "--------------------------------\n"
+                      << "insert relation_name(val1, val2, ...)   : Queue a tuple for insertion\n"
+                      << "delete/remove relation_name(val1, val2...): Queue a tuple for deletion\n"
+                      << "commit                                  : Apply queued changes and run incremental computation\n"
+                      << "help, h                                 : Display this help message\n"
+                      << "exit, quit, q                           : Exit the CLI\n"
+                      << std::endl;
+            return true;
+        }
+        else if (cmd == "insert") {
             // Get the rest of the line
             std::string tupleSpec;
             std::getline(iss >> std::ws, tupleSpec);
@@ -109,28 +128,43 @@ public:
 
         } else {
             std::cout << "Unknown command: " << cmd << std::endl;
-            std::cout << "Available commands: insert, delete/remove, commit, exit/quit/q" << std::endl;
+            std::cout << "Use 'help' to see available commands" << std::endl;
         }
 
         return true;
     }
 
-    /**
-     * Start the CLI loop
-     */
     void run() {
         bool running = true;
 
-        std::cout << "Incremental Souffle CLI (Parser Only)" << std::endl;
-        std::cout << "Available commands: insert, delete/remove, commit, exit/quit/q" << std::endl;
+        std::cout << "Incremental Souffle CLI (with command history)" << std::endl;
+        std::cout << "Type 'help' for a list of available commands" << std::endl;
 
         while (running) {
-            std::cout << "> ";
-            std::string line;
-            std::getline(std::cin, line);
+            // Use readline to get input with history support
+            char* line = readline("> ");
 
-            running = processCommand(line);
+            // Check for EOF
+            if (!line) {
+                std::cout << std::endl;
+                break;
+            }
+
+            // Skip empty lines
+            if (line[0] != '\0') {
+                // Add to readline history
+                add_history(line);
+
+                // Process the command
+                std::string command(line);
+                running = processCommand(command);
+            }
+
+            // Free the memory allocated by readline
+            free(line);
         }
+
+        std::cout << "Exiting CLI" << std::endl;
     }
 };
 #endif //CLI_H
