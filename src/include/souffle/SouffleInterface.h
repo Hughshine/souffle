@@ -1040,6 +1040,54 @@ public:
 };
 
 /**
+ * Abstract base for incremental datalog programs, inheriting from SouffleProgram.
+ */
+class IncrementalSouffleProgram : public SouffleProgram {
+private:
+    int currentEpoch = 0;
+    std::vector<std::pair<std::string, std::vector<RamDomain>>> pendingAdditions;
+    std::vector<std::pair<std::string, std::vector<RamDomain>>> pendingDeletions;
+
+public:
+    /**
+     * Constructor that delegates to the base SouffleProgram constructor
+     */
+    IncrementalSouffleProgram() : SouffleProgram() {}
+
+    /**
+     * Destructor
+     */
+    ~IncrementalSouffleProgram() override = default;
+
+    /**
+     * Queue a tuple for insertion in the next commit
+     * @param relationName Name of the relation
+     * @param tuple Values for the tuple
+     */
+    virtual void queueInsertion(const std::string& relationName, const std::vector<RamDomain>& tuple) {
+        pendingAdditions.emplace_back(relationName, tuple);
+    }
+
+    /**
+     * Queue a tuple for deletion in the next commit
+     * @param relationName Name of the relation
+     * @param tuple Values for the tuple
+     */
+    virtual void queueDeletion(const std::string& relationName, const std::vector<RamDomain>& tuple) {
+        pendingDeletions.emplace_back(relationName, tuple);
+    }
+
+    virtual void runIncremental() {
+        // In a real implementation, this would selectively recompute
+        // affected parts of the program rather than running everything
+
+        // For now, just delegate to the full run
+        // run();
+        std::cout << "Incremental execution not implemented" << std::endl;
+    }
+};
+
+/**
  * Abstract program factory class.
  */
 class ProgramFactory {
