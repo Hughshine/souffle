@@ -5,51 +5,124 @@
 #include <sstream>
 #include <vector>
 #include <regex>
+#include <iomanip>
 #include <readline/readline.h>
 #include <readline/history.h>
-#include "souffle/SouffleInterface.h"
 
 class IncrementalCLI {
 private:
-    std::vector<std::string> commandHistory;
+    // Structure to represent a pending operation
+    struct Operation {
+        enum Type { INSERT, DELETE } type;
+        std::string relationName;
+        std::vector<std::string> values;
+        float probability;
 
-    std::pair<std::string, std::vector<std::string>> parseTuple(const std::string& str) {
+        std::string toString() const {
+            std::stringstream ss;
+            ss << (type == INSERT ? "insert " : "delete ");
+            if (type == INSERT) {
+                ss << probability << "::";
+            }
+            ss << relationName << "(";
+            for (size_t i = 0; i < values.size(); i++) {
+                if (i > 0) ss << ", ";
+                ss << values[i];
+            }
+            ss << ")";
+            return ss.str();
+        }
+    };
+
+    // Store all pending operations
+    std::vector<Operation> pendingOperations;
+
+    // Parse a tuple with potential probability
+    // Returns: relation name, values, probability, success flag
+    std::tuple<std::string, std::vector<std::string>, float, bool>
+    parseInsertCommand(const std::string& str) {
         std::string relName;
         std::vector<std::string> values;
+        float probability = 1.0; // Default probability
+        bool success = false;
 
-        // Look for a pattern with proper word boundaries
-        std::regex tupleRegex("\\b([a-zA-Z][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)");
+        // Pattern for prefix probability format: probability::relation_name(...)
+        std::regex prefixProbRegex("(0?\\.[0-9]+)\\s*::\\s*([a-zA-Z][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)");
+
+        // Pattern for suffix probability format: relation_name(...) probability
+        std::regex suffixProbRegex("([a-zA-Z][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)\\s*(0?\\.[0-9]+)");
+
+        // Pattern for standard format without explicit probability: relation_name(...)
+        std::regex standardRegex("([a-zA-Z][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)");
+
         std::smatch matches;
 
-        if (std::regex_search(str, matches, tupleRegex) && matches.size() > 2) {
-            relName = matches[1].str();
-            std::string valuesStr = matches[2].str();
-
-            // Split values by comma
-            std::regex valueRegex("\\s*([^,]+)\\s*,?");
-            std::string::const_iterator searchStart(valuesStr.cbegin());
-            std::smatch valueMatch;
-
-            while (std::regex_search(searchStart, valuesStr.cend(), valueMatch, valueRegex)) {
-                std::string value = valueMatch[1].str();
-                // Trim whitespace
-                value.erase(0, value.find_first_not_of(" \t"));
-                value.erase(value.find_last_not_of(" \t") + 1);
-                values.push_back(value);
-                searchStart = valueMatch.suffix().first;
+        // Try matching prefix probability pattern
+        if (std::regex_search(str, matches, prefixProbRegex) && matches.size() > 3) {
+            try {
+                probability = std::stof(matches[1].str());
+                if (probability < 0.0 || probability > 1.0) {
+                    return std::make_tuple("", std::vector<std::string>(), 0.0, false);
+                }
+                relName = matches[2].str();
+                std::string valuesStr = matches[3].str();
+                values = parseValues(valuesStr);
+                success = true;
+            } catch (const std::exception&) {
+                return std::make_tuple("", std::vector<std::string>(), 0.0, false);
             }
         }
+        // Try matching suffix probability pattern
+        else if (std::regex_search(str, matches, suffixProbRegex) && matches.size() > 3) {
+            try {
+                relName = matches[1].str();
+                std::string valuesStr = matches[2].str();
+                values = parseValues(valuesStr);
+                probability = std::stof(matches[3].str());
+                if (probability < 0.0 || probability > 1.0) {
+                    return std::make_tuple("", std::vector<std::string>(), 0.0, false);
+                }
+                success = true;
+            } catch (const std::exception&) {
+                return std::make_tuple("", std::vector<std::string>(), 0.0, false);
+            }
+        }
+        // Try matching standard pattern (default probability = 1.0)
+        else if (std::regex_search(str, matches, standardRegex) && matches.size() > 2) {
+            relName = matches[1].str();
+            std::string valuesStr = matches[2].str();
+            values = parseValues(valuesStr);
+            success = true;
+        }
 
-        return std::make_pair(relName, values);
+        return std::make_tuple(relName, values, probability, success);
+    }
+
+    // Helper function to parse values from a comma-separated string
+    std::vector<std::string> parseValues(const std::string& valuesStr) {
+        std::vector<std::string> values;
+
+        // Split values by comma
+        std::regex valueRegex("\\s*([^,]+)\\s*,?");
+        std::string::const_iterator searchStart(valuesStr.cbegin());
+        std::smatch valueMatch;
+
+        while (std::regex_search(searchStart, valuesStr.cend(), valueMatch, valueRegex)) {
+            std::string value = valueMatch[1].str();
+            // Trim whitespace
+            value.erase(0, value.find_first_not_of(" \t"));
+            value.erase(value.find_last_not_of(" \t") + 1);
+            values.push_back(value);
+            searchStart = valueMatch.suffix().first;
+        }
+
+        return values;
     }
 
 public:
     IncrementalCLI() {
         // Initialize readline
         using_history();
-
-        // Set up completion if desired (optional)
-        // rl_attempted_completion_function = completionFunction;
     }
 
     ~IncrementalCLI() {
@@ -71,11 +144,14 @@ public:
         if (cmd == "help" || cmd == "h") {
             std::cout << "Incremental Souffle CLI Commands:\n"
                       << "--------------------------------\n"
-                      << "insert relation_name(val1, val2, ...)   : Queue a tuple for insertion\n"
-                      << "delete/remove relation_name(val1, val2...): Queue a tuple for deletion\n"
-                      << "commit                                  : Apply queued changes and run incremental computation\n"
-                      << "help, h                                 : Display this help message\n"
-                      << "exit, quit, q                           : Exit the CLI\n"
+                      << "insert [probability::]relation_name(val1, val2, ...) [probability]\n"
+                      << "       Queue a tuple for insertion with optional probability (0-1)\n"
+                      << "delete/remove relation_name(val1, val2, ...)\n"
+                      << "       Queue a tuple for deletion\n"
+                      << "list   List all pending operations\n"
+                      << "commit Apply queued changes and run incremental computation\n"
+                      << "help, h Display this help message\n"
+                      << "exit, quit, q Exit the CLI\n"
                       << std::endl;
             return true;
         }
@@ -84,43 +160,80 @@ public:
             std::string tupleSpec;
             std::getline(iss >> std::ws, tupleSpec);
 
-            // Parse tuple
-            auto parsed = parseTuple(tupleSpec);
-            if (parsed.first.empty()) {
-                std::cout << "Error: Invalid tuple format. Use: relation_name(val1, val2, ...)" << std::endl;
+            // Parse tuple with probability
+            auto [relName, values, probability, success] = parseInsertCommand(tupleSpec);
+
+            if (!success || relName.empty()) {
+                std::cout << "Error: Invalid format. Use: [probability::]relation_name(val1, val2, ...) [probability]" << std::endl;
                 return true;
             }
 
+            // Add to pending operations
+            Operation op;
+            op.type = Operation::INSERT;
+            op.relationName = relName;
+            op.values = values;
+            op.probability = probability;
+            pendingOperations.push_back(op);
+
             // Output parsed information
-            std::cout << "PARSED INSERT: Relation = " << parsed.first << ", Values = [";
-            for (size_t i = 0; i < parsed.second.size(); i++) {
+            std::cout << "PARSED INSERT: Relation = " << relName
+                      << ", Values = [";
+            for (size_t i = 0; i < values.size(); i++) {
                 if (i > 0) std::cout << ", ";
-                std::cout << parsed.second[i];
+                std::cout << values[i];
             }
-            std::cout << "]" << std::endl;
+            std::cout << "], Probability = " << std::fixed << std::setprecision(2) << probability << std::endl;
 
         } else if (cmd == "delete" || cmd == "remove") {
             // Get the rest of the line
             std::string tupleSpec;
             std::getline(iss >> std::ws, tupleSpec);
 
-            // Parse tuple
-            auto parsed = parseTuple(tupleSpec);
-            if (parsed.first.empty()) {
-                std::cout << "Error: Invalid tuple format. Use: relation_name(val1, val2, ...)" << std::endl;
+            // For deletion we use the same parser but ignore probability
+            auto [relName, values, probability, success] = parseInsertCommand(tupleSpec);
+
+            if (!success || relName.empty()) {
+                std::cout << "Error: Invalid format. Use: relation_name(val1, val2, ...)" << std::endl;
                 return true;
             }
 
+            // Add to pending operations
+            Operation op;
+            op.type = Operation::DELETE;
+            op.relationName = relName;
+            op.values = values;
+            op.probability = 1.0;  // Deletion always has probability 1.0
+            pendingOperations.push_back(op);
+
             // Output parsed information
-            std::cout << "PARSED DELETE: Relation = " << parsed.first << ", Values = [";
-            for (size_t i = 0; i < parsed.second.size(); i++) {
+            std::cout << "PARSED DELETE: Relation = " << relName
+                      << ", Values = [";
+            for (size_t i = 0; i < values.size(); i++) {
                 if (i > 0) std::cout << ", ";
-                std::cout << parsed.second[i];
+                std::cout << values[i];
             }
             std::cout << "]" << std::endl;
 
+        } else if (cmd == "list") {
+            // List all pending operations
+            if (pendingOperations.empty()) {
+                std::cout << "No pending operations." << std::endl;
+            } else {
+                std::cout << "Pending operations:" << std::endl;
+                for (size_t i = 0; i < pendingOperations.size(); i++) {
+                    const Operation& op = pendingOperations[i];
+                    std::cout << i+1 << ". " << op.toString() << std::endl;
+                }
+            }
         } else if (cmd == "commit") {
-            std::cout << "PARSED COMMIT: Would apply pending changes and run incremental computation" << std::endl;
+            std::cout << "PARSED COMMIT: Would apply " << pendingOperations.size()
+                      << " pending changes and run incremental computation" << std::endl;
+
+            // In a real implementation, we would actually apply the changes here
+
+            // Clear pending operations after commit
+            pendingOperations.clear();
 
         } else if (cmd == "exit" || cmd == "quit" || cmd == "q") {
             std::cout << "PARSED EXIT: Exiting CLI" << std::endl;
