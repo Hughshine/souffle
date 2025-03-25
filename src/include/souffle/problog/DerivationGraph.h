@@ -60,7 +60,9 @@ public:
 
     const UntypedTuple& getTuple() const { return tuple; }
     const std::vector<EdgePtr>& getIncomingEdges() const { return incomingEdges; }
+    std::vector<EdgePtr>& getIncomingEdges() { return incomingEdges; }
     const std::vector<EdgePtr>& getOutgoingEdges() const { return outgoingEdges; }
+    std::vector<EdgePtr>& getOutgoingEdges() { return outgoingEdges; }
     size_t getId() const { return id; }
     double getProbability() const { return probability; }
     std::string toString() const {
@@ -290,7 +292,7 @@ public:
         ruleManager = rm;
     }
 
-private:
+protected:
     std::vector<NodePtr> nodes;
     std::vector<EdgePtr> edges;
     size_t nextNodeId;
@@ -363,130 +365,146 @@ void Node::addOutgoingEdge(EdgePtr edge) {
     outgoingEdges.push_back(edge);
 }
 
-//class IncrementalDerivationGraph : public DerivationGraph {
-//public:
-//    // 继承构造函数
-//    IncrementalDerivationGraph() : DerivationGraph() {}
-//    IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
-//
-//    // 从现有的派生图创建增量图
-//    void applyDelta(
-//        const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
-//        const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
-//        const RuleManager& ruleManager
-//    );
-//
-//    // 应用增量插入
-//    void applyDeltaInserts(
-//        const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
-//        const RuleManager& ruleManager
-//    );
-//
-//    // 应用增量删除
-//    void applyDeltaDeletes(
-//        const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
-//        const RuleManager& ruleManager
-//    );
-//
-//    void dumpDotInc(const std::string& filename) const;
-//
-//private:
-//    // 追踪增量变化的节点和边
-//    std::set<NodePtr> deltaInsertNodes;
-//    std::set<EdgePtr> deltaInsertEdges;
-//    std::set<NodePtr> deltaDeleteNodes;
-//    std::set<EdgePtr> deltaDeleteEdges;
-//};
+class IncrementalDerivationGraph : public DerivationGraph {
+public:
+    // 构造函数
+    IncrementalDerivationGraph() : DerivationGraph() {}
+    IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
 
-//void IncrementalDerivationGraph::applyDelta(
-//    const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
-//    const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
-//    const RuleManager& ruleManager
-//) {
-//    applyDeltaInserts(deltaInsertRuleApps, ruleManager);
-//    applyDeltaDeletes(deltaDeleteRuleApps, ruleManager);
-//}
-//
-//void IncrementalDerivationGraph::applyDeltaInserts(
-//    const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
-//    const RuleManager& ruleManager
-//) {
-//    FunctionTimer timer("applying delta inserts");
-//
-//    for (const auto& [tuple, ruleAppSet] : deltaInsertRuleApps) {
-//        auto outNode = createNode(tuple);
-//        deltaInsertNodes.insert(outNode);
-//
-//        for (const auto& ruleApp : *ruleAppSet) {
-//            auto edge = createHyperedgeFromRuleApp(ruleApp, ruleManager);
-//            deltaInsertEdges.insert(edge);
-//        }
-//    }
-//}
+    // 应用增量插入
+    void applyDeltaInserts(
+        const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
+        const RuleManager& ruleManager
+    );
 
-//void IncrementalDerivationGraph::applyDeltaDeletes(
-//    const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
-//    const RuleManager& ruleManager
-//) {
-//    FunctionTimer timer("applying delta deletes");
-//
-//    // 第一步：标记要删除的边
-//    std::vector<EdgePtr> edgesToRemove;
-//
-//    for (const auto& [tuple, ruleAppSet] : deltaDeleteRuleApps) {
-//        // 找到匹配元组的节点
-//        NodePtr targetNode = nullptr;
-//        for (const auto& node : getNodes()) {
-//            if (node->getTuple() == tuple) {
-//                targetNode = node;
-//                break;
-//            }
-//        }
-//
-//        if (!targetNode) {
-//            std::cout << "Node not found for tuple: " << tuple.toString() << std::endl;
-//            continue;
-//        } // 如果找不到节点，跳过
-//
-//        // 对于每个规则应用，找到并标记对应的边
-//        for (const auto& ruleApp : *ruleAppSet) {
-//            for (const auto& edge : targetNode->getIncomingEdges()) {
-//                // 这里需要一个比较逻辑来确定边是否由特定规则应用创建
-//                // 简化版本：假设我们可以通过规则ID和节点来匹配
-//                if (edge->getRule() && edge->getRule()->getRuleId() == ruleApp.ruleId) {
-//                    edgesToRemove.push_back(edge);
-//                    deltaDeleteEdges.insert(edge);
-//
-//                    // 标记输出节点为delta删除
-//                    deltaDeleteNodes.insert(edge->getOutput());
-//                }
-//            }
-//        }
-//    }
-//
-//    // 第二步：标记那些可能因为没有来源而被删除的节点
-//    std::set<NodePtr> potentialOrphanNodes;
-//    for (const auto& edge : edgesToRemove) {
-//        potentialOrphanNodes.insert(edge->getOutput());
-//    }
-//
-//    // 第三步：检查哪些节点变成了孤立节点（没有入边）
-//    for (const auto& node : potentialOrphanNodes) {
-//        bool hasRemainingEdges = false;
-//        for (const auto& edge : node->getIncomingEdges()) {
-//            if (std::find(edgesToRemove.begin(), edgesToRemove.end(), edge) == edgesToRemove.end()) {
-//                hasRemainingEdges = true;
-//                break;
-//            }
-//        }
-//
-//        if (!hasRemainingEdges) {
-//            deltaDeleteNodes.insert(node);
-//        }
-//    }
-//
-//    // 注意：这个方法不会实际从图中删除节点和边，
-//    // 只是标记它们。完整实现应该包括实际删除的逻辑。
-//}
+    // 应用增量删除
+    void applyDeltaDeletes(
+        const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
+        const RuleManager& ruleManager
+    );
+
+    // 合并方法，同时应用插入和删除操作
+    void applyDelta(
+        const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
+        const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
+        const RuleManager& ruleManager
+    ) {
+        // 先应用删除，再应用插入
+        applyDeltaDeletes(deltaDeleteRuleApps, ruleManager);
+        applyDeltaInserts(deltaInsertRuleApps, ruleManager);
+    }
+
+    // 用于跟踪增量变化的节点和边的集合
+    std::set<NodePtr> deltaInsertNodes;
+    std::set<EdgePtr> deltaInsertEdges;
+    std::set<NodePtr> deltaDeleteNodes;
+    std::set<EdgePtr> deltaDeleteEdges;
+};
+
+void IncrementalDerivationGraph::applyDeltaInserts(
+    const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
+    const RuleManager& ruleManager
+) {
+    FunctionTimer timer("applying delta inserts");
+
+    for (const auto& [tuple, ruleAppSet] : deltaInsertRuleApps) {
+        // 处理与该元组关联的每个规则应用
+        for (const auto& ruleApp : *ruleAppSet) {
+            // 检查这个规则应用的边是否已经存在
+            EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp);
+            assert(existingEdge == nullptr && "Delta insert edge already exists in the graph");
+
+            // 创建规则应用对应的超边
+            EdgePtr newEdge = createHyperedgeFromRuleApp(ruleApp, ruleManager);
+
+            // 将边标记为增量插入
+            deltaInsertEdges.insert(newEdge);
+
+            // 获取输出节点
+            NodePtr outputNode = newEdge->getOutput();
+
+            // 如果这是一个重新插入的节点（之前被标记为删除）
+            if (deltaDeleteNodes.find(outputNode) != deltaDeleteNodes.end()) {
+                // 从删除集合中移除
+                deltaDeleteNodes.erase(outputNode);
+            } else {
+                // 否则，将其添加到插入集合中（如果尚未添加）
+                deltaInsertNodes.insert(outputNode);
+            }
+        }
+    }
+}
+
+void IncrementalDerivationGraph::applyDeltaDeletes(
+    const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
+    const RuleManager& ruleManager
+) {
+    FunctionTimer timer("applying delta deletes");
+
+    // 跟踪需要删除的节点
+    std::vector<NodePtr> nodesToRemove;
+
+    for (const auto& [tuple, ruleAppSet] : deltaDeleteRuleApps) {
+        for (const auto& ruleApp : *ruleAppSet) {
+            // 查找要删除的边 - 直接使用map查找
+            EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp);
+            assert(existingEdge != nullptr && "Delta delete edge does not exist in the graph");
+
+            // 将边标记为增量删除
+            deltaDeleteEdges.insert(existingEdge);
+
+            // 获取输出节点和输入节点
+            NodePtr outputNode = existingEdge->getOutput();
+            const std::vector<NodePtr>& inputNodes = existingEdge->getInputs();
+
+            // 从输出节点的入边列表中移除这条边
+            auto& inEdges = outputNode->getIncomingEdges();
+            inEdges.erase(std::remove(inEdges.begin(), inEdges.end(), existingEdge), inEdges.end());
+
+            // 从每个输入节点的出边列表中移除这条边
+            for (const auto& inputNode : inputNodes) {
+                // 检查节点是否还在图中 - 使用map直接查找
+                if (tupleToNodeMap.find(inputNode->getTuple()) != tupleToNodeMap.end()) {
+                    auto& outEdges = inputNode->getOutgoingEdges();
+                    outEdges.erase(std::remove(outEdges.begin(), outEdges.end(), existingEdge), outEdges.end());
+                }
+            }
+
+            // 从图的边列表中移除这条边
+            auto& allEdges = edges;
+            allEdges.erase(std::remove(allEdges.begin(), allEdges.end(), existingEdge), allEdges.end());
+
+            // 从edgeKeyToEdgeMap中移除这条边
+            std::string edgeKey = createEdgeKey(ruleApp.ruleId, ruleApp.varValues);
+            edgeKeyToEdgeMap.erase(edgeKey);
+
+            // 检查输出节点是否还有其他导出路径
+            if (outputNode->getIncomingEdges().empty()) {
+                // 对于派生节点，如果没有入边，应该从图中删除
+                // 如果这是一个新插入的节点被删除
+                if (deltaInsertNodes.find(outputNode) != deltaInsertNodes.end()) {
+                    // 从插入集合中移除
+                    deltaInsertNodes.erase(outputNode);
+                } else {
+                    // 添加到删除集合中
+                    deltaDeleteNodes.insert(outputNode);
+                }
+
+                // 将节点添加到待删除列表
+                nodesToRemove.push_back(outputNode);
+            }
+        }
+    }
+
+    // 最后，从图中删除没有入边的派生节点
+    for (const auto& nodeToRemove : nodesToRemove) {
+        // 从映射中移除
+        tupleToNodeMap.erase(nodeToRemove->getTuple());
+
+        // 从节点列表中移除
+        nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeToRemove), nodes.end());
+    }
+}
+
 
 #endif //DERIVATIONGRAPH_H

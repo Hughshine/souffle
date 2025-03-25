@@ -11,7 +11,7 @@
 int main() {
     RuleManager ruleManager = ExampleRuleComponents::ruleManager;
     std::cout << ruleManager.toString() << std::endl;
-    auto graph = DerivationGraph::createFrom(ExampleRuleComponents::exampleRuleApps2, ExampleRuleComponents::ruleManager);
+    auto graph = IncrementalDerivationGraph::createFrom(ExampleRuleComponents::exampleRuleApps2, ExampleRuleComponents::ruleManager);
     // Dump to DOT file
     graph->dumpDot("derivation.dot");
 
