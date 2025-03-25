@@ -57,7 +57,6 @@ public:
 
     static const std::map<UntypedTuple, std::set<RuleApplication>*> exampleRuleApps;
     static const std::map<UntypedTuple, std::set<RuleApplication>*> exampleRuleApps2;
-
 };
 
 RuleManager::RuleManager(std::vector<Rule> rules) {
