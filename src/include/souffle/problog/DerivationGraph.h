@@ -64,6 +64,7 @@ public:
     const std::vector<EdgePtr>& getOutgoingEdges() const { return outgoingEdges; }
     std::vector<EdgePtr>& getOutgoingEdges() { return outgoingEdges; }
     size_t getId() const { return id; }
+    void setProbability(double prob) { probability = prob; }
     double getProbability() const { return probability; }
     std::string toString() const {
         return tuple.toString();
@@ -374,7 +375,8 @@ public:
     // 应用增量插入
     void applyDeltaInserts(
         const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
-        const RuleManager& ruleManager
+        const RuleManager& ruleManager,
+        const std::map<UntypedTuple, double>& fact_prob = {}
     );
 
     // 应用增量删除
@@ -387,11 +389,12 @@ public:
     void applyDelta(
         const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
         const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
-        const RuleManager& ruleManager
+        const RuleManager& ruleManager,
+        const std::map<UntypedTuple, double>& fact_prob = {}
     ) {
         // 先应用删除，再应用插入
         applyDeltaDeletes(deltaDeleteRuleApps, ruleManager);
-        applyDeltaInserts(deltaInsertRuleApps, ruleManager);
+        applyDeltaInserts(deltaInsertRuleApps, ruleManager, fact_prob);
     }
 
     // 用于跟踪增量变化的节点和边的集合
@@ -403,7 +406,8 @@ public:
 
 void IncrementalDerivationGraph::applyDeltaInserts(
     const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
-    const RuleManager& ruleManager
+    const RuleManager& ruleManager,
+    const std::map<UntypedTuple, double>& fact_prob
 ) {
     FunctionTimer timer("applying delta inserts");
 
@@ -432,6 +436,15 @@ void IncrementalDerivationGraph::applyDeltaInserts(
                 deltaInsertNodes.insert(outputNode);
             }
         }
+    }
+
+    for (const auto& [tuple, prob] : fact_prob) {
+        auto node = this->findNode(tuple);
+        if (node == nullptr) {
+            node = createNode(tuple);
+            deltaInsertNodes.insert(node);
+        }
+        node->setProbability(prob);
     }
 }
 
