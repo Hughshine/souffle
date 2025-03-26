@@ -23,39 +23,17 @@ int main() {
     std::map<EdgePtr, BddNodeRef> edgeFormulas;
     WeightedBDDManager bddManager;
 
-
-
-    // TODO: automatically set weights based on facts and rule probabilities
-//    bddManager.setVariableWeight(1, 1.0, 0.0);  // edge(1, 2)
-//    bddManager.setVariableWeight(3, 1.0, 0.0);  // edge(1, 2)
-//    bddManager.setVariableWeight(4, 1.0, 0.0);  // edge(1, 2)
-    bddManager.setVariableWeight(1, 0.5, 0.5);  // edge(1, 2)
-    bddManager.setVariableWeight(3, 0.8, 0.2);  // edge(3, 2)
-    bddManager.setVariableWeight(4, 0.9, 0.1);  // edge(2, 3)
-//    bddManager.setVariableWeight(9, 0.9, 0.1);
-//    bddManager.setVariableWeight(11, 0.9, 0.1);
-//    bddManager.setVariableWeight(10, 0.9, 0.1);
-//    bddManager.setVariableWeight(12, 0.9, 0.1);
-//    bddManager.setVariableWeight(13, 0.9, 0.1);
-//    bddManager.setVariableWeight(14, 0.9, 0.1);
-//    bddManager.setVariableWeight(15, 0.9, 0.1);
-//    bddManager.setVariableWeight(16, 0.9, 0.1);
-//    bddManager.setVariableWeight(17, 0.9, 0.1);
-
     buildFormulas(*graph, bddManager, nodeFormulas, edgeFormulas);
 
     for (const auto& [node, bdd] : nodeFormulas) {
         std::cout << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
-//        formulaManager.printInfo(formula, "formula");
-//        auto bdd = transform(formula, formulaManager, bddManager);
         std::cout << bddManager.toString(bdd) << "\t";
         auto prob = bddManager.computeWeightedModelCount(bdd);
         std::cout << "Probability: " << prob << std::endl;
     }
     for (const auto& [edge, bdd] : edgeFormulas) {
         std::cout << edge->toString() << " : ";
-//        formulaManager.printInfo(formula, "formula");
-//        auto bdd = transform(formula, formulaManager, bddManager);
+        std::cout << bddManager.toString(bdd) << "\t";
         auto prob = bddManager.computeWeightedModelCount(bdd);
         std::cout << "Probability: " << prob << std::endl;
     }

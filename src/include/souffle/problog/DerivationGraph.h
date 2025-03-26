@@ -107,11 +107,12 @@ public:
 //        }
     // inputs to outputs
         std::stringstream ss;
-        ss << "Hyperedge(" << id << "): ";
+        ss << "Hyperedge(" << id << ")[";
+        ss << "rule" << rule->getRuleId() << ",";
         for (const auto& input : inputs) {
-            ss << input->getTuple().toString() << " ";
+            ss << input->getTuple().toString();
         }
-        ss << " -> " << output->getTuple().toString();
+        ss << "->" << output->getTuple().toString() << "]";
 
         return ss.str();
     }
