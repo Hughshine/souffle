@@ -435,6 +435,16 @@ void IncrementalDerivationGraph::applyDeltaInserts(
 ) {
     FunctionTimer timer("applying delta inserts");
 
+    // all facts
+    for (const auto& [tuple, prob] : fact_prob) {
+        auto node = this->findNode(tuple);
+        if (node == nullptr) {
+            node = createNode(tuple);
+            deltaInsertNodes.insert(node);
+        }
+        node->setProbability(prob);
+    }
+
     for (const auto& [tuple, ruleAppSet] : deltaInsertRuleApps) {
         // 处理与该元组关联的每个规则应用
         for (const auto& ruleApp : *ruleAppSet) {
@@ -460,15 +470,6 @@ void IncrementalDerivationGraph::applyDeltaInserts(
                 deltaInsertNodes.insert(outputNode);
             }
         }
-    }
-
-    for (const auto& [tuple, prob] : fact_prob) {
-        auto node = this->findNode(tuple);
-        if (node == nullptr) {
-            node = createNode(tuple);
-            deltaInsertNodes.insert(node);
-        }
-        node->setProbability(prob);
     }
 }
 
