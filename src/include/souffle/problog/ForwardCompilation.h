@@ -184,6 +184,18 @@ void buildFormulas(
 
 // TODO: formula上可以增加一个change标记？或者node/edge上，表示它的formula没有变过，于是避免重复wmc.
 // 不过目前的实现中有cache，所以其实就是优化了的. 先不管这件事.
+//template<typename FormulaNodeRef>
+//void buildFormulasInc(
+//    const IncrementalDerivationGraph& graph,
+//    FormulaManager<FormulaNodeRef>& formulaManager,
+//    std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
+//    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
+//) {
+//    nodeFormulas.clear();
+//    edgeFormulas.clear();
+//    buildFormulas(graph, formulaManager, nodeFormulas, edgeFormulas);
+//}
+
 template<typename FormulaNodeRef>
 void buildFormulasInc(
     const IncrementalDerivationGraph& graph,
@@ -191,9 +203,212 @@ void buildFormulasInc(
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
 ) {
-    nodeFormulas.clear();
-    edgeFormulas.clear();
-    buildFormulas(graph, formulaManager, nodeFormulas, edgeFormulas);
+    FunctionTimer timer(" forward compilation, incremental update ");
+
+    // Skip if no changes
+    if (graph.deltaInsertEdges.empty() && graph.deltaDeleteEdges.empty()) {
+        std::cout << "No changes to apply, skipping incremental update" << std::endl;
+        return;
+    }
+
+    // Function to update edge formula based on its inputs
+    auto updateEdgeFormula = [&](EdgePtr edge) -> FormulaNodeRef {
+        // Get base edge formula (the rule probability)
+        auto baseEdgeFormula = formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
+
+        // Collect input formulas
+        std::vector<FormulaNodeRef> inputFormulas;
+        inputFormulas.push_back(baseEdgeFormula);
+
+        // Add all input node formulas
+        bool allInputsAvailable = true;
+        for (size_t i = 0; i < edge->getInputs().size(); i++) {
+            auto input = edge->getInputs()[i];
+            auto isNegated = edge->getBodyNegations()[i];
+            auto it = nodeFormulas.find(input);
+
+            if (it != nodeFormulas.end()) {
+                if (!isNegated) {
+                    inputFormulas.push_back(it->second);
+                } else {
+                    inputFormulas.push_back(formulaManager.makeNot(it->second));
+                }
+            } else {
+                allInputsAvailable = false;
+                break;
+            }
+        }
+
+        // If all inputs available, compute conjunction
+        if (allInputsAvailable) {
+            if (inputFormulas.size() == 1) {
+                return inputFormulas[0];
+            } else {
+                return formulaManager.makeAnd(inputFormulas);
+            }
+        }
+
+        // Return empty formula if inputs not available
+        return formulaManager.getFalse();
+    };
+
+    // Function to update node formula based on incoming edges
+    auto updateNodeFormula = [&](NodePtr node) -> FormulaNodeRef {
+        // Collect formulas from all incoming edges
+        std::vector<FormulaNodeRef> incomingFormulas;
+
+        for (const auto& inEdge : node->getIncomingEdges()) {
+            auto it = edgeFormulas.find(inEdge);
+            if (it != edgeFormulas.end() && it->second.get()) {
+                incomingFormulas.push_back(it->second);
+            }
+        }
+
+        // Compute disjunction of all incoming edge formulas
+        if (incomingFormulas.empty()) {
+            // If no incoming edges, node is not derivable (False)
+            return formulaManager.getFalse();
+        } else if (incomingFormulas.size() == 1) {
+            return incomingFormulas[0];
+        } else {
+            return formulaManager.makeOr(incomingFormulas);
+        }
+    };
+
+    // Initialize updated set with all deleted edges
+    std::set<EdgePtr> updatedSet(graph.deltaDeleteEdges.begin(), graph.deltaDeleteEdges.end());
+//    auto deltaDeleteEdgesCopy = graph.deltaDeleteEdges;
+    // Process deleted edges - update their formulas and propagate changes
+    for (auto node : graph.deltaDeleteNodes) {
+        nodeFormulas.erase(node);
+    }
+    while (!updatedSet.empty()) {
+        // Get an edge from the updated set
+        auto edge = *updatedSet.begin();
+        updatedSet.erase(updatedSet.begin());
+
+        // Store old edge formula
+        FormulaNodeRef oldEdgeFormula = edgeFormulas[edge];
+
+        // For deleted edges, set formula to False or recompute
+        FormulaNodeRef newEdgeFormula;
+        if (graph.deltaDeleteEdges.find(edge) != graph.deltaDeleteEdges.end()) {
+            // Set to False (empty formula) TODO
+            newEdgeFormula = formulaManager.getFalse();
+        } else {
+            // Recompute based on inputs
+            newEdgeFormula = updateEdgeFormula(edge);
+        }
+
+        // Check if formula changed
+        bool edgeFormulaChanged = !formulaManager.isSame(oldEdgeFormula, newEdgeFormula);
+
+        if (edgeFormulaChanged) {
+            // Update edge formula
+            edgeFormulas[edge] = newEdgeFormula;
+
+            // Update output node formula
+            auto output = edge->getOutput();
+
+            // Skip if output node is also deleted
+            if (graph.deltaDeleteNodes.find(output) != graph.deltaDeleteNodes.end()) {
+                continue;
+            }
+
+            // Store old node formula
+            FormulaNodeRef oldNodeFormula;
+            bool nodeHasFormula = nodeFormulas.find(output) != nodeFormulas.end();
+            if (nodeHasFormula) {
+                oldNodeFormula = nodeFormulas[output];
+            }
+
+            // Compute new node formula
+            FormulaNodeRef newNodeFormula = updateNodeFormula(output);
+
+            // Check if node formula changed
+            bool nodeFormulaChanged = !nodeHasFormula ||
+                                     !formulaManager.isSame(oldNodeFormula, newNodeFormula);
+
+            if (nodeFormulaChanged) {
+                // Update node formula
+                nodeFormulas[output] = newNodeFormula;
+
+                // Add outgoing edges to updated set
+                for (const auto& outEdge : output->getOutgoingEdges()) {
+                    if (graph.deltaDeleteEdges.find(outEdge) == graph.deltaDeleteEdges.end()) {
+                        updatedSet.insert(outEdge);
+                    }
+                }
+            }
+        }
+    }
+
+    // Initialize updated set with all inserted edges
+    updatedSet.clear();
+    updatedSet.insert(graph.deltaInsertEdges.begin(), graph.deltaInsertEdges.end());
+    for (auto node : graph.deltaInsertNodes) {
+        // Create a variable using the fact's unique ID
+        if (node->getIncomingEdges().empty()) {
+            nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
+            formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1-node->getProbability());
+        }
+    }
+    // Process inserted edges - update their formulas and propagate changes
+    while (!updatedSet.empty()) {
+        // Get an edge from the updated set
+        auto edge = *updatedSet.begin();
+        updatedSet.erase(updatedSet.begin());
+
+        // Store old edge formula
+        FormulaNodeRef oldEdgeFormula;
+        bool edgeHasFormula = edgeFormulas.find(edge) != edgeFormulas.end();
+        if (edgeHasFormula) {
+            oldEdgeFormula = edgeFormulas[edge];
+        }
+
+        // Compute new edge formula
+        FormulaNodeRef newEdgeFormula = updateEdgeFormula(edge);
+
+        // Check if formula changed
+        bool edgeFormulaChanged = !edgeHasFormula ||
+                                 !formulaManager.isSame(oldEdgeFormula, newEdgeFormula);
+
+        if (edgeFormulaChanged) {
+            // Update edge formula
+            edgeFormulas[edge] = newEdgeFormula;
+
+            // Update output node formula
+            auto output = edge->getOutput();
+
+            // Store old node formula
+            FormulaNodeRef oldNodeFormula;
+            bool nodeHasFormula = nodeFormulas.find(output) != nodeFormulas.end();
+            if (nodeHasFormula) {
+                oldNodeFormula = nodeFormulas[output];
+            }
+
+            // Compute new node formula
+            FormulaNodeRef newNodeFormula = updateNodeFormula(output);
+
+            // Check if node formula changed
+            bool nodeFormulaChanged = !nodeHasFormula ||
+                                     !formulaManager.isSame(oldNodeFormula, newNodeFormula);
+
+            if (nodeFormulaChanged) {
+                // Update node formula
+                nodeFormulas[output] = newNodeFormula;
+
+                // Add outgoing edges to updated set
+                for (const auto& outEdge : output->getOutgoingEdges()) {
+                    updatedSet.insert(outEdge);
+                }
+            }
+        }
+    }
+    for (auto edge: graph.deltaDeleteEdges) {
+        edgeFormulas.erase(edge);
+    }
+    std::cout << "Successfully completed incremental formula update" << std::endl;
 }
 
 #endif //FORWARDCOMPILATION_H

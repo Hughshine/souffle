@@ -99,6 +99,13 @@ public:
     // Getter for the BDD node
     DdNode* get() const { return ddNode; }
 
+    // TODO: static false true node
+//    static BddNodeRef getTrue(std::shared_ptr<DdManager> manager) {
+//        return BddNodeRef(manager, Cudd_ReadOne(manager.get()));
+//    }
+//    static BddNodeRef getFalse(std::shared_ptr<DdManager> manager) {
+//        return BddNodeRef(manager, Cudd_ReadLogicZero(manager.get()));
+//    }
 private:
     std::shared_ptr<DdManager> manager;  // Shared ownership of manager
     DdNode* ddNode;
@@ -126,6 +133,13 @@ public:
     BddNodeRef makeOr(const std::vector<BddNodeRef>& nodes) override;
     BddNodeRef makeNot(const BddNodeRef& a) override;
     bool isSame(const BddNodeRef& a, const BddNodeRef& b) override;
+
+    BddNodeRef getTrue() {
+        return BddNodeRef(manager, Cudd_ReadOne(manager.get()));
+    }
+    BddNodeRef getFalse() {
+        return BddNodeRef(manager, Cudd_ReadLogicZero(manager.get()));
+    }
 
     std::string toString(const BddNodeRef& nodeRef);
 
