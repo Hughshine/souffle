@@ -95,6 +95,9 @@ public:
     size_t getId() const { return id; }
     const Rule* getRule() const { return rule; }
     const std::vector<bool>& getBodyNegations() const { return bodyNegations; }
+
+    double getProbability() const { return probability; }
+
     std::string toString() const {
 //        if (rule == nullptr) {
 //            return "Hyperedge(" + std::to_string(id) + ")";
@@ -152,7 +155,7 @@ public:
         // 不存在则创建新节点
         auto node = std::shared_ptr<Node>(new Node(tuple, nextNodeId++));
         nodes.push_back(node);
-        node->probability = weight;
+        node->setProbability(weight);
 
         // 添加到映射中
         tupleToNodeMap[tuple] = node;
@@ -372,6 +375,23 @@ public:
     IncrementalDerivationGraph() : DerivationGraph() {}
     IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
 
+    static IncrementalDerivationGraph* createFrom(const std::map<UntypedTuple, std::set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::map<UntypedTuple, double>& fact_prob = {})  {
+        FunctionTimer timer(" creating derivation graph ");
+
+        auto graph = new IncrementalDerivationGraph(&ruleManager);
+        for (const auto& [tuple, ruleAppSet] : ruleApps) {
+            auto node = graph->createNode(tuple);
+            for (const auto& ruleApp : *ruleAppSet) {
+                auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
+            }
+        }
+        for (const auto& [tuple, prob] : fact_prob) {
+            auto node = graph->createNode(tuple);  // actually "find node" here
+            node->setProbability(prob);
+        }
+        return graph;
+    }
+
     // 应用增量插入
     void applyDeltaInserts(
         const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
@@ -382,7 +402,8 @@ public:
     // 应用增量删除
     void applyDeltaDeletes(
         const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
-        const RuleManager& ruleManager
+        const RuleManager& ruleManager,
+        const std::vector<UntypedTuple>& deletedFacts
     );
 
     // 合并方法，同时应用插入和删除操作
@@ -390,12 +411,15 @@ public:
         const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
         const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
         const RuleManager& ruleManager,
-        const std::map<UntypedTuple, double>& fact_prob = {}
+        const std::map<UntypedTuple, double>& fact_prob = {},
+        const std::vector<UntypedTuple>& deletedFacts = {}
     ) {
         // 先应用删除，再应用插入
-        applyDeltaDeletes(deltaDeleteRuleApps, ruleManager);
+        applyDeltaDeletes(deltaDeleteRuleApps, ruleManager, deletedFacts);
         applyDeltaInserts(deltaInsertRuleApps, ruleManager, fact_prob);
     }
+
+    void dumpDotInc(const std::string& filename) const;
 
     // 用于跟踪增量变化的节点和边的集合
     std::set<NodePtr> deltaInsertNodes;
@@ -450,7 +474,8 @@ void IncrementalDerivationGraph::applyDeltaInserts(
 
 void IncrementalDerivationGraph::applyDeltaDeletes(
     const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
-    const RuleManager& ruleManager
+    const RuleManager& ruleManager,
+    const std::vector<UntypedTuple>& deletedFacts
 ) {
     FunctionTimer timer("applying delta deletes");
 
@@ -517,7 +542,232 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
         // 从节点列表中移除
         nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeToRemove), nodes.end());
     }
+
+    for (const auto& tuple : deletedFacts) {
+        auto node = this->findNode(tuple);
+        if (node != nullptr) {
+            // 从映射中移除
+            tupleToNodeMap.erase(node->getTuple());
+            deltaDeleteNodes.insert(node);
+            // 从节点列表中移除
+            nodes.erase(std::remove(nodes.begin(), nodes.end(), node), nodes.end());
+            nodesToRemove.push_back(node);
+        } else {
+            assert (false && "Deleted fact not found in the graph");
+        }
+    }
 }
 
+void IncrementalDerivationGraph::dumpDotInc(const std::string& filename) const {
+    std::ofstream out(filename);
+    if (!out.is_open()) {
+        throw std::runtime_error("Cannot open file: " + filename);
+    }
 
+    out << "digraph IncrementalDerivationGraph {\n";
+    out << "  rankdir=LR;\n";
+
+    // 添加图例
+    out << "  subgraph cluster_legend {\n";
+    out << "    label=\"Legend\";\n";
+    out << "    style=filled;\n";
+    out << "    color=lightgrey;\n";
+    out << "    node [style=filled];\n";
+    out << "    \"Normal Node\" [fillcolor=lightblue];\n";
+    out << "    \"Inserted Node\" [fillcolor=lightgreen];\n";
+    out << "    \"Deleted Node\" [fillcolor=pink, style=\"filled,dashed\"];\n";
+    out << "    \"Normal Node\" -> \"Normal Edge\" [color=black];\n";
+    out << "    \"Inserted Node\" -> \"Inserted Edge\" [color=green];\n";
+    out << "    \"Deleted Node\" -> \"Deleted Edge\" [color=red, style=dashed];\n";
+    out << "    \"Normal Edge\" [shape=point, fillcolor=black, width=0.2];\n";
+    out << "    \"Inserted Edge\" [shape=point, fillcolor=green, width=0.2];\n";
+    out << "    \"Deleted Edge\" [shape=point, fillcolor=red, width=0.2];\n";
+    out << "  }\n\n";
+
+    // 正常节点 - 蓝色填充
+    out << "  // Regular nodes\n";
+    out << "  node [shape=box, style=filled, fillcolor=lightblue];\n";
+
+    for (const auto& node : getNodes()) {
+        // 忽略插入和删除的节点，它们将单独处理
+        if (deltaInsertNodes.find(node) == deltaInsertNodes.end() &&
+            deltaDeleteNodes.find(node) == deltaDeleteNodes.end()) {
+            out << "  node" << node->getId() << " [label=\""
+                << node->getTuple().toString();
+
+            // 如果有概率信息，添加到标签中
+            if (node->getProbability() < 1.0) {
+                out << "\\nP=" << node->getProbability();
+            }
+
+            out << "\"];\n";
+        }
+    }
+
+    // 插入的节点 - 绿色填充
+    out << "\n  // Inserted nodes\n";
+    out << "  node [shape=box, style=filled, fillcolor=lightgreen];\n";
+
+    for (const auto& node : deltaInsertNodes) {
+        out << "  node" << node->getId() << " [label=\""
+            << node->getTuple().toString();
+
+        // 如果有概率信息，添加到标签中
+        if (node->getProbability() < 1.0) {
+            out << "\\nP=" << node->getProbability();
+        }
+
+        out << "\"];\n";
+    }
+
+    // 删除的节点 - 红色虚线填充
+    out << "\n  // Deleted nodes\n";
+    out << "  node [shape=box, style=\"filled,dashed\", fillcolor=pink];\n";
+
+    for (const auto& node : deltaDeleteNodes) {
+        out << "  node" << node->getId() << " [label=\""
+            << node->getTuple().toString();
+
+        // 如果有概率信息，添加到标签中
+        if (node->getProbability() < 1.0) {
+            out << "\\nP=" << node->getProbability();
+        }
+
+        out << "\"];\n";
+    }
+
+    // 正常边 - 黑色点和线
+    out << "\n  // Regular edges\n";
+    out << "  node [shape=point, fillcolor=black, width=0.2];\n";
+
+    for (const auto& edge : getEdges()) {
+        // 忽略插入和删除的边，它们将单独处理
+        if (deltaInsertEdges.find(edge) == deltaInsertEdges.end() &&
+            deltaDeleteEdges.find(edge) == deltaDeleteEdges.end()) {
+
+            // 添加规则ID到标签（如果有）
+            std::string edgeLabel = "";
+            if (edge->getRule() != nullptr) {
+                edgeLabel = " [label=\"R" + std::to_string(edge->getRule()->getRuleId()) + "\"";
+
+                // 如果概率不是1.0，添加概率信息
+                if (edge->getProbability() < 1.0) {
+                    edgeLabel += ", tooltip=\"P=" + std::to_string(edge->getProbability()) + "\"";
+                }
+
+                edgeLabel += "]";
+            }
+
+            out << "  edge" << edge->getId() << edgeLabel << ";\n";
+
+            // 输入节点到边的连接
+            for (const auto& input : edge->getInputs()) {
+                // 检查是否是否定的体原子
+                size_t inputIdx = std::distance(edge->getInputs().begin(),
+                                 std::find(edge->getInputs().begin(), edge->getInputs().end(), input));
+                bool isNegated = inputIdx < edge->getBodyNegations().size() ?
+                                 edge->getBodyNegations()[inputIdx] : false;
+
+                // 如果是否定的，使用虚线和不同的箭头样式
+                std::string edgeStyle = isNegated ? " [style=dashed, arrowhead=odot]" : "";
+
+                out << "  node" << input->getId()
+                    << " -> edge" << edge->getId() << edgeStyle << ";\n";
+            }
+
+            // 边到输出节点的连接
+            out << "  edge" << edge->getId()
+                << " -> node" << edge->getOutput()->getId() << ";\n";
+        }
+    }
+
+    // 插入的边 - 绿色点和线
+    out << "\n  // Inserted edges\n";
+    out << "  node [shape=point, fillcolor=green, width=0.2];\n";
+
+    for (const auto& edge : deltaInsertEdges) {
+        // 添加规则ID到标签（如果有）
+        std::string edgeLabel = "";
+        if (edge->getRule() != nullptr) {
+            edgeLabel = " [label=\"R" + std::to_string(edge->getRule()->getRuleId()) + "\"";
+
+            // 如果概率不是1.0，添加概率信息
+            if (edge->getProbability() < 1.0) {
+                edgeLabel += ", tooltip=\"P=" + std::to_string(edge->getProbability()) + "\"";
+            }
+
+            edgeLabel += ", color=green]";
+        } else {
+            edgeLabel = " [color=green]";
+        }
+
+        out << "  edge" << edge->getId() << edgeLabel << ";\n";
+
+        // 输入节点到边的连接 - 绿色
+        for (const auto& input : edge->getInputs()) {
+            // 检查是否是否定的体原子
+            size_t inputIdx = std::distance(edge->getInputs().begin(),
+                             std::find(edge->getInputs().begin(), edge->getInputs().end(), input));
+            bool isNegated = inputIdx < edge->getBodyNegations().size() ?
+                             edge->getBodyNegations()[inputIdx] : false;
+
+            // 如果是否定的，使用虚线和不同的箭头样式，但仍然保持绿色
+            std::string edgeStyle = isNegated ?
+                " [color=green, style=dashed, arrowhead=odot]" : " [color=green]";
+
+            out << "  node" << input->getId()
+                << " -> edge" << edge->getId() << edgeStyle << ";\n";
+        }
+
+        // 边到输出节点的连接 - 绿色
+        out << "  edge" << edge->getId()
+            << " -> node" << edge->getOutput()->getId() << " [color=green];\n";
+    }
+
+    // 删除的边 - 红色虚线点和线
+    out << "\n  // Deleted edges\n";
+    out << "  node [shape=point, fillcolor=red, width=0.2];\n";
+
+    for (const auto& edge : deltaDeleteEdges) {
+        // 添加规则ID到标签（如果有）
+        std::string edgeLabel = "";
+        if (edge->getRule() != nullptr) {
+            edgeLabel = " [label=\"R" + std::to_string(edge->getRule()->getRuleId()) + "\"";
+
+            // 如果概率不是1.0，添加概率信息
+            if (edge->getProbability() < 1.0) {
+                edgeLabel += ", tooltip=\"P=" + std::to_string(edge->getProbability()) + "\"";
+            }
+
+            edgeLabel += ", color=red, style=dashed]";
+        } else {
+            edgeLabel = " [color=red, style=dashed]";
+        }
+
+        out << "  edge" << edge->getId() << edgeLabel << ";\n";
+
+        // 输入节点到边的连接 - 红色虚线
+        for (const auto& input : edge->getInputs()) {
+            // 检查是否是否定的体原子
+            size_t inputIdx = std::distance(edge->getInputs().begin(),
+                             std::find(edge->getInputs().begin(), edge->getInputs().end(), input));
+            bool isNegated = inputIdx < edge->getBodyNegations().size() ?
+                             edge->getBodyNegations()[inputIdx] : false;
+
+            // 如果是否定的，使用双重虚线和不同的箭头样式，但仍然保持红色
+            std::string edgeStyle = isNegated ?
+                " [color=red, style=\"dashed,dotted\", arrowhead=odot]" : " [color=red, style=dashed]";
+
+            out << "  node" << input->getId()
+                << " -> edge" << edge->getId() << edgeStyle << ";\n";
+        }
+
+        // 边到输出节点的连接 - 红色虚线
+        out << "  edge" << edge->getId()
+            << " -> node" << edge->getOutput()->getId() << " [color=red, style=dashed];\n";
+    }
+
+    out << "}\n";
+    out.close();
+}
 #endif //DERIVATIONGRAPH_H

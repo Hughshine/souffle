@@ -11,9 +11,13 @@
 int main() {
     RuleManager ruleManager = ExampleRuleComponents::ruleManager;
     std::cout << ruleManager.toString() << std::endl;
-    auto graph = IncrementalDerivationGraph::createFrom(ExampleRuleComponents::exampleRuleApps2, ExampleRuleComponents::ruleManager);
+    auto graph = IncrementalDerivationGraph::createFrom(ExampleRuleComponents::exampleRuleApps, ExampleRuleComponents::ruleManager, ExampleRuleComponents::fact_prob);
+
+    graph->dumpDot("derivation-full.dot");
+
+    graph->applyDelta(ExampleRuleComponents::exampleDeltaInsertRuleApps, ExampleRuleComponents::exampleDeltaDeleteRuleApps, ExampleRuleComponents::ruleManager, ExampleRuleComponents::fact_prob_inc, ExampleRuleComponents::deletedFacts);
     // Dump to DOT file
-    graph->dumpDot("derivation.dot");
+    graph->dumpDotInc("derivation-inc.dot");
 
     std::map<NodePtr, BddNodeRef> nodeFormulas;
     std::map<EdgePtr, BddNodeRef> edgeFormulas;
