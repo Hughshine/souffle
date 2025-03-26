@@ -71,7 +71,7 @@ void buildFormulas(
 
         // Add the input node formulas
         bool allInputsAvailable = true;
-        for (auto i = 0; i < edge->getInputs().size(); i++) {
+        for (size_t i = 0; i < edge->getInputs().size(); i++) {
             auto input = edge->getInputs()[i];
             auto isNegated = edge->getBodyNegations()[i];
             auto it = nodeFormulas.find(input);
@@ -180,6 +180,20 @@ void buildFormulas(
         }
     }
     std::cout << "Successfully build formulas" << std::endl;
+}
+
+// TODO: formula上可以增加一个change标记？或者node/edge上，表示它的formula没有变过，于是避免重复wmc.
+// 不过目前的实现中有cache，所以其实就是优化了的. 先不管这件事.
+template<typename FormulaNodeRef>
+void buildFormulasInc(
+    const IncrementalDerivationGraph& graph,
+    FormulaManager<FormulaNodeRef>& formulaManager,
+    std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
+    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
+) {
+    nodeFormulas.clear();
+    edgeFormulas.clear();
+    buildFormulas(graph, formulaManager, nodeFormulas, edgeFormulas);
 }
 
 #endif //FORWARDCOMPILATION_H

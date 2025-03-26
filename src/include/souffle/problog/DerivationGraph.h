@@ -1,7 +1,3 @@
-//
-// Created by lxy10 on 2/25/2025.
-//
-
 #ifndef DERIVATIONGRAPH_H
 #define DERIVATIONGRAPH_H
 
@@ -22,27 +18,6 @@
 // rule 2: path(x,y) :- path(x,z), edge(z,y).
 // facts: edge(1,2), edge(2,3)
 // (derived) paths: path(1,2), path(2,3), path(1,3)
-//inline Clauses rules
-
-
-//inline UntypedTuple tuple1{"edge", {1, 2}};
-//inline UntypedTuple tuple2{"edge", {2, 3}};
-//inline UntypedTuple tuple3{"path", {1, 2}};
-//inline UntypedTuple tuple4{"path", {2, 3}};
-//inline UntypedTuple tuple5{"path", {1, 3}};
-//
-//inline std::map<UntypedTuple, std::set<RuleApplication>*> exampleRuleApps{
-//        {tuple3, new std::set<RuleApplication>{
-//                RuleApplication{1, {{"x", 1}, {"y", 2}}}
-//        }},
-//        {tuple4, new std::set<RuleApplication>{
-//                RuleApplication{1, {{"x", 2}, {"y", 3}}}
-//        }},
-//        {tuple5, new std::set<RuleApplication>{
-//                RuleApplication{2, {{"x", 1}, {"y", 3}, {"z", 2}}}
-//        }}
-//};
-
 
 // Forward declarations
 class Node;
