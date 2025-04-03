@@ -19,6 +19,7 @@
 #include "ram/Node.h"
 #include "ram/Relation.h"
 #include "ram/Statement.h"
+#include "ram/EmptyStatement.h"
 #include "souffle/utility/ContainerUtil.h"
 #include "souffle/utility/MiscUtil.h"
 #include <cassert>
@@ -52,7 +53,7 @@ private:
     Program() : Node(NK_Program){};
 
 public:
-    Program(VecOwn<Relation> rels, Own<Statement> main, std::map<std::string, Own<Statement>> subs, Own<Statement> inc = nullptr)
+    Program(VecOwn<Relation> rels, Own<Statement> main, std::map<std::string, Own<Statement>> subs, Own<Statement> inc = mk<EmptyStatement>())
             : Node(NK_Program), relations(std::move(rels)), main(std::move(main)),
               subroutines(std::move(subs)), inc(std::move(inc)) {
         assert(this->main != nullptr && "Main program is a null-pointer");

@@ -8,6 +8,8 @@
 #include <iomanip>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include "souffle/SouffleInterface.h"
+#include "souffle/Derivation.h" // TODO: should change timer to Misc header
 
 class IncrementalCLI {
 private:
@@ -118,9 +120,10 @@ private:
 
         return values;
     }
+    souffle::SouffleProgram* program;
 
 public:
-    IncrementalCLI() {
+    IncrementalCLI(souffle::SouffleProgram* prog = nullptr) : program(prog) {
         // Initialize readline
         using_history();
     }
@@ -231,7 +234,7 @@ public:
                       << " pending changes and run incremental computation" << std::endl;
 
             // In a real implementation, we would actually apply the changes here
-
+            commit();
             // Clear pending operations after commit
             pendingOperations.clear();
 
@@ -247,6 +250,24 @@ public:
         return true;
     }
 
+    void commit() {
+        static size_t commitCount = 0;
+        if (program) {
+//            for (const auto& op : pendingOperations) {
+//                if (op.type == Operation::INSERT) {
+//                    program->insert(op.relationName, op.values, op.probability);
+//                } else if (op.type == Operation::DELETE) {
+//                    program->remove(op.relationName, op.values);
+//                }
+//            }
+            FunctionTimer timer("runAllInc" + std::to_string(++commitCount));
+            std::cout << "runAllInc()..." << std::endl;
+            program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);  // note that runAllInc() should also call inc prob computation
+//            program->dumpOutputs();
+        } else {
+            std::cout << "No program loaded." << std::endl;
+        }
+    }
     void run() {
         bool running = true;
 

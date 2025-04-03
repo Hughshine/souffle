@@ -695,6 +695,8 @@ public:
  */
 class SouffleProgram {
 protected:
+    std::string inputDirectory;
+    std::string outputDirectory = "-";
     /**
      * Define a relation map for external access, when getRelation(name) is called,
      * the relation with the given name will be returned from this map,
@@ -776,13 +778,18 @@ public:
      * Destructor of SouffleProgram.
      */
     virtual ~SouffleProgram() = default;
-
+    std::string getInputDirectory() const {
+        return inputDirectory;
+    }
+    std::string getOutputDirectory() const {
+        return outputDirectory;
+    }
     /**
      * Execute the souffle program, without any loads or stores, and live-profiling (in case it is switched
      * on).
      */
     virtual void run() {}
-
+    virtual void runInc() {}
     /**
      * Execute program, loading inputs and storing outputs as required.
      * File IO types can use the given directories to find their input file.
@@ -794,7 +801,10 @@ public:
      */
     virtual void runAll(std::string inputDirectory = "", std::string outputDirectory = "",
             bool performIO = false, bool pruneImdtRels = true) = 0;
-
+    virtual void runAllInc(std::string inputDirectory = "", std::string outputDirectory = "",
+            bool performIO = false, bool pruneImdtRels = true) {
+        assert(false && "inc not supported in this pipeline");
+    };
     /**
      * Read all input relations.
      *
@@ -1042,50 +1052,50 @@ public:
 /**
  * Abstract base for incremental datalog programs, inheriting from SouffleProgram.
  */
-class IncrementalSouffleProgram : public SouffleProgram {
-private:
-    int currentEpoch = 0;
-    std::vector<std::pair<std::string, std::vector<RamDomain>>> pendingAdditions;
-    std::vector<std::pair<std::string, std::vector<RamDomain>>> pendingDeletions;
-
-public:
-    /**
-     * Constructor that delegates to the base SouffleProgram constructor
-     */
-    IncrementalSouffleProgram() : SouffleProgram() {}
-
-    /**
-     * Destructor
-     */
-    ~IncrementalSouffleProgram() override = default;
-
-    /**
-     * Queue a tuple for insertion in the next commit
-     * @param relationName Name of the relation
-     * @param tuple Values for the tuple
-     */
-    virtual void queueInsertion(const std::string& relationName, const std::vector<RamDomain>& tuple) {
-        pendingAdditions.emplace_back(relationName, tuple);
-    }
-
-    /**
-     * Queue a tuple for deletion in the next commit
-     * @param relationName Name of the relation
-     * @param tuple Values for the tuple
-     */
-    virtual void queueDeletion(const std::string& relationName, const std::vector<RamDomain>& tuple) {
-        pendingDeletions.emplace_back(relationName, tuple);
-    }
-
-    virtual void runIncremental() {
-        // In a real implementation, this would selectively recompute
-        // affected parts of the program rather than running everything
-
-        // For now, just delegate to the full run
-        // run();
-        std::cout << "Incremental execution not implemented" << std::endl;
-    }
-};
+// class IncrementalSouffleProgram : public SouffleProgram {
+// private:
+//     int currentEpoch = 0;
+//     std::vector<std::pair<std::string, std::vector<RamDomain>>> pendingAdditions;
+//     std::vector<std::pair<std::string, std::vector<RamDomain>>> pendingDeletions;
+//
+// public:
+//     /**
+//      * Constructor that delegates to the base SouffleProgram constructor
+//      */
+//     IncrementalSouffleProgram() : SouffleProgram() {}
+//
+//     /**
+//      * Destructor
+//      */
+//     ~IncrementalSouffleProgram() override = default;
+//
+//     /**
+//      * Queue a tuple for insertion in the next commit
+//      * @param relationName Name of the relation
+//      * @param tuple Values for the tuple
+//      */
+//     virtual void queueInsertion(const std::string& relationName, const std::vector<RamDomain>& tuple) {
+//         pendingAdditions.emplace_back(relationName, tuple);
+//     }
+//
+//     /**
+//      * Queue a tuple for deletion in the next commit
+//      * @param relationName Name of the relation
+//      * @param tuple Values for the tuple
+//      */
+//     virtual void queueDeletion(const std::string& relationName, const std::vector<RamDomain>& tuple) {
+//         pendingDeletions.emplace_back(relationName, tuple);
+//     }
+//
+//     virtual void runIncremental() {
+//         // In a real implementation, this would selectively recompute
+//         // affected parts of the program rather than running everything
+//
+//         // For now, just delegate to the full run
+//         // run();
+//         std::cout << "Incremental execution not implemented" << std::endl;
+//     }
+// };
 
 /**
  * Abstract program factory class.

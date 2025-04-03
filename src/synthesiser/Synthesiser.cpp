@@ -415,6 +415,9 @@ void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
 }
 
 void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
+    // if (stmt == nullptr) {
+    //     return;
+    // }
     class CodeEmitter : public ram::Visitor<void, Node const, std::ostream&> {
         using ram::Visitor<void, Node const, std::ostream&>::visit_;
 
@@ -3454,8 +3457,8 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // Improve compile time by storing the signal handler in one loc instead of
     // emitting thousands of `SignalHandler::instance()`. The volume of calls
     // makes GVN and register alloc very expensive, even if the call is inlined.
-    mainClass.addField("std::string", "inputDirectory", Visibility::Private);
-    mainClass.addField("std::string", "outputDirectory", Visibility::Private);
+    // mainClass.addField("std::string", "inputDirectory", Visibility::Private);
+    // mainClass.addField("std::string", "outputDirectory", Visibility::Private);
     mainClass.addField("SignalHandler*", "signalHandler", Visibility::Private, "{SignalHandler::instance()}");
     mainClass.addField("std::atomic<RamDomain>", "ctr", Visibility::Private, "{}");
     mainClass.addField("std::atomic<std::size_t>", "iter", Visibility::Private, "{}");
@@ -3542,6 +3545,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // emit code
     currentClass = &mainClass;
     emitCode(runFunction.body(), prog.getMain());
+    // TODO: may avoid emitting inc when no inc is set. defaultly getInc will return EmptyStatement, so everything still works fine for now.
     emitCode(runFunctionInc.body(), prog.getInc());
 
     if (glb.config().has("profile")) {
@@ -3923,6 +3927,12 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << "} catch (std::exception& e) {std::cerr << \"Problog colc failed\" << e.what() << std::endl;}\n";
     }
 
+    // add online incremental&interactive computation
+    if (glb.config().has("online")) {
+        db.addGlobalInclude("\"souffle/cli/Cli.h\"");
+        hook << "IncrementalCLI cli(&obj);\n";
+        hook << "cli.run();\n";
+    }
 
     if (glb.config().get("provenance") == "explain") {
         hook << "explain(obj, false);\n";
