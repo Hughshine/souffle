@@ -102,11 +102,11 @@ std::string getNewRelationName(const ast::QualifiedName& name) {
  * For inc + recursion
  */
 std::string getDeltaDeletionRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@delta_tuple_delete_");
+    return getConcreteRelationName(name, "$delta_tuple_delete_");
 }
 
 std::string getDeltaInsertionRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@delta_tuple_insert_");
+    return getConcreteRelationName(name, "$delta_tuple_insert_");
 }
 
 std::string getNewDeletionRelationName(const ast::QualifiedName& name) {

@@ -390,6 +390,10 @@ public:
         const std::map<UntypedTuple, double>& fact_prob = {},
         const std::vector<UntypedTuple>& deletedFacts = {}
     ) {
+        deltaInsertNodes.clear();
+        deltaInsertEdges.clear();
+        deltaDeleteNodes.clear();
+        deltaDeleteEdges.clear();
         // 先应用删除，再应用插入
         applyDeltaDeletes(deltaDeleteRuleApps, ruleManager, deletedFacts);
         applyDeltaInserts(deltaInsertRuleApps, ruleManager, fact_prob);
@@ -409,6 +413,9 @@ void IncrementalDerivationGraph::applyDeltaInserts(
     const RuleManager& ruleManager,
     const std::map<UntypedTuple, double>& fact_prob
 ) {
+    if (deltaInsertRuleApps.empty() && fact_prob.empty()) {
+        return;
+    }
     FunctionTimer timer("applying delta inserts");
 
     // all facts
@@ -454,6 +461,9 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
     const RuleManager& ruleManager,
     const std::vector<UntypedTuple>& deletedFacts
 ) {
+    if (deltaDeleteRuleApps.empty() && deletedFacts.empty()) {
+        return;
+    }
     FunctionTimer timer("applying delta deletes");
 
     // 跟踪需要删除的节点

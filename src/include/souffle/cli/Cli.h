@@ -15,11 +15,24 @@
 #include "souffle/problog/formula/CuddManager.h"
 #include "souffle/problog/ForwardCompilation.h"
 
+std::string getConcreteRelationName(const std::string& name, const std::string prefix) {
+    return prefix + name;
+}
+
+std::string getDeltaDeletionRelationName(const std::string& name) {
+    return getConcreteRelationName(name, "$delta_tuple_delete_");
+}
+
+std::string getDeltaInsertionRelationName(const std::string& name) {
+    return getConcreteRelationName(name, "$delta_tuple_insert_");
+}
+
 class IncrementalCLI {
 private:
     // Structure to represent a pending operation
     struct Operation {
         enum Type { INSERT, DELETE } type;
+        bool valid = true;
         std::string relationName;
         std::vector<std::string> values;
         float probability;
@@ -223,7 +236,29 @@ public:
             op.relationName = relName;
             op.values = values;
             op.probability = 1.0;  // Deletion always has probability 1.0
-            pendingOperations.push_back(op);
+
+            bool overlap = false;
+            for (size_t i = 0; i < pendingOperations.size(); i++) {
+                // if overlapped insertion, remove that insertion
+                if (pendingOperations[i].type == Operation::INSERT && pendingOperations[i].relationName == relName) {
+                    bool same = true;
+                    for (size_t j = 0; j < pendingOperations[i].values.size(); j++) {  // TODO: optimize
+                        if (pendingOperations[i].values[j] != values[j]) {
+                            same = false;
+                            break;
+                        }
+                    }
+                    if (same) {
+                        std::cout << "Overlapped insertion and deletion removed." << std::endl;
+                        overlap = true;
+                        pendingOperations.erase(pendingOperations.begin() + i);
+                        break;
+                    }
+                }
+            }
+            if (!overlap) {
+                pendingOperations.push_back(op);
+            }
 
             // Output parsed information
             std::cout << "PARSED DELETE: Relation = " << relName
@@ -277,7 +312,7 @@ public:
     std::map<UntypedTuple, double> getFactProbInc() {
         std::map<UntypedTuple, double> fact_prob_inc;
         for (const auto& op : pendingOperations) {
-            if (op.type == Operation::INSERT) {
+            if (op.valid && op.type == Operation::INSERT) {
                 fact_prob_inc[getTuple(op)] = op.probability;
             }
         }
@@ -287,7 +322,7 @@ public:
     std::vector<UntypedTuple> getDeletedFacts() {
         std::vector<UntypedTuple> deletedFacts;
         for (const auto& op : pendingOperations) {
-            if (op.type == Operation::DELETE) {
+            if (op.valid && op.type == Operation::DELETE) {
                 deletedFacts.push_back(getTuple(op));
             }
         }
@@ -296,7 +331,67 @@ public:
 
     void commit() {
         static size_t commitCount = 0;
+
         if (program) {
+            {
+                // insert delta into relations for real
+                for (auto& op : pendingOperations) {
+                    if (op.type == Operation::INSERT) {
+                        auto* origRel = program->getRelation(op.relationName);
+                        auto* rel = program->getRelation(getDeltaInsertionRelationName(op.relationName));
+                        if (rel == nullptr) {
+                            std::cout << "Relation not found, omitted: " << op.relationName << std::endl;
+                            continue;
+                        }
+                        if (op.values.size() != rel->getArity()) {
+                            std::cout << "Relation arity mismatch, omitted: " << op.relationName << std::endl;
+                            continue;
+                        }
+                        souffle::tuple relTuple = souffle::tuple(rel);
+                        souffle::tuple origTuple = souffle::tuple{origRel};
+
+                        for (size_t i = 0; i < op.values.size(); i++) {
+                            relTuple << std::stoi(op.values[i]);  // TODO optimize
+                            origTuple << std::stoi(op.values[i]);
+                        }
+                        if (origRel->contains(origTuple)) {
+                            std::cout << "Relation already contains the tuple to insert, omitted: " << relTuple.toString() << std::endl;
+                            op.valid = false;
+                            continue;
+                        } else {
+                            std::cout << "Inserting tuple: " << origTuple.toString() << std::endl;
+                        }
+                        rel->insert(relTuple);
+                    } else if (op.type == Operation::DELETE) {
+                        auto* origRel = program->getRelation(op.relationName);
+                        auto* rel = program->getRelation(getDeltaDeletionRelationName(op.relationName));
+                        auto insRel = program->getRelation(getDeltaInsertionRelationName(op.relationName));
+                        if (rel == nullptr) {
+                            std::cout << "Relation not found, omitted: " << op.relationName << std::endl;
+                            continue;
+                        }
+                        if (op.values.size() != rel->getArity()) {
+                            std::cout << "Relation arity mismatch, omitted: " << op.relationName << std::endl;
+                            continue;
+                        }
+                        souffle::tuple relTuple = souffle::tuple(rel);
+                        souffle::tuple origTuple = souffle::tuple{origRel};
+                        souffle::tuple insTuple = souffle::tuple{insRel};
+                        for (size_t i = 0; i < op.values.size(); i++) {
+                            relTuple << std::stoi(op.values[i]);  // TODO optimize
+                            origTuple << std::stoi(op.values[i]);
+                            insTuple << std::stoi(op.values[i]);
+                        }
+
+                        if (!origRel->contains(origTuple)) {
+                            std::cout << "Relation does not contains the tuple to delete, omitted: " << origTuple.toString() << std::endl;
+                            op.valid = false;
+                            continue;
+                        }
+                        rel->insert(relTuple);
+                    }
+                }
+            }
             {
                 FunctionTimer timer("runAllInc" + std::to_string(++commitCount));
                 std::cout << "runAllInc()..." << std::endl;
@@ -327,6 +422,7 @@ public:
         } else {
             std::cout << "No program loaded." << std::endl;
         }
+        pendingOperations.clear();
     }
     void run() {
         bool running = true;

@@ -688,6 +688,25 @@ public:
             : relation(*relation), array(tupleList), pos(tupleList.size()), data(array.data()) {
         assert(tupleList.size() == relation->getArity() && "tuple arity does not match relation arity");
     }
+
+    std::vector<RamDomain> getArray() {
+        return array;
+    }
+    std::string toString() const {
+        std::string result = relation.getName() + "(";
+        for (std::size_t i = 0; i < size(); ++i) {
+            if (i > 0) {
+                result += ",";
+            }
+            if (*relation.getAttrType(i) == 's') {
+                result += relation.getSymbolTable().decode(array[i]);
+            } else {
+                result += std::to_string(ramBitCast<RamSigned>(array[i]));
+            }
+        }
+        result += ")";
+        return result;
+    }
 };
 
 /**

@@ -138,8 +138,8 @@ using namespace stream_write_qualified_char_as_number;
 
 const std::string getBaseRelationName(const std::string& name) {
     return
-    stripPrefix("@inc_delta_tuple_delete_",
-    stripPrefix("@inc_delta_tuple_insert_",
+    stripPrefix("$inc_delta_tuple_delete_",
+    stripPrefix("$inc_delta_tuple_insert_",
     stripPrefix("@inc_delta_derv_delete_",
     stripPrefix("@inc_delta_derv_insert_",
     stripPrefix("@tmp4_",
@@ -147,13 +147,9 @@ const std::string getBaseRelationName(const std::string& name) {
     stripPrefix("@tmp2_",
     stripPrefix("@tmp_",
     stripPrefix("@old_",
-    stripPrefix("@inc_delta_tuple_delete_",
-    stripPrefix("@inc_delta_tuple_insert_",
-    stripPrefix("@inc_delta_derv_delete_",
-    stripPrefix("@inc_delta_derv_insert_",
     stripPrefix("@new_",
     stripPrefix("@delta_",
-    stripPrefix("@info_", name))))))))))))))));
+    stripPrefix("@info_", name))))))))))));
 }
 
 /** Lookup frequency counter */
@@ -3593,7 +3589,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     runAll.setNextArg("std::string", "inputDirectoryArg", std::make_optional("\"\""));
     runAll.setNextArg("std::string", "outputDirectoryArg", std::make_optional("\"\""));
     runAll.setNextArg("bool", "performIOArg", std::make_optional("true"));
-    runAll.setNextArg("bool", "pruneImdtRelsArg", std::make_optional("true"));
+    runAll.setNextArg("bool", "pruneImdtRelsArg", std::make_optional("false"));
     if (glb.config().has("live-profile")) {
         runAll.body() << "std::thread profiler([]() { profile::Tui().runProf(); });\n";
     }
@@ -3608,7 +3604,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     runAllInc.setNextArg("std::string", "inputDirectoryArg", std::make_optional("\"\""));
     runAllInc.setNextArg("std::string", "outputDirectoryArg", std::make_optional("\"\""));
     runAllInc.setNextArg("bool", "performIOArg", std::make_optional("true"));
-    runAllInc.setNextArg("bool", "pruneImdtRelsArg", std::make_optional("true"));
+    runAllInc.setNextArg("bool", "pruneImdtRelsArg", std::make_optional("false"));
     if (glb.config().has("live-profile")) {
         runAllInc.body() << "std::thread profiler([]() { profile::Tui().runProf(); });\n";
     }
