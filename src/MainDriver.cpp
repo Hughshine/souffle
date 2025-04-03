@@ -129,6 +129,7 @@
 #include <vector>
 
 #include <ast2ram/seminaive-with-delta/TranslationStrategy.h>
+#include <ast2ram/online/TranslationStrategy.h>
 
 namespace fs = std::filesystem;
 
@@ -536,15 +537,17 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
 
 Own<ast2ram::UnitTranslator> getUnitTranslator(Global& glb) {
     auto translationStrategy =
-            glb.config().has("full-with-delta")
+        glb.config().has("online")
+            ? mk<ast2ram::TranslationStrategy, ast2ram::online::TranslationStrategy>()
+            :(glb.config().has("full-with-delta")
                 ? mk<ast2ram::TranslationStrategy, ast2ram::seminaive_with_delta::TranslationStrategy>()
                 : (glb.config().has("inc")
                     ? mk<ast2ram::TranslationStrategy, ast2ram::incremental::TranslationStrategy>()
                     : (glb.config().has("provenance")
                         ? mk<ast2ram::TranslationStrategy, ast2ram::provenance::TranslationStrategy>()
-                        : mk<ast2ram::TranslationStrategy, ast2ram::seminaive::TranslationStrategy>()));
+                        : mk<ast2ram::TranslationStrategy, ast2ram::seminaive::TranslationStrategy>())));
     auto unitTranslator = Own<ast2ram::UnitTranslator>(translationStrategy->createUnitTranslator());
-
+    std::cout << "unitTranslator created, " << translationStrategy->getName() << std::endl;
     return unitTranslator;
 }
 
@@ -730,8 +733,10 @@ std::vector<MainOption> getMainOptions() {
           "Enable provenance instrumentation and interaction."},
       {"inc", 'i', "", "", false,
           "Enable incremental computation pipeline"}, // TODO
-        {"full-with-delta", 'f', "", "", false,
+   {"full-with-delta", 'f', "", "", false,
             "Enable full compilation that considering delta (incremental fact update)"}, // TODO
+    {"online", 'O', "", "", false,
+          "Enable online compilation that allows interactive incremental updates"}, // TODO
       {"show", nextOptChar++, "[ <see-list> ]", "", true,
           "Print selected program information.\n"
           "Modes:\n"

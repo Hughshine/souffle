@@ -189,6 +189,11 @@ set(SOUFFLE_SOURCES
         ast2ram/seminaive-with-delta/ValueTranslator.cpp
         ram/EmptyStatement.h
         ram/DerivationCheck.h
+        ast2ram/online/ConstraintTranslator.cpp
+        ast2ram/online/ClauseTranslator.cpp
+        ast2ram/online/TranslationStrategy.cpp
+        ast2ram/online/UnitTranslator.cpp
+        ast2ram/online/ValueTranslator.cpp
 )
 
 # --------------------------------------------------
