@@ -3481,18 +3481,48 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     signalHandler->set();
 )_";
+
+    GenFunction& runFunctionInc = mainClass.addFunction("runFunctionInc", Visibility::Private);
+    runFunctionInc.setRetType("void");
+    runFunctionInc.setNextArg("std::string", "inputDirectoryArg");
+    runFunctionInc.setNextArg("std::string", "outputDirectoryArg");
+    runFunctionInc.setNextArg("bool", "performIOArg");
+    runFunctionInc.setNextArg("bool", "pruneImdtRelsArg");
+
+    runFunctionInc.body() << R"_(
+    this->inputDirectory  = std::move(inputDirectoryArg);
+    this->outputDirectory = std::move(outputDirectoryArg);
+    this->performIO       = performIOArg;
+    this->pruneImdtRels   = pruneImdtRelsArg;
+
+    // set default threads (in embedded mode)
+    // if this is not set, and omp is used, the default omp setting of number of cores is used.
+#if defined(_OPENMP)
+    if (0 < getNumThreads()) { omp_set_num_threads(static_cast<int>(getNumThreads())); }
+#endif
+
+    signalHandler->set();
+)_";
+
     if (glb.config().has("verbose")) {
         runFunction.body() << "signalHandler->enableLogging();\n";
+        runFunctionInc.body() << "signalHandler->enableLogging();\n";
     }
 
     // add actual program body
     runFunction.body() << "// -- query evaluation --\n";
+    runFunctionInc.body() << "// -- query evaluation --\n";
     if (glb.config().has("profile")) {
         runFunction.body() << "ProfileEventSingleton::instance().startTimer();\n"
                            << R"_(ProfileEventSingleton::instance().makeTimeEvent("@time;starttime");)_"
                            << '\n'
                            << "{\n"
                            << R"_(Logger logger("@runtime;", 0);)_" << '\n';
+        runFunctionInc.body() << "ProfileEventSingleton::instance().startTimer();\n"
+                   << R"_(ProfileEventSingleton::instance().makeTimeEvent("@time;starttime");)_"
+                   << '\n'
+                   << "{\n"
+                   << R"_(Logger logger("@runtime;", 0);)_" << '\n';
         // Store count of relations
         std::size_t relationCount = 0;
         for (auto rel : prog.getRelations()) {
@@ -3504,20 +3534,28 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         runFunction.body()
                 << R"_(ProfileEventSingleton::instance().makeConfigRecord("relationCount", std::to_string()_"
                 << relationCount << "));";
+        runFunctionInc.body()
+                << R"_(ProfileEventSingleton::instance().makeConfigRecord("relationCount", std::to_string()_"
+                << relationCount << "));";
     }
 
     // emit code
     currentClass = &mainClass;
     emitCode(runFunction.body(), prog.getMain());
+    emitCode(runFunctionInc.body(), prog.getInc());
 
     if (glb.config().has("profile")) {
         runFunction.body() << "}\n"
                            << "ProfileEventSingleton::instance().stopTimer();\n"
                            << "dumpFreqs();\n";
+        runFunctionInc.body() << "}\n"
+                   << "ProfileEventSingleton::instance().stopTimer();\n"
+                   << "dumpFreqs();\n";
     }
 
     // add code printing hint statistics
     runFunction.body() << "\n// -- relation hint statistics --\n";
+    runFunctionInc.body() << "\n// -- relation hint statistics --\n";
 
     if (glb.config().has("verbose")) {
         for (auto rel : prog.getRelations()) {
@@ -3525,16 +3563,25 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
             runFunction.body() << "std::cout << \"Statistics for Relation " << name << ":\\n\";\n"
                                << name << "->printStatistics(std::cout);\n"
                                << "std::cout << \"\\n\";\n";
+            runFunctionInc.body() << "std::cout << \"Statistics for Relation " << name << ":\\n\";\n"
+                   << name << "->printStatistics(std::cout);\n"
+                   << "std::cout << \"\\n\";\n";
         }
     }
 
     runFunction.body() << "signalHandler->reset();\n";
+    runFunctionInc.body() << "signalHandler->reset();\n";
 
     // add methods to run with and without performing IO (mainly for the interface)
     GenFunction& run = mainClass.addFunction("run", Visibility::Public);
     run.setOverride();
     run.setRetType("void");
     run.body() << "runFunction(\"\", \"\", false, false);\n";
+
+    GenFunction& runInc = mainClass.addFunction("runInc", Visibility::Public);
+    runInc.setOverride();
+    runInc.setRetType("void");
+    runInc.body() << "runFunctionInc(\"\", \"\", false, false);\n";
 
     GenFunction& runAll = mainClass.addFunction("runAll", Visibility::Public);
     runAll.setOverride();
@@ -3549,6 +3596,21 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     runAll.body() << "runFunction(inputDirectoryArg, outputDirectoryArg, performIOArg, pruneImdtRelsArg);\n";
     if (glb.config().has("live-profile")) {
         runAll.body() << "if (profiler.joinable()) { profiler.join(); }\n";
+    }
+
+    GenFunction& runAllInc = mainClass.addFunction("runAllInc", Visibility::Public);
+    runAllInc.setOverride();
+    runAllInc.setRetType("void");
+    runAllInc.setNextArg("std::string", "inputDirectoryArg", std::make_optional("\"\""));
+    runAllInc.setNextArg("std::string", "outputDirectoryArg", std::make_optional("\"\""));
+    runAllInc.setNextArg("bool", "performIOArg", std::make_optional("true"));
+    runAllInc.setNextArg("bool", "pruneImdtRelsArg", std::make_optional("true"));
+    if (glb.config().has("live-profile")) {
+        runAllInc.body() << "std::thread profiler([]() { profile::Tui().runProf(); });\n";
+    }
+    runAllInc.body() << "runFunctionInc(inputDirectoryArg, outputDirectoryArg, performIOArg, pruneImdtRelsArg);\n";
+    if (glb.config().has("live-profile")) {
+        runAllInc.body() << "if (profiler.joinable()) { profiler.join(); }\n";
     }
 
     // issue printAll method
