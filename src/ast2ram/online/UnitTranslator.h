@@ -70,6 +70,8 @@ protected:
 
     /** High-level relation translation */
     virtual Own<ram::Sequence> generateProgram(const ast::TranslationUnit& translationUnit);
+    virtual Own<ram::Sequence> generateProgramInc(const ast::TranslationUnit& translationUnit);
+
     Own<ram::Statement> generateNonRecursiveRelation(const ast::Relation& rel) const;
     Own<ram::Statement> generateRecursiveStratum(const ast::RelationSet& scc, std::size_t sccNum) const;
 
@@ -79,6 +81,8 @@ protected:
 
     /** Low-level stratum translation */
     Own<ram::Statement> generateStratum(std::size_t scc) const;
+    Own<ram::Statement> generateStratumInc(std::size_t scc) const;
+
     Own<ram::Statement> generateStratumPreamble(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateNonRecursiveDelete(const ast::Relation& rel) const;
     Own<ram::Statement> generateStratumPostamble(const ast::RelationSet& scc) const;

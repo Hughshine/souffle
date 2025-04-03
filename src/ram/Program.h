@@ -52,9 +52,9 @@ private:
     Program() : Node(NK_Program){};
 
 public:
-    Program(VecOwn<Relation> rels, Own<Statement> main, std::map<std::string, Own<Statement>> subs)
+    Program(VecOwn<Relation> rels, Own<Statement> main, std::map<std::string, Own<Statement>> subs, Own<Statement> inc = nullptr)
             : Node(NK_Program), relations(std::move(rels)), main(std::move(main)),
-              subroutines(std::move(subs)) {
+              subroutines(std::move(subs)), inc(std::move(inc)) {
         assert(this->main != nullptr && "Main program is a null-pointer");
         assert(allValidPtrs(relations));
         assert(allValidPtrs(makeTransformRange(subroutines, [](auto&& kv) { return kv.second.get(); })));
@@ -63,6 +63,10 @@ public:
     /** @brief Get main program */
     Statement& getMain() const {
         return *main;
+    }
+
+    Statement& getInc() const {
+        return *inc;
     }
 
     /** @brief Get all relations of RAM program  */
@@ -151,6 +155,7 @@ protected:
 
     /** Main program */
     Own<Statement> main;
+    Own<Statement> inc;
 
     /** Subroutines for provenance system */
     std::map<std::string, Own<Statement>> subroutines;

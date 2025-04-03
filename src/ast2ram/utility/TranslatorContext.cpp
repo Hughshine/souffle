@@ -41,6 +41,7 @@
 #include "ast2ram/ValueTranslator.h"
 #include "ast2ram/provenance/TranslationStrategy.h"
 #include "ast2ram/seminaive/TranslationStrategy.h"
+#include "ast2ram/online/TranslationStrategy.h"
 #include "ast2ram/utility/SipsMetric.h"
 #include "ram/AbstractOperator.h"
 #include "ram/Condition.h"
@@ -58,6 +59,7 @@
 
 #include <ast2ram/incremental/ClauseTranslator.h>
 #include <ast2ram/incremental/TranslationStrategy.h>
+
 
 namespace souffle::ast2ram {
 
@@ -105,12 +107,14 @@ TranslatorContext::TranslatorContext(const ast::TranslationUnit& tu) {
     // Set up the correct strategy
     if (global->config().has("provenance")) {
         translationStrategy = mk<provenance::TranslationStrategy>();
+    } else if (global->config().has("online")) {
+        translationStrategy = mk<online::TranslationStrategy>();
     } else if (global->config().has("inc")) {
         translationStrategy = mk<incremental::TranslationStrategy>();
     } else {
         translationStrategy = mk<seminaive::TranslationStrategy>();
     }
-
+    /*
     // populates deltaRel
     for (const ast::Relation* rel : program->getRelations()) {
         const auto delta = rel->getIsDeltaDebug();
@@ -123,6 +127,7 @@ TranslatorContext::TranslatorContext(const ast::TranslationUnit& tu) {
     for (const ast::Lattice* lattice : program->getLattices()) {
         lattices.emplace(lattice->getQualifiedName(), lattice);
     }
+    */
 }
 
 TranslatorContext::~TranslatorContext() = default;

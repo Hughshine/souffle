@@ -765,7 +765,7 @@ Own<ram::Statement> UnitTranslator::generateStratumTableUpdates(const ast::Relat
         // Copy @new into main relation, @delta := @new, and empty out @new
         std::string mainRelation = getConcreteRelationName(rel->getQualifiedName());
         std::string newRelation = getNewRelationName(rel->getQualifiedName());
-        std::string deltaRelation = getDeltaRelationName(rel->getQualifiedName());
+        // std::string deltaRelation = getDeltaRelationName(rel->getQualifiedName());
         // relation, oldRel, newRel,
                     // deltaDervInsertRel, deltaDervDeleteRel, deltaTupleInsertRel, deltaTupleDeleteRel
         // swap new and and delta relation and clear new relation afterwards (if not a subsumptive relation)
@@ -1319,6 +1319,19 @@ VecOwn<ram::Relation> UnitTranslator::createRamRelations(const std::vector<std::
             // Add main relation
             std::string mainName = getConcreteRelationName(rel->getQualifiedName());
             ramRelations.push_back(createRamRelation(rel, mainName));
+
+            if (isRecursive || rel->getAuxiliaryArity() > 0) {
+                // Add new relation
+                std::string newName = getNewRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, newName));
+            }
+
+            // Recursive relations also require @delta and @new variants, with the same signature
+            if (isRecursive) {
+                // Add delta relation
+                std::string deltaName = getDeltaRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, deltaName));
+            }
 
             // Add relation that cache old result
             std::string oldName = getOldRelationName(rel->getQualifiedName());

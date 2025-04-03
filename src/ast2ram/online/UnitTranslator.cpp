@@ -210,6 +210,107 @@ Own<ram::Statement> UnitTranslator::generateStratum(std::size_t scc) const {
     return mk<ram::Sequence>(std::move(current));
 }
 
+// change to real inc TODO
+Own<ram::Statement> UnitTranslator::generateStratumInc(std::size_t scc) const {
+    // Make a new ram statement for the current SCC
+    VecOwn<ram::Statement> current;
+
+    // Load all internal input relations from the facts dir with a .facts extension
+    for (const auto& relation : context->getInputRelationsInSCC(scc)) {
+        appendStmt(current, generateLoadRelation(relation));
+    }
+
+    // Compute the current stratum
+    const auto& sccRelations = context->getRelationsInSCC(scc);
+    if (context->isRecursiveSCC(scc)) {
+        appendStmt(current, generateRecursiveStratum(sccRelations, scc));
+    } else {
+        assert(sccRelations.size() == 1 && "only one relation should exist in non-recursive stratum");
+        const auto* rel = *sccRelations.begin();
+        appendStmt(current, generateNonRecursiveRelation(*rel));
+
+        // lub auxiliary arities using the @lub relation
+        if (rel->getAuxiliaryArity() > 0) {
+            std::string mainRelation = getConcreteRelationName(rel->getQualifiedName());
+            std::string newRelation = getNewRelationName(rel->getQualifiedName());
+            std::string deltaRelation = getDeltaRelationName(rel->getQualifiedName());
+            appendStmt(current, generateStratumLubSequence(*rel, false));
+            std::map<std::string, std::string> directives;
+            appendStmt(current, mk<ram::Clear>(newRelation));
+        }
+
+        // issue delete sequence for non-recursive subsumptions
+        appendStmt(current, generateNonRecursiveDelete(*rel));
+    }
+
+    // Get all non-recursive relation statements
+    auto nonRecursiveJoinSizeStatements = context->getNonRecursiveJoinSizeStatementsInSCC(scc);
+    auto joinSizeSequence = mk<ram::Sequence>(std::move(nonRecursiveJoinSizeStatements));
+    appendStmt(current, std::move(joinSizeSequence));
+
+    // Store all internal output relations to the output dir with a .csv extension
+    for (const auto& relation : context->getOutputRelationsInSCC(scc)) {
+        appendStmt(current, generateStoreRelation(relation));
+    }
+
+    return mk<ram::Sequence>(std::move(current));
+}
+
+//Own<ram::Statement> UnitTranslator::generateStratumInc(std::size_t scc) const {
+//    // Make a new ram statement for the current SCC
+//    VecOwn<ram::Statement> current;
+//
+//    // Load all internal input relations from the facts dir with a .facts extension
+//    // INC: Also load all delta changes for IDB by files having .facts.insert and .facts.delete extension
+//    // TODO: here we suppose EDB does not change during fixpoint computation
+//    // TODO: i.e. they are not the heads of any rules
+//    for (const auto& relation : context->getInputRelationsInSCC(scc)) {
+//        appendStmt(current, generateLoadRelation(relation));
+//    }
+//
+//    // Load all cached external output relations from the output dir
+//    // Cached derivation info maintained separately
+//    for (const auto& relation : context->getOutputRelationsInSCC(scc)) {
+//        appendStmt(current, generateLoadRelationForIDB(relation));
+//    }
+//
+//    // Compute the current stratum
+//    const auto& sccRelations = context->getRelationsInSCC(scc);
+//    if (context->isRecursiveSCC(scc)) {
+//        appendStmt(current, generateRecursiveStratum(sccRelations, scc));
+//        // assert(false && "recursion not supported");
+//    } else {
+//        assert(sccRelations.size() == 1 && "only one relation should exist in non-recursive stratum");
+//        const auto* rel = *sccRelations.begin();
+//        appendStmt(current, generateNonRecursiveRelation(*rel));  // TODO
+//
+//        // lub auxiliary arities using the @lub relation
+//        if (rel->getAuxiliaryArity() > 0) {
+//            assert (false && "lub auxiliary not supported");
+//        }
+//
+//        if (context->hasSubsumptiveClause(rel->getQualifiedName())) {
+//            assert (false && "subsumption clause not supported");
+//        }
+//    }
+//
+//    // Get all non-recursive relation statements, TODO
+//    const auto nonRecursiveJoinSizeStatements = context->getNonRecursiveJoinSizeStatementsInSCC(scc);
+//    assert(nonRecursiveJoinSizeStatements.empty() && "does not support join size statement currently");
+//    // auto joinSizeSequence = mk<ram::Sequence>(std::move(nonRecursiveJoinSizeStatements));
+//    // appendStmt(current, std::move(joinSizeSequence));
+//
+//    // Store all internal output relations to the output dir with a .csv extension
+//    // Note: delta derivations will be dumped after all calculations
+//    // Note: do we also need to provide delta EDB? It seems this is already enough
+//    for (const auto& relation : context->getOutputRelationsInSCC(scc)) {
+//        appendStmt(current, generateStoreRelation(relation));
+//    }
+//
+//    return mk<ram::Sequence>(std::move(current));
+//}
+
+
 Own<ram::Statement> UnitTranslator::generateClearExpiredRelations(
         const ast::RelationSet& expiredRelations) const {
     VecOwn<ram::Statement> stmts;
@@ -871,19 +972,13 @@ Own<ram::Relation> UnitTranslator::createRamRelation(
 }
 
 VecOwn<ram::Relation> UnitTranslator::createRamRelations(const std::vector<std::size_t>& sccOrdering) const {
-    VecOwn<ram::Relation> ramRelations;
+     VecOwn<ram::Relation> ramRelations;
     for (const auto& scc : sccOrdering) {
         bool isRecursive = context->isRecursiveSCC(scc);
         for (const auto& rel : context->getRelationsInSCC(scc)) {
             // Add main relation
             std::string mainName = getConcreteRelationName(rel->getQualifiedName());
             ramRelations.push_back(createRamRelation(rel, mainName));
-
-            if (rel->getAuxiliaryArity() > 0) {
-                // Add lub relation
-                std::string lubName = getLubRelationName(rel->getQualifiedName());
-                ramRelations.push_back(createRamRelation(rel, lubName));
-            }
 
             if (isRecursive || rel->getAuxiliaryArity() > 0) {
                 // Add new relation
@@ -896,22 +991,71 @@ VecOwn<ram::Relation> UnitTranslator::createRamRelations(const std::vector<std::
                 // Add delta relation
                 std::string deltaName = getDeltaRelationName(rel->getQualifiedName());
                 ramRelations.push_back(createRamRelation(rel, deltaName));
-
-                // Add auxiliary relation for subsumption
-                if (context->hasSubsumptiveClause(rel->getQualifiedName())) {
-                    // Add reject relation
-                    std::string rejectName = getRejectRelationName(rel->getQualifiedName());
-                    ramRelations.push_back(createRamRelation(rel, rejectName));
-
-                    // Add deletion relation
-                    std::string toEraseName = getDeleteRelationName(rel->getQualifiedName());
-                    ramRelations.push_back(createRamRelation(rel, toEraseName));
-                }
-            } else if (context->hasSubsumptiveClause(rel->getQualifiedName())) {
-                // Add deletion relation for non recursive subsumptive relations
-                std::string toEraseName = getDeleteRelationName(rel->getQualifiedName());
-                ramRelations.push_back(createRamRelation(rel, toEraseName));
             }
+
+            // Add relation that cache old result
+            std::string oldName = getOldRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, oldName));
+
+            // INC: Add delta relation for derivation-changing tuples in incremental computation
+            // We will have @inc_delta_derv_[insert|delete]_ and @inc_delta_tuple_[insert|delete}_ relations
+            // The former one tracks those tuples that change its derivations
+            // The later one tracks the inserted and deleted tuples for real
+            // i.e., newly inserted tuples and newly deleted tuples
+            // Only those tuples cause further derivation info (rule application) changes in our setting
+
+            std::string incDeltaDervInsertName = getIncDeltaDervInsertRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, incDeltaDervInsertName));
+
+            std::string incDeltaDervDeleteName = getIncDeltaDervDeleteRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, incDeltaDervDeleteName));
+
+            std::string incDeltaTupleInsertName = getIncDeltaTupleInsertRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, incDeltaTupleInsertName));
+
+            std::string incDeltaTupleDeleteName = getIncDeltaTupleDeleteRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, incDeltaTupleDeleteName));
+
+            std::string tmpName = getTmpRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, tmpName));
+
+            std::string tmp2Name = getTmp2RelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, tmp2Name));
+
+            std::string tmp3Name = getTmp3RelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, tmp3Name));
+
+            std::string tmp4Name = getTmp4RelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, tmp4Name));
+
+            // for recursion: delta and new, now have deletion and insertion version
+            // delta - real tuple change, new - derivation change & record derivation
+
+            if (rel->getAuxiliaryArity() > 0) {
+                assert(false && "does not support lub relation");
+                // Add lub relation
+                std::string lubName = getLubRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, lubName));
+            }
+
+            if (rel->getAuxiliaryArity() > 0) {
+                assert(false && "does not support AUXILIARY ARITY");
+            }
+
+            // TODO: for inc, need extra delta relations for delta rules, for those rels in recursive
+            // Recursive relations also require @delta and @new variants, with the same signature
+            // if (isRecursive) {
+                // Note that this UnitTranslator is only for incremental case
+
+                // Add delta relation
+                std::string deltaDelName = getDeltaDeletionRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, deltaDelName));
+                std::string deltaInsertName = getDeltaInsertionRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, deltaInsertName));
+                std::string newDelName = getNewDeletionRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, newDelName));
+                std::string newInsertName = getNewInsertionRelationName(rel->getQualifiedName());
+                ramRelations.push_back(createRamRelation(rel, newInsertName));
         }
     }
     return ramRelations;
@@ -925,25 +1069,34 @@ Own<ram::Sequence> UnitTranslator::generateProgram(const ast::TranslationUnit& t
     const auto& sccOrdering =
             translationUnit.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>().order();
     VecOwn<ram::Statement> res;
+    VecOwn<ram::Statement> incRes;
 
     // Create subroutines for each SCC according to topological order
     for (std::size_t i = 0; i < sccOrdering.size(); i++) {
         // Generate the main stratum code
         auto stratum = generateStratum(sccOrdering.at(i));
+//        auto stratumInc = generateStratumInc(sccOrdering.at(i));
 
         // Clear expired relations
         const auto& expiredRelations = context->getExpiredRelations(i);
         stratum = mk<ram::Sequence>(std::move(stratum), generateClearExpiredRelations(expiredRelations));
+//        stratumInc = mk<ram::Sequence>(std::move(stratumInc), generateClearExpiredRelations(expiredRelations));
 
         // Add the subroutine
         const ast::Relation* rel = *context->getRelationsInSCC(sccOrdering.at(i)).begin();
 
         std::string stratumID = rel->getQualifiedName().toString();
-        addRamSubroutine(stratumID, std::move(stratum));
+//        std::string stratumIDInc = rel->getQualifiedName().toString() + "_inc";
 
+        addRamSubroutine(stratumID, std::move(stratum));
+//        addRamSubroutine(stratumIDInc, std::move(stratumInc));
+//        std::cout << "stratumIDInc: " << stratumIDInc << std::endl;
         // invoke the strata
         appendStmt(res, mk<ram::Call>("stratum_" + stratumID));
+//        appendStmt(incRes, mk<ram::Call>("stratum_" + stratumIDInc));
     }
+
+//    addRamSubroutine("incRunAll", mk<ram::Sequence>(std::move(incRes)));
 
     // Add main timer if profiling
     if (!res.empty() && glb->config().has("profile")) {
@@ -954,6 +1107,41 @@ Own<ram::Sequence> UnitTranslator::generateProgram(const ast::TranslationUnit& t
 
     // Program translated!
     return mk<ram::Sequence>(std::move(res));
+}
+
+
+Own<ram::Sequence> UnitTranslator::generateProgramInc(const ast::TranslationUnit& translationUnit) {
+    // Check if trivial program
+    if (context->getNumberOfSCCs() == 0) {
+        return mk<ram::Sequence>();
+    }
+    const auto& sccOrdering =
+            translationUnit.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>().order();
+    VecOwn<ram::Statement> incRes;
+
+    // Create subroutines for each SCC according to topological order
+    for (std::size_t i = 0; i < sccOrdering.size(); i++) {
+        // Generate the main stratum code
+        auto stratumInc = generateStratumInc(sccOrdering.at(i));
+
+        // Clear expired relations
+        const auto& expiredRelations = context->getExpiredRelations(i);
+        stratumInc = mk<ram::Sequence>(std::move(stratumInc), generateClearExpiredRelations(expiredRelations));
+
+        // Add the subroutine
+        const ast::Relation* rel = *context->getRelationsInSCC(sccOrdering.at(i)).begin();
+
+        std::string stratumIDInc = rel->getQualifiedName().toString() + "_inc";
+
+        addRamSubroutine(stratumIDInc, std::move(stratumInc));
+        std::cout << "stratumIDInc: " << stratumIDInc << std::endl;
+        // invoke the strata
+        appendStmt(incRes, mk<ram::Call>("stratum_" + stratumIDInc));
+    }
+
+
+    // Program translated!
+    return mk<ram::Sequence>(std::move(incRes));
 }
 
 /**
@@ -969,6 +1157,7 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
     /* -- Translation -- */
     // Generate the RAM program code
     auto ramMain = generateProgram(tu);
+    auto ramInc = generateProgramInc(tu);
 
     // Create the relevant RAM relations
     const auto& sccOrdering = tu.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>().order();
@@ -978,7 +1167,7 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
     ErrorReport& errReport = tu.getErrorReport();
     DebugReport& debugReport = tu.getDebugReport();
     auto ramProgram =
-            mk<ram::Program>(std::move(ramRelations), std::move(ramMain), std::move(ramSubroutines));
+            mk<ram::Program>(std::move(ramRelations), std::move(ramMain), std::move(ramSubroutines), std::move(ramInc));
 
     // Add the translated program to the debug report
     if (glb->config().has("debug-report")) {
