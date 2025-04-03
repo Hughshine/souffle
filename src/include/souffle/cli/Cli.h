@@ -393,6 +393,10 @@ public:
                 }
             }
             {
+                DerivationManager::untypedTuple2DeltaInsertRuleApplications.clear();
+                DerivationManager::untypedTuple2DeltaDeleteRuleApplications.clear();
+                DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();
+                DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();
                 FunctionTimer timer("runAllInc" + std::to_string(++commitCount));
                 std::cout << "runAllInc()..." << std::endl;
                 program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);
@@ -423,6 +427,7 @@ public:
             std::cout << "No program loaded." << std::endl;
         }
         pendingOperations.clear();
+
     }
     void run() {
         bool running = true;
