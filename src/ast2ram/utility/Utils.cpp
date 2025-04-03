@@ -134,11 +134,11 @@ std::string getDeleteRelationName(const ast::QualifiedName& name) {
 // }
 
 std::string getIncDeltaDervInsertRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@inc_delta_derv_insert_");
+    return getConcreteRelationName(name, "$inc_delta_derv_insert_");
 }
 
 std::string getIncDeltaDervDeleteRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@inc_delta_derv_delete_");
+    return getConcreteRelationName(name, "$inc_delta_derv_delete_");
 }
 
 std::string getIncDeltaTupleInsertRelationName(const ast::QualifiedName& name) {
@@ -172,8 +172,8 @@ std::string getBaseRelationName(const ast::QualifiedName& name) {
     return
     stripPrefix("$inc_delta_tuple_delete_",
     stripPrefix("$inc_delta_tuple_insert_",
-    stripPrefix("@inc_delta_derv_delete_",
-    stripPrefix("@inc_delta_derv_insert_",
+    stripPrefix("$inc_delta_derv_delete_",
+    stripPrefix("$inc_delta_derv_insert_",
     stripPrefix("@tmp4_",
     stripPrefix("@tmp3_",
     stripPrefix("@tmp2_",

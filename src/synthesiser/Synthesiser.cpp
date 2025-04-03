@@ -140,8 +140,8 @@ const std::string getBaseRelationName(const std::string& name) {
     auto res =
     stripPrefix("$inc_delta_tuple_delete_",
     stripPrefix("$inc_delta_tuple_insert_",
-    stripPrefix("@inc_delta_derv_delete_",
-    stripPrefix("@inc_delta_derv_insert_",
+    stripPrefix("$inc_delta_derv_delete_",
+    stripPrefix("$inc_delta_derv_insert_",
     stripPrefix("@tmp4_",
     stripPrefix("@tmp3_",
     stripPrefix("@tmp2_",

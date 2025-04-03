@@ -390,10 +390,10 @@ public:
         const std::map<UntypedTuple, double>& fact_prob = {},
         const std::vector<UntypedTuple>& deletedFacts = {}
     ) {
-        deltaInsertNodes.clear();
-        deltaInsertEdges.clear();
-        deltaDeleteNodes.clear();
-        deltaDeleteEdges.clear();
+        this->deltaInsertNodes.clear();
+        this->deltaInsertEdges.clear();
+        this->deltaDeleteNodes.clear();
+        this->deltaDeleteEdges.clear();
         // 先应用删除，再应用插入
         applyDeltaDeletes(deltaDeleteRuleApps, ruleManager, deletedFacts);
         applyDeltaInserts(deltaInsertRuleApps, ruleManager, fact_prob);
@@ -433,6 +433,9 @@ void IncrementalDerivationGraph::applyDeltaInserts(
         for (const auto& ruleApp : *ruleAppSet) {
             // 检查这个规则应用的边是否已经存在
             EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp);
+            if (existingEdge != nullptr) {
+                std::cout << existingEdge->toString() << std::endl;
+            }
             assert(existingEdge == nullptr && "Delta insert edge already exists in the graph");
 
             // 创建规则应用对应的超边

@@ -329,11 +329,20 @@ public:
         return deletedFacts;
     }
 
+    void purgeAllIncDeltaRelations() {
+        for (auto* rel : program->getAllRelations()) {
+             if (rel->getName()[0] == '$') {
+//                std::cout << "Purging relation: " << rel->getName() << std::endl;
+                rel->purge();
+             }
+        }
+    }
     void commit() {
         static size_t commitCount = 0;
-
+        // TODO: should clean all delta relations after each commit
         if (program) {
             {
+                purgeAllIncDeltaRelations();
                 // insert delta into relations for real
                 for (auto& op : pendingOperations) {
                     if (op.type == Operation::INSERT) {
