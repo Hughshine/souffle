@@ -67,30 +67,49 @@ protected:
             const ast::Relation* relation, std::map<std::string, std::string>& directives) const;
 
     /** -- Generation methods -- */
-
+    VecOwn<ram::Statement> generateClauseVersionsInc(
+        const ast::Clause* clause, const ast::RelationSet& scc, bool isDelete = false) const;
+    VecOwn<ram::Statement> generateClauseVersionsPrefill(
+        const ast::Clause* clause, const ast::RelationSet& scc, bool isDelete) const;
+    Own<ram::Statement> generateStratumTableUpdatesInc(const ast::RelationSet& scc, bool isDelete = false) const;
+    Own<ram::Statement> generateStratumLoopBodyInc(const ast::RelationSet& scc, bool isDelete = false) const;
+    Own<ram::Statement> generateStratumExitSequenceInc(const ast::RelationSet& scc, bool isDelete = false) const;
+    Own<ram::Statement> translateRecursiveClausesInc(
+        const ast::RelationSet& scc, const ast::Relation* rel, bool isDelete = false, bool isPrefill = false) const;
+    Own<ram::Statement> generateStratumNonSccPreFill(const ast::RelationSet& scc, bool isDelete = false) const;
+    Own<ram::Statement> generateNonRecursiveRelationIns(const ast::Relation& rel) const;
+    Own<ram::Statement> generateNonRecursiveRelationDel(const ast::Relation& rel) const;
     /** High-level relation translation */
     virtual Own<ram::Sequence> generateProgram(const ast::TranslationUnit& translationUnit);
     virtual Own<ram::Sequence> generateProgramInc(const ast::TranslationUnit& translationUnit);
 
     Own<ram::Statement> generateNonRecursiveRelation(const ast::Relation& rel) const;
     Own<ram::Statement> generateRecursiveStratum(const ast::RelationSet& scc, std::size_t sccNum) const;
-
+    Own<ram::Statement> generateRecursiveStratumInc(
+                const ast::RelationSet& scc, std::size_t sccNumber) const;
     /** IO translation */
     Own<ram::Statement> generateStoreRelation(const ast::Relation* relation) const;
     Own<ram::Statement> generateLoadRelation(const ast::Relation* relation) const;
+    Own<ram::Statement> generateLoadRelationInc(const ast::Relation* relation) const;
+    Own<ram::Statement> generateLoadRelationForIDB(const ast::Relation* relation) const;
 
     /** Low-level stratum translation */
     Own<ram::Statement> generateStratum(std::size_t scc) const;
     Own<ram::Statement> generateStratumInc(std::size_t scc) const;
 
     Own<ram::Statement> generateStratumPreamble(const ast::RelationSet& scc) const;
+    Own<ram::Statement> generateStratumPreambleInc(const ast::RelationSet& scc, bool isDelete = false) const;
+
     Own<ram::Statement> generateNonRecursiveDelete(const ast::Relation& rel) const;
     Own<ram::Statement> generateStratumPostamble(const ast::RelationSet& scc) const;
+    Own<ram::Statement> generateStratumPostambleInc(const ast::RelationSet& scc, bool isDelete) const;
+
     Own<ram::Statement> generateStratumLoopBody(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateStratumTableUpdates(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateStratumExitSequence(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateStratumLubSequence(const ast::Relation& rel, bool inRecursiveLoop) const;
 
+    Own<ram::Statement> generateNonRecursiveRelationInc(const ast::Relation& rel) const;
     /** Other helper generations */
     virtual Own<ram::Statement> generateClearExpiredRelations(const ast::RelationSet& expiredRelations) const;
     Own<ram::Statement> generateClearRelation(const ast::Relation* relation) const;
@@ -99,6 +118,9 @@ protected:
     virtual Own<ram::Statement> generateMergeRelationsWithFilter(const ast::Relation* rel,
             const std::string& destRelation, const std::string& srcRelation,
             const std::string& filterRelation) const;
+    virtual Own<ram::Statement> generateMergeRelationsWithNegativeFilter(const ast::Relation* rel,
+                const std::string& destRelation, const std::string& srcRelation,
+                const std::string& filterRelation) const;
     virtual Own<ram::Statement> generateEraseTuples(
             const ast::Relation* rel, const std::string& destRelation, const std::string& srcRelation) const;
     virtual Own<ram::Statement> generateDebugRelation(const ast::Relation* rel,

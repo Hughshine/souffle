@@ -190,10 +190,13 @@ set(SOUFFLE_SOURCES
         ram/EmptyStatement.h
         ram/DerivationCheck.h
         ast2ram/online/ConstraintTranslator.cpp
+        ast2ram/online/IncConstraintTranslator.cpp
         ast2ram/online/ClauseTranslator.cpp
+        ast2ram/online/IncClauseTranslator.cpp
         ast2ram/online/TranslationStrategy.cpp
         ast2ram/online/UnitTranslator.cpp
         ast2ram/online/ValueTranslator.cpp
+        ast2ram/online/IncValueTranslator.cpp
 )
 
 # --------------------------------------------------

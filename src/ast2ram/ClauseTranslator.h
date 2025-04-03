@@ -67,7 +67,9 @@ enum TranslationMode {
     // delete delete-R(x0) :- R(x0), R(x1), x0!=x1, body. (outside fix-point)
     SubsumeDeleteCurrentCurrent,
 
-    Incremental
+    Incremental,
+
+    // ONLINE_INC
 };
 
 /* Abstract Clause Translator */

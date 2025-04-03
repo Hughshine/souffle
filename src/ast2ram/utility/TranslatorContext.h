@@ -162,6 +162,16 @@ public:
     Own<ram::Statement> translateRecursiveClause(const ast::Clause& clause, const ast::RelationSet& scc,
             std::size_t version, TranslationMode mode = DEFAULT, bool isDelete = false, bool isPrefill = false) const;
 
+  Own<ram::Statement> translateNonRecursiveClauseInc(
+            const ast::Clause& clause, TranslationMode mode = DEFAULT) const;
+  Own<ram::Statement> translateNonRecursiveClauseDelInc(
+        const ast::Clause& clause, TranslationMode mode = DEFAULT) const;
+  Own<ram::Statement> translateNonRecursiveClauseInsInc(
+      const ast::Clause& clause, TranslationMode mode = DEFAULT) const;
+  Own<ram::Statement> translateRecursiveClauseInc(const ast::Clause& clause, const ast::RelationSet& scc,
+          std::size_t version, TranslationMode mode = DEFAULT, bool isDelete = false, bool isPrefill = false) const;
+
+
     Own<ram::Condition> translateConstraint(const ValueIndex& index, const ast::Literal* lit) const;
 
     Own<ram::Expression> translateValue(const ValueIndex& index, const ast::Argument* arg) const;

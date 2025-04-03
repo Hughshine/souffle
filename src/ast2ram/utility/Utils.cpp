@@ -102,11 +102,11 @@ std::string getNewRelationName(const ast::QualifiedName& name) {
  * For inc + recursion
  */
 std::string getDeltaDeletionRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "$delta_tuple_delete_");
+    return getConcreteRelationName(name, "@delta_tuple_delete_");
 }
 
 std::string getDeltaInsertionRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "$delta_tuple_insert_");
+    return getConcreteRelationName(name, "@delta_tuple_insert_");
 }
 
 std::string getNewDeletionRelationName(const ast::QualifiedName& name) {
@@ -142,11 +142,11 @@ std::string getIncDeltaDervDeleteRelationName(const ast::QualifiedName& name) {
 }
 
 std::string getIncDeltaTupleInsertRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@inc_delta_tuple_insert_");
+    return getConcreteRelationName(name, "$inc_delta_tuple_insert_");
 }
 
 std::string getIncDeltaTupleDeleteRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@inc_delta_tuple_delete_");
+    return getConcreteRelationName(name, "$inc_delta_tuple_delete_");
 }
 
 std::string getTmpRelationName(const ast::QualifiedName& name) {
@@ -170,19 +170,19 @@ const std::string& getRelationName(const ast::QualifiedName& name) {
 
 std::string getBaseRelationName(const ast::QualifiedName& name) {
     return
-    stripPrefix("@inc_delta_tuple_delete_",
-    stripPrefix("@inc_delta_tuple_insert_",
+    stripPrefix("$inc_delta_tuple_delete_",
+    stripPrefix("$inc_delta_tuple_insert_",
     stripPrefix("@inc_delta_derv_delete_",
     stripPrefix("@inc_delta_derv_insert_",
     stripPrefix("@tmp4_",
-        stripPrefix("@tmp3_",
-        stripPrefix("@tmp2_",
-            stripPrefix("@tmp_",
+    stripPrefix("@tmp3_",
+    stripPrefix("@tmp2_",
+    stripPrefix("@tmp_",
         stripPrefix("@old_",
-            stripPrefix("@inc_delta_tuple_delete_",
-                stripPrefix("@inc_delta_tuple_insert_",
-                    stripPrefix("@inc_delta_derv_delete_",
-                        stripPrefix("@inc_delta_derv_insert_",
+            stripPrefix("@delta_tuple_delete_",
+                stripPrefix("@delta_tuple_insert_",
+                    stripPrefix("@new_derv_delete_",
+                        stripPrefix("@new_derv_insert_",
                             stripPrefix("@new_",
                                 stripPrefix("@delta_",
                                     stripPrefix("@info_", name.toString()))))))))))))))));

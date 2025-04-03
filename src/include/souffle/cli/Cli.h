@@ -19,12 +19,12 @@ std::string getConcreteRelationName(const std::string& name, const std::string p
     return prefix + name;
 }
 
-std::string getDeltaDeletionRelationName(const std::string& name) {
-    return getConcreteRelationName(name, "$delta_tuple_delete_");
+std::string getIncDeltaTupleDeleteRelationName(const std::string& name) {
+    return getConcreteRelationName(name, "$inc_delta_tuple_delete_");
 }
 
-std::string getDeltaInsertionRelationName(const std::string& name) {
-    return getConcreteRelationName(name, "$delta_tuple_insert_");
+std::string getIncDeltaTupleInsertRelationName(const std::string& name) {
+    return getConcreteRelationName(name, "$inc_delta_tuple_insert_");
 }
 
 class IncrementalCLI {
@@ -338,7 +338,7 @@ public:
                 for (auto& op : pendingOperations) {
                     if (op.type == Operation::INSERT) {
                         auto* origRel = program->getRelation(op.relationName);
-                        auto* rel = program->getRelation(getDeltaInsertionRelationName(op.relationName));
+                        auto* rel = program->getRelation(getIncDeltaTupleInsertRelationName(op.relationName));
                         if (rel == nullptr) {
                             std::cout << "Relation not found, omitted: " << op.relationName << std::endl;
                             continue;
@@ -364,8 +364,8 @@ public:
                         rel->insert(relTuple);
                     } else if (op.type == Operation::DELETE) {
                         auto* origRel = program->getRelation(op.relationName);
-                        auto* rel = program->getRelation(getDeltaDeletionRelationName(op.relationName));
-                        auto insRel = program->getRelation(getDeltaInsertionRelationName(op.relationName));
+                        auto* rel = program->getRelation(getIncDeltaTupleDeleteRelationName(op.relationName));
+                        auto insRel = program->getRelation(getIncDeltaTupleInsertRelationName(op.relationName));
                         if (rel == nullptr) {
                             std::cout << "Relation not found, omitted: " << op.relationName << std::endl;
                             continue;

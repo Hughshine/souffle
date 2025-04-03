@@ -137,7 +137,7 @@ using namespace ram;
 using namespace stream_write_qualified_char_as_number;
 
 const std::string getBaseRelationName(const std::string& name) {
-    return
+    auto res =
     stripPrefix("$inc_delta_tuple_delete_",
     stripPrefix("$inc_delta_tuple_insert_",
     stripPrefix("@inc_delta_derv_delete_",
@@ -150,6 +150,11 @@ const std::string getBaseRelationName(const std::string& name) {
     stripPrefix("@new_",
     stripPrefix("@delta_",
     stripPrefix("@info_", name))))))))))));
+    res = stripPrefix("@delta_tuple_delete_", res);
+    res = stripPrefix("@delta_tuple_insert_", res);
+    res = stripPrefix("@new_derv_delete_", res);
+    res = stripPrefix("@new_derv_insert_", res);
+    return res;
 }
 
 /** Lookup frequency counter */

@@ -43,6 +43,12 @@ public:
             const TranslatorContext& context, const ValueIndex& index) const override;
     ast2ram::ValueTranslator* createValueTranslator(
             const TranslatorContext& context, const ValueIndex& index) const override;
+  ast2ram::ClauseTranslator* createClauseTranslatorInc(
+      const TranslatorContext& context, TranslationMode mode) const override;
+  ast2ram::ConstraintTranslator* createConstraintTranslatorInc(
+          const TranslatorContext& context, const ValueIndex& index) const;
+  ast2ram::ValueTranslator* createValueTranslatorInc(
+          const TranslatorContext& context, const ValueIndex& index) const;
 };
 
 }  // namespace souffle::ast2ram::online

@@ -42,6 +42,10 @@ public:
     virtual ClauseTranslator* createClauseTranslator(
             const TranslatorContext& context, TranslationMode mode) const = 0;
 
+    /** AST clause -> RAM statement translator */
+    virtual ClauseTranslator* createClauseTranslatorInc(
+                const TranslatorContext& context, TranslationMode mode) const { return nullptr; };
+
     /** AST literal -> RAM condition translator */
     virtual ConstraintTranslator* createConstraintTranslator(
             const TranslatorContext& context, const ValueIndex& index) const = 0;
@@ -49,6 +53,7 @@ public:
     /** AST argument -> RAM expression translator */
     virtual ValueTranslator* createValueTranslator(
             const TranslatorContext& context, const ValueIndex& index) const = 0;
+
 };
 
 }  // namespace souffle::ast2ram

@@ -1292,7 +1292,7 @@ Own<ram::Relation> UnitTranslator::createRamRelation(
     auto auxArity = mergeAuxiliary ? baseRelation->getAuxiliaryArity() : 0;
     // auto representation = baseRelation->getRepresentation(); TODO
     auto representation = RelationRepresentation::BTREE_DELETE;
-    if (representation == RelationRepresentation::BTREE_DELETE && ramRelationName[0] == '@') {
+    if (representation == RelationRepresentation::BTREE_DELETE && (ramRelationName[0] == '@' || ramRelationName[0] == '$')) {
         representation = RelationRepresentation::DEFAULT;
     }
     // TODO: BTREE_DELETE
