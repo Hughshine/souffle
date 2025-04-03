@@ -388,7 +388,7 @@ void Synthesiser::emitRules (std::ostream& out) {
 }
 
 void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
-    out << "auto graph = DerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
+    out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
     out << "graph->dumpDot(\"derivation_graph.dot\");\n";
     out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
@@ -3924,15 +3924,18 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         emitRules(hook);
         // synthesize forward compilation
         emitProblogPipelineCudd(hook);
+
+
+        // add online incremental&interactive computation
+        if (glb.config().has("online")) {
+            db.addGlobalInclude("\"souffle/cli/Cli.h\"");
+            hook << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
+            hook << "cli.run();\n";
+        }
+
         hook << "} catch (std::exception& e) {std::cerr << \"Problog colc failed\" << e.what() << std::endl;}\n";
     }
 
-    // add online incremental&interactive computation
-    if (glb.config().has("online")) {
-        db.addGlobalInclude("\"souffle/cli/Cli.h\"");
-        hook << "IncrementalCLI cli(&obj);\n";
-        hook << "cli.run();\n";
-    }
 
     if (glb.config().get("provenance") == "explain") {
         hook << "explain(obj, false);\n";

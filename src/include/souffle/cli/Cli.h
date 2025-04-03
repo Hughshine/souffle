@@ -10,6 +10,10 @@
 #include <readline/history.h>
 #include "souffle/SouffleInterface.h"
 #include "souffle/Derivation.h" // TODO: should change timer to Misc header
+#include "souffle/problog/DerivationGraph.h"
+#include "souffle/problog/RuleManager.h"
+#include "souffle/problog/formula/CuddManager.h"
+#include "souffle/problog/ForwardCompilation.h"
 
 class IncrementalCLI {
 private:
@@ -121,9 +125,21 @@ private:
         return values;
     }
     souffle::SouffleProgram* program;
+    IncrementalDerivationGraph* graph;
+    RuleManager* ruleManager;
+    std::map<NodePtr, BddNodeRef>* nodeFormulas;
+    std::map<EdgePtr, BddNodeRef>* edgeFormulas;
+    WeightedBDDManager* bddManager = nullptr;
 
 public:
-    IncrementalCLI(souffle::SouffleProgram* prog = nullptr) : program(prog) {
+    IncrementalCLI(souffle::SouffleProgram* prog = nullptr,
+            IncrementalDerivationGraph* graph = nullptr,
+            RuleManager* rm = nullptr,
+            WeightedBDDManager* bddManager = nullptr,
+            std::map<NodePtr, BddNodeRef>* nodeFormulas = {},
+            std::map<EdgePtr, BddNodeRef>* edgeFormulas = {}
+            )
+            : program(prog), graph(graph), ruleManager(rm), bddManager(bddManager), nodeFormulas(nodeFormulas), edgeFormulas(edgeFormulas) {
         // Initialize readline
         using_history();
     }
@@ -250,20 +266,64 @@ public:
         return true;
     }
 
+    UntypedTuple getTuple(const Operation& op) {
+        UntypedTuple tuple{op.relationName, {}};
+        for (const auto& value : op.values) {
+            tuple.fields.push_back(std::stoi(value));
+        }
+        return tuple;
+    }
+
+    std::map<UntypedTuple, double> getFactProbInc() {
+        std::map<UntypedTuple, double> fact_prob_inc;
+        for (const auto& op : pendingOperations) {
+            if (op.type == Operation::INSERT) {
+                fact_prob_inc[getTuple(op)] = op.probability;
+            }
+        }
+        return fact_prob_inc;
+    }
+
+    std::vector<UntypedTuple> getDeletedFacts() {
+        std::vector<UntypedTuple> deletedFacts;
+        for (const auto& op : pendingOperations) {
+            if (op.type == Operation::DELETE) {
+                deletedFacts.push_back(getTuple(op));
+            }
+        }
+        return deletedFacts;
+    }
+
     void commit() {
         static size_t commitCount = 0;
         if (program) {
-//            for (const auto& op : pendingOperations) {
-//                if (op.type == Operation::INSERT) {
-//                    program->insert(op.relationName, op.values, op.probability);
-//                } else if (op.type == Operation::DELETE) {
-//                    program->remove(op.relationName, op.values);
-//                }
-//            }
-            FunctionTimer timer("runAllInc" + std::to_string(++commitCount));
-            std::cout << "runAllInc()..." << std::endl;
-            program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);  // note that runAllInc() should also call inc prob computation
-//            program->dumpOutputs();
+            {
+                FunctionTimer timer("runAllInc" + std::to_string(++commitCount));
+                std::cout << "runAllInc()..." << std::endl;
+                program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);
+            }
+            graph->applyDelta(
+                DerivationManager::untypedTuple2DeltaInsertRuleApplications,
+                DerivationManager::untypedTuple2DeltaDeleteRuleApplications,
+                *ruleManager,
+                getFactProbInc(),// fact_prob_inc; cli should collect this
+                getDeletedFacts() // deletedFacts; cli should collect this
+            );
+            graph->dumpDotInc("derivation-inc.dot");
+            buildFormulasInc(*graph, *bddManager, *nodeFormulas, *edgeFormulas);
+            for (const auto& [node, bdd] : *nodeFormulas) {
+                std::cout << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
+                std::cout << bddManager->toString(bdd) << "\t";
+                auto prob = bddManager->computeWeightedModelCount(bdd);
+                std::cout << "Probability: " << prob << std::endl;
+            }
+            for (const auto& [edge, bdd] : *edgeFormulas) {
+                std::cout << edge->toString() << " : ";
+                std::cout << bddManager->toString(bdd) << "\t";
+                auto prob = bddManager->computeWeightedModelCount(bdd);
+                std::cout << "Probability: " << prob << std::endl;
+            }
+            std::cout << "Done" << std::endl;
         } else {
             std::cout << "No program loaded." << std::endl;
         }
