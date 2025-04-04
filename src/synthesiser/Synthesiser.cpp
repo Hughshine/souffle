@@ -721,17 +721,17 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             PRINT_END_COMMENT(out);
         }
 
-        void visit_(type_identity<Clear>, const Clear& clear, std::ostream& out) override {
+        void visit_(type_identity<Clear>, const Clear& clear, std::ostream& out) override {  // TODO: should not purge real relation
             PRINT_BEGIN_COMMENT(out);
 
             auto Relation = synthesiser.lookup(clear.getRelation());
-            bool isIntermediate =
-                    !contains(synthesiser.storeRelations, Relation->getName()) && !Relation->isTemp();
+            // bool isIntermediate =
+            //     !contains(synthesiser.storeRelations, Relation->getName()) && !Relation->isTemp();
 
-            if (isIntermediate) {
-                out << "if (pruneImdtRels) ";
-            }
-            if (Relation->isTemp() || isIntermediate) {
+            // if (isIntermediate) {
+            //     out << "if (pruneImdtRels) ";
+            // }
+            if (Relation->isTemp()) {
                 out << synthesiser.getRelationName(Relation) << "->purge();\n";
             }
 

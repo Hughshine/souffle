@@ -391,7 +391,10 @@ public:
                             origTuple << std::stoi(op.values[i]);
                             insTuple << std::stoi(op.values[i]);
                         }
-
+                        std::cout << origRel->getName() << std::endl;
+                        for (auto t: *origRel) {
+                            std::cout << "original tuple: " << t.toString() << std::endl;
+                        }
                         if (!origRel->contains(origTuple)) {
                             std::cout << "Relation does not contains the tuple to delete, omitted: " << origTuple.toString() << std::endl;
                             op.valid = false;
