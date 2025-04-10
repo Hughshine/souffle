@@ -307,6 +307,8 @@ void Synthesiser::emitRules (std::ostream& out) {
                     fields.emplace_back('S', constant->getConstant());
                 } else {
                     assert (false && "Not impl yet, atom");
+                    // TODO: can we just omit all constraints?
+                    continue;
                 }
             }
             out << "const Atom " << headAtomName << " = Atom{\"" << headAtom->getQualifiedName().toString() << "\", {";
@@ -330,8 +332,8 @@ void Synthesiser::emitRules (std::ostream& out) {
         }
         // const auto& initialBodyLiterals = initClause->getBodyLiterals();
         const auto& bodyLiterals = clause->getBodyLiterals();
-        for (size_t i = 0; i < bodyLiterals.size(); ++i) {
-            auto& bodyLiteral = bodyLiterals[i];
+        for (size_t ii = 0; ii < bodyLiterals.size(); ++ii) {
+            auto& bodyLiteral = bodyLiterals[ii];
             atomId ++;
             if (isA<ast::Atom>(bodyLiteral)) {
                 ast::Atom* atom = as<ast::Atom>(bodyLiteral);
@@ -374,6 +376,8 @@ void Synthesiser::emitRules (std::ostream& out) {
                     out << "SymbolicField::makeVariable(\"" << var << "\"), ";
                 }
                 out << "}, true};" << std::endl;
+            } else if (isA<ast::Constraint>(bodyLiteral)) {
+                continue;
             } else {
                 assert (false && "Not impl yet, atom");
             }
@@ -390,7 +394,9 @@ void Synthesiser::emitRules (std::ostream& out) {
 
 void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
-    out << "graph->dumpDot(\"derivation_graph.dot\");\n";
+    if (glb.config().has("verbose")) {
+        out << "graph->dumpDot(\"derivation_graph.dot\");\n";
+    }
     out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
     out << "WeightedBDDManager bddManager;\n";

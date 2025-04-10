@@ -175,6 +175,7 @@ public:
         NK_Program,
         NK_Relation,
         NK_Statement,
+            NK_EmptyStatement,
             NK_Assign,
 
             NK_BinRelationStatement,

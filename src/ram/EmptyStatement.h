@@ -26,7 +26,7 @@ namespace souffle::ram {
 
 class EmptyStatement : public Statement {
 public:
-    EmptyStatement() : Statement(NK_NONE) {}
+    EmptyStatement() : Statement(NK_EmptyStatement) {}
 
 
     EmptyStatement* cloning() const override {
@@ -34,7 +34,7 @@ public:
     }
 
     static bool classof(const Node* n) {
-        return n->getKind() == NK_NONE;
+        return n->getKind() == NK_EmptyStatement;
     }
 
 protected:

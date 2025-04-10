@@ -120,7 +120,8 @@ std::map<std::string, Own<ram::Expression>> ClauseTranslator::getClauseVars(cons
         } else if (isA<ast::Negation>(lit)) {
             atom = as<ast::Negation>(lit)->getAtom();
         } else {
-            assert(false && "constraints are not supported");
+            // assert(false && "constraints are not supported");
+            continue;
         }
         for (const auto* arg : atom->getArguments()) {
             if (const auto& var = as<ast::Variable>(arg)) {
