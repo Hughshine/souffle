@@ -555,23 +555,23 @@ Own<ram::transform::Transformer> ramTransformerSequence(Global& glb) {
     using namespace ram::transform;
     // TODO: should check the transformer sequence; one of them is not compatible with unnamed variables in prob
     // clang-format off
-    // Own<Transformer> ramTransform = mk<TransformerSequence>(
-    //         mk<LoopTransformer>(mk<TransformerSequence>(mk<ExpandFilterTransformer>(),
-    //                 mk<HoistConditionsTransformer>(), mk<MakeIndexTransformer>())),
-    //         mk<IfConversionTransformer>(), mk<IfExistsConversionTransformer>(),
-    //         mk<CollapseFiltersTransformer>(), mk<TupleIdTransformer>(),
-    //         mk<LoopTransformer>(
-    //                 mk<TransformerSequence>(mk<HoistAggregateTransformer>(), mk<TupleIdTransformer>())),
-    //         mk<ExpandFilterTransformer>(), mk<HoistConditionsTransformer>(),
-    //         mk<CollapseFiltersTransformer>(), mk<EliminateDuplicatesTransformer>(),
-    //         mk<ReorderConditionsTransformer>(), mk<LoopTransformer>(mk<ReorderFilterBreak>()),
-    //         mk<ConditionalTransformer>(
-    //                 // job count of 0 means all cores are used.
-    //                 [&]() -> bool { return std::stoi(glb.config().get("jobs")) != 1; },
-    //                 mk<ParallelTransformer>()),
-    //         mk<ReportIndexTransformer>());
+    Own<Transformer> ramTransform = mk<TransformerSequence>(
+            mk<LoopTransformer>(mk<TransformerSequence>(mk<ExpandFilterTransformer>(),
+                    mk<HoistConditionsTransformer>(), mk<MakeIndexTransformer>())),
+            // mk<IfConversionTransformer>(), mk<IfExistsConversionTransformer>(),
+            mk<CollapseFiltersTransformer>(), mk<TupleIdTransformer>(),
+            mk<LoopTransformer>(
+                    mk<TransformerSequence>(mk<HoistAggregateTransformer>(), mk<TupleIdTransformer>())),
+            mk<ExpandFilterTransformer>(), mk<HoistConditionsTransformer>(),
+            mk<CollapseFiltersTransformer>(), mk<EliminateDuplicatesTransformer>(),
+            mk<ReorderConditionsTransformer>(), mk<LoopTransformer>(mk<ReorderFilterBreak>()),
+            mk<ConditionalTransformer>(
+                    // job count of 0 means all cores are used.
+                    [&]() -> bool { return std::stoi(glb.config().get("jobs")) != 1; },
+                    mk<ParallelTransformer>()),
+            mk<ReportIndexTransformer>());
     // clang-format on
-    Own<Transformer> ramTransform = mk<TransformerSequence>();
+    // Own<Transformer> ramTransform = mk<TransformerSequence>();
     return ramTransform;
 }
 

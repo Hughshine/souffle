@@ -1021,9 +1021,12 @@ Own<ram::Operation> ClauseTranslator::addNegatedAtomDerived(
     }
 
     auto clauseStr = clause.toString();
-    return mk<ram::Filter>(
+    op = mk<ram::Filter>(
     mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause), std::move(cloneClauseVarMap(clauseVarMap)))), std::move(op));
+    return mk<ram::Filter>(
+    mk<ram::Negation>(mk<ram::ExistenceCheck>(headRelationName, std::move(values))), std::move(op));
 }
+
 Own<ram::Operation> ClauseTranslator::addAtomDerived(
         Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const {
     const auto head = clause.getHead();
@@ -1037,8 +1040,10 @@ Own<ram::Operation> ClauseTranslator::addAtomDerived(
     }
 
     auto clauseStr = clause.toString();
-    return mk<ram::Filter>(
+    op = mk<ram::Filter>(
     (mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause), std::move(cloneClauseVarMap(clauseVarMap)))), std::move(op));
+    return mk<ram::Filter>(
+    mk<ram::Negation>(mk<ram::ExistenceCheck>(headRelationName, std::move(values))), std::move(op));
 }
 
 

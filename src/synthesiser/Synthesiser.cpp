@@ -239,6 +239,19 @@ ram::RelationSet Synthesiser::getReferencedRelations(const Operation& op) {
             res.insert(lookup(insert->getRelation()));
         } else if (auto derExists = as<DerivationCheck>(node)) {
             res.insert(lookup((derExists->getRelation())));
+            for (auto& [_, expr] : derExists->varExprMap) {
+                if (auto* rel = as<RelationOperation>(expr)) {  // TODO: useless?
+
+                    res.insert(lookup(rel->getRelation()));
+                }
+            }
+        } else if (auto record = as<RecordDerivation>(node)) {
+            res.insert(lookup(record->getRelation()));
+            for (auto& [_, expr] : record->varExprMap) {
+                if (auto* rel = as<RelationOperation>(expr)) {
+                    res.insert(lookup(rel->getRelation()));
+                }
+            }
         }
     });
     return res;
@@ -2106,7 +2119,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             }
             out << "std::map<std::string, souffle::RamDomain> varValues{};\n";
             for (const auto& [var, expr]: recordDerivation.varExprMap) {
-                out << "varValues.insert({\"" << var  << "\", "; rec(out, expr.get()); out << "});\n";
+                out << "varValues.insert(std::make_pair(\"" << var  << "\", "; rec(out, expr.get()); out << "));\n";
             }
             out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
             out << "ruleSet->insert(ruleApplication);\n";

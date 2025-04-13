@@ -145,7 +145,13 @@ public:
     }
 
     NodeVec getChildren() const override {
-        return toPtrVector<Node const>(expressions);
+        NodeVec nodes;
+        for (auto& [_, v] : varExprMap) {
+            nodes.push_back(v.get());
+        }
+        auto vec = toPtrVector<Node const>(expressions);
+        nodes.insert(nodes.end(), vec.begin(), vec.end());
+        return nodes;
     }
 
     /** Relation name */

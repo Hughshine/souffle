@@ -122,7 +122,14 @@ public:
     }
 
     NodeVec getChildren() const override {
-        return toPtrVector<Node const>(expressions); // TODO: varExprMap?
+        NodeVec nodes;
+        for (auto& [_, v] : varExprMap) {
+            nodes.push_back(v.get());
+        }
+        auto vec = toPtrVector<Node const>(expressions);
+        nodes.insert(nodes.end(), vec.begin(), vec.end());
+        return nodes;
+        // return toPtrVector<Node const>(expressions); // TODO: varExprMap?
     }
 
     const std::vector<Expression*> getValues() const {
