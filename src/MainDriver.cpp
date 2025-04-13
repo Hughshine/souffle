@@ -558,8 +558,10 @@ Own<ram::transform::Transformer> ramTransformerSequence(Global& glb) {
     Own<Transformer> ramTransform = mk<TransformerSequence>(
             mk<LoopTransformer>(mk<TransformerSequence>(mk<ExpandFilterTransformer>(),
                     mk<HoistConditionsTransformer>(), mk<MakeIndexTransformer>())),
-            // mk<IfConversionTransformer>(), mk<IfExistsConversionTransformer>(),
-            mk<CollapseFiltersTransformer>(), mk<TupleIdTransformer>(),
+            mk<IfConversionTransformer>(),
+            mk<IfExistsConversionTransformer>(),
+            mk<CollapseFiltersTransformer>(),
+            mk<TupleIdTransformer>(),
             mk<LoopTransformer>(
                     mk<TransformerSequence>(mk<HoistAggregateTransformer>(), mk<TupleIdTransformer>())),
             mk<ExpandFilterTransformer>(), mk<HoistConditionsTransformer>(),

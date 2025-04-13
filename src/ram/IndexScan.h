@@ -69,7 +69,7 @@ public:
         return (kind >= NK_IndexScan && kind < NK_LastIndexScan);
     }
 
-protected:
+// protected:
     IndexScan(NodeKind kind, std::string rel, std::size_t ident, RamPattern queryPattern,
             Own<Operation> nested, std::string profileText = "")
             : IndexOperation(

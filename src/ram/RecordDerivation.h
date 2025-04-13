@@ -108,6 +108,9 @@ public:
         for (auto& expr : expressions) {
             expr = map(std::move(expr));
         }
+        for (auto& [var, expr] : varExprMap) {
+            expr = map(std::move(expr));
+        }
     }
 
     static bool classof(const Node* n) {
@@ -136,6 +139,9 @@ public:
             << (complete?"COMPLETE":"DELTA") << ", "
             << (isRecursive?"Recursive":"Non-Recursive") << ", "
             << std::endl;
+        for (auto& [var, expr] : varExprMap) {
+            os << times(" ", tabpos + 2) << var << ": " << *expr << std::endl;
+        }
     }
 
     bool equal(const Node& node) const override {

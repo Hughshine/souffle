@@ -43,6 +43,7 @@ bool TupleIdTransformer::reorderOperations(Program& program) {
             ctr++;
         });
 
+        // TODO
         query.apply(nodeMapper<Node>([&](auto&& go, Own<Node> node) -> Own<Node> {
             if (auto* element = as<TupleElement>(node)) {
                 if (reorder[element->getTupleId()] != element->getTupleId()) {

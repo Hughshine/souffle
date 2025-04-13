@@ -71,6 +71,9 @@ public:
             expr = map(std::move(expr));
         }
         // TODO: do we need to map varValueMap?
+        for (auto& [var, expr] : varExprMap) {
+            expr = map(std::move(expr));
+        }
     }
 
     static bool classof(const Node* n) {

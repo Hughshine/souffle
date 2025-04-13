@@ -46,7 +46,7 @@ namespace souffle::ram::transform {
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~
  *  QUERY
  *   ...
- *    IF (10,20) NOT IN A
+ *    IF (10,20) IN A
  *      ...
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~
  *
