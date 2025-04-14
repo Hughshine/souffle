@@ -60,3 +60,5 @@ experiments/**/test-*
 experiments/**/*.dot
 experiments/**/main
 test
+
+experiments/**/output

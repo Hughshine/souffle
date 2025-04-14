@@ -2018,7 +2018,8 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     << "insert(tuple," << ctxName << ");\n";
             } else {
                 // case 2: insert to new/original rel, record derivation
-                if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new") {
+                if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new"
+                    && !(tempRelName.size() >= 10 && tempRelName.substr(0, 10) == "@new_derv_")) {
                     tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
                 }
                 // retrieve the tuple first
@@ -2052,16 +2053,40 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 
             // insert tuple and record derivation
             // case 1: insert to delta, (new) to old
+            // TODO
             if (insert.getClauseStr() == "UNKNOWN CLAUSE") {
-                out << relName << "->"
-                    << "insert(tuple," << ctxName << ");\n";
+                // out << relName << "->"
+                //     << "insert(tuple," << ctxName << ");\n";
+                if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new"
+                    && !(tempRelName.size() >= 10 && tempRelName.substr(0, 10) != "@new_derv_")){
+                    tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
+                    auto origRelName = synthesiser.getRelationName(synthesiser.lookup(tempRelName));
+                    // out << "if (origRelName->contains("
+                    out << "if (!" << origRelName << "->contains(tuple)) {\n";
+                    out << relName << "->"
+                        << "insert(tuple," << ctxName << ");\n";
+                    out << "}\n";
+                } else {
+                    out << relName << "->"
+                        << "insert(tuple," << ctxName << ");\n";
+                }
             } else {
                 // TODO: is it ok to just insert the tuple?
-                out << relName << "->"
-                    << "insert(tuple," << ctxName << ");\n";
-                // if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new") {
-                //     tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
-                // }
+                if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new"
+    && !(tempRelName.size() >= 9 && tempRelName.substr(0, 9) == "@new_derv")) {
+                    tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
+                    auto origRelName = synthesiser.getRelationName(synthesiser.lookup(tempRelName));
+                    // out << "if (origRelName->contains("
+                    out << "if (!" << origRelName << "->contains(tuple)) {\n";
+                    out << relName << "->"
+                        << "insert(tuple," << ctxName << ");\n";
+                    out << "}\n";
+                } else {
+                    out << relName << "->"
+                        << "insert(tuple," << ctxName << ");\n";
+                }
+
+
                 // retrieve the tuple first
                 // out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << tempRelName << "\",tuple);\n";
                 // out << "auto*& ruleSet = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
