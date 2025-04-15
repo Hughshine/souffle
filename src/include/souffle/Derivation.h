@@ -11,6 +11,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <unordered_set>
 #include <vector>
 #include <chrono>
 #include <iostream>
@@ -124,19 +125,23 @@ struct UntypedTuple {
         return false;
     }
 
+    // bool operator==(const UntypedTuple& other) const {
+    //     if (relation_name != other.relation_name) {
+    //         return false;
+    //     }
+    //     if (fields.size() != other.fields.size()) {
+    //         return false;
+    //     }
+    //     for (size_t i = 0; i < fields.size(); i++) {
+    //         if (fields[i] != other.fields[i]) {
+    //             return false;
+    //         }
+    //     }
+    //     return true;
+    // }
+
     bool operator==(const UntypedTuple& other) const {
-        if (relation_name != other.relation_name) {
-            return false;
-        }
-        if (fields.size() != other.fields.size()) {
-            return false;
-        }
-        for (size_t i = 0; i < fields.size(); i++) {
-            if (fields[i] != other.fields[i]) {
-                return false;
-            }
-        }
-        return true;
+        return relation_name == other.relation_name && fields == other.fields;
     }
 
     // TODO: avoid non-reference passing
@@ -151,12 +156,35 @@ struct UntypedTuple {
     }
 };
 
+template <typename T>
+inline void hash_combine(std::size_t& seed, const T& val) {
+    seed ^= std::hash<T>{}(val) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+}
+
+// hash 特化
+namespace std {
+template <>
+struct hash<UntypedTuple> {
+    std::size_t operator()(const UntypedTuple& tup) const {
+        std::size_t seed = std::hash<std::string>{}(tup.relation_name);
+        for (const auto& x : tup.fields) {
+            hash_combine(seed, x);  // RamDomain is just an int
+        }
+        return seed;
+    }
+};
+}
+
 inline UntypedTuple testUntypedTuple1{"T", {0, -1, -2, -42}};
 inline UntypedTuple testUntypedTuple2{"S", {0, 1, 2, 42}};
 
 struct RuleApplication {
     souffle::RamDomain ruleId{};
     std::map<std::string, souffle::RamDomain> varValues;
+    bool operator==(const RuleApplication& other) const {
+        return ruleId == other.ruleId && varValues == other.varValues;
+    }
+
     static std::string toString(const RuleApplication& ruleApplication) {
         std::string result = std::to_string(ruleApplication.ruleId) + "[" +
                              toStringVarValues(ruleApplication.varValues) + "]";
@@ -209,6 +237,21 @@ struct RuleApplication {
     }
 };
 
+// hash specialization
+namespace std {
+template <>
+struct hash<RuleApplication> {
+    std::size_t operator()(const RuleApplication& app) const {
+        std::size_t seed = std::hash<souffle::RamDomain>{}(app.ruleId);
+        for (const auto& [key, value] : app.varValues) {
+            hash_combine(seed, std::hash<std::string>{}(key));
+            hash_combine(seed, std::hash<souffle::RamDomain>{}(value));
+        }
+        return seed;
+    }
+};
+}
+
 /** Fact is trivially true; use the naiveRuleApplication for such cases when needed */
 inline RuleApplication naiveRuleApplication{0, {}};
 
@@ -218,18 +261,18 @@ inline RuleApplication testRuleApplication2{2, testVarValues};
 inline RuleApplication testRuleApplication3{3, testVarValues};
 inline RuleApplication testRuleApplication4{114514, testVarValues};
 
-inline std::set<RuleApplication> testRuleApplicationSet1{
+inline std::unordered_set<RuleApplication> testRuleApplicationSet1{
     testRuleApplication1, testRuleApplication2,
     testRuleApplication3, testRuleApplication4,
 };
 
-inline std::set<RuleApplication> testRuleApplicationSet2{
+inline std::unordered_set<RuleApplication> testRuleApplicationSet2{
     testRuleApplication4, testRuleApplication3,
     testRuleApplication2, testRuleApplication1,
 };
 
 // testDerivationInfo
-inline std::map<UntypedTuple, std::set<RuleApplication>*> testUntypedTuple2RuleApplications{
+inline std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> testUntypedTuple2RuleApplications{
     {testUntypedTuple1, &testRuleApplicationSet1},
     {testUntypedTuple2, &testRuleApplicationSet2},
 };
@@ -242,24 +285,24 @@ public:
     static inline std::set<souffle::RamDomain> testRules = {
         0, 1, 2, 42
     };
-    static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2RuleApplications = {
+    static inline std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2RuleApplications = {
         // {testUntypedTuple, &testRules}
     };
     // for incremental computation: delta insert
-    static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2DeltaInsertRuleApplications = {
+    static inline std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2DeltaInsertRuleApplications = {
         // {testUntypedTuple, &testRules}
     };
     // for incremental computation: delta deleteC
-    static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2DeltaDeleteRuleApplications = {
+    static inline std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2DeltaDeleteRuleApplications = {
         // {testUntypedTuple, &testRules}
     };
 
     // for incremental + recursive computation: delta insert
-    static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2DeltaDeltaInsertRuleApplications = {
+    static inline std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2DeltaDeltaInsertRuleApplications = {
         // {testUntypedTuple, &testRules}
     };
     // for incremental + recursive computation: delta deleteC
-    static inline std::map<UntypedTuple, std::set<RuleApplication>*> untypedTuple2DeltaDeltaDeleteRuleApplications = {
+    static inline std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2DeltaDeltaDeleteRuleApplications = {
         // {testUntypedTuple, &testRules}
     };
 
@@ -273,7 +316,7 @@ public:
         return false;
     };
 
-    static std::string ruleApplications2Str(const std::set<RuleApplication>* ruleApplications) {
+    static std::string ruleApplications2Str(const std::unordered_set<RuleApplication>* ruleApplications) {
         assert(ruleApplications != nullptr && !ruleApplications->empty() && "null ruleSet");
         std::string result = "[";
         bool first = true;
@@ -296,7 +339,7 @@ public:
      * Derivation Info: {A(1)	[1[x->1],2[x->1]]}
      * JSON: [{}]
      */
-    static json11::Json derivationInfo2Json(const std::map<UntypedTuple, std::set<RuleApplication>*>& derivationInfo) {
+    static json11::Json derivationInfo2Json(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo) {
         json11::Json::array result;
         for (const auto& [tuple, ruleApps]: derivationInfo) {
             json11::Json::array ruleAppsJson = json11::Json::array();
@@ -317,8 +360,8 @@ public:
         return result;
     }
 
-    static std::map<UntypedTuple, std::set<RuleApplication>*> derivationInfoFromJson(const json11::Json& infoJson) {
-        std::map<UntypedTuple, std::set<RuleApplication>*> derivationInfo;
+    static std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> derivationInfoFromJson(const json11::Json& infoJson) {
+        std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> derivationInfo;
         for (const auto& item: infoJson.array_items()) {
             std::vector<souffle::RamDomain> fields;
             for (const auto& field: item["tuple"]["fields"].array_items()) {
@@ -326,9 +369,9 @@ public:
             }
             UntypedTuple tuple{item["tuple"]["rel"].string_value(), fields};
             if (derivationInfo.count(tuple) == 0) {
-                derivationInfo[tuple] = new std::set<RuleApplication>();
+                derivationInfo[tuple] = new std::unordered_set<RuleApplication>();
             }
-            std::set<RuleApplication>* ruleApps = derivationInfo[tuple];
+            std::unordered_set<RuleApplication>* ruleApps = derivationInfo[tuple];
             for (const auto& ruleAppJson: item["edges"].array_items()) {
                 RuleApplication ruleApp;
                 souffle::RamDomain ruleId = ruleAppJson["ruleId"].int_value();
@@ -347,7 +390,7 @@ public:
     }
 
 
-    static void derivationInfo2JsonFile(const std::string& originalFileName, const std::string& suffix, const std::map<UntypedTuple, std::set<RuleApplication>*>& derivationInfo, const std::string& outputDir = "") {
+    static void derivationInfo2JsonFile(const std::string& originalFileName, const std::string& suffix, const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo, const std::string& outputDir = "") {
         json11::Json result = derivationInfo2Json(derivationInfo);
         std::string realFilename = std::filesystem::path(originalFileName).filename().string();
 
@@ -362,7 +405,7 @@ public:
     }
 
 
-    static std::map<UntypedTuple, std::set<RuleApplication>*> derivationInfoFromJsonFile(const std::string& originalFileName, const std::string& suffix, const std::string& inputDir = "") {
+    static std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> derivationInfoFromJsonFile(const std::string& originalFileName, const std::string& suffix, const std::string& inputDir = "") {
         std::string realFilename = std::filesystem::path(originalFileName).filename().string();
         std::ifstream inputFile(inputDir + "/" + (suffix.empty() ? realFilename : realFilename + "." + suffix ) + ".json");
         if (inputFile.good()) {
@@ -420,5 +463,6 @@ public:
     }
 };
 
+// relation string -> int mapping, for optimization, reuse string
 
 #endif //DERIVATION_H

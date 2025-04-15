@@ -8,6 +8,7 @@
 #include <memory>
 #include <fstream>
 #include <sstream>
+#include <unordered_set>
 #include "souffle/Derivation.h"
 #include "souffle/problog/Rule.h"
 #include "souffle/problog/RuleManager.h"
@@ -197,7 +198,7 @@ public:
     const std::vector<NodePtr>& getNodes() const { return nodes; }
     const std::vector<EdgePtr>& getEdges() const { return edges; }
 
-    static DerivationGraph* createFrom(const std::map<UntypedTuple, std::set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::map<UntypedTuple, double>& fact_prob = {})  {
+    static DerivationGraph* createFrom(const std::map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::map<UntypedTuple, double>& fact_prob = {})  {
         FunctionTimer timer(" creating derivation graph ");
 
         auto graph = new DerivationGraph(&ruleManager);
@@ -351,7 +352,7 @@ public:
     IncrementalDerivationGraph() : DerivationGraph() {}
     IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
 
-    static IncrementalDerivationGraph* createFrom(const std::map<UntypedTuple, std::set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::map<UntypedTuple, double>& fact_prob = {})  {
+    static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::map<UntypedTuple, double>& fact_prob = {})  {
         FunctionTimer timer(" creating derivation graph ");
 
         auto graph = new IncrementalDerivationGraph(&ruleManager);
@@ -370,22 +371,22 @@ public:
 
     // 应用增量插入
     void applyDeltaInserts(
-        const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
+        const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaInsertRuleApps,
         const RuleManager& ruleManager,
         const std::map<UntypedTuple, double>& fact_prob = {}
     );
 
     // 应用增量删除
     void applyDeltaDeletes(
-        const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
+        const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaDeleteRuleApps,
         const RuleManager& ruleManager,
         const std::vector<UntypedTuple>& deletedFacts
     );
 
     // 合并方法，同时应用插入和删除操作
     void applyDelta(
-        const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
-        const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
+        const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaInsertRuleApps,
+        const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaDeleteRuleApps,
         const RuleManager& ruleManager,
         const std::map<UntypedTuple, double>& fact_prob = {},
         const std::vector<UntypedTuple>& deletedFacts = {}
@@ -409,7 +410,7 @@ public:
 };
 
 void IncrementalDerivationGraph::applyDeltaInserts(
-    const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaInsertRuleApps,
+    const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaInsertRuleApps,
     const RuleManager& ruleManager,
     const std::map<UntypedTuple, double>& fact_prob
 ) {
@@ -460,7 +461,7 @@ void IncrementalDerivationGraph::applyDeltaInserts(
 }
 
 void IncrementalDerivationGraph::applyDeltaDeletes(
-    const std::map<UntypedTuple, std::set<RuleApplication>*>& deltaDeleteRuleApps,
+    const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaDeleteRuleApps,
     const RuleManager& ruleManager,
     const std::vector<UntypedTuple>& deletedFacts
 ) {

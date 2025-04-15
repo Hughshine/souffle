@@ -2028,7 +2028,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "if (ruleSet == nullptr) {\n";
                 out << relName << "->"
                     << "insert(tuple," << ctxName << ");\n";  // only insert tuple to rel when it wasn't recorded
-                out << "ruleSet = new std::set<RuleApplication>();\n";
+                out << "ruleSet = new std::unordered_set<RuleApplication>();\n";
                 out << "}\n";
                 // record derivation info about realTuple
                 out << "RuleApplication ruleApplication{" << guardedInsert.getClauseID() << ", testVarValues};\n";
@@ -2135,11 +2135,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 }
             }
             out << "if (ruleSet == nullptr) {\n";
-            out << "ruleSet = new std::set<RuleApplication>();\n";
+            out << "ruleSet = new std::unordered_set<RuleApplication>();\n";
             out << "}\n";
             if (!recordDerivation.isComplete()) {
                 out << "if (ruleSet2 == nullptr) {\n";
-                out << "ruleSet2 = new std::set<RuleApplication>();\n";
+                out << "ruleSet2 = new std::unordered_set<RuleApplication>();\n";
                 out << "}\n";
             }
             out << "std::map<std::string, souffle::RamDomain> varValues{};\n";
@@ -3904,82 +3904,82 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << R"_(souffle::ProfileEventSingleton::instance().makeConfigRecord("version", ")_"
              << glb.config().get("version") << R"_(");)_" << '\n';
     }
-    if (glb.config().has("inc")) {
-    hook << "{\n";
-    hook << "FunctionTimer timer(\"reading derivations\");\n";
-        hook << R"(DerivationManager::untypedTuple2RuleApplications = DerivationManager::derivationInfoFromJsonFile(opt.getSourceFileName(),"", opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n"; // Read old computation
-    hook << "}\n";
-    }
+    // if (glb.config().has("inc")) {
+    // hook << "{\n";
+    // hook << "FunctionTimer timer(\"reading derivations\");\n";
+    //     hook << R"(DerivationManager::untypedTuple2RuleApplications = DerivationManager::derivationInfoFromJsonFile(opt.getSourceFileName(),"", opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n"; // Read old computation
+    // hook << "}\n";
+    // }
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
-    hook << "{\n";
-    hook << "FunctionTimer timer(\"dumping derivations\");\n";
-    hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "", DerivationManager::untypedTuple2RuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // Should be complete, take into new deltas into account
-    hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "insert", DerivationManager::untypedTuple2DeltaInsertRuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // TODO: Delta insert
-    hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "delete", DerivationManager::untypedTuple2DeltaDeleteRuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // TODO: Delta delete
-    // TODO: for debug; remove this later
-    hook << R"(DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") << "\":opt.getOutputFileDir());\n";
-    hook << "}\n";
+    // hook << "{\n";
+    // hook << "FunctionTimer timer(\"dumping derivations\");\n";
+    // hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "", DerivationManager::untypedTuple2RuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // Should be complete, take into new deltas into account
+    // hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "insert", DerivationManager::untypedTuple2DeltaInsertRuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // TODO: Delta insert
+    // hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "delete", DerivationManager::untypedTuple2DeltaDeleteRuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // TODO: Delta delete
+    // // TODO: for debug; remove this later
+    // hook << R"(DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") << "\":opt.getOutputFileDir());\n";
+    // hook << "}\n";
 
     // problog calculation
-    if (glb.config().has("inc")) {
-        // assert (false && "incremental problog calculation not implemented yet");
-    } else {
-        hook << "try {\n";
-
-        hook << "std::map<UntypedTuple, double> fact_prob;\n";
-        hook << "{\n";
-        hook << "FunctionTimer timer(\" reading fact probability \");\n";
-        for (auto input : loadIOs) {
-            auto rel = input->getRelation();
-            hook << "{\n";
-            hook << "std::string rel = \"" << rel << "\";\n";
-            hook << "std::ifstream factFile(\"input/\" + rel + \".facts\");";
-            hook << "std::ifstream probFile(\"input/\" + rel + \".prob\");";
-            hook << "std::string factLine, probLine;";
-            hook << "while (std::getline(factFile, factLine) && std::getline(probFile, probLine)) {";
-            hook << "std::istringstream fs(factLine);";
-            hook << "std::istringstream ps(probLine);";
-            hook << "double prob; ps >> prob;\n";
-            hook << "assert (prob >= 0 && prob <= 1);\n";
-            hook << "souffle::RamDomain field;\n";
-            hook << "std::vector<souffle::RamDomain> fields;\n";
-            hook << "while (fs >> field) {fields.push_back(field);}\n";
-            hook << "UntypedTuple tuple{rel, fields};\n";
-            hook << "fact_prob[tuple] = prob;\n";
-            hook << "}\n";
-            hook << "}\n";
-        }
-        // for (auto clause : newAstProgram->getClauses()) {
-        //     if (ast::isFact(*clause)) {
-        //         // perhaps we should distinguish input-rule-fact and output-rule-fact
-        //         // and
-        //         // hook << "fact_prob
-        //
-        //
-        //         std::cout << clause->toString() << " " << clause->getProbability() << "\n";
-        //     }
-        // }
-        hook << "}\n";
-        db.addGlobalInclude("\"souffle/problog/Atom.h\"");
-        db.addGlobalInclude("\"souffle/problog/Rule.h\"");
-        db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
-        db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
-        db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
-        // synthesize rules
-        emitRules(hook);
-        // synthesize forward compilation
-        emitProblogPipelineCudd(hook);
-
-
-        // add online incremental&interactive computation
-        if (glb.config().has("online")) {
-            db.addGlobalInclude("\"souffle/cli/Cli.h\"");
-            hook << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
-            hook << "cli.run();\n";
-        }
-
-        hook << "} catch (std::exception& e) {std::cerr << \"Problog colc failed\" << e.what() << std::endl;}\n";
-    }
+    // if (glb.config().has("inc")) {
+    //     // assert (false && "incremental problog calculation not implemented yet");
+    // } else {
+    //     hook << "try {\n";
+    //
+    //     hook << "std::map<UntypedTuple, double> fact_prob;\n";
+    //     hook << "{\n";
+    //     hook << "FunctionTimer timer(\" reading fact probability \");\n";
+    //     for (auto input : loadIOs) {
+    //         auto rel = input->getRelation();
+    //         hook << "{\n";
+    //         hook << "std::string rel = \"" << rel << "\";\n";
+    //         hook << "std::ifstream factFile(\"input/\" + rel + \".facts\");";
+    //         hook << "std::ifstream probFile(\"input/\" + rel + \".prob\");";
+    //         hook << "std::string factLine, probLine;";
+    //         hook << "while (std::getline(factFile, factLine) && std::getline(probFile, probLine)) {";
+    //         hook << "std::istringstream fs(factLine);";
+    //         hook << "std::istringstream ps(probLine);";
+    //         hook << "double prob; ps >> prob;\n";
+    //         hook << "assert (prob >= 0 && prob <= 1);\n";
+    //         hook << "souffle::RamDomain field;\n";
+    //         hook << "std::vector<souffle::RamDomain> fields;\n";
+    //         hook << "while (fs >> field) {fields.push_back(field);}\n";
+    //         hook << "UntypedTuple tuple{rel, fields};\n";
+    //         hook << "fact_prob[tuple] = prob;\n";
+    //         hook << "}\n";
+    //         hook << "}\n";
+    //     }
+    //     // for (auto clause : newAstProgram->getClauses()) {
+    //     //     if (ast::isFact(*clause)) {
+    //     //         // perhaps we should distinguish input-rule-fact and output-rule-fact
+    //     //         // and
+    //     //         // hook << "fact_prob
+    //     //
+    //     //
+    //     //         std::cout << clause->toString() << " " << clause->getProbability() << "\n";
+    //     //     }
+    //     // }
+    //     hook << "}\n";
+    //     db.addGlobalInclude("\"souffle/problog/Atom.h\"");
+    //     db.addGlobalInclude("\"souffle/problog/Rule.h\"");
+    //     db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
+    //     db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
+    //     db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
+    //     // synthesize rules
+    //     emitRules(hook);
+    //     // synthesize forward compilation
+    //     emitProblogPipelineCudd(hook);
+    //
+    //
+    //     // add online incremental&interactive computation
+    //     if (glb.config().has("online")) {
+    //         db.addGlobalInclude("\"souffle/cli/Cli.h\"");
+    //         hook << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
+    //         hook << "cli.run();\n";
+    //     }
+    //
+    //     hook << "} catch (std::exception& e) {std::cerr << \"Problog colc failed\" << e.what() << std::endl;}\n";
+    // }
 
 
     if (glb.config().get("provenance") == "explain") {

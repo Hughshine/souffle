@@ -46,7 +46,7 @@ doc
 .vscode
 # cmake generated file used by various tools
 /compile_commands.json
-
+gmon.out
 stamp-h1
 
 utilities/bash-completion
