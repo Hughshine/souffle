@@ -2142,11 +2142,17 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "ruleSet2 = new std::unordered_set<RuleApplication>();\n";
                 out << "}\n";
             }
-            out << "std::map<std::string, souffle::RamDomain> varValues{};\n";
-            for (const auto& [var, expr]: recordDerivation.varExprMap) {
-                out << "varValues.insert(std::make_pair(\"" << var  << "\", "; rec(out, expr.get()); out << "));\n";
+            // out << "std::map<std::string, souffle::RamDomain> varValues{};\n";
+            // for (const auto& [var, expr]: recordDerivation.varExprMap) {
+            //     out << "varValues.insert(std::make_pair(\"" << var  << "\", "; rec(out, expr.get()); out << "));\n";
+            // }
+            // out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
+            out << "std::vector<souffle::RamDomain> varValues{};\n";
+            for (const auto& expr: recordDerivation.varExprs) {
+                out << "varValues.insert("; rec(out, expr.get()); out << ");\n";
             }
             out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
+
             out << "ruleSet->insert(ruleApplication);\n";
             if (!recordDerivation.isComplete()) {
                 out << "ruleSet2->insert(ruleApplication);\n";
@@ -2500,7 +2506,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     << "RuleApplication{"
                     << derivationCheck.clauseID
                     << ",";
-                    derivationCheck.outputVarExprMapString(out, rec);
+                    derivationCheck.outputVarExprsString(out, rec);
                 out << "})";
                 out << "))";
                 PRINT_END_COMMENT(out);

@@ -1048,7 +1048,7 @@ Own<ram::Operation> ClauseTranslator::addNegatedAtomDerived(
     auto headRelationName = getConcreteRelationName(head->getQualifiedName());
 
     auto clauseVarMap = getClauseVars(clause);
-
+    auto clauseVarExprs = getClauseVarExprs(clause);
     VecOwn<ram::Expression> values;
     for (const auto* arg : head->getArguments()) {
         values.push_back(context.translateValue(*valueIndex, arg));
@@ -1056,7 +1056,10 @@ Own<ram::Operation> ClauseTranslator::addNegatedAtomDerived(
 
     auto clauseStr = clause.toString();
     op = mk<ram::Filter>(
-    mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause), std::move(cloneClauseVarMap(clauseVarMap)))), std::move(op));
+    mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause),
+        std::move(cloneClauseVarMap(clauseVarMap)),
+        std::move(clauseVarExprs)
+        )), std::move(op));
     return mk<ram::Filter>(
     mk<ram::Negation>(mk<ram::ExistenceCheck>(headRelationName, std::move(values))), std::move(op));
 }
@@ -1067,7 +1070,7 @@ Own<ram::Operation> ClauseTranslator::addAtomDerived(
     auto headRelationName = getConcreteRelationName(head->getQualifiedName());
 
     auto clauseVarMap = getClauseVars(clause);
-
+    auto clauseVarExprs = getClauseVarExprs(clause);
     VecOwn<ram::Expression> values;
     for (const auto* arg : head->getArguments()) {
         values.push_back(context.translateValue(*valueIndex, arg));
@@ -1075,7 +1078,10 @@ Own<ram::Operation> ClauseTranslator::addAtomDerived(
 
     auto clauseStr = clause.toString();
     op = mk<ram::Filter>(
-    (mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause), std::move(cloneClauseVarMap(clauseVarMap)))), std::move(op));
+    (mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause),
+        std::move(cloneClauseVarMap(clauseVarMap)),
+        std::move(cloneVarExprs(clauseVarExprs))
+        )), std::move(op));
     return mk<ram::Filter>(
     mk<ram::Negation>(mk<ram::ExistenceCheck>(headRelationName, std::move(values))), std::move(op));
 }

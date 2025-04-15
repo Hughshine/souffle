@@ -62,7 +62,11 @@ public:
         for (auto& [var, expr] : varExprMap) {
             newVarExprMap.emplace(var, expr->cloning());
         }
-        return new DerivationCheck(rel, std::move(newValues), clauseID, std::move(newVarExprMap));
+        std::vector<Own<ram::Expression>> newVarExprs{};
+        for (auto& expr : varExprs) {
+            newVarExprs.emplace_back(expr->cloning());
+        }
+        return new DerivationCheck(rel, std::move(newValues), clauseID, std::move(newVarExprMap), std::move(newVarExprs));
     }
 
     // TODO: when do we call this function???
@@ -93,11 +97,23 @@ public:
         ss << "}";
     }
 
+    void outputVarExprsString(std::ostream& ss, std::function<void(std::ostream&, const Expression*)>& rec) const {
+        ss << "{";
+        bool first = true;
+        for (auto& expr : varExprs) {
+            if (!first) {ss << ",";}
+            rec(ss, expr.get());
+            first = false;
+        }
+        ss << "}";
+    }
+
 // protected:
 
-    DerivationCheck(std::string rel, VecOwn<Expression> expressions, std::size_t clauseID, /*bool isDelete, bool isComplete,*/ std::map<std::string, Own<ram::Expression>>&& varExprMap) //
+    DerivationCheck(std::string rel, VecOwn<Expression> expressions, std::size_t clauseID, /*bool isDelete, bool isComplete,*/ std::map<std::string, Own<ram::Expression>>&& varExprMap, std::vector<Own<ram::Expression>> varExprs) //
         : Condition(NK_DerivationCheck), rel(std::move(rel)), expressions(std::move(expressions)),
         varExprMap(std::move(varExprMap)),
+        varExprs(std::move(varExprs)),
         // isComplete(isComplete), isDelete(isDelete),
         clauseID(clauseID)
     {
@@ -142,6 +158,7 @@ public:
     std::string rel;
     VecOwn<ram::Expression> expressions;
     std::map<std::string, Own<ram::Expression>> varExprMap;  // TODO
+    std::vector<Own<ram::Expression>> varExprs;  // TODO
 
     // bool isComplete;
     // bool isDelete;

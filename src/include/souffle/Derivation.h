@@ -180,15 +180,15 @@ inline UntypedTuple testUntypedTuple2{"S", {0, 1, 2, 42}};
 
 struct RuleApplication {
     souffle::RamDomain ruleId{};
-    std::map<std::string, souffle::RamDomain> varValues;
+    // std::map<std::string, souffle::RamDomain> varValues;
     std::vector<souffle::RamDomain> varValuesPure;
     bool operator==(const RuleApplication& other) const {
-        return ruleId == other.ruleId && varValues == other.varValues;
+        return ruleId == other.ruleId && varValuesPure == other.varValuesPure;
     }
 
     static std::string toString(const RuleApplication& ruleApplication) {
         std::string result = std::to_string(ruleApplication.ruleId) + "[" +
-                             toStringVarValues(ruleApplication.varValues) + "]";
+                             toStringVarValuesPure(ruleApplication.varValuesPure) + "]";
         return result;
     }
     static std::string toStringVarValues(const std::map<std::string, souffle::RamDomain>& varValues) {
@@ -205,17 +205,37 @@ struct RuleApplication {
         }
         return result;
     }
+    static std::string toStringVarValuesPure(const std::vector<souffle::RamDomain>& values) {
+        std::string result;
+        bool first = true;
+        // may use StreamUtil::join()
+        for (const auto& value : values) {
+            if (first) {
+                first = false;
+                result += std::to_string(value);
+            } else {
+                result += "," + std::to_string(value);
+            }
+        }
+        return result;
+    }
     bool operator<(const RuleApplication& other) const {
         if (ruleId != other.ruleId) {
             return ruleId < other.ruleId;
         }
         // size should equal; vars should equal
-        assert(varValues.size() == other.varValues.size());
-        for (const auto& [var, value1] : varValues) {
-            assert(other.varValues.find(var) != other.varValues.end());
-            const auto& value2 = other.varValues.at(var);
-            if (value1 != value2) {
-                return value1 < value2;
+        // assert(varValues.size() == other.varValues.size());
+        // for (const auto& [var, value1] : varValues) {
+        //     assert(other.varValues.find(var) != other.varValues.end());
+        //     const auto& value2 = other.varValues.at(var);
+        //     if (value1 != value2) {
+        //         return value1 < value2;
+        //     }
+        // }
+        assert(varValuesPure.size() == other.varValuesPure.size());
+        for (int i = 0; i < varValuesPure.size(); i++) {
+            if (varValuesPure[i] != other.varValuesPure[i]) {
+                return varValuesPure[i] < other.varValuesPure[i];
             }
         }
         return false;
@@ -223,10 +243,13 @@ struct RuleApplication {
 
     json11::Json toJson() const {
         json11::Json::array mapping;
-        for (const auto& [var, value] : varValues) {
-            mapping.emplace_back(
-                json11::Json::object{{var, (value)}}
-            );
+        // for (const auto& [var, value] : varValues) {
+        //     mapping.emplace_back(
+        //         json11::Json::object{{var, (value)}}
+        //     );
+        // }
+        for (const auto& value : varValuesPure) {
+            mapping.emplace_back(value);
         }
         json11::Json result = json11::Json::object{
             {
@@ -244,8 +267,12 @@ template <>
 struct hash<RuleApplication> {
     std::size_t operator()(const RuleApplication& app) const {
         std::size_t seed = std::hash<souffle::RamDomain>{}(app.ruleId);
-        for (const auto& [key, value] : app.varValues) {
-            hash_combine(seed, std::hash<std::string>{}(key));
+        // for (const auto& [key, value] : app.varValues) {
+        //     hash_combine(seed, std::hash<std::string>{}(key));
+        //     hash_combine(seed, std::hash<souffle::RamDomain>{}(value));
+        // }
+        for (const auto& value : app.varValuesPure) {
+            // hash_combine(seed, std::hash<std::string>{}(key));
             hash_combine(seed, std::hash<souffle::RamDomain>{}(value));
         }
         return seed;
@@ -255,8 +282,8 @@ struct hash<RuleApplication> {
 
 /** Fact is trivially true; use the naiveRuleApplication for such cases when needed */
 inline RuleApplication naiveRuleApplication{0, {}};
-
-inline std::map<std::string, souffle::RamDomain> testVarValues = {{"x", 1}, {"y", 2}};
+// {"x", 1}, {"y", 2}
+inline std::vector<souffle::RamDomain> testVarValues = {1, 2};
 inline RuleApplication testRuleApplication1{1, testVarValues};
 inline RuleApplication testRuleApplication2{2, testVarValues};
 inline RuleApplication testRuleApplication3{3, testVarValues};
@@ -378,8 +405,8 @@ public:
                 souffle::RamDomain ruleId = ruleAppJson["ruleId"].int_value();
                 ruleApp.ruleId = ruleId;
                 for (const auto& map: ruleAppJson["mapping"].array_items()) {
-                    for (const auto& [var, value]: map.object_items()) { // should be only one item here
-                        ruleApp.varValues[var] = value.int_value();
+                    for (const auto& value: map.array_items()) { // should be only one item here
+                        ruleApp.varValuesPure.emplace_back(value.int_value());
                     }
                 }
                 ruleApps->insert(ruleApp);
