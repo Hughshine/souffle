@@ -144,6 +144,16 @@ std::map<std::string, Own<ram::Expression>> ClauseTranslator::getClauseVars(cons
     return varExprMap;
 }
 
+std::vector<Own<ram::Expression>> ClauseTranslator::getClauseVarExprs(const ast::Clause& clause) const {
+    std::map<std::string, Own<ram::Expression>> varExprMap = getClauseVars(clause);
+    std::vector<Own<ram::Expression>> varExprs;
+    // iterate all body literals and translate it to expression
+    for (auto var: clause.getVariables()) {
+        varExprs.emplace_back(varExprMap[var]->cloning());
+    }
+    return varExprs;
+}
+
 Own<ram::Statement> ClauseTranslator::translateRecursiveClause(
         const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete, bool isPrefill) {
     // Update version config
@@ -210,6 +220,15 @@ Own<ram::Statement> ClauseTranslator::translateNonRecursiveClauseIns(const ast::
     }
     return createRamDeltaRulesQueryIns(clause);
 }
+
+std::vector<Own<ram::Expression>> cloneVarExprs(const std::vector<Own<ram::Expression>>& varExprs) {
+    std::vector<Own<ram::Expression>> newVarExprs{};
+    for (auto& expr : varExprs) {
+        newVarExprs.emplace_back( expr->cloning());
+    }
+    return newVarExprs;
+}
+
 Own<ram::Statement> ClauseTranslator::createRamRecDeltaRulesQuery(const ast::Clause& clause, bool isDelete, bool isPrefill) {
     assert(isRule(clause) && "clause should be rule");
     VecOwn<ram::Statement> stmts;
@@ -220,6 +239,8 @@ Own<ram::Statement> ClauseTranslator::createRamRecDeltaRulesQuery(const ast::Cla
     auto headDeltaInsertRelationName = getNewInsertionRelationName(head->getQualifiedName());
     auto clauseStr = clause.toString();
     auto clauseVarMap = getClauseVars(clause);
+    auto clauseVarExprs = getClauseVarExprs(clause);
+
     VecOwn<ram::Expression> values;  // how head argument is computed by its body (relation name is anonymous)
     for (const auto* arg : head->getArguments()) {
         values.push_back(context.translateValue(*valueIndex, arg));  // TODO
@@ -255,7 +276,8 @@ Own<ram::Statement> ClauseTranslator::createRamRecDeltaRulesQuery(const ast::Cla
                 op = mk<ram::SequentialOperation>(std::move(op),
                     mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
-                        std::move(cloneClauseVarMap(clauseVarMap)), false, false, true)); // delete
+                        std::move(cloneClauseVarMap(clauseVarMap)),
+                        std::move(cloneVarExprs(clauseVarExprs)), false, false, true)); // delete
                 op = addBodyLiteralConstraints(clause, std::move(op), isDelete);
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
@@ -299,7 +321,9 @@ Own<ram::Statement> ClauseTranslator::createRamRecDeltaRulesQuery(const ast::Cla
                 op = mk<ram::SequentialOperation>(std::move(op),
                     mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
-                        std::move(cloneClauseVarMap(clauseVarMap)), true, false, true)); // insert
+                        std::move(cloneClauseVarMap(clauseVarMap)),
+                        std::move(cloneVarExprs(clauseVarExprs)),
+                        true, false, true)); // insert
                 op = addBodyLiteralConstraints(clause, std::move(op), isDelete);
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
@@ -333,6 +357,7 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
     auto headDeltaDervDeleteRelationName = getIncDeltaDervDeleteRelationName(head->getQualifiedName());
     auto clauseStr = clause.toString();
     auto clauseVarMap = getClauseVars(clause);
+    auto clauseVarExprs = getClauseVarExprs(clause);
     VecOwn<ram::Expression> values;  // how head argument is computed by its body (relation name is anonymous)
     for (const auto* arg : head->getArguments()) {
         values.push_back(context.translateValue(*valueIndex, arg));  // TODO
@@ -362,7 +387,8 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
                 op = mk<ram::SequentialOperation>(std::move(op),
                     mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
-                        std::move(cloneClauseVarMap(clauseVarMap)), true, false));
+                        std::move(cloneClauseVarMap(clauseVarMap)),
+                        std::move(cloneVarExprs(clauseVarExprs)), true, false));
                 op = addBodyLiteralConstraints(clause, std::move(op), false);
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
@@ -377,7 +403,8 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQuery(const ast::Clause
                 op = mk<ram::SequentialOperation>(std::move(op),
                     mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
-                        std::move(cloneClauseVarMap(clauseVarMap)), false, false)); // delete
+                        std::move(cloneClauseVarMap(clauseVarMap)),
+                        std::move(cloneVarExprs(clauseVarExprs)), false, false)); // delete
                 op = addBodyLiteralConstraints(clause, std::move(op), true);
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
@@ -411,6 +438,8 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQueryDel(const ast::Cla
     auto headDeltaDervDeleteRelationName = getIncDeltaDervDeleteRelationName(head->getQualifiedName());
     auto clauseStr = clause.toString();
     auto clauseVarMap = getClauseVars(clause);
+    auto clauseVarExprs = getClauseVarExprs(clause);
+
     VecOwn<ram::Expression> values;  // how head argument is computed by its body (relation name is anonymous)
     for (const auto* arg : head->getArguments()) {
         values.push_back(context.translateValue(*valueIndex, arg));  // TODO
@@ -438,7 +467,9 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQueryDel(const ast::Cla
                 op = mk<ram::SequentialOperation>(std::move(op),
                     mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
-                        std::move(cloneClauseVarMap(clauseVarMap)), false, false)); // delete
+                        std::move(cloneClauseVarMap(clauseVarMap)),
+                        std::move(cloneVarExprs(clauseVarExprs)),
+                        false, false)); // delete
                 op = addBodyLiteralConstraints(clause, std::move(op), true);
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);
@@ -472,6 +503,7 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQueryIns(const ast::Cla
     // auto headDeltaDervDeleteRelationName = getIncDeltaDervDeleteRelationName(head->getQualifiedName());
     auto clauseStr = clause.toString();
     auto clauseVarMap = getClauseVars(clause);
+    auto clauseVarExprs = getClauseVarExprs(clause);
     VecOwn<ram::Expression> values;  // how head argument is computed by its body (relation name is anonymous)
     for (const auto* arg : head->getArguments()) {
         values.push_back(context.translateValue(*valueIndex, arg));  // TODO
@@ -500,7 +532,9 @@ Own<ram::Statement> ClauseTranslator::createRamDeltaRulesQueryIns(const ast::Cla
                 op = mk<ram::SequentialOperation>(std::move(op),
                     mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)), context.getClauseNum(&clause), clauseStr,
-                        std::move(cloneClauseVarMap(clauseVarMap)), true, false));
+                        std::move(cloneClauseVarMap(clauseVarMap)),
+                        std::move(cloneVarExprs(clauseVarExprs)),
+                        true, false));
                 op = addBodyLiteralConstraints(clause, std::move(op), false);
                 op = addVariableBindingConstraints(std::move(op));
                 op = addGeneratorLevels(std::move(op), clause);

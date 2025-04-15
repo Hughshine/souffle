@@ -181,6 +181,7 @@ inline UntypedTuple testUntypedTuple2{"S", {0, 1, 2, 42}};
 struct RuleApplication {
     souffle::RamDomain ruleId{};
     std::map<std::string, souffle::RamDomain> varValues;
+    std::vector<souffle::RamDomain> varValuesPure;
     bool operator==(const RuleApplication& other) const {
         return ruleId == other.ruleId && varValues == other.varValues;
     }

@@ -221,6 +221,16 @@ Own<ram::Operation> ClauseTranslator::addVariableBindingConstraints(Own<ram::Ope
     return op;
 }
 
+std::vector<Own<ram::Expression>> ClauseTranslator::getClauseVarExprs(const ast::Clause& clause) const {
+    std::map<std::string, Own<ram::Expression>> varExprMap = getClauseVars(clause);
+    std::vector<Own<ram::Expression>> varExprs;
+    // iterate all body literals and translate it to expression
+    for (auto var: clause.getVariables()) {
+        varExprs.emplace_back(varExprMap[var]->cloning());
+    }
+    return varExprs;
+}
+
 std::map<std::string, Own<ram::Expression>> cloneClauseVarMap(const std::map<std::string, Own<ram::Expression>>& varExprMap) {
     std::map<std::string, Own<ram::Expression>> newVarExprMap{};
     for (auto& [var, expr] : varExprMap) {
@@ -229,11 +239,20 @@ std::map<std::string, Own<ram::Expression>> cloneClauseVarMap(const std::map<std
     return newVarExprMap;
 }
 
+std::vector<Own<ram::Expression>> cloneVarExprs(const std::vector<Own<ram::Expression>>& varExprs) {
+    std::vector<Own<ram::Expression>> newVarExprs{};
+    for (auto& expr : varExprs) {
+        newVarExprs.emplace_back( expr->cloning());
+    }
+    return newVarExprs;
+}
+
 Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause) const {
     const auto head = clause.getHead();
     auto headRelationName = getClauseAtomName(clause, head);
 
     auto clauseVarMap = getClauseVars(clause);
+    auto varExprs = getClauseVarExprs(clause);
 
     VecOwn<ram::Expression> values;
     for (const auto* arg : head->getArguments()) {
@@ -247,7 +266,7 @@ Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause)
     auto recordDerivation = mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)),
                         context.getClauseNum(&clause), clauseStr,
-                        std::move(cloneClauseVarMap(clauseVarMap)), false, true);
+                        std::move(cloneClauseVarMap(clauseVarMap)), std::move(varExprs), false, true);
 
 
     // Propositions

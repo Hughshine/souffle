@@ -25,6 +25,29 @@ Clause::Clause(
     assert(allValidPtrs(this->bodyLiterals));
     assert(kind >= NK_Clause && kind < NK_LastClause);
     // Execution plan can be null
+    if (bodyLiterals.size() == 0) {
+        variables = {};
+    } else {
+        ast::Atom* atom;
+        for (auto& lit : bodyLiterals) {
+            if (isA<ast::Atom>(lit)) {
+                atom = as<ast::Atom>(lit);
+            } else if (isA<ast::Negation>(lit)) {
+                atom = as<ast::Negation>(lit)->getAtom();
+            } else {
+                // assert(false && "constraints are not supported");
+                continue;
+            }
+            for (const auto* arg : atom->getArguments()) {
+                if (const auto& var = as<ast::Variable>(arg)) {
+                    const auto& varName = var->getName();
+                    if (std::find(variables.begin(), variables.end(), varName) != variables.end()) {
+                        variables.emplace_back(varName);
+                    }
+                }
+            }
+        }
+    }
 }
 
 Clause::Clause(Own<Atom> head, VecOwn<Literal> bodyLiterals, Own<ExecutionPlan> plan, SrcLocation loc)

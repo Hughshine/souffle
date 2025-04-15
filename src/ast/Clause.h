@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "Negation.h"
+#include "Variable.h"
 #include "ast/Atom.h"
 #include "ast/ExecutionPlan.h"
 #include "ast/Literal.h"
@@ -106,7 +108,12 @@ public:
     std::size_t getClauseId() const {
         return clauseId;
     }
+
+    std::vector<std::string> getVariables() const {
+        return variables;
+    }
 protected:
+    std::vector<std::string> variables;
     void print(std::ostream& os) const override;
 
     NodeVec getChildren() const override;
