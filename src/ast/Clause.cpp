@@ -25,11 +25,11 @@ Clause::Clause(
     assert(allValidPtrs(this->bodyLiterals));
     assert(kind >= NK_Clause && kind < NK_LastClause);
     // Execution plan can be null
-    if (bodyLiterals.size() == 0) {
+    if (this->bodyLiterals.empty()) {
         variables = {};
     } else {
         ast::Atom* atom;
-        for (auto& lit : bodyLiterals) {
+        for (auto& lit : this->bodyLiterals) {
             if (isA<ast::Atom>(lit)) {
                 atom = as<ast::Atom>(lit);
             } else if (isA<ast::Negation>(lit)) {
@@ -41,7 +41,7 @@ Clause::Clause(
             for (const auto* arg : atom->getArguments()) {
                 if (const auto& var = as<ast::Variable>(arg)) {
                     const auto& varName = var->getName();
-                    if (std::find(variables.begin(), variables.end(), varName) != variables.end()) {
+                    if (std::find(variables.begin(), variables.end(), varName) == variables.end()) {
                         variables.emplace_back(varName);
                     }
                 }
@@ -51,20 +51,41 @@ Clause::Clause(
 }
 
 Clause::Clause(Own<Atom> head, VecOwn<Literal> bodyLiterals, Own<ExecutionPlan> plan, SrcLocation loc)
-        : Clause(NK_Clause, std::move(head), std::move(bodyLiterals), std::move(plan), std::move(loc)) {}
+        : Clause(NK_Clause, std::move(head), std::move(bodyLiterals), std::move(plan), std::move(loc)) {
+}
 
-Clause::Clause(Own<Atom> head, SrcLocation loc) : Clause(std::move(head), {}, {}, std::move(loc)) {}
+Clause::Clause(Own<Atom> head, SrcLocation loc) : Clause(std::move(head), {}, {}, std::move(loc)) {
+}
 
 Clause::Clause(QualifiedName name, SrcLocation loc) : Clause(mk<Atom>(name), std::move(loc)) {}
 
 void Clause::addToBody(Own<Literal> literal) {
     assert(literal != nullptr);
+    Atom* atom;
+    if (isA<ast::Atom>(literal)) {
+        atom = as<ast::Atom>(literal);
+    } else if (isA<ast::Negation>(literal)) {
+        atom = as<ast::Negation>(literal)->getAtom();
+    } else {
+        return;
+    }
+    for (const auto* arg : atom->getArguments()) {
+        if (const auto& var = as<ast::Variable>(arg)) {
+            const auto& varName = var->getName();
+            if (std::find(variables.begin(), variables.end(), varName) == variables.end()) {
+                variables.emplace_back(varName);
+            }
+        }
+    }
     bodyLiterals.push_back(std::move(literal));
 }
 void Clause::addToBody(VecOwn<Literal>&& literals) {
     assert(allValidPtrs(literals));
-    bodyLiterals.insert(bodyLiterals.end(), std::make_move_iterator(literals.begin()),
-            std::make_move_iterator(literals.end()));
+    for (auto& lit : literals) {
+        addToBody(std::move(lit));
+    }
+    // bodyLiterals.insert(bodyLiterals.end(), std::make_move_iterator(literals.begin()),
+    //         std::make_move_iterator(literals.end()));
 }
 
 void Clause::setHead(Own<Atom> h) {
@@ -139,6 +160,7 @@ Clause* Clause::cloning() const {
     auto* cl = new Clause(clone(head), clone(bodyLiterals), clone(plan), getSrcLoc());
     cl->setClauseId(clauseId);
     cl->setProbability(probability);
+    cl->setVariables(variables);
     return cl;
 }
 
@@ -148,6 +170,9 @@ Clause* Clause::cloneHead() const {
         myClone->setExecutionPlan(clone(getExecutionPlan()));
     }
     myClone->setAnnotationsFrom(*this);
+    myClone->setClauseId(getClauseId());
+    myClone->setProbability(getProbability());
+    myClone->setVariables(getVariables());
     return myClone;
 }
 

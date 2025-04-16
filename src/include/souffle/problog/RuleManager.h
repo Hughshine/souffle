@@ -55,14 +55,14 @@ public:
 
     static const RuleManager ruleManager;
 
-    static const std::map<UntypedTuple, std::set<RuleApplication>*> exampleRuleApps;
-    static const std::map<UntypedTuple, double> fact_prob;
-    static const std::map<UntypedTuple, std::set<RuleApplication>*> exampleDeltaInsertRuleApps;
-    static const std::map<UntypedTuple, std::set<RuleApplication>*> exampleDeltaDeleteRuleApps;
-    static const std::map<UntypedTuple, double> fact_prob_inc;
+    static const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> exampleRuleApps;
+    static const std::unordered_map<UntypedTuple, double> fact_prob;
+    static const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> exampleDeltaInsertRuleApps;
+    static const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> exampleDeltaDeleteRuleApps;
+    static const std::unordered_map<UntypedTuple, double> fact_prob_inc;
     static const std::vector<UntypedTuple> deletedFacts;
 
-    static const std::map<UntypedTuple, std::set<RuleApplication>*> exampleRuleApps2;
+    static const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> exampleRuleApps2;
 };
 
 RuleManager::RuleManager(std::vector<Rule> rules) {
@@ -208,7 +208,9 @@ const Rule ExampleRuleComponents::rule1 = Rule(
 const Rule ExampleRuleComponents::rule2 = Rule(
     2,
     ExampleRuleComponents::path_xy,
-    {ExampleRuleComponents::path_xz, ExampleRuleComponents::edge_zy}
+    {ExampleRuleComponents::path_xz, ExampleRuleComponents::edge_zy},
+    {"x", "y", "z"},
+    1.0
 );
 
 const RuleManager ExampleRuleComponents::ruleManager = RuleManager({rule1, rule2});
@@ -219,15 +221,15 @@ const UntypedTuple tuple3{"path", {1, 2}};
 const UntypedTuple tuple4{"path", {2, 3}};
 const UntypedTuple tuple5{"path", {1, 3}};
 
-const std::map<UntypedTuple, std::set<RuleApplication>*> ExampleRuleComponents::exampleRuleApps{
-            {tuple3, new std::set<RuleApplication>{
-                RuleApplication{1, {{"x", 1}, {"y", 2}}}
+const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> ExampleRuleComponents::exampleRuleApps{
+            {tuple3, new std::unordered_set<RuleApplication>{
+                RuleApplication{1, {1, 2}} // {{"x", 1}, {"y", 2}}
             }},
-            {tuple4, new std::set<RuleApplication>{
-                RuleApplication{1, {{"x", 2}, {"y", 3}}}
+            {tuple4, new std::unordered_set<RuleApplication>{
+                RuleApplication{1, {2, 3} } // {{"x", 2}, {"y", 3}}
             }},
-            {tuple5, new std::set<RuleApplication>{
-                RuleApplication{2, {{"x", 1}, {"y", 3}, {"z", 2}}}
+            {tuple5, new std::unordered_set<RuleApplication>{
+                RuleApplication{2, {1, 2, 3}} // {{"x", 1}, {"y", 3}, {"z", 2}}
             }}
 };
 
@@ -241,26 +243,26 @@ const UntypedTuple tupleInsert3{"path", {2, 4}}; // 由 rule2 派生: path(2, 4)
 const UntypedTuple tupleDelete2{"path", {1, 2}}; // 删除 path(1, 2)，它依赖于 edge(1, 2)
 const UntypedTuple tupleDelete3{"path", {1, 3}}; // 删除 path(1, 3)，它依赖于 path(1, 2) 和 edge(2, 3)
 
-const std::map<UntypedTuple, std::set<RuleApplication>*> ExampleRuleComponents::exampleDeltaInsertRuleApps{
+const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> ExampleRuleComponents::exampleDeltaInsertRuleApps{
     // 对于 path(3, 4)，应用规则 1: path(x,y) :- edge(x,y)
-        {tupleInsert2, new std::set<RuleApplication>{
-            RuleApplication{1, {{"x", 3}, {"y", 4}}}
+        {tupleInsert2, new std::unordered_set<RuleApplication>{
+            RuleApplication{1, {3, 4}} // {{"x", 3}, {"y", 4}}
         }},
     // 对于 path(2, 4)，应用规则 2: path(x,y) :- path(x,z), edge(z,y)
-        {tupleInsert3, new std::set<RuleApplication>{
-            RuleApplication{2, {{"x", 2}, {"y", 4}, {"z", 3}}}
+        {tupleInsert3, new std::unordered_set<RuleApplication>{
+            RuleApplication{2, {2, 4, 3}}  // {{"x", 2}, {"y", 4}, {"z", 3}}
         }}
 };
 
 // 定义增量删除的规则应用
-const std::map<UntypedTuple, std::set<RuleApplication>*> ExampleRuleComponents::exampleDeltaDeleteRuleApps{
+const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> ExampleRuleComponents::exampleDeltaDeleteRuleApps{
     // 对于 path(1, 2)，删除通过规则 1 生成的规则应用
-        {tupleDelete2, new std::set<RuleApplication>{
-            RuleApplication{1, {{"x", 1}, {"y", 2}}}
+        {tupleDelete2, new std::unordered_set<RuleApplication>{
+            RuleApplication{1, {1, 2}}  // {{"x", 1}, {"y", 2}}
         }},
         // 对于 path(1, 3)，删除通过规则 2 生成的规则应用
-        {tupleDelete3, new std::set<RuleApplication>{
-            RuleApplication{2, {{"x", 1}, {"y", 3}, {"z", 2}}}
+        {tupleDelete3, new std::unordered_set<RuleApplication>{
+            RuleApplication{2, {1, 3, 2}}  // {{"x", 1}, {"y", 3}, {"z", 2}}
         }}
 };
 
@@ -269,13 +271,13 @@ const std::vector<UntypedTuple> ExampleRuleComponents::deletedFacts{
 };
 
 // 初始事实的概率
-const std::map<UntypedTuple, double> ExampleRuleComponents::fact_prob{
+const std::unordered_map<UntypedTuple, double> ExampleRuleComponents::fact_prob{
         {tuple1, 0.9},  // edge(1, 2) 概率为 0.9
         {tuple2, 0.8}   // edge(2, 3) 概率为 0.8
 };
 
 // 增量插入的事实概率
-const std::map<UntypedTuple, double> ExampleRuleComponents::fact_prob_inc{
+const std::unordered_map<UntypedTuple, double> ExampleRuleComponents::fact_prob_inc{
         {tupleInsert1, 0.7}  // 新增 edge(3, 4) 概率为 0.7
 };
 
@@ -284,27 +286,27 @@ const UntypedTuple tuple6{"edge", {3, 2}};
 const UntypedTuple tuple7{"path", {3, 2}};
 const UntypedTuple tuple8{"path", {2, 2}};
 const UntypedTuple tuple9{"path", {3, 3}};
-const std::map<UntypedTuple, std::set<RuleApplication>*> ExampleRuleComponents::exampleRuleApps2{
-                {tuple3, new std::set<RuleApplication>{  // path(1,2)	[1[x->1,y->2],2[x->1,y->2,z->3]]
-                    RuleApplication{1, {{"x", 1}, {"y", 2}}},
-                    RuleApplication{2, {{"x", 1}, {"y", 2}, {"z", 3}}}
+const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> ExampleRuleComponents::exampleRuleApps2{
+                {tuple3, new std::unordered_set<RuleApplication>{  // path(1,2)	[1[x->1,y->2],2[x->1,y->2,z->3]]
+                    RuleApplication{1, {1, 2}},  // {{"x", 1}, {"y", 2}}
+                    RuleApplication{2, {1, 2, 3}}  // {{"x", 1}, {"y", 2}, {"z", 3}}
                 }},
-                {tuple4, new std::set<RuleApplication>{  // path(2,3)	[1[x->2,y->3],2[x->2,y->3,z->2]]
-                    RuleApplication{1, {{"x", 2}, {"y", 3}}},
-                    RuleApplication{2, {{"x", 2}, {"y", 3}, {"z", 2}}}
+                {tuple4, new std::unordered_set<RuleApplication>{  // path(2,3)	[1[x->2,y->3],2[x->2,y->3,z->2]]
+                    RuleApplication{1, {2, 3}},  // {{"x", 2}, {"y", 3}}
+                    RuleApplication{2, {2, 3 ,2}}  // {{"x", 2}, {"y", 3}, {"z", 2}}
                 }},
-                {tuple5, new std::set<RuleApplication>{  //path(1,3)	[2[x->1,y->3,z->2]]
-                    RuleApplication{2, {{"x", 1}, {"y", 3}, {"z", 2}}}
+                {tuple5, new std::unordered_set<RuleApplication>{  //path(1,3)	[2[x->1,y->3,z->2]]
+                    RuleApplication{2, {1, 3, 2}} // {{"x", 1}, {"y", 3}, {"z", 2}}
                 }},
-                {tuple7, new std::set<RuleApplication>{  // path(3,2)	[1[x->3,y->2],2[x->3,y->2,z->3]]
-                    RuleApplication{1, {{"x", 3}, {"y", 2}}},
-                    RuleApplication{2, {{"x", 3}, {"y", 2}, {"z", 3}}}
+                {tuple7, new std::unordered_set<RuleApplication>{  // path(3,2)	[1[x->3,y->2],2[x->3,y->2,z->3]]
+                    RuleApplication{1, {3, 2}}, // {{"x", 3}, {"y", 2}}
+                    RuleApplication{2, {3, 2, 3}}  // {{"x", 3}, {"y", 2}, {"z", 3}}
                 }},
-                {tuple8, new std::set<RuleApplication>{  // path(2,2)   [2[x->2,y->2,z->3]]
-                    RuleApplication{2, {{"x", 2}, {"y", 2}, {"z", 3}}}
+                {tuple8, new std::unordered_set<RuleApplication>{  // path(2,2)   [2[x->2,y->2,z->3]]
+                    RuleApplication{2, {2, 2, 3}}  // {{"x", 2}, {"y", 2}, {"z", 3}}
                 }},
-                {tuple9, new std::set<RuleApplication>{  // path(3,3)   [2[x->3,y->3,z->2]]
-                    RuleApplication{2, {{"x", 3}, {"y", 3}, {"z", 2}}}
+                {tuple9, new std::unordered_set<RuleApplication>{  // path(3,3)   [2[x->3,y->3,z->2]]
+                    RuleApplication{2, {3, 3, 2}}  // {{"x", 3}, {"y", 3}, {"z", 2}}
                 }}
 };
 

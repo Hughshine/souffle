@@ -112,7 +112,12 @@ public:
     std::vector<std::string> getVariables() const {
         return variables;
     }
+
+    void setVariables(const std::vector<std::string>& v) {
+        variables = v;
+    }
 protected:
+    // void initializeVariables(VecOwn<Literal> bodyLiterals);
     std::vector<std::string> variables;
     void print(std::ostream& os) const override;
 

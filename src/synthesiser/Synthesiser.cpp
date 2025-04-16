@@ -398,7 +398,10 @@ void Synthesiser::emitRules (std::ostream& out) {
         std::string ruleName = "rule" + std::to_string(ruleId);
         ruleNames.push_back(ruleName);
         out << "const Rule " << ruleName << " = Rule(" << std::to_string(ruleId) + "," + headAtomName
-        << ", {" << join(atomNames, ", ") << "}, " << std::to_string(clause->getProbability()) << ");" << std::endl;
+        << ", {" << join(atomNames, ", ") << "}, "
+        << "{" << join(map(clause->getVariables(),
+            [](const std::string& s) { return "\"" + s + "\"";}), ", ") << "}, "
+        << std::to_string(clause->getProbability()) << ");" << std::endl;
     }
     out << "RuleManager ruleManager = RuleManager({" << join(ruleNames, ", ") << "});" << std::endl;
     // out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
@@ -2149,7 +2152,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             // out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
             out << "std::vector<souffle::RamDomain> varValues{};\n";
             for (const auto& expr: recordDerivation.varExprs) {
-                out << "varValues.insert("; rec(out, expr.get()); out << ");\n";
+                out << "varValues.emplace_back("; rec(out, expr.get()); out << ");\n";
             }
             out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
 
@@ -3930,61 +3933,52 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // if (glb.config().has("inc")) {
     //     // assert (false && "incremental problog calculation not implemented yet");
     // } else {
-    //     hook << "try {\n";
-    //
-    //     hook << "std::map<UntypedTuple, double> fact_prob;\n";
-    //     hook << "{\n";
-    //     hook << "FunctionTimer timer(\" reading fact probability \");\n";
-    //     for (auto input : loadIOs) {
-    //         auto rel = input->getRelation();
-    //         hook << "{\n";
-    //         hook << "std::string rel = \"" << rel << "\";\n";
-    //         hook << "std::ifstream factFile(\"input/\" + rel + \".facts\");";
-    //         hook << "std::ifstream probFile(\"input/\" + rel + \".prob\");";
-    //         hook << "std::string factLine, probLine;";
-    //         hook << "while (std::getline(factFile, factLine) && std::getline(probFile, probLine)) {";
-    //         hook << "std::istringstream fs(factLine);";
-    //         hook << "std::istringstream ps(probLine);";
-    //         hook << "double prob; ps >> prob;\n";
-    //         hook << "assert (prob >= 0 && prob <= 1);\n";
-    //         hook << "souffle::RamDomain field;\n";
-    //         hook << "std::vector<souffle::RamDomain> fields;\n";
-    //         hook << "while (fs >> field) {fields.push_back(field);}\n";
-    //         hook << "UntypedTuple tuple{rel, fields};\n";
-    //         hook << "fact_prob[tuple] = prob;\n";
-    //         hook << "}\n";
-    //         hook << "}\n";
-    //     }
-    //     // for (auto clause : newAstProgram->getClauses()) {
-    //     //     if (ast::isFact(*clause)) {
-    //     //         // perhaps we should distinguish input-rule-fact and output-rule-fact
-    //     //         // and
-    //     //         // hook << "fact_prob
-    //     //
-    //     //
-    //     //         std::cout << clause->toString() << " " << clause->getProbability() << "\n";
-    //     //     }
-    //     // }
-    //     hook << "}\n";
-    //     db.addGlobalInclude("\"souffle/problog/Atom.h\"");
-    //     db.addGlobalInclude("\"souffle/problog/Rule.h\"");
-    //     db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
-    //     db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
-    //     db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
-    //     // synthesize rules
-    //     emitRules(hook);
-    //     // synthesize forward compilation
-    //     emitProblogPipelineCudd(hook);
-    //
-    //
-    //     // add online incremental&interactive computation
-    //     if (glb.config().has("online")) {
-    //         db.addGlobalInclude("\"souffle/cli/Cli.h\"");
-    //         hook << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
-    //         hook << "cli.run();\n";
-    //     }
-    //
-    //     hook << "} catch (std::exception& e) {std::cerr << \"Problog colc failed\" << e.what() << std::endl;}\n";
+    hook << "try {\n";
+
+    hook << "std::map<UntypedTuple, double> fact_prob;\n";
+    hook << "{\n";
+    hook << "FunctionTimer timer(\" reading fact probability \");\n";
+    for (auto input : loadIOs) {
+        auto rel = input->getRelation();
+        hook << "{\n";
+        hook << "std::string rel = \"" << rel << "\";\n";
+        hook << "std::ifstream factFile(\"input/\" + rel + \".facts\");";
+        hook << "std::ifstream probFile(\"input/\" + rel + \".prob\");";
+        hook << "std::string factLine, probLine;";
+        hook << "while (std::getline(factFile, factLine) && std::getline(probFile, probLine)) {";
+        hook << "std::istringstream fs(factLine);";
+        hook << "std::istringstream ps(probLine);";
+        hook << "double prob; ps >> prob;\n";
+        hook << "assert (prob >= 0 && prob <= 1);\n";
+        hook << "souffle::RamDomain field;\n";
+        hook << "std::vector<souffle::RamDomain> fields;\n";
+        hook << "while (fs >> field) {fields.push_back(field);}\n";
+        hook << "UntypedTuple tuple{rel, fields};\n";
+        hook << "fact_prob[tuple] = prob;\n";
+        hook << "}\n";
+        hook << "}\n";
+    }
+    hook << "}\n";
+    db.addGlobalInclude("\"souffle/problog/Atom.h\"");
+    db.addGlobalInclude("\"souffle/problog/Rule.h\"");
+    db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
+    // db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
+    // db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
+
+    // synthesize rules
+    emitRules(hook);
+    // synthesize forward compilation
+    // emitProblogPipelineCudd(hook);
+
+
+    // add online incremental&interactive computation
+    // if (glb.config().has("online")) {
+    //     db.addGlobalInclude("\"souffle/cli/Cli.h\"");
+    //     hook << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
+    //     hook << "cli.run();\n";
+    // }
+
+    hook << "} catch (std::exception& e) {std::cerr << \"Problog colc failed\" << e.what() << std::endl;}\n";
     // }
 
 

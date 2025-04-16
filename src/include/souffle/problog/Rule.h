@@ -17,7 +17,7 @@
 
 class Rule {
 public:
-    Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms = {}, double probability = 1.0);
+    Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms = {}, std::vector<std::string> vars = {}, double probability = 1.0);
 
     const Atom& getHead() const;
     const std::vector<Atom>& getBodyAtoms() const;
@@ -30,16 +30,18 @@ private:
     std::size_t ruleId;
     Atom head;
     std::vector<Atom> bodyAtoms;
+    std::vector<std::string> vars;
     double probability;
 
     void addBodyAtom(Atom atom);
 };
 
 
-Rule::Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms, double probability)
+Rule::Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms, std::vector<std::string> vars, double probability)
     : ruleId(ruleId)
     , head(std::move(head))
     , bodyAtoms(std::move(bodyAtoms))
+    , vars(std::move(vars))
     , probability(probability) {
 }
 const Atom& Rule::getHead() const {
@@ -81,7 +83,11 @@ std::string Rule::toString() const {
             oss << bodyAtoms[i].toString();
         }
     }
-    oss << ".";
+    oss << ". <";
+    for (const auto& var : vars) {
+        oss << " " << var;
+    }
+    oss << " >";
     return oss.str();
 }
 
