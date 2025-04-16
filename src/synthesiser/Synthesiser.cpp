@@ -423,7 +423,7 @@ void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
     out << "//    std::cout << \"Node\" << node->getId() ;\n";
     out << "    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
-    out << "    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
+    out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
     out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
     out << "    std::cout << \"Probability: \" << prob << std::endl;\n";
     out << "}\n";

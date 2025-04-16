@@ -463,7 +463,7 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
                     // mk<ast::transform::ReplaceSingletonVariablesTransformer>(),
                     // mk<ast::transform::RemoveRelationCopiesTransformer>(),
                     mk<ast::transform::RemoveEmptyRelationsTransformer>()
-                    // ,mk<ast::transform::RemoveRedundantRelationsTransformer>()
+                    ,mk<ast::transform::RemoveRedundantRelationsTransformer>()
                     );
 
     // Magic-Set pipeline
