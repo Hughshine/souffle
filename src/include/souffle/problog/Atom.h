@@ -109,15 +109,21 @@ public:
         return vars;
     }
 
-    std::vector<souffle::RamDomain> instantiatedFields(const std::map<std::string, int>& varValues) const {
+    std::vector<souffle::RamDomain> instantiatedFields(const std::vector<std::string> vars, const std::vector<int>& values) const {
         std::vector<souffle::RamDomain> result;  // TODO
         for (const auto& field : fields) {
             if (std::holds_alternative<VariableField>(field.field)) {
                 const std::string& varName = std::get<VariableField>(field.field).name;
-                if (varValues.find(varName) != varValues.end()) {
-                    result.push_back(varValues.at(varName));
-                } else {
-					assert(false && "Variable not found in map");
+                bool found = false;
+                for (size_t i = 0; i < vars.size(); ++i) {
+                    if (vars[i] == varName) {
+                        result.push_back(values[i]);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    assert(false && "Variable not found in map");
                 }
         } else if (std::holds_alternative<IntegerField>(field.field)) {
 	            result.push_back(std::get<IntegerField>(field.field).value);

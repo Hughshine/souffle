@@ -3962,13 +3962,13 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     db.addGlobalInclude("\"souffle/problog/Atom.h\"");
     db.addGlobalInclude("\"souffle/problog/Rule.h\"");
     db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
-    // db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
-    // db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
+    db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
+    db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
 
     // synthesize rules
     emitRules(hook);
     // synthesize forward compilation
-    // emitProblogPipelineCudd(hook);
+    emitProblogPipelineCudd(hook);
 
 
     // add online incremental&interactive computation

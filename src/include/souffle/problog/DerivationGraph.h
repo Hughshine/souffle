@@ -142,23 +142,26 @@ public:
 
     EdgePtr createHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& rm) {
         // 先查找是否存在对应的边
-        EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp);
+        const Rule* rule = rm.getRule(ruleApp.ruleId);
+        assert(rule != nullptr && "Rule not found");
+        const std::vector<std::string>& vars = rule->getVars();
+
+        EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, vars);
         if (existingEdge) {
             return existingEdge;
         }
 
-        const Rule* rule = rm.getRule(ruleApp.ruleId);
-        assert(rule != nullptr && "Rule not found");
 
         // 根据规则头部和变量值创建输出元组
-        UntypedTuple headTuple{rule->getHead().getRelation(), rule->getHead().instantiatedFields(ruleApp.varValues)};
+        UntypedTuple headTuple{rule->getHead().getRelation(),
+                rule->getHead().instantiatedFields(rule->getVars(), ruleApp.varValuesPure)};
         auto headNode = createNode(headTuple);
 
         // 创建输入节点
         std::vector<NodePtr> bodyNodes;
         std::vector<bool> bodyNegations;
         for (const auto& bodyAtom : rule->getBodyAtoms()) {
-            UntypedTuple bodyTuple{bodyAtom.getRelation(), bodyAtom.instantiatedFields(ruleApp.varValues)};
+            UntypedTuple bodyTuple{bodyAtom.getRelation(), bodyAtom.instantiatedFields(rule->getVars(), ruleApp.varValuesPure)};
             auto bodyNode = createNode(bodyTuple);
             bodyNodes.push_back(bodyNode);
             bodyNegations.push_back(bodyAtom.isNegatedAtom());
@@ -167,7 +170,7 @@ public:
         auto newEdge = createHyperedge(bodyNodes, headNode, rule, bodyNegations);
 
         // 将新边添加到映射中
-        std::string key = createEdgeKey(ruleApp.ruleId, ruleApp.varValues);
+        std::string key = createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure);
         edgeKeyToEdgeMap[key] = newEdge;
 
         return newEdge;
@@ -182,8 +185,9 @@ public:
     }
 
     EdgePtr findHyperedge(souffle::RamDomain ruleId,
-                         const std::map<std::string, souffle::RamDomain>& varValues) const {
-        std::string key = createEdgeKey(ruleId, varValues);
+                         const std::vector<std::string>& vars,
+                            const std::vector<souffle::RamDomain>& values) const {
+        std::string key = createEdgeKey(ruleId, vars, values);
         auto it = edgeKeyToEdgeMap.find(key);
         if (it != edgeKeyToEdgeMap.end()) {
             return it->second;
@@ -191,8 +195,8 @@ public:
         return nullptr;
     }
 
-    EdgePtr findHyperedgeFromRuleApp(const RuleApplication& ruleApp) const {
-        return findHyperedge(ruleApp.ruleId, ruleApp.varValues);
+    EdgePtr findHyperedgeFromRuleApp(const RuleApplication& ruleApp, const std::vector<std::string>& vars) const {
+        return findHyperedge(ruleApp.ruleId, vars, ruleApp.varValuesPure);
     }
 
     const std::vector<NodePtr>& getNodes() const { return nodes; }
@@ -288,20 +292,24 @@ protected:
 
     // 创建边的唯一键
     std::string createEdgeKey(souffle::RamDomain ruleId,
-                             const std::map<std::string, souffle::RamDomain>& varValues) const {
+                             const std::vector<std::string>& vars,
+                             const std::vector<souffle::RamDomain>& values) const {
         std::stringstream ss;
         ss << ruleId << "_";
 
         // 按照变量名排序，确保键的一致性
-        std::vector<std::string> varNames;
-        for (const auto& [name, _] : varValues) {
-            varNames.push_back(name);
-        }
+        std::vector<std::string> varNames = vars;
+//        for (const auto& [name, _] : varValues) {
+//            varNames.push_back(name);
+//        }
         std::sort(varNames.begin(), varNames.end());
 
-        for (const auto& name : varNames) {
-            ss << name << ":" << varValues.at(name) << ";";
+        for (size_t i = 0; i < varNames.size(); ++i) {
+            ss << varNames[i] << ":" << values[i] << ";";
         }
+//        for (const auto& name : varNames) {
+//            ss << name << ":" << varValues.at(name) << ";";
+//        }
 
         return ss.str();
     }
@@ -433,7 +441,8 @@ void IncrementalDerivationGraph::applyDeltaInserts(
         // 处理与该元组关联的每个规则应用
         for (const auto& ruleApp : *ruleAppSet) {
             // 检查这个规则应用的边是否已经存在
-            EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp);
+            const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
+            EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, rule->getVars());
             if (existingEdge != nullptr) {
                 std::cout << existingEdge->toString() << std::endl;
             }
@@ -476,7 +485,9 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
     for (const auto& [tuple, ruleAppSet] : deltaDeleteRuleApps) {
         for (const auto& ruleApp : *ruleAppSet) {
             // 查找要删除的边 - 直接使用map查找
-            EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp);
+            const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
+            const std::vector<std::string>& vars = rule->getVars();
+            EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, vars);
             assert(existingEdge != nullptr && "Delta delete edge does not exist in the graph");
 
             // 将边标记为增量删除
@@ -504,7 +515,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             allEdges.erase(std::remove(allEdges.begin(), allEdges.end(), existingEdge), allEdges.end());
 
             // 从edgeKeyToEdgeMap中移除这条边
-            std::string edgeKey = createEdgeKey(ruleApp.ruleId, ruleApp.varValues);
+            std::string edgeKey = createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure);
             edgeKeyToEdgeMap.erase(edgeKey);
 
             // 检查输出节点是否还有其他导出路径

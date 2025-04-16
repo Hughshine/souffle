@@ -25,7 +25,9 @@ public:
     double getProbability() const;
     bool isFact() const;
     std::string toString() const;
-
+    std::vector<std::string> getVars() const {
+        return vars;
+    }
 private:
     std::size_t ruleId;
     Atom head;
