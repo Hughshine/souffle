@@ -309,8 +309,8 @@ public:
         return tuple;
     }
 
-    std::map<UntypedTuple, double> getFactProbInc() {
-        std::map<UntypedTuple, double> fact_prob_inc;
+    std::unordered_map<UntypedTuple, double> getFactProbInc() {
+        std::unordered_map<UntypedTuple, double> fact_prob_inc;
         for (const auto& op : pendingOperations) {
             if (op.valid && op.type == Operation::INSERT) {
                 fact_prob_inc[getTuple(op)] = op.probability;
@@ -392,9 +392,9 @@ public:
                             insTuple << std::stoi(op.values[i]);
                         }
                         std::cout << origRel->getName() << std::endl;
-                        for (auto t: *origRel) {
-                            std::cout << "original tuple: " << t.toString() << std::endl;
-                        }
+//                        for (auto t: *origRel) {
+//                            std::cout << "original tuple: " << t.toString() << std::endl;
+//                        }
                         if (!origRel->contains(origTuple)) {
                             std::cout << "Relation does not contains the tuple to delete, omitted: " << origTuple.toString() << std::endl;
                             op.valid = false;
@@ -413,6 +413,20 @@ public:
                 std::cout << "runAllInc()..." << std::endl;
                 program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);
             }
+//            {
+//                for (auto ruleapp: DerivationManager::untypedTuple2DeltaInsertRuleApplications) {
+//                    std::cout << "insert rule application: " << ruleapp.first.toString() << std::endl;
+//                    for (auto t: *(ruleapp.second)) {
+//                        std::cout << "insert rule application tuple: " << RuleApplication::toString(t) << std::endl;
+//                    }
+//                }
+//                for (auto ruleapp: DerivationManager::untypedTuple2DeltaDeleteRuleApplications) {
+//                    std::cout << "delete rule application: " << ruleapp.first.toString() << std::endl;
+//                    for (auto t: *(ruleapp.second)) {
+//                        std::cout << "delete rule application tuple: " << RuleApplication::toString(t) << std::endl;
+//                    }
+//                }
+//            }
             graph->applyDelta(
                 DerivationManager::untypedTuple2DeltaInsertRuleApplications,
                 DerivationManager::untypedTuple2DeltaDeleteRuleApplications,

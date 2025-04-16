@@ -423,7 +423,7 @@ void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
     out << "//    std::cout << \"Node\" << node->getId() ;\n";
     out << "    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
-    out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
+    out << "    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
     out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
     out << "    std::cout << \"Probability: \" << prob << std::endl;\n";
     out << "}\n";
@@ -3935,7 +3935,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // } else {
     hook << "try {\n";
 
-    hook << "std::map<UntypedTuple, double> fact_prob;\n";
+    hook << "std::unordered_map<UntypedTuple, double> fact_prob;\n";
     hook << "{\n";
     hook << "FunctionTimer timer(\" reading fact probability \");\n";
     for (auto input : loadIOs) {
@@ -3972,11 +3972,11 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
 
     // add online incremental&interactive computation
-    // if (glb.config().has("online")) {
-    //     db.addGlobalInclude("\"souffle/cli/Cli.h\"");
-    //     hook << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
-    //     hook << "cli.run();\n";
-    // }
+    if (glb.config().has("online")) {
+        db.addGlobalInclude("\"souffle/cli/Cli.h\"");
+        hook << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
+        hook << "cli.run();\n";
+    }
 
     hook << "} catch (std::exception& e) {std::cerr << \"Problog colc failed\" << e.what() << std::endl;}\n";
     // }

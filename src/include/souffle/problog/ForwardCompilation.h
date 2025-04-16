@@ -39,9 +39,14 @@ void buildFormulas(
     // Initialize formulas for rule instantiations (hyperedges)
     for (const auto& edge : graph.getEdges()) {
         // Create a variable using the edge's unique ID; need to plus the size of graph.getNodes() to avoid conflict with node's id
-        auto baseEdgeFormula = formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
-        formulaManager.setVariableWeight(graph.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
-        baseEdgeFormulas.insert({edge, baseEdgeFormula});
+        if (edge->getRule()->isDeterminstic()) {
+            auto baseEdgeFormula = formulaManager.getTrue();
+            baseEdgeFormulas.insert({edge, baseEdgeFormula});
+        } else {
+            auto baseEdgeFormula = formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
+            formulaManager.setVariableWeight(graph.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
+            baseEdgeFormulas.insert({edge, baseEdgeFormula});
+        }
     }
 //    std::cout << "Initialize formulas for rule instantiations (hyperedges)" << std::endl;
 
@@ -214,7 +219,15 @@ void buildFormulasInc(
     // Function to update edge formula based on its inputs
     auto updateEdgeFormula = [&](EdgePtr edge) -> FormulaNodeRef {
         // Get base edge formula (the rule probability)
-        auto baseEdgeFormula = formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
+        FormulaNodeRef baseEdgeFormula;
+        if (edge->getRule()->isDeterminstic()) {
+            baseEdgeFormula = formulaManager.getTrue();
+        } else {
+            baseEdgeFormula = formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
+            formulaManager.setVariableWeight(graph.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
+        }
+
+//        auto baseEdgeFormula = formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
 
         // Collect input formulas
         std::vector<FormulaNodeRef> inputFormulas;

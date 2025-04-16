@@ -28,6 +28,9 @@ public:
     std::vector<std::string> getVars() const {
         return vars;
     }
+    bool isDeterminstic() const {
+        return probability == 1.0;
+    }
 private:
     std::size_t ruleId;
     Atom head;
