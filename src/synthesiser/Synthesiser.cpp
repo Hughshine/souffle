@@ -416,17 +416,26 @@ void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
     out << "WeightedBDDManager bddManager;\n";
+    out << "{\n" << std::endl;
+    out << "FunctionTimer timer(\" building formulas \");\n";
     out << "buildFormulas(*graph, bddManager, nodeFormulas, edgeFormulas);\n";
+    out << "}" << std::endl;
     out << "{" << std::endl;
     out << "FunctionTimer timer(\" wmc and output probability \");\n";
     // print result to cout; TODO print to files
-    out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
-    out << "//    std::cout << \"Node\" << node->getId() ;\n";
-    out << "    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
-    out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
-    out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
-    out << "    std::cout << \"Probability: \" << prob << std::endl;\n";
-    out << "}\n";
+    out << "std::cout << \"nodeFormulas size: \" << nodeFormulas.size() << std::flush;\n";
+    // out << "size_t count = 0;\n";
+    // out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+    // out << "    count++;\n";
+    // out << "if (count % 1000 == 0) {\n";
+    // out << "std::cout << count << std::flush;\n";
+    // out << "}\n";
+    // out << "//    std::cout << \"Node\" << node->getId() ;\n";
+    // out << "    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
+    // out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
+    // out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
+    // out << "    std::cout << \"Probability: \" << prob << std::endl;\n";
+    // out << "}\n";
     out << "}" << std::endl;
 
     // out << "for (const auto& [edge, bdd] : edgeFormulas) {\n";

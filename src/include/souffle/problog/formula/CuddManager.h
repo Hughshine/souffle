@@ -182,30 +182,41 @@ WeightedBDDManager::WeightedBDDManager() {
 }
 
 BddNodeRef WeightedBDDManager::createVar(int index) {
+    if (variableRegistry.find(index) != variableRegistry.end()) {
+        return variableRegistry[index];
+    }
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
     BddNodeRef ref(manager, var);
     variableRegistry[index] = ref;
-    return BddNodeRef(manager, var);
+    return ref;
+//    BddNodeRef(manager, var);
 }
 
 BddNodeRef WeightedBDDManager::createVar(int index, const Node& node) {
+    if (variableRegistry.find(index) != variableRegistry.end()) {
+        return variableRegistry[index];
+    }
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
     if (var == nullptr) {
         throw std::runtime_error("Failed to create BDD variable");
     }
     BddNodeRef ref(manager, var, node);
     variableRegistry[index] = ref;
-    return BddNodeRef(manager, var, node);
+    return ref;
 }
 
 BddNodeRef WeightedBDDManager::createVar(int index, const Hyperedge& edge) {
+    if (variableRegistry.find(index) != variableRegistry.end()) {
+        return variableRegistry[index];
+    }
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
     if (var == nullptr) {
         throw std::runtime_error("Failed to create BDD variable");
     }
     BddNodeRef ref(manager, var, edge);
     variableRegistry[index] = ref;
-    return BddNodeRef(manager, var, edge);
+//    return BddNodeRef(manager, var, edge);
+    return ref;
 }
 
 BddNodeRef WeightedBDDManager::makeAnd(const BddNodeRef& a, const BddNodeRef& b) {
@@ -266,6 +277,7 @@ void WeightedBDDManager::setVariableWeight(int varIndex, double posWeight, doubl
 }
 
 double WeightedBDDManager::computeWeightedModelCount(const BddNodeRef& node) {
+//    std::cout << "wmc..." << std::endl;
     std::unordered_map<DdNode*, double> cache;
     return recursiveWeightedModelCount(node.get(), cache);
 }
@@ -273,17 +285,17 @@ double WeightedBDDManager::computeWeightedModelCount(const BddNodeRef& node) {
 double WeightedBDDManager::recursiveWeightedModelCount(
     DdNode* node,
     std::unordered_map<DdNode*, double>& cache) {
-
+//    std::cout << "wmc..." << std::endl;
     // Check if node is constant
     if (Cudd_IsConstant(node)) {
         return Cudd_IsComplement(node) ? 0.0 : 1.0;
     }
 
     // Check cache
-    auto it = cache.find(node);
-    if (it != cache.end()) {
-        return it->second;
-    }
+//    auto it = cache.find(node);
+//    if (it != cache.end()) {
+//        return it->second;
+//    }
 
     // Get node's variable index
     int varIndex = Cudd_NodeReadIndex(node);
@@ -309,7 +321,8 @@ double WeightedBDDManager::recursiveWeightedModelCount(
     // Combine results
     double result = posWeight * tWeight + negWeight * eWeight;
     // Cache and return result
-    cache[node] = result;
+//    cache[node] = result;
+//    Cudd_Ref(node);  // TODO: Note that there might need deref
     return result;
 }
 

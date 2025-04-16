@@ -171,7 +171,7 @@ void buildFormulas(
 //                }
 //
 //                std::cout << "New formula: " << formulaManager.toString(newNodeFormula) << std::endl;
-                auto prob = formulaManager.computeWeightedModelCount(newNodeFormula);
+//                auto prob = formulaManager.computeWeightedModelCount(newNodeFormula);
 //                std::cout << "Probability: " << prob << std::endl;
                 // Add outgoing edges to the worklist
                 for (const auto& outEdge : output->getOutgoingEdges()) {
