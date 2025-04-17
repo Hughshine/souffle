@@ -121,7 +121,11 @@ class DerivationGraph {
 public:
     DerivationGraph() : nextNodeId(0), nextEdgeId(0) {}
     DerivationGraph(const RuleManager* rm) : nextNodeId(0), nextEdgeId(0), ruleManager(rm) {}
-
+    void dumpStatistics(std::ostream& out) const {
+        out << "DerivationGraph Statistics:" << std::endl;
+        out << "  Number of nodes: " << nodes.size() << std::endl;
+        out << "  Number of edges: " << edges.size() << std::endl;
+    }
     NodePtr createNode(const UntypedTuple& tuple, const double weight = 1.0) {
         // 先查找是否已存在
         NodePtr existingNode = findNode(tuple);
@@ -359,7 +363,15 @@ public:
     // 构造函数
     IncrementalDerivationGraph() : DerivationGraph() {}
     IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
-
+    void dumpStatistics(std::ostream& out) const {
+        out << "IncrementalDerivationGraph Statistics:" << std::endl;
+        out << "  Number of nodes: " << nodes.size() << std::endl;
+        out << "  Number of edges: " << edges.size() << std::endl;
+        out << "  Number of delta insert nodes: " << deltaInsertNodes.size() << std::endl;
+        out << "  Number of delta insert edges: " << deltaInsertEdges.size() << std::endl;
+        out << "  Number of delta delete nodes: " << deltaDeleteNodes.size() << std::endl;
+        out << "  Number of delta delete edges: " << deltaDeleteEdges.size() << std::endl;
+    }
     static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {})  {
         FunctionTimer timer(" creating derivation graph ");
 
@@ -771,5 +783,19 @@ void IncrementalDerivationGraph::dumpDotInc(const std::string& filename) const {
 
     out << "}\n";
     out.close();
+}
+
+inline std::unordered_map<NodePtr, double> probResult;
+
+void dumpProbabilities(
+    std::unordered_map<NodePtr, double>& nodeProbabilities, const std::string& outputDir = "./output/") {
+    std::ofstream outputFile(
+        outputDir + "/" + "facts" + ".prob"
+    );
+
+    for (auto& [node, prob] : nodeProbabilities) {
+        outputFile << node->getTuple().toString() << " : " << prob << std::endl;
+    }
+
 }
 #endif //DERIVATIONGRAPH_H

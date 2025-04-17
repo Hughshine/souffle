@@ -28,7 +28,11 @@ void buildFormulas(
     for (const auto& node : graph.getNodes()) {
         // Create a variable using the node's unique ID
         if (node->getIncomingEdges().empty()) {
-            nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
+            if (node->getProbability() == 1.0) {
+                nodeFormulas[node] = formulaManager.getTrue();
+            } else {
+                nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
+            }
             baseNodeFormulas.insert({node, nodeFormulas[node]});
 //            std::cout << "Setting weight for node " << node->getId() << " with probability " << node->getProbability() << std::endl;
             formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1-node->getProbability());
@@ -60,8 +64,15 @@ void buildFormulas(
         inWorklist.insert(edge);
     }
 //    std::cout << "Initialize worklist with all edges" << std::endl;
-
+    long long iteration = 0;
     while (!worklist.empty()) {
+//        if (iteration % 1000 == 0) {
+            std::cout << "Iteration: " << iteration << std::endl;
+            std::cout << "Worklist size: " << worklist.size() << std::endl;
+            formulaManager.dumpProfilingStatistics();
+
+//        }
+        iteration++;
         auto edge = worklist.front();
         worklist.pop();
         inWorklist.erase(edge);

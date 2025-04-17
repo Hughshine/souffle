@@ -284,7 +284,7 @@ void Synthesiser::emitRules (std::ostream& out) {
         // if (ast::isFact(*clause)) {
         //     continue;
         // }
-        std::cout << clause->getProbability() << std::endl;
+        // std::cout << clause->getProbability() << std::endl;
         auto ruleId = clause->getClauseId();
         std::size_t atomId = 0;
         std::vector<std::string> atomNames;
@@ -410,6 +410,7 @@ void Synthesiser::emitRules (std::ostream& out) {
 
 void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
+    out << "graph->dumpStatistics(std::cout);\n";
     if (glb.config().has("verbose")) {
         out << "graph->dumpDot(\"derivation_graph.dot\");\n";
     }
@@ -424,18 +425,19 @@ void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "FunctionTimer timer(\" wmc and output probability \");\n";
     // print result to cout; TODO print to files
     out << "std::cout << \"nodeFormulas size: \" << nodeFormulas.size() << std::flush;\n";
+    out << "std::cout << \"edgeFormulas size: \" << edgeFormulas.size() << std::flush;\n";
     // out << "size_t count = 0;\n";
-    // out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
-    // out << "    count++;\n";
-    // out << "if (count % 1000 == 0) {\n";
-    // out << "std::cout << count << std::flush;\n";
-    // out << "}\n";
-    // out << "//    std::cout << \"Node\" << node->getId() ;\n";
-    // out << "    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
-    // out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
-    // out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
-    // out << "    std::cout << \"Probability: \" << prob << std::endl;\n";
-    // out << "}\n";
+    // out << "std::unordered_map<NodePtr, double> nodeProbabilities;\n";
+    out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+    out << "//    std::cout << \"Node\" << node->getId() ;\n";
+    out << "//    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
+    out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
+    out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
+    out << "    probResult[node] = prob;\n";
+    out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
+    out << "}\n";
+    // dump the node probabilities
+    out << "dumpProbabilities(probResult, \"" << glb.config().get("output-dir") << "\");\n";
     out << "}" << std::endl;
 
     // out << "for (const auto& [edge, bdd] : edgeFormulas) {\n";

@@ -1917,7 +1917,7 @@ Own<ram::Sequence> UnitTranslator::generateProgramInc(const ast::TranslationUnit
         std::string stratumIDInc = rel->getQualifiedName().toString() + "_inc";
 
         addRamSubroutine(stratumIDInc, std::move(stratumInc));
-        std::cout << "stratumIDInc: " << stratumIDInc << std::endl;
+        // std::cout << "stratumIDInc: " << stratumIDInc << std::endl;
         // invoke the strata
         appendStmt(incRes, mk<ram::Call>("stratum_" + stratumIDInc));
     }

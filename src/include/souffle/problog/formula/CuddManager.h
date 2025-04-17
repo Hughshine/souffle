@@ -152,6 +152,11 @@ public:
     // Utility functions
     void printInfo(const BddNodeRef& node, const std::string& name) override;
     DdManager* getManager() const { return manager.get(); }
+    void dumpProfilingStatistics() {
+            std::cout << "Current live nodes: " << Cudd_ReadNodeCount(manager.get()) << std::endl;
+            std::cout << "Memory usage: " << Cudd_ReadMemoryInUse(manager.get()) / (1024.0 * 1024) << " MB" << std::endl;
+    };
+
 
 private:
     double recursiveWeightedModelCount(DdNode* node,
@@ -176,9 +181,9 @@ int myHookFunc(DdManager* dd, const char* str, void* data) {
 }
 
 WeightedBDDManager::WeightedBDDManager() {
-    DdManager* m = Cudd_Init(0, 0, CUDD_UNIQUE_SLOTS, CUDD_CACHE_SLOTS, 0);
+    DdManager* m = Cudd_Init(0, 0, CUDD_UNIQUE_SLOTS, CUDD_CACHE_SLOTS, 16UL * 1024 * 1024 * 1024);
     Cudd_EnableGarbageCollection(m);
-    Cudd_SetMaxLive(m, std::numeric_limits<unsigned int>::max());
+//    Cudd_SetMaxLive(m, );
     Cudd_AddHook(m, myHookFunc, CUDD_PRE_GC_HOOK);
     Cudd_AddHook(m, myHookFunc, CUDD_POST_GC_HOOK);
 
@@ -302,10 +307,10 @@ double WeightedBDDManager::recursiveWeightedModelCount(
     }
 
     // Check cache
-//    auto it = cache.find(node);
-//    if (it != cache.end()) {
-//        return it->second;
-//    }
+    auto it = cache.find(node);
+    if (it != cache.end()) {
+        return it->second;
+    }
 
     // Get node's variable index
     int varIndex = Cudd_NodeReadIndex(node);
@@ -331,8 +336,7 @@ double WeightedBDDManager::recursiveWeightedModelCount(
     // Combine results
     double result = posWeight * tWeight + negWeight * eWeight;
     // Cache and return result
-//    cache[node] = result;
-//    Cudd_Ref(node);  // TODO: Note that there might need deref
+    cache[node] = result;
     return result;
 }
 

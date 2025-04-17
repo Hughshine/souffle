@@ -334,6 +334,7 @@ public:
         // {testUntypedTuple, &testRules}
     };
 
+
     static bool ruleAppExistsInCompleteSet(const UntypedTuple& untypedTuple, const RuleApplication& ruleAppl) {
         if (untypedTuple2RuleApplications[untypedTuple] == nullptr) {
             return false;

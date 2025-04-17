@@ -435,19 +435,26 @@ public:
                 getDeletedFacts() // deletedFacts; cli should collect this
             );
             graph->dumpDotInc("derivation-inc.dot");
-            buildFormulasInc(*graph, *bddManager, *nodeFormulas, *edgeFormulas);
-            for (const auto& [node, bdd] : *nodeFormulas) {
-                std::cout << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
-                std::cout << bddManager->toString(bdd) << "\t";
-                auto prob = bddManager->computeWeightedModelCount(bdd);
-                std::cout << "Probability: " << prob << std::endl;
+            buildFormulasInc(*graph, *bddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
+            probResult.clear();
+            {
+                FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(nodeFormulas->size()));
+                for (const auto& [node, bdd] : *nodeFormulas) {
+    //                std::cout << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
+    //                std::cout << bddManager->toString(bdd) << "\t";
+    //                auto prob = bddManager->computeWeightedModelCount(bdd);
+    //                std::cout << "Probability: " << prob << std::endl;
+                    auto prob = bddManager->computeWeightedModelCount(bdd);
+                    probResult[node] = prob;
+                }
             }
-            for (const auto& [edge, bdd] : *edgeFormulas) {
-                std::cout << edge->toString() << " : ";
-                std::cout << bddManager->toString(bdd) << "\t";
-                auto prob = bddManager->computeWeightedModelCount(bdd);
-                std::cout << "Probability: " << prob << std::endl;
-            }
+            dumpProbabilities(probResult,"./output/");
+//            for (const auto& [edge, bdd] : *edgeFormulas) {
+//                std::cout << edge->toString() << " : ";
+//                std::cout << bddManager->toString(bdd) << "\t";
+//                auto prob = bddManager->computeWeightedModelCount(bdd);
+//                std::cout << "Probability: " << prob << std::endl;
+//            }
             std::cout << "Done" << std::endl;
         } else {
             std::cout << "No program loaded." << std::endl;

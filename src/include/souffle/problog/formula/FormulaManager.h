@@ -27,6 +27,7 @@ public:
     virtual double computeWeightedModelCount(const NodeRef& node) = 0;
 
     virtual void printInfo(const NodeRef& node, const std::string& name) = 0;
+    virtual void dumpProfilingStatistics() = 0;
 };
 
 template<typename NodeRef>
