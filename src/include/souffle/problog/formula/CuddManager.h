@@ -169,10 +169,20 @@ private:
 };
 
 // Implementation
+int myHookFunc(DdManager* dd, const char* str, void* data) {
+    fprintf(stderr, "[GC] Dead = %u, Keys = %u, Mem = %zu\n",
+            Cudd_ReadDead(dd), Cudd_ReadKeys(dd), Cudd_ReadMemoryInUse(dd));
+    return 1;
+}
 
 WeightedBDDManager::WeightedBDDManager() {
     DdManager* m = Cudd_Init(0, 0, CUDD_UNIQUE_SLOTS, CUDD_CACHE_SLOTS, 0);
-//    DdManager* m = Cudd_Init(0, 0, 4096, 2*CUDD_CACHE_SLOTS, 0);
+    Cudd_EnableGarbageCollection(m);
+    Cudd_SetMaxLive(m, std::numeric_limits<unsigned int>::max());
+    Cudd_AddHook(m, myHookFunc, CUDD_PRE_GC_HOOK);
+    Cudd_AddHook(m, myHookFunc, CUDD_POST_GC_HOOK);
+
+
     if (m == nullptr) {
         throw std::runtime_error("Failed to initialize CUDD manager");
     }
@@ -231,14 +241,14 @@ BddNodeRef WeightedBDDManager::makeAnd(const std::vector<BddNodeRef>& nodes) {
     if (nodes.empty()) {
         return BddNodeRef(manager, Cudd_ReadOne(manager.get()));
     }
-    DdNode* result = nodes[0].get();
+    BddNodeRef result(manager, nodes[0].get());
     for (size_t i = 1; i < nodes.size(); i++) {
-        result = Cudd_bddAnd(manager.get(), result, nodes[i].get());
-        if (result == nullptr) {
+        result = BddNodeRef(manager, Cudd_bddAnd(manager.get(), result.get(), nodes[i].get()));
+        if (result.get() == nullptr) {
             throw std::runtime_error("makeAnd failed");
         }
     }
-    return BddNodeRef(manager, result);
+    return result;
 }
 
 BddNodeRef WeightedBDDManager::makeOr(const BddNodeRef& a, const BddNodeRef& b) {
@@ -253,14 +263,14 @@ BddNodeRef WeightedBDDManager::makeOr(const std::vector<BddNodeRef>& nodes) {
     if (nodes.empty()) {
         return BddNodeRef(manager, Cudd_ReadZero(manager.get()));
     }
-    DdNode* result = nodes[0].get();
+    BddNodeRef result(manager, nodes[0].get());
     for (size_t i = 1; i < nodes.size(); i++) {
-        result = Cudd_bddOr(manager.get(), result, nodes[i].get());
-        if (result == nullptr) {
+        result = BddNodeRef(manager, Cudd_bddOr(manager.get(), result.get(), nodes[i].get()));
+        if (result.get() == nullptr) {
             throw std::runtime_error("makeOr failed");
         }
     }
-    return BddNodeRef(manager, result);
+    return result;
 }
 
 BddNodeRef WeightedBDDManager::makeNot(const BddNodeRef& a) {

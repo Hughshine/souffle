@@ -7,24 +7,29 @@ int main() {
     WeightedBDDManager manager;
 
     {
-        // 所有 BddNodeRef 在这个作用域内创建并销毁
-        // auto a = manager.createVar(0);
-        // auto b = manager.createVar(1);
-        // auto c = manager.createVar(2);
+        int num = 10000;
+        // 创建复杂表达式
+        std::vector<BddNodeRef> vars;
+        for (int i = 0; i < num; ++i) {
+            vars.push_back(manager.createVar(i));
+        }
 
-        // auto ab = manager.makeAnd(a, b);
-        // auto notC = manager.makeNot(c);
-        // auto final = manager.makeOr(ab, notC);
+        BddNodeRef deepAnd = vars[0];
+        for (int i = 1; i < num; ++i) {
+            deepAnd = manager.makeAnd(deepAnd, vars[i]);
+        }
 
-        // manager.printInfo(final, "F = (a ∧ b) ∨ ¬c");
+        BddNodeRef not1 = manager.makeNot(vars[1]);
+        BddNodeRef orExpr = manager.makeOr(not1, vars[2]);
 
-        // 在这里检查不一定为 0（还没析构完）
-        std::cout << "🔧 [Inner] CUDD ref count: "
+        BddNodeRef final = manager.makeAnd(deepAnd, orExpr);
+
+        manager.printInfo(final, "F");
+        std::cout << "🧪 [before scope ends] ref count = "
                   << Cudd_CheckZeroRef(manager.getManager()) << std::endl;
     }
 
-    // 现在所有 BddNodeRef 已析构，引用数应该为 0
-    std::cout << "✅ [After destruction] CUDD ref count: "
+    std::cout << "✅ [after internal refs released] ref count = "
               << Cudd_CheckZeroRef(manager.getManager()) << std::endl;
 
     return 0;
