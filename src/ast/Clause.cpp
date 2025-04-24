@@ -67,6 +67,7 @@ void Clause::addToBody(Own<Literal> literal) {
     } else if (isA<ast::Negation>(literal)) {
         atom = as<ast::Negation>(literal)->getAtom();
     } else {
+        bodyLiterals.push_back(std::move(literal));
         return;
     }
     for (const auto* arg : atom->getArguments()) {
