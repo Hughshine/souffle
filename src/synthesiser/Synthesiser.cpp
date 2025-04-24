@@ -401,7 +401,8 @@ void Synthesiser::emitRules (std::ostream& out) {
         << ", {" << join(atomNames, ", ") << "}, "
         << "{" << join(map(clause->getVariables(),
             [](const std::string& s) { return "\"" + s + "\"";}), ", ") << "}, "
-        << std::to_string(clause->getProbability()) << ");" << std::endl;
+        << std::to_string(clause->getProbability())
+        << ");" << std::endl;
     }
     out << "RuleManager ruleManager = RuleManager({" << join(ruleNames, ", ") << "});" << std::endl;
     // out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
@@ -410,6 +411,10 @@ void Synthesiser::emitRules (std::ostream& out) {
 
 void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
+    out << "graph->dumpStatistics(std::cout);\n";
+    out << "graph->dumpDot(\"before_prune.dot\");\n" << std::endl;
+    out << "graph->prune(obj.getOutputRelations());\n" << std::endl;
+    out << "graph->dumpDot(\"after_prune.dot\");\n" << std::endl;
     out << "graph->dumpStatistics(std::cout);\n";
     if (glb.config().has("verbose")) {
         out << "graph->dumpDot(\"derivation_graph.dot\");\n";
@@ -420,6 +425,7 @@ void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "{\n" << std::endl;
     out << "FunctionTimer timer(\" building formulas \");\n";
     out << "buildFormulas(*graph, bddManager, nodeFormulas, edgeFormulas);\n";
+
     out << "}" << std::endl;
     out << "{" << std::endl;
     out << "FunctionTimer timer(\" wmc and output probability \");\n";

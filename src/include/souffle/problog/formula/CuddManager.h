@@ -29,13 +29,13 @@ public:
 
     // Constructor with Node
     BddNodeRef(std::shared_ptr<DdManager> m, DdNode* n, const Node& node)
-        : manager(m), ddNode(n), node(node) {
+        : manager(m), ddNode(n), node(&node) {
         if (ddNode) Cudd_Ref(ddNode);
     }
 
     // Constructor with Hyperedge
     BddNodeRef(std::shared_ptr<DdManager> m, DdNode* n, const Hyperedge& edge)
-        : manager(m), ddNode(n), edge(edge) {
+        : manager(m), ddNode(n), edge(&edge) {
         if (ddNode) Cudd_Ref(ddNode);
     }
 
@@ -109,8 +109,8 @@ public:
 private:
     std::shared_ptr<DdManager> manager;  // Shared ownership of manager
     DdNode* ddNode;
-    std::optional<Node> node;
-    std::optional<Hyperedge> edge;
+    std::optional<const Node*> node;
+    std::optional<const Hyperedge*> edge;
 };
 
 struct VariableWeight {
@@ -355,9 +355,9 @@ std::string WeightedBDDManager::getVariableName(int varIndex) {
         const BddNodeRef& ref = it->second;
         // Direct access to private members thanks to friendship
         if (ref.node.has_value()) {
-            return ref.node.value().toString();
+            return ref.node.value()->toString();
         } else if (ref.edge.has_value()) {
-            return ref.edge.value().toString();
+            return ref.edge.value()->toString();
         }
     }
     // Fallback to default naming

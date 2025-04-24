@@ -9,10 +9,12 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_set>
+#include <queue>
 #include "souffle/Derivation.h"
 #include "souffle/problog/Rule.h"
 #include "souffle/problog/RuleManager.h"
 #include "souffle/RamTypes.h"
+#include "souffle/SouffleInterface.h"
 
 // example rule application sets
 // rule 1: path(x,y) :- edge(x,y).
@@ -94,10 +96,10 @@ public:
     }
 
 private:
-    Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId)
-        : inputs(inputs), output(output), id(edgeId), rule(nullptr) {}
-    Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, const Rule* rule, std::vector<bool>& bodyNegations)
-        : inputs(inputs), output(output), id(edgeId), rule(rule) {
+    Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, RuleApplication ruleApp)
+        : inputs(inputs), output(output), id(edgeId), rule(nullptr), ruleApp(ruleApp) {}
+    Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, const Rule* rule, std::vector<bool>& bodyNegations, RuleApplication ruleApp)
+        : inputs(inputs), output(output), id(edgeId), rule(rule), ruleApp(ruleApp) {
         if (rule) {
             probability = rule->getProbability();
         }
@@ -115,6 +117,7 @@ private:
     size_t id;
     double probability;
     const Rule* rule;
+    const RuleApplication ruleApp;
 };
 
 class DerivationGraph {
@@ -171,7 +174,7 @@ public:
             bodyNegations.push_back(bodyAtom.isNegatedAtom());
         }
 
-        auto newEdge = createHyperedge(bodyNodes, headNode, rule, bodyNegations);
+        auto newEdge = createHyperedge(bodyNodes, headNode, rule, bodyNegations, ruleApp);
 
         // 将新边添加到映射中
         std::string key = createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure);
@@ -222,6 +225,72 @@ public:
         }
         return graph;
     }
+
+    void prune(const std::vector<souffle::Relation*>& outputRelations) {
+        std::unordered_set<std::string> outputRelationNames;
+        for (const auto* rel : outputRelations) {
+            outputRelationNames.insert(rel->getName());
+            std::cout << "Output relation: " << rel->getName() << std::endl;
+        }
+
+        // 标记可达的节点和边
+        std::unordered_set<NodePtr> reachableNodes;
+        std::unordered_set<EdgePtr> reachableEdges;
+        std::queue<NodePtr> workQueue;
+
+        // 初始化：从所有输出 relation 的节点出发
+        for (const auto& node : nodes) {
+            if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
+                std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
+                reachableNodes.insert(node);
+                workQueue.push(node);
+            }
+        }
+
+        // 反向 BFS 遍历
+        while (!workQueue.empty()) {
+            NodePtr current = workQueue.front();
+            workQueue.pop();
+
+            for (const auto& edge : current->getIncomingEdges()) {
+                reachableEdges.insert(edge);
+                for (const auto& inputNode : edge->getInputs()) {
+                    if (reachableNodes.insert(inputNode).second) {
+                        workQueue.push(inputNode);
+                    }
+                }
+            }
+        }
+
+        // 过滤节点和边
+        std::vector<NodePtr> newNodes;
+        for (const auto& node : nodes) {
+            if (reachableNodes.count(node)) {
+                newNodes.push_back(node);
+            } else {
+                tupleToNodeMap.erase(node->getTuple());
+            }
+        }
+
+        std::vector<EdgePtr> newEdges;
+        for (const auto& edge : edges) {
+            if (reachableEdges.count(edge)) {
+                newEdges.push_back(edge);
+            } else {
+                // 同时从映射中删除这条边
+                if (edge->getRule()) {
+                    std::string key = createEdgeKey(edge->getRule()->getRuleId(),
+                                                    edge->getRule()->getVars(),
+                                                    edge->ruleApp.varValuesPure);
+                    edgeKeyToEdgeMap.erase(key);
+                }
+            }
+        }
+
+        nodes = std::move(newNodes);
+        edges = std::move(newEdges);
+    }
+
 
     void dumpDot(const std::string& filename) const {
         std::ofstream out(filename);
@@ -319,8 +388,8 @@ protected:
     }
 
     // this one does not check if the edge already exists
-    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, const Rule* rule, std::vector<bool>& bodyNegations) {
-        auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, rule, bodyNegations));
+    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, const Rule* rule, std::vector<bool>& bodyNegations, RuleApplication ruleApp = naiveRuleApplication) {
+        auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, rule, bodyNegations, ruleApp));
 
         for (const auto& input : inputs) {
             input->addOutgoingEdge(edge);
@@ -332,8 +401,8 @@ protected:
     }
 
     // Just for test; this one does not check if the edge already exists
-    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output) {
-        auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++));
+    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, RuleApplication ruleApp = naiveRuleApplication) {
+        auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, ruleApp));
 
         for (const auto& input : inputs) {
             input->addOutgoingEdge(edge);
