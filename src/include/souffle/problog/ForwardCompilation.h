@@ -27,15 +27,16 @@ void buildFormulas(
     std::map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
     for (const auto& node : graph.getNodes()) {
         // Create a variable using the node's unique ID
-        if (node->getIncomingEdges().empty()) {
-            if (node->getProbability() == 1.0) {
-                nodeFormulas[node] = formulaManager.getTrue();
-            } else {
-                nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
-            }
-            baseNodeFormulas.insert({node, nodeFormulas[node]});
+        std::cout << "Creating Node " << node->getId() << " " << node->toString() << std::endl;
+        if (node->isFact && node->getProbability() == 1.0) {
+            nodeFormulas[node] = formulaManager.getTrue();
+        } else {
+            nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
+        }
+        baseNodeFormulas.insert({node, nodeFormulas[node]});
 //            std::cout << "Setting weight for node " << node->getId() << " with probability " << node->getProbability() << std::endl;
-            formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1-node->getProbability());
+        if (node->isFact) {
+            formulaManager.setVariableWeight(node->getId(), 1.0, 0.0);
         }
     }
 //    std::cout << "Weight set for nodes" << std::endl;
@@ -76,10 +77,10 @@ void buildFormulas(
         auto edge = worklist.front();
         worklist.pop();
         inWorklist.erase(edge);
-
+//        std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
         // Store the old edge formula to check if it changes
         FormulaNodeRef oldEdgeFormula = edgeFormulas[edge];
-
+//        std::cout << "Old edge formula: " << formulaManager.toString(oldEdgeFormula) << std::endl;
         // Compute new formula for the edge (conjunction of input node formulas and rule formula)
         std::vector<FormulaNodeRef> inputFormulas;
         // Add the rule formula (the edge's base formula)
@@ -99,7 +100,9 @@ void buildFormulas(
                 }
             } else {
                 // Input node formula not available yet, skip this edge for now
+                // cannot skip, since there is cycle
                 allInputsAvailable = false;
+//                std::cout << "Input node formula not available yet: " << input->getTuple().toString() << std::endl;
                 break;
             }
         }
@@ -176,12 +179,12 @@ void buildFormulas(
                 // Update the node formula
                 nodeFormulas[output] = newNodeFormula;
 //                std::cout << "Node" << output->getId() << " " << output->getTuple().toString() << " changed.\n";
-//                std::cout << "Old formula: " << formulaManager.toString(oldNodeFormula) << std::endl;
+//                std::cout << "Node Old formula: " << formulaManager.toString(oldNodeFormula) << std::endl;
 //                for (const auto& inEdge : output->getIncomingEdges()) {
 //                    std::cout << "Incoming edge formula: " << formulaManager.toString(edgeFormulas[inEdge]) << std::endl;
 //                }
 //
-//                std::cout << "New formula: " << formulaManager.toString(newNodeFormula) << std::endl;
+//                std::cout << "Node New formula: " << formulaManager.toString(newNodeFormula) << std::endl;
 //                auto prob = formulaManager.computeWeightedModelCount(newNodeFormula);
 //                std::cout << "Probability: " << prob << std::endl;
                 // Add outgoing edges to the worklist

@@ -29,24 +29,22 @@
 .input BV_SAME_REC
 .input KEY_SENSITIVE
 .output KEY_SENSITIVE
-.input KEY_IND
-.output KEY_IND
 .input RAND
 
-//0.972259::HD_SENSITIVE(to_e, from1_e) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), equal_assign(to, to_e), (share(to_e, from1_e); share(from1_e, to_e)), equal_assign(from1, from1_e), KEY_SENSITIVE(from2)).
-//		  0.972259::HD_SENSITIVE(to_e, from2_e) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), equal_assign(to, to_e), (share(to_e, from2_e); share(from2_e, to_e)), equal_assign(from2, from2_e), KEY_SENSITIVE(from1)).
-//					0.961209::HD_SENSITIVE_2(to, from2) :- (load_assign(from1, _), store_assign(to, from1), (HD_SENSITIVE(to, from2); HD_SENSITIVE(from2, to))).
-//							  0.914107::KEY_IND(from2) :- (KEY_IND(from1), assign(from2, from1)).
-KEY_IND(to) :- (andor_assign_left(to, from1), andor_assign_right(to, from2), RAND(from1), RAND(from2), ((BV_DIFF_REC(from1, from2, int_res0), !((int_res0 = 0))); (BV_DIFF_REC(from2, from1, int_res1), ((int_res1 != 0))))).
-//KEY_IND(to) :- (andor_assign_left(to, from1), andor_assign_right(to, from2), RAND(from1), RAND(from2), ((BV_DIFF_REC(from1, from2, int_res0), (int_res0 = 0)), (BV_DIFF_REC(from2, from1, int_res1), (int_res1 = 0))), BV_SAME_REC(from1, from2, int_res0), (int_res0 = 0)).
-//KEY_IND(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), ((RAND(from1), BV_DIFF_REC(from1, from2, int_res0), (int_res0 = 0)), (RAND(from2), BV_DIFF_REC(from2, from1, int_res1), (int_res1 = 0))), BV_SAME_REC(from1, from2, int_res0), (int_res0 = 0)).
-//0.810044::KEY_SENSITIVE(from2) :- (KEY_SENSITIVE(from1), assign(from2, from1)).
-//		  0.811857::KEY_SENSITIVE(to) :- (andor_assign_left(to, from1), andor_assign_right(to, from2), (KEY_SENSITIVE(from1); KEY_SENSITIVE(from2))).
-//KEY_SENSITIVE(to) :- (andor_assign_left(to, from1), andor_assign_right(to, from2), RAND(from1), RAND(from2), ((BV_DIFF_REC(from1, from2, int_res0), (int_res0 = 0)), (BV_DIFF_REC(from2, from1, int_res1), (int_res1 = 0))), BV_SAME_REC(from1, from2, int_res0), !((int_res0 = 0))).
-//0.929904::KEY_SENSITIVE(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), ((KEY_IND(from1), KEY_SENSITIVE(from2)); (KEY_IND(from2), KEY_SENSITIVE(from1)))).
-//KEY_SENSITIVE(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), ((RAND(from1), BV_DIFF_REC(from1, from2, int_res0), (int_res0 = 0)), (RAND(from2), BV_DIFF_REC(from2, from1, int_res1), (int_res1 = 0))), BV_SAME_REC(from1, from2, int_res0), !((int_res0 = 0))).
-//0.8552::KEY_SENSITIVE(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), KEY_SENSITIVE(from1), KEY_SENSITIVE(from2)).
-//		0.811386::RAND(from2) :- (RAND(from1), assign(from2, from1)).
-//RAND(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), ((RAND(from1), BV_DIFF_REC(from1, from2, int_res0), !((int_res0 = 0))); (RAND(from2), BV_DIFF_REC(from2, from1, int_res1), !((int_res1 = 0))))).
-//0.870353::assign(from1, from2) :- load_assign(from1, from2).
-//		  0.995615::assign(from1, from2) :- store_assign(from1, from2).
+0.972259::HD_SENSITIVE(to_e, from1_e) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), equal_assign(to, to_e), (share(to_e, from1_e); share(from1_e, to_e)), equal_assign(from1, from1_e), KEY_SENSITIVE(from2)).
+		  0.972259::HD_SENSITIVE(to_e, from2_e) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), equal_assign(to, to_e), (share(to_e, from2_e); share(from2_e, to_e)), equal_assign(from2, from2_e), KEY_SENSITIVE(from1)).
+					0.961209::HD_SENSITIVE_2(to, from2) :- (load_assign(from1, _), store_assign(to, from1), (HD_SENSITIVE(to, from2); HD_SENSITIVE(from2, to))).
+							  0.914107::KEY_IND(from2) :- (KEY_IND(from1), assign(from2, from1)).
+KEY_IND(to) :- (andor_assign_left(to, from1), andor_assign_right(to, from2), RAND(from1), RAND(from2), ((BV_DIFF_REC(from1, from2, int_res0), !((int_res0 = 0))); (BV_DIFF_REC(from2, from1, int_res1), !((int_res1 = 0))))).
+KEY_IND(to) :- (andor_assign_left(to, from1), andor_assign_right(to, from2), RAND(from1), RAND(from2), ((BV_DIFF_REC(from1, from2, int_res0), (int_res0 = 0)), (BV_DIFF_REC(from2, from1, int_res1), (int_res1 = 0))), BV_SAME_REC(from1, from2, int_res0), (int_res0 = 0)).
+KEY_IND(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), ((RAND(from1), BV_DIFF_REC(from1, from2, int_res0), (int_res0 = 0)), (RAND(from2), BV_DIFF_REC(from2, from1, int_res1), (int_res1 = 0))), BV_SAME_REC(from1, from2, int_res0), (int_res0 = 0)).
+0.810044::KEY_SENSITIVE(from2) :- (KEY_SENSITIVE(from1), assign(from2, from1)).
+		  0.811857::KEY_SENSITIVE(to) :- (andor_assign_left(to, from1), andor_assign_right(to, from2), (KEY_SENSITIVE(from1); KEY_SENSITIVE(from2))).
+KEY_SENSITIVE(to) :- (andor_assign_left(to, from1), andor_assign_right(to, from2), RAND(from1), RAND(from2), ((BV_DIFF_REC(from1, from2, int_res0), (int_res0 = 0)), (BV_DIFF_REC(from2, from1, int_res1), (int_res1 = 0))), BV_SAME_REC(from1, from2, int_res0), !((int_res0 = 0))).
+0.929904::KEY_SENSITIVE(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), ((KEY_IND(from1), KEY_SENSITIVE(from2)); (KEY_IND(from2), KEY_SENSITIVE(from1)))).
+KEY_SENSITIVE(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), ((RAND(from1), BV_DIFF_REC(from1, from2, int_res0), (int_res0 = 0)), (RAND(from2), BV_DIFF_REC(from2, from1, int_res1), (int_res1 = 0))), BV_SAME_REC(from1, from2, int_res0), !((int_res0 = 0))).
+0.8552::KEY_SENSITIVE(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), KEY_SENSITIVE(from1), KEY_SENSITIVE(from2)).
+		0.811386::RAND(from2) :- (RAND(from1), assign(from2, from1)).
+RAND(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), ((RAND(from1), BV_DIFF_REC(from1, from2, int_res0), !((int_res0 = 0))); (RAND(from2), BV_DIFF_REC(from2, from1, int_res1), !((int_res1 = 0))))).
+0.870353::assign(from1, from2) :- load_assign(from1, from2).
+		  0.995615::assign(from1, from2) :- store_assign(from1, from2).

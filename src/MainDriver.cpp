@@ -459,27 +459,27 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
     // Equivalence pipeline
     auto equivalencePipeline =
             mk<ast::transform::PipelineTransformer>(mk<ast::transform::NameUnnamedVariablesTransformer>(),
-                    // mk<ast::transform::FixpointTransformer>(mk<ast::transform::MinimiseProgramTransformer>()),
+                    mk<ast::transform::FixpointTransformer>(mk<ast::transform::MinimiseProgramTransformer>()),
                     // mk<ast::transform::ReplaceSingletonVariablesTransformer>(),
-                    // mk<ast::transform::RemoveRelationCopiesTransformer>(),
+                    mk<ast::transform::RemoveRelationCopiesTransformer>(),
                     mk<ast::transform::RemoveEmptyRelationsTransformer>()
                     ,mk<ast::transform::RemoveRedundantRelationsTransformer>()
                     );
 
     // Magic-Set pipeline
-    // auto magicPipeline = mk<ast::transform::PipelineTransformer>(
-    //         mk<ast::transform::ConditionalTransformer>(
-    //                 glb.config().has("magic-transform"), mk<ast::transform::ExpandEqrelsTransformer>()),
-    //         mk<ast::transform::MagicSetTransformer>(), mk<ast::transform::ResolveAliasesTransformer>(),
-    //         // mk<ast::transform::RemoveRelationCopiesTransformer>(),
-    //         mk<ast::transform::RemoveEmptyRelationsTransformer>(),
-    //         mk<ast::transform::RemoveRedundantRelationsTransformer>(), clone(equivalencePipeline));
+    auto magicPipeline = mk<ast::transform::PipelineTransformer>(
+            mk<ast::transform::ConditionalTransformer>(
+                    glb.config().has("magic-transform"), mk<ast::transform::ExpandEqrelsTransformer>()),
+            mk<ast::transform::MagicSetTransformer>(), mk<ast::transform::ResolveAliasesTransformer>(),
+            mk<ast::transform::RemoveRelationCopiesTransformer>(),
+            mk<ast::transform::RemoveEmptyRelationsTransformer>(),
+            mk<ast::transform::RemoveRedundantRelationsTransformer>(), clone(equivalencePipeline));
     //
     // // Partitioning pipeline
     // auto partitionPipeline =
     //         mk<ast::transform::PipelineTransformer>(mk<ast::transform::NameUnnamedVariablesTransformer>(),
     //                 mk<ast::transform::PartitionBodyLiteralsTransformer>()
-    //                 // ,  mk<ast::transform::ReplaceSingletonVariablesTransformer>()
+    //                 ,  mk<ast::transform::ReplaceSingletonVariablesTransformer>()
     //                 );
     //
     // // Provenance pipeline
@@ -509,24 +509,25 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
             mk<ast::transform::ResolveAliasesTransformer>(),
             mk<ast::transform::RemoveBooleanConstraintsTransformer>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
-            // mk<ast::transform::MinimiseProgramTransformer>(),
+            mk<ast::transform::MinimiseProgramTransformer>(),
             // mk<ast::transform::InlineUnmarkExcludedTransform>(),
-            // mk<ast::transform::InlineRelationsTransformer>(),
+            mk<ast::transform::InlineRelationsTransformer>(),
             mk<ast::transform::GroundedTermsChecker>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
             mk<ast::transform::SimplifyConstantBinaryConstraintsTransformer>(),
             mk<ast::transform::RemoveBooleanConstraintsTransformer>(),
-            // mk<ast::transform::RemoveRedundantRelationsTransformer>(),
-            // mk<ast::transform::RemoveRelationCopiesTransformer>(),
+            mk<ast::transform::RemoveRedundantRelationsTransformer>(),
+            mk<ast::transform::RemoveRelationCopiesTransformer>(),
             mk<ast::transform::RemoveEmptyRelationsTransformer>(),
             // mk<ast::transform::ReplaceSingletonVariablesTransformer>(),
-            // mk<ast::transform::FixpointTransformer>(mk<ast::transform::PipelineTransformer>(
-            //         mk<ast::transform::ReduceExistentialsTransformer>(),
-            //         mk<ast::transform::RemoveRedundantRelationsTransformer>())),
-            // mk<ast::transform::RemoveRelationCopiesTransformer>(), std::move(partitionPipeline),
+            mk<ast::transform::FixpointTransformer>(mk<ast::transform::PipelineTransformer>(
+                    mk<ast::transform::ReduceExistentialsTransformer>(),
+                    mk<ast::transform::RemoveRedundantRelationsTransformer>())),
+            mk<ast::transform::RemoveRelationCopiesTransformer>(),
+            // std::move(partitionPipeline),
             std::move(equivalencePipeline),
-            // mk<ast::transform::RemoveRelationCopiesTransformer>(),
-            // std::move(magicPipeline), mk<ast::transform::RemoveEmptyRelationsTransformer>(),
+            mk<ast::transform::RemoveRelationCopiesTransformer>(),
+            std::move(magicPipeline), mk<ast::transform::RemoveEmptyRelationsTransformer>(),
             // mk<ast::transform::AddNullariesToAtomlessAggregatesTransformer>(),
             // mk<ast::transform::ExecutionPlanChecker>(), // std::move(provenancePipeline),
             mk<ast::transform::IOAttributesTransformer>());

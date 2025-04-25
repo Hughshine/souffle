@@ -50,6 +50,8 @@ public:
 //        ss << "Node(" << tuple.toString() << ")";
 //        return ss.str();
     }
+    bool isFact = false;
+
 private:
     explicit Node(const UntypedTuple& t, size_t nodeId, double prob = 1.0)
         : tuple(t), id(nodeId), probability(prob) {}
@@ -222,6 +224,7 @@ public:
         for (const auto& [tuple, prob] : fact_prob) {
             auto node = graph->createNode(tuple);  // actually "find node" here
             node->probability = prob;
+            node->isFact = true;
         }
         return graph;
     }
