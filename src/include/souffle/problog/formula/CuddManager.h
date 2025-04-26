@@ -293,6 +293,13 @@ void WeightedBDDManager::setVariableWeight(int varIndex, double posWeight, doubl
 
 double WeightedBDDManager::computeWeightedModelCount(const BddNodeRef& node) {
 //    std::cout << "wmc..." << std::endl;
+//    static int count = 0;
+//    if (count++ == 0) {
+//        for (auto& [index, weight] : weights) {
+//            std::cout << "Variable " << index << ": posWeight = " << weight.posWeight
+//                      << ", negWeight = " << weight.negWeight << std::endl;
+//        }
+//    }
     std::unordered_map<DdNode*, double> cache;
     return recursiveWeightedModelCount(node.get(), cache);
 }

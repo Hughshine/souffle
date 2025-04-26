@@ -27,17 +27,18 @@ void buildFormulas(
     std::map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
     for (const auto& node : graph.getNodes()) {
         // Create a variable using the node's unique ID
-        std::cout << "Creating Node " << node->getId() << " " << node->toString() << std::endl;
-        if (node->isFact && node->getProbability() == 1.0) {
-            nodeFormulas[node] = formulaManager.getTrue();
-        } else {
-            nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
-        }
-        baseNodeFormulas.insert({node, nodeFormulas[node]});
-//            std::cout << "Setting weight for node " << node->getId() << " with probability " << node->getProbability() << std::endl;
         if (node->isFact) {
-            formulaManager.setVariableWeight(node->getId(), 1.0, 0.0);
+            std::cout << "Creating Fact Node " << node->getId() << " " << node->toString() << std::endl;
+            if (node->getProbability() == 1.0) {
+                nodeFormulas[node] = formulaManager.getTrue();
+            } else {
+                nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
+            }
+            baseNodeFormulas.insert({node, nodeFormulas[node]});
+            formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1-node->getProbability());
+            std::cout << "Setting weight for node " << node->toString() << " with probability " << node->getProbability() << std::endl;
         }
+//            std::cout << "Setting weight for node " << node->getId() << " with probability " << node->getProbability() << std::endl;
     }
 //    std::cout << "Weight set for nodes" << std::endl;
 
@@ -77,7 +78,7 @@ void buildFormulas(
         auto edge = worklist.front();
         worklist.pop();
         inWorklist.erase(edge);
-//        std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
+        std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
         // Store the old edge formula to check if it changes
         FormulaNodeRef oldEdgeFormula = edgeFormulas[edge];
 //        std::cout << "Old edge formula: " << formulaManager.toString(oldEdgeFormula) << std::endl;
@@ -134,6 +135,10 @@ void buildFormulas(
 
             // Update the output node formula
             auto output = edge->getOutput();
+//            if (output->isFact) {
+//                // Skip fact nodes
+//                continue;
+//            }
 
             // Store the old node formula to check if it changes
             FormulaNodeRef oldNodeFormula;
@@ -198,6 +203,9 @@ void buildFormulas(
 
         }
     }
+//    for (auto& [node, formula] : nodeFormulas) {
+//        std::cout << "Node " << node->getId() << " " << node->toString() << " formula: " << formulaManager.toString(formula) << std::endl;
+//    }
     std::cout << "Successfully build formulas" << std::endl;
 }
 

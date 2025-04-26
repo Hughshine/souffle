@@ -254,7 +254,9 @@ public:
         while (!workQueue.empty()) {
             NodePtr current = workQueue.front();
             workQueue.pop();
-
+            if (current->isFact) {
+                continue;  // if fact node has derivations, it seems correlation, currently we just omit these.
+            }
             for (const auto& edge : current->getIncomingEdges()) {
                 reachableEdges.insert(edge);
                 for (const auto& inputNode : edge->getInputs()) {
@@ -457,6 +459,7 @@ public:
         for (const auto& [tuple, prob] : fact_prob) {
             auto node = graph->createNode(tuple);  // actually "find node" here
             node->setProbability(prob);
+            node->isFact = true;
         }
         return graph;
     }
