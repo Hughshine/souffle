@@ -215,16 +215,20 @@ public:
         FunctionTimer timer(" creating derivation graph ");
 
         auto graph = new DerivationGraph(&ruleManager);
-        for (const auto& [tuple, ruleAppSet] : ruleApps) {
-            auto node = graph->createNode(tuple);
-            for (const auto& ruleApp : *ruleAppSet) {
-				auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
-            }
-        }
         for (const auto& [tuple, prob] : fact_prob) {
             auto node = graph->createNode(tuple);  // actually "find node" here
             node->probability = prob;
             node->isFact = true;
+        }
+        for (const auto& [tuple, ruleAppSet] : ruleApps) {
+            auto node = graph->createNode(tuple);
+            if (node->isFact) {
+                std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
+                continue;  // skip fact nodes currently
+            }
+            for (const auto& ruleApp : *ruleAppSet) {
+				auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
+            }
         }
         return graph;
     }
@@ -254,9 +258,15 @@ public:
         while (!workQueue.empty()) {
             NodePtr current = workQueue.front();
             workQueue.pop();
-            if (current->isFact) {
-                continue;  // if fact node has derivations, it seems correlation, currently we just omit these.
-            }
+//            if (current->isFact) {
+//                for (auto edge: current->incomingEdges) {
+//                    for (auto inputNode: edge->getInputs()) {
+//                        inputNode->incomingEdges.erase(edge);
+//                    }
+//                }
+//                current->incomingEdges.clear();  // if fact node has derivations, it seems correlation, currently we just omit these.
+//                continue;
+//            }
             for (const auto& edge : current->getIncomingEdges()) {
                 reachableEdges.insert(edge);
                 for (const auto& inputNode : edge->getInputs()) {
@@ -450,17 +460,22 @@ public:
         FunctionTimer timer(" creating derivation graph ");
 
         auto graph = new IncrementalDerivationGraph(&ruleManager);
-        for (const auto& [tuple, ruleAppSet] : ruleApps) {
-            auto node = graph->createNode(tuple);
-            for (const auto& ruleApp : *ruleAppSet) {
-                auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
-            }
-        }
         for (const auto& [tuple, prob] : fact_prob) {
             auto node = graph->createNode(tuple);  // actually "find node" here
             node->setProbability(prob);
             node->isFact = true;
         }
+        for (const auto& [tuple, ruleAppSet] : ruleApps) {
+            auto node = graph->createNode(tuple);
+            if (node->isFact) {
+                std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
+                continue;  // skip fact nodes currently
+            }
+            for (const auto& ruleApp : *ruleAppSet) {
+                auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
+            }
+        }
+
         return graph;
     }
 
