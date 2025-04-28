@@ -302,6 +302,24 @@ public:
             }
         }
 
+        // TODO: update nodes incoming and outgoing edges
+        for (const auto& node : newNodes) {
+            std::vector<EdgePtr> newIncomingEdges;
+            std::vector<EdgePtr> newOutgoingEdges;
+            for (const auto& edge : node->getIncomingEdges()) {
+                if (reachableEdges.count(edge)) {
+                    newIncomingEdges.push_back(edge);
+                }
+            }
+            for (const auto& edge : node->getOutgoingEdges()) {
+                if (reachableEdges.count(edge)) {
+                    newOutgoingEdges.push_back(edge);
+                }
+            }
+            node->incomingEdges = std::move(newIncomingEdges);
+            node->outgoingEdges = std::move(newOutgoingEdges);
+        }
+
         nodes = std::move(newNodes);
         edges = std::move(newEdges);
     }
