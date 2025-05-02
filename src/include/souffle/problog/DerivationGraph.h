@@ -88,7 +88,7 @@ public:
     // inputs to outputs
         std::stringstream ss;
         ss << "Hyperedge(" << id << ")[";
-        ss << "rule" << rule->getRuleId() << ",";
+        ss << "rule" << ((rule)?rule->getRuleId():-1) << ",";
         for (const auto& input : inputs) {
             ss << input->getTuple().toString();
         }
@@ -383,6 +383,32 @@ public:
         ruleManager = rm;
     }
 
+    // this one does not check if the edge already exists
+    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, const Rule* rule, std::vector<bool>& bodyNegations, RuleApplication ruleApp = naiveRuleApplication) {
+        auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, rule, bodyNegations, ruleApp));
+
+        for (const auto& input : inputs) {
+            input->addOutgoingEdge(edge);
+        }
+        output->addIncomingEdge(edge);
+
+        edges.push_back(edge);
+        return edge;
+    }
+
+    // Just for test; this one does not check if the edge already exists
+    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, RuleApplication ruleApp = naiveRuleApplication) {
+        auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, ruleApp));
+
+        for (const auto& input : inputs) {
+            input->addOutgoingEdge(edge);
+        }
+        output->addIncomingEdge(edge);
+
+        edges.push_back(edge);
+        return edge;
+    }
+
 protected:
     std::vector<NodePtr> nodes;
     std::vector<EdgePtr> edges;
@@ -420,31 +446,7 @@ protected:
         return ss.str();
     }
 
-    // this one does not check if the edge already exists
-    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, const Rule* rule, std::vector<bool>& bodyNegations, RuleApplication ruleApp = naiveRuleApplication) {
-        auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, rule, bodyNegations, ruleApp));
 
-        for (const auto& input : inputs) {
-            input->addOutgoingEdge(edge);
-        }
-        output->addIncomingEdge(edge);
-
-        edges.push_back(edge);
-        return edge;
-    }
-
-    // Just for test; this one does not check if the edge already exists
-    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, RuleApplication ruleApp = naiveRuleApplication) {
-        auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, ruleApp));
-
-        for (const auto& input : inputs) {
-            input->addOutgoingEdge(edge);
-        }
-        output->addIncomingEdge(edge);
-
-        edges.push_back(edge);
-        return edge;
-    }
 };
 
 void Node::addIncomingEdge(EdgePtr edge) {
@@ -594,6 +596,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
     const RuleManager& ruleManager,
     const std::vector<UntypedTuple>& deletedFacts
 ) {
+    // TODO: should delete corresponding inserting and deleting edges
     if (deltaDeleteRuleApps.empty() && deletedFacts.empty()) {
         return;
     }
@@ -906,4 +909,175 @@ void dumpProbabilities(
     }
 
 }
+
+void computeSCCOrderedCyclesWithDepth(
+    const DerivationGraph& graph,
+    std::vector<std::unordered_set<NodePtr>>& nodeCycles,
+    std::vector<std::unordered_set<EdgePtr>>& edgeCycles,
+    std::unordered_map<NodePtr, size_t>& nodeToCycleIndex,
+    std::unordered_map<EdgePtr, size_t>& edgeToCycleIndex,
+    std::unordered_map<NodePtr, size_t>& nodeDepths,
+    std::unordered_map<EdgePtr, size_t>& edgeDepths
+) {
+    FunctionTimer timer("Computing SCC Ordered Cycles with Depth");
+    const auto& nodes = graph.getNodes();
+    size_t index = 0, currentSCC = 0;
+    std::unordered_map<NodePtr, size_t> indices, lowlinks;
+    std::stack<NodePtr> stack;
+    std::unordered_set<NodePtr> onStack;
+    std::vector<std::unordered_set<NodePtr>> rawNodeCycles;
+    std::unordered_map<NodePtr, size_t> rawNodeToCycle;
+
+    std::function<void(NodePtr)> strongconnect = [&](NodePtr v) {
+        indices[v] = lowlinks[v] = index++;
+        stack.push(v);
+        onStack.insert(v);
+
+        for (const auto& edge : v->getOutgoingEdges()) {
+            NodePtr w = edge->getOutput();
+            if (indices.find(w) == indices.end()) {
+                strongconnect(w);
+                lowlinks[v] = std::min(lowlinks[v], lowlinks[w]);
+            } else if (onStack.count(w)) {
+                lowlinks[v] = std::min(lowlinks[v], indices[w]);
+            }
+        }
+
+        if (lowlinks[v] == indices[v]) {
+            std::unordered_set<NodePtr> scc;
+            NodePtr w;
+            do {
+                w = stack.top(); stack.pop();
+                onStack.erase(w);
+                scc.insert(w);
+                rawNodeToCycle[w] = currentSCC;
+            } while (w != v);
+            rawNodeCycles.push_back(std::move(scc));
+            ++currentSCC;
+        }
+    };
+
+    for (const auto& node : nodes) {
+        if (indices.find(node) == indices.end()) {
+            strongconnect(node);
+        }
+    }
+
+    // Build dependency graph of SCCs (revised: use all inputs of each edge)
+    std::vector<std::unordered_set<size_t>> sccGraph(currentSCC);
+    std::vector<size_t> indegree(currentSCC, 0);
+    for (const auto& edge : graph.getEdges()) {
+        size_t outCycle = rawNodeToCycle[edge->getOutput()];
+        for (const auto& input : edge->getInputs()) {
+            size_t inCycle = rawNodeToCycle[input];
+            if (inCycle != outCycle && !sccGraph[inCycle].count(outCycle)) {
+                sccGraph[inCycle].insert(outCycle);
+                indegree[outCycle]++;
+            }
+        }
+    }
+
+    // Kahn's algorithm for topological sort
+    std::queue<size_t> q;
+    for (size_t i = 0; i < indegree.size(); ++i) {
+        if (indegree[i] == 0) q.push(i);
+    }
+    std::vector<size_t> topoOrder;
+    while (!q.empty()) {
+        size_t cid = q.front(); q.pop();
+        topoOrder.push_back(cid);
+        for (size_t succ : sccGraph[cid]) {
+            if (--indegree[succ] == 0) q.push(succ);
+        }
+    }
+
+    // Rebuild nodeCycles and edgeCycles with new topo order
+    nodeCycles.clear();
+    edgeCycles.clear();
+    nodeToCycleIndex.clear();
+    edgeToCycleIndex.clear();
+
+    std::unordered_map<size_t, size_t> oldToNewCycleId;
+    for (size_t newId = 0; newId < topoOrder.size(); ++newId) {
+        size_t oldId = topoOrder[newId];
+        oldToNewCycleId[oldId] = newId;
+        nodeCycles.push_back(rawNodeCycles[oldId]);
+        edgeCycles.emplace_back();
+        for (auto node : rawNodeCycles[oldId]) {
+            nodeToCycleIndex[node] = newId;
+        }
+    }
+    for (const auto& edge : graph.getEdges()) {
+        NodePtr out = edge->getOutput();
+        if (nodeToCycleIndex.count(out)) {
+            size_t cid = nodeToCycleIndex[out];
+            edgeCycles[cid].insert(edge);
+            edgeToCycleIndex[edge] = cid;
+        }
+    }
+
+    // Compute depth within each cycle
+    for (size_t cid = 0; cid < nodeCycles.size(); ++cid) {
+        const auto& cycleNodes = nodeCycles[cid];
+        const auto& cycleEdges = edgeCycles[cid];
+        std::queue<NodePtr> q;
+        for (auto node : cycleNodes) {
+            bool isEntry = false;
+            for (auto& inEdge : node->getIncomingEdges()) {
+                bool allOutOfCycle = true;
+                for (auto& inNode : inEdge->getInputs()) {
+                    if (nodeToCycleIndex[inNode] == cid) {
+                        allOutOfCycle = false;
+                        break;
+                    }
+                }
+                if (allOutOfCycle) {
+                    isEntry = true;
+                    break;
+                }
+            }
+            if (node->isFact || node->getIncomingEdges().empty()) isEntry = true;
+            if (isEntry) {
+                nodeDepths[node] = 0;
+                q.push(node);
+            }
+        }
+        while (!q.empty()) {
+            NodePtr curr = q.front(); q.pop();
+            size_t currDepth = nodeDepths[curr];
+            for (auto& outEdge : curr->getOutgoingEdges()) {
+                NodePtr out = outEdge->getOutput();
+                if (nodeToCycleIndex[out] != cid) continue;
+                if (!nodeDepths.count(out) || nodeDepths[out] > currDepth + 1) {
+                    nodeDepths[out] = currDepth + 1;
+                    q.push(out);
+                }
+            }
+        }
+        for (auto edge : cycleEdges) {
+            size_t d = 0;
+            for (auto in : edge->getInputs()) {
+                if (nodeToCycleIndex[in] == cid && nodeDepths.count(in)) {
+                    // Edge depth = max(input depth + 1), so inner-cycle edges start from 1, cross-cycle = 0
+                    d = std::max(d, nodeDepths[in] + 1);
+                }
+            }
+            edgeDepths[edge] = d;
+        }
+    }
+
+    std::cout << "Number of SCCs: " << nodeCycles.size() << "\n";
+    for (size_t i = 0; i < nodeCycles.size(); ++i) {
+        std::cout << "Cycle " << i << " nodes:\n";
+        for (auto n : nodeCycles[i]) {
+            std::cout << "  " << n->toString() << " (depth=" << nodeDepths[n] << ")\n";
+        }
+        std::cout << "Cycle " << i << " edges:\n";
+        for (auto e : edgeCycles[i]) {
+            std::cout << "  " << e->toString() << " (depth=" << edgeDepths[e] << ")\n";
+        }
+        std::cout << "----\n";
+    }
+}
+
 #endif //DERIVATIONGRAPH_H

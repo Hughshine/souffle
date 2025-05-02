@@ -9,6 +9,13 @@
 #include "souffle/problog/formula/LogicFormulaManager.h"
 #include <queue>
 #include "souffle/problog/formula/CuddManager.h"
+#include <queue>
+#include <set>
+#include <map>
+#include <vector>
+#include <unordered_map>
+#include <unordered_set>
+#include <algorithm>
 
 // Currently support CuddManager only; not optimized version
 // 1. no stratum-by-stratum and cycle-by-cycle processing
@@ -208,6 +215,133 @@ void buildFormulas(
 //    }
     std::cout << "Successfully build formulas" << std::endl;
 }
+
+struct PrioritizedEdge {
+    EdgePtr edge;
+    size_t priority;
+    bool operator<(const PrioritizedEdge& other) const {
+        return priority > other.priority; // lower depth = higher priority
+    }
+};
+
+template<typename FormulaNodeRef>
+void buildFormulasCyclewise(
+    const DerivationGraph& graph,
+    FormulaManager<FormulaNodeRef>& formulaManager,
+    std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
+    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
+) {
+    FunctionTimer timer("Build Formulas Cyclewise");
+
+    using namespace std;
+    vector<unordered_set<NodePtr>> nodeCycles;
+    vector<unordered_set<EdgePtr>> edgeCycles;
+    unordered_map<NodePtr, size_t> nodeToCycleIndex;
+    unordered_map<EdgePtr, size_t> edgeToCycleIndex;
+    unordered_map<NodePtr, size_t> nodeDepths;
+    unordered_map<EdgePtr, size_t> edgeDepths;
+
+    computeSCCOrderedCyclesWithDepth(graph, nodeCycles, edgeCycles, nodeToCycleIndex, edgeToCycleIndex, nodeDepths, edgeDepths);
+
+    map<NodePtr, FormulaNodeRef> baseNodeFormulas;
+    map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
+
+    for (const auto& node : graph.getNodes()) {
+        if (node->isFact) {
+            FormulaNodeRef var = (node->getProbability() == 1.0)
+                ? formulaManager.getTrue()
+                : formulaManager.createVar(node->getId(), *node);
+            formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1 - node->getProbability());
+            nodeFormulas[node] = var;
+            baseNodeFormulas[node] = var;
+        }
+    }
+
+    for (const auto& edge : graph.getEdges()) {
+        FormulaNodeRef f = edge->getRule()->isDeterminstic()
+            ? formulaManager.getTrue()
+            : formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
+        if (!edge->getRule()->isDeterminstic()) {
+            formulaManager.setVariableWeight(graph.getNodes().size() + edge->getId(), edge->getProbability(), 1 - edge->getProbability());
+        }
+        baseEdgeFormulas[edge] = f;
+    }
+
+    size_t iteration = 0;
+    for (size_t cid = 0; cid < edgeCycles.size(); ++cid) {
+        priority_queue<PrioritizedEdge> worklist;
+        set<EdgePtr> inWorklist;
+        for (const auto& edge : edgeCycles[cid]) {
+            worklist.push({edge, edgeDepths[edge]});
+            inWorklist.insert(edge);
+        }
+
+        while (!worklist.empty()) {
+            std::cout << "Cycle id: " << cid << std::endl;
+            std::cout << "Iteration: " << ++iteration << std::endl;
+            std::cout << "Worklist size: " << worklist.size() << std::endl;
+            formulaManager.dumpProfilingStatistics();
+
+            EdgePtr edge = worklist.top().edge;
+            worklist.pop();
+            inWorklist.erase(edge);
+            std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
+
+            vector<FormulaNodeRef> inputs = { baseEdgeFormulas[edge] };
+            bool allAvailable = true;
+            for (size_t i = 0; i < edge->getInputs().size(); ++i) {
+                auto input = edge->getInputs()[i];
+                auto it = nodeFormulas.find(input);
+                if (it == nodeFormulas.end()) {
+                    cout << "Input node formula not available yet: " << input->getTuple().toString() << endl;
+                    allAvailable = false;
+//                    break;
+//                    assert (false && "Input node formula not available yet; should not happen if priority queue is used");
+
+                    continue;
+                }
+                inputs.push_back(edge->getBodyNegations()[i] ? formulaManager.makeNot(it->second) : it->second);
+            }
+            if (!allAvailable) {
+                worklist.push({edge, edgeDepths[edge]});
+                inWorklist.insert(edge);
+                continue;
+            }
+            FormulaNodeRef newEdgeF = inputs.size() == 1 ? inputs[0] : formulaManager.makeAnd(inputs);
+            bool edgeChanged = !formulaManager.isSame(edgeFormulas[edge], newEdgeF);
+            if (edgeChanged) {
+                cout << "Edge " << edge->getId() << " changed.\n";
+                edgeFormulas[edge] = newEdgeF;
+                NodePtr out = edge->getOutput();
+                vector<FormulaNodeRef> inFs;
+                for (auto& inEdge : out->getIncomingEdges()) {
+                    if (edgeFormulas.count(inEdge) && edgeFormulas[inEdge].get()) {
+                        inFs.push_back(edgeFormulas[inEdge]);
+                    }
+                }
+                if (!inFs.empty()) {
+                    FormulaNodeRef newNodeF = inFs.size() == 1 ? inFs[0] : formulaManager.makeOr(inFs);
+                    bool nodeChanged = nodeFormulas.count(out) == 0 || !formulaManager.isSame(nodeFormulas[out], newNodeF);
+                    if (nodeChanged) {
+                        cout << "Node " << out->getId() << " changed.\n";
+                        nodeFormulas[out] = newNodeF;
+                        for (auto& outEdge : out->getOutgoingEdges()) {
+                            size_t targetCid = edgeToCycleIndex[outEdge];
+                            if (targetCid == cid && !inWorklist.count(outEdge)) {
+                                worklist.push({outEdge, edgeDepths[outEdge]});
+                                inWorklist.insert(outEdge);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    std::cout << "Successfully built formulas with cyclewise priority" << std::endl;
+}
+
+
 
 // TODO: formula上可以增加一个change标记？或者node/edge上，表示它的formula没有变过，于是避免重复wmc.
 // 不过目前的实现中有cache，所以其实就是优化了的. 先不管这件事.

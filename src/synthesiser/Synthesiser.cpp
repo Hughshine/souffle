@@ -424,7 +424,7 @@ void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "WeightedBDDManager bddManager;\n";
     out << "{\n" << std::endl;
     out << "FunctionTimer timer(\" building formulas \");\n";
-    out << "buildFormulas(*graph, bddManager, nodeFormulas, edgeFormulas);\n";
+    out << "buildFormulasCyclewise(*graph, bddManager, nodeFormulas, edgeFormulas);\n";
 
     out << "}" << std::endl;
     out << "{" << std::endl;
