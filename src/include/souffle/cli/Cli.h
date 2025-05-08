@@ -289,6 +289,13 @@ public:
             // Clear pending operations after commit
             pendingOperations.clear();
 
+        } else if (cmd == "dump") {
+            for (auto rel: this->program->getAllRelations()) {
+                std::cout << rel->getName() << std::endl;
+                for (auto ele: *rel) {
+                    std::cout << ele.toString() << std::endl;
+                }
+            }
         } else if (cmd == "exit" || cmd == "quit" || cmd == "q") {
             std::cout << "PARSED EXIT: Exiting CLI" << std::endl;
             return false;

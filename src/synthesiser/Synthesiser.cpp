@@ -415,7 +415,8 @@ void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "graph->dumpDot(\"before_prune.dot\");\n" << std::endl;
     out << "auto view = graph->prune(obj.getOutputRelations());\n" << std::endl;
     out << "view.dumpDot(\"after_prune.dot\");\n" << std::endl;
-    out << "view.dumpStatistics(std::cout);\n";
+    // out << "view.dumpStatistics(std::cout);\n";
+    out << "view.dumpStatisticsInc(std::cout);\n";
     // if (glb.config().has("verbose")) {
     //     out << "view->dumpDot(\"derivation_graph.dot\");\n";
     // }

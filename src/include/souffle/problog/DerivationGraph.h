@@ -52,6 +52,7 @@ public:
 //        return ss.str();
     }
     bool isFact = false;
+    bool pruned = false;
 
 private:
     explicit Node(const UntypedTuple& t, size_t nodeId, double prob = 1.0)
@@ -98,6 +99,7 @@ public:
         return ss.str();
     }
     RuleApplication getRuleApp() const { return ruleApp; }
+    bool pruned = false;
 private:
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, RuleApplication ruleApp)
         : inputs(inputs), output(output), id(edgeId), rule(nullptr), ruleApp(ruleApp) {}
@@ -197,7 +199,7 @@ public:
         out << "  Number of nodes: " << nodes_.size() << std::endl;
         out << "  Number of edges: " << edges_.size() << std::endl;
     }
-private:
+protected:
     std::unordered_set<NodePtr> nodes_;
     std::unordered_set<EdgePtr> edges_;
 };
@@ -249,14 +251,14 @@ public:
     virtual const std::set<EdgePtr>& getDeltaDeleteEdges() const = 0;
     void dumpDotInc(const std::string& filename) const;
     void dumpStatisticsInc(std::ostream& out) const {
-    out << "IncrementalDerivationGraph Statistics:" << std::endl;
-    out << "  Number of nodes: " << getNodes().size() << std::endl;
-    out << "  Number of edges: " << getEdges().size() << std::endl;
-    out << "  Number of delta insert nodes: " << getDeltaInsertNodes().size() << std::endl;
-    out << "  Number of delta insert edges: " << getDeltaInsertEdges().size() << std::endl;
-    out << "  Number of delta delete nodes: " << getDeltaDeleteNodes().size() << std::endl;
-    out << "  Number of delta delete edges: " << getDeltaDeleteEdges().size() << std::endl;
-}
+        out << "IncrementalDerivationGraph Statistics:" << std::endl;
+        out << "  Number of nodes: " << getNodes().size() << std::endl;
+        out << "  Number of edges: " << getEdges().size() << std::endl;
+        out << "  Number of delta insert nodes: " << getDeltaInsertNodes().size() << std::endl;
+        out << "  Number of delta insert edges: " << getDeltaInsertEdges().size() << std::endl;
+        out << "  Number of delta delete nodes: " << getDeltaDeleteNodes().size() << std::endl;
+        out << "  Number of delta delete edges: " << getDeltaDeleteEdges().size() << std::endl;
+    }
 };
 
 class IncSubgraphView : public SubgraphView, public virtual IncrementalDerivationGraphViewInterface {
@@ -284,9 +286,7 @@ public:
 
     // 可选：dumpDot for incremental view
 
-private:
-    std::unordered_set<NodePtr> nodes_;
-    std::unordered_set<EdgePtr> edges_;
+protected:
     std::set<NodePtr> deltaInsertNodes_;
     std::set<EdgePtr> deltaInsertEdges_;
     std::set<NodePtr> deltaDeleteNodes_;
@@ -429,15 +429,6 @@ public:
         while (!workQueue.empty()) {
             NodePtr current = workQueue.front();
             workQueue.pop();
-//            if (current->isFact) {
-//                for (auto edge: current->incomingEdges) {
-//                    for (auto inputNode: edge->getInputs()) {
-//                        inputNode->incomingEdges.erase(edge);
-//                    }
-//                }
-//                current->incomingEdges.clear();  // if fact node has derivations, it seems correlation, currently we just omit these.
-//                continue;
-//            }
             for (const auto& edge : current->getIncomingEdges()) {
                 reachableEdges.insert(edge);
                 for (const auto& inputNode : edge->getInputs()) {
@@ -453,8 +444,6 @@ public:
         for (const auto& node : nodes) {
             if (reachableNodes.count(node)) {
                 newNodes.insert(node);
-            } else {
-                tupleToNodeMap.erase(node->getTuple());
             }
         }
 
@@ -462,14 +451,6 @@ public:
         for (const auto& edge : edges) {
             if (reachableEdges.count(edge)) {
                 newEdges.insert(edge);
-            } else {
-                // 同时从映射中删除这条边
-                if (edge->getRule()) {
-                    std::string key = createEdgeKey(edge->getRule()->getRuleId(),
-                                                    edge->getRule()->getVars(),
-                                                    edge->ruleApp.varValuesPure);
-                    edgeKeyToEdgeMap.erase(key);
-                }
             }
         }
 
@@ -655,6 +636,19 @@ public:
         const std::unordered_map<UntypedTuple, double>& fact_prob = {},
         const std::vector<UntypedTuple>& deletedFacts = {}
     ) {
+        for (const auto& app : deltaInsertRuleApps) {
+            std::cout << app.first.toString() << std::endl;
+            for (const auto& ruleApp : *(app.second)) {
+                std::cout << RuleApplication::toString(ruleApp) << std::endl;
+            }
+        }
+        for (const auto& app : deltaDeleteRuleApps) {
+            std::cout << app.first.toString() << std::endl;
+            for (const auto& ruleApp : *(app.second)) {
+                std::cout << RuleApplication::toString(ruleApp) << std::endl;
+            }
+        }
+
         this->deltaInsertNodes.clear();
         this->deltaInsertEdges.clear();
         this->deltaDeleteNodes.clear();
@@ -760,9 +754,10 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             const std::vector<std::string>& vars = rule->getVars();
             EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, vars);
             if (existingEdge == nullptr) {
-                std::cout << "Did not find the edge to delete, possibly pruned, omitted: "
-                          << createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure) << std::endl;
-                continue;
+//                std::cout << "Did not find the edge to delete, possibly pruned, omitted: "
+//                          << createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure) << std::endl;
+//                continue;
+                assert(false && "Did not find the edge to delete");
             }
 
             // 将边标记为增量删除
@@ -816,7 +811,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
     for (const auto& nodeToRemove : nodesToRemove) {
         // 从映射中移除
         tupleToNodeMap.erase(nodeToRemove->getTuple());
-
+        std::cout << "removing node " << nodeToRemove->toString() << std::endl;
         // 从节点列表中移除
 //        nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeToRemove), nodes.end());
         nodes.erase(nodeToRemove);
@@ -833,8 +828,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             nodes.erase(node);
             nodesToRemove.push_back(node);
         } else {
-            std::cout << "Deleted fact not found in the graph, possibly pruned, omitted: " << tuple.toString() << std::endl;
-            continue;
+            assert (false && "deleted fact not found");
         }
     }
 }
@@ -875,12 +869,25 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
     }
 
     // 过滤节点和边
+    std::set<NodePtr> newDeltaDeletedNodes;
+    std::set<EdgePtr> newDeltaDeletedEdges;
+    for (const auto& deletedNode : deltaDeleteNodes) {
+        if (!deletedNode->pruned) {
+            newDeltaDeletedNodes.insert(deletedNode);
+        }
+    }
+    for (const auto& deletedEdge : deltaDeleteEdges) {
+        if (!deletedEdge->pruned) {
+            newDeltaDeletedEdges.insert(deletedEdge);
+        }
+    }
+
     std::unordered_set<NodePtr> newNodes;
     for (const auto& node : nodes) {
         if (reachableNodes.count(node)) {
             newNodes.insert(node);
         } else {
-            tupleToNodeMap.erase(node->getTuple());
+            node->pruned = true;
         }
     }
 
@@ -889,47 +896,34 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
         if (reachableEdges.count(edge)) {
             newEdges.insert(edge);
         } else {
-            // 同时从映射中删除这条边
-            if (edge->getRule()) {
-                std::string key = createEdgeKey(edge->getRule()->getRuleId(),
-                                                edge->getRule()->getVars(),
-                                                edge->getRuleApp().varValuesPure);
-                edgeKeyToEdgeMap.erase(key);
-            }
+            edge->pruned = true;
         }
     }
 
     // TODO: update nodes incoming and outgoing edges
-    for (const auto& node : newNodes) {
-        std::vector<EdgePtr> newIncomingEdges;
-        std::vector<EdgePtr> newOutgoingEdges;
-        for (const auto& edge : node->getIncomingEdges()) {
-            if (reachableEdges.count(edge)) {
-                newIncomingEdges.push_back(edge);
-            }
-        }
-        for (const auto& edge : node->getOutgoingEdges()) {
-            if (reachableEdges.count(edge)) {
-                newOutgoingEdges.push_back(edge);
-            }
-        }
-        node->incomingEdges = std::move(newIncomingEdges);
-        node->outgoingEdges = std::move(newOutgoingEdges);
-    }
+//    for (const auto& node : newNodes) {
+//        std::vector<EdgePtr> newIncomingEdges;
+//        std::vector<EdgePtr> newOutgoingEdges;
+//        for (const auto& edge : node->getIncomingEdges()) {
+//            if (reachableEdges.count(edge)) {
+//                newIncomingEdges.push_back(edge);
+//            }
+//        }
+//        for (const auto& edge : node->getOutgoingEdges()) {
+//            if (reachableEdges.count(edge)) {
+//                newOutgoingEdges.push_back(edge);
+//            }
+//        }
+//        node->incomingEdges = std::move(newIncomingEdges);
+//        node->outgoingEdges = std::move(newOutgoingEdges);
+//    }
 
     std::set<NodePtr> newDeltaInsertedNodes;
-    std::set<NodePtr> newDeltaDeletedNodes;
     std::set<EdgePtr> newDeltaInsertedEdges;
-    std::set<EdgePtr> newDeltaDeletedEdges;
 
     for (const auto& insertedNode : deltaInsertNodes) {
         if (reachableNodes.count(insertedNode)) {
             newDeltaInsertedNodes.insert(insertedNode);
-        }
-    }
-    for (const auto& deletedNode : deltaDeleteNodes) {
-        if (reachableNodes.count(deletedNode)) {
-            newDeltaDeletedNodes.insert(deletedNode);
         }
     }
     for (const auto& insertedEdge : deltaInsertEdges) {
@@ -937,19 +931,19 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
             newDeltaInsertedEdges.insert(insertedEdge);
         }
     }
-    for (const auto& deletedEdge : deltaDeleteEdges) {
-        if (reachableEdges.count(deletedEdge)) {
-            newDeltaDeletedEdges.insert(deletedEdge);
-        }
-    }
+
+
 
 //        nodes = std::move(newNodes);
 //        edges = std::move(newEdges);
-    return IncSubgraphView(std::move(newNodes), std::move(newEdges),
+
+    auto view = IncSubgraphView(std::move(newNodes), std::move(newEdges),
                            std::move(newDeltaInsertedNodes),
                            std::move(newDeltaInsertedEdges),
                            std::move(newDeltaDeletedNodes),
                            std::move(newDeltaDeletedEdges));
+    view.dumpStatisticsInc(std::cout);
+    return view;
 }
 
 void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& filename) const {
@@ -1141,12 +1135,12 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
         out << "  edge" << edge->getId() << edgeLabel << ";\n";
 
         // 输入节点到边的连接 - 红色虚线
-        for (const auto& input : this->getInputs(edge)) {
+        for (const auto& input : edge->getInputs()) {
             // 检查是否是否定的体原子
-            size_t inputIdx = std::distance(this->getInputs(edge).begin(),
-                             std::find(this->getInputs(edge).begin(), this->getInputs(edge).end(), input));
-            bool isNegated = inputIdx < this->getBodyNegations(edge).size() ?
-                             this->getBodyNegations(edge)[inputIdx] : false;
+            size_t inputIdx = std::distance(edge->getInputs().begin(),
+                             std::find(edge->getInputs().begin(), edge->getInputs().end(), input));
+            bool isNegated = inputIdx < edge->getBodyNegations().size() ?
+                             edge->getBodyNegations()[inputIdx] : false;
 
             // 如果是否定的，使用双重虚线和不同的箭头样式，但仍然保持红色
             std::string edgeStyle = isNegated ?
@@ -1158,7 +1152,7 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
 
         // 边到输出节点的连接 - 红色虚线
         out << "  edge" << edge->getId()
-            << " -> node" << this->getOutput(edge)->getId() << " [color=red, style=dashed];\n";
+            << " -> node" << edge->getOutput()->getId() << " [color=red, style=dashed];\n";
     }
 
     out << "}\n";
