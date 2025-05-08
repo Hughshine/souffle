@@ -132,6 +132,7 @@ public:
     std::vector<EdgePtr> getOutgoingEdges(NodePtr node) const;
     std::vector<NodePtr> getInputs(EdgePtr edge) const;
     NodePtr getOutput(EdgePtr edge) const;
+    std::vector<bool> getBodyNegations(EdgePtr edge) const;
 
     virtual ~DerivationGraphViewInterface() = default;
 };
@@ -171,6 +172,73 @@ NodePtr DerivationGraphViewInterface::getOutput(EdgePtr edge) const {
     return getNodes().count(out) ? out : nullptr;
 }
 
+std::vector<bool> DerivationGraphViewInterface::getBodyNegations(EdgePtr edge) const {
+    std::vector<bool> result;
+    for (size_t i = 0; i < edge->getBodyNegations().size(); ++i) {
+        if (getNodes().count(edge->getInputs()[i])) {
+            result.push_back(edge->getBodyNegations()[i]);
+        }
+    }
+    return result;
+}
+
+class SubgraphView : public virtual DerivationGraphViewInterface {
+public:
+    SubgraphView(std::unordered_set<NodePtr> nodes,
+                 std::unordered_set<EdgePtr> edges)
+        : nodes_(std::move(nodes)), edges_(std::move(edges)) {}
+
+    const std::unordered_set<NodePtr>& getNodes() const override { return nodes_; }
+    const std::unordered_set<EdgePtr>& getEdges() const override { return edges_; }
+    void dumpDot(const std::string& filename) const;
+    void dumpStatistics(std::ostream& out) const {
+        out << "DerivationGraph Statistics:" << std::endl;
+        out << "  Number of nodes: " << nodes_.size() << std::endl;
+        out << "  Number of edges: " << edges_.size() << std::endl;
+    }
+private:
+    std::unordered_set<NodePtr> nodes_;
+    std::unordered_set<EdgePtr> edges_;
+};
+
+void SubgraphView::dumpDot(const std::string& filename) const {
+    std::ofstream out(filename);
+    if (!out.is_open()) {
+        throw std::runtime_error("Cannot open file: " + filename);
+    }
+
+    out << "digraph SubgraphView {\n";
+    out << "  rankdir=LR;\n";
+
+    // 节点样式
+    out << "  node [shape=box, style=filled, fillcolor=lightblue];\n";
+    for (const auto& node : getNodes()) {
+        out << "  node" << node->getId() << " [label=\""
+            << node->getTuple().toString() << "\"];\n";
+    }
+
+    // 边样式
+    out << "  node [shape=point, fillcolor=red, width=0.2];\n";
+    for (const auto& edge : getEdges()) {
+        out << "  edge" << edge->getId() << ";\n";
+
+        for (const auto& input : edge->getInputs()) {
+            if (getNodes().count(input)) {
+                out << "  node" << input->getId()
+                    << " -> edge" << edge->getId() << ";\n";
+            }
+        }
+
+        NodePtr outNode = edge->getOutput();
+        if (getNodes().count(outNode)) {
+            out << "  edge" << edge->getId()
+                << " -> node" << outNode->getId() << ";\n";
+        }
+    }
+
+    out << "}\n";
+    out.close();
+}
 
 class IncrementalDerivationGraphViewInterface : virtual public DerivationGraphViewInterface {
 public:
@@ -291,7 +359,7 @@ public:
         return graph;
     }
 
-    void prune(const std::vector<souffle::Relation*>& outputRelations) {
+    SubgraphView prune(const std::vector<souffle::Relation*>& outputRelations) {
         std::unordered_set<std::string> outputRelationNames;
         for (const auto* rel : outputRelations) {
             outputRelationNames.insert(rel->getName());
@@ -378,8 +446,9 @@ public:
             node->outgoingEdges = std::move(newOutgoingEdges);
         }
 
-        nodes = std::move(newNodes);
-        edges = std::move(newEdges);
+//        nodes = std::move(newNodes);
+//        edges = std::move(newEdges);
+        return SubgraphView(std::move(newNodes), std::move(newEdges));
     }
 
 
@@ -995,7 +1064,7 @@ void dumpProbabilities(
 }
 
 void computeSCCOrderedCyclesWithDepth(
-    const DerivationGraph& graph,
+    const SubgraphView& view,
     std::vector<std::unordered_set<NodePtr>>& nodeCycles,
     std::vector<std::unordered_set<EdgePtr>>& edgeCycles,
     std::unordered_map<NodePtr, size_t>& nodeToCycleIndex,
@@ -1004,7 +1073,7 @@ void computeSCCOrderedCyclesWithDepth(
     std::unordered_map<EdgePtr, size_t>& edgeDepths
 ) {
     FunctionTimer timer("Computing SCC Ordered Cycles with Depth");
-    const auto& nodes = graph.getNodes();
+    const auto& nodes = view.getNodes();
     size_t index = 0, currentSCC = 0;
     std::unordered_map<NodePtr, size_t> indices, lowlinks;
     std::stack<NodePtr> stack;
@@ -1017,8 +1086,8 @@ void computeSCCOrderedCyclesWithDepth(
         stack.push(v);
         onStack.insert(v);
 
-        for (const auto& edge : v->getOutgoingEdges()) {
-            NodePtr w = edge->getOutput();
+        for (const auto& edge : view.getOutgoingEdges(v)) {
+            NodePtr w = view.getOutput(edge);
             if (indices.find(w) == indices.end()) {
                 strongconnect(w);
                 lowlinks[v] = std::min(lowlinks[v], lowlinks[w]);
@@ -1050,9 +1119,9 @@ void computeSCCOrderedCyclesWithDepth(
     // Build dependency graph of SCCs (revised: use all inputs of each edge)
     std::vector<std::unordered_set<size_t>> sccGraph(currentSCC);
     std::vector<size_t> indegree(currentSCC, 0);
-    for (const auto& edge : graph.getEdges()) {
-        size_t outCycle = rawNodeToCycle[edge->getOutput()];
-        for (const auto& input : edge->getInputs()) {
+    for (const auto& edge : view.getEdges()) {
+        size_t outCycle = rawNodeToCycle[view.getOutput(edge)];
+        for (const auto& input : view.getInputs(edge)) {
             size_t inCycle = rawNodeToCycle[input];
             if (inCycle != outCycle && !sccGraph[inCycle].count(outCycle)) {
                 sccGraph[inCycle].insert(outCycle);
@@ -1091,8 +1160,8 @@ void computeSCCOrderedCyclesWithDepth(
             nodeToCycleIndex[node] = newId;
         }
     }
-    for (const auto& edge : graph.getEdges()) {
-        NodePtr out = edge->getOutput();
+    for (const auto& edge : view.getEdges()) {
+        NodePtr out = view.getOutput(edge);
         if (nodeToCycleIndex.count(out)) {
             size_t cid = nodeToCycleIndex[out];
             edgeCycles[cid].insert(edge);
@@ -1107,9 +1176,9 @@ void computeSCCOrderedCyclesWithDepth(
         std::queue<NodePtr> q;
         for (auto node : cycleNodes) {
             bool isEntry = false;
-            for (auto& inEdge : node->getIncomingEdges()) {
+            for (auto& inEdge : view.getIncomingEdges(node)) {
                 bool allOutOfCycle = true;
-                for (auto& inNode : inEdge->getInputs()) {
+                for (auto& inNode : view.getInputs(inEdge)) {
                     if (nodeToCycleIndex[inNode] == cid) {
                         allOutOfCycle = false;
                         break;
@@ -1120,7 +1189,7 @@ void computeSCCOrderedCyclesWithDepth(
                     break;
                 }
             }
-            if (node->isFact || node->getIncomingEdges().empty()) isEntry = true;
+            if (node->isFact || view.getIncomingEdges(node).empty()) isEntry = true;
             if (isEntry) {
                 nodeDepths[node] = 0;
                 q.push(node);
@@ -1129,8 +1198,8 @@ void computeSCCOrderedCyclesWithDepth(
         while (!q.empty()) {
             NodePtr curr = q.front(); q.pop();
             size_t currDepth = nodeDepths[curr];
-            for (auto& outEdge : curr->getOutgoingEdges()) {
-                NodePtr out = outEdge->getOutput();
+            for (auto& outEdge : view.getOutgoingEdges(curr)) {
+                NodePtr out = view.getOutput(outEdge);
                 if (nodeToCycleIndex[out] != cid) continue;
                 if (!nodeDepths.count(out) || nodeDepths[out] > currDepth + 1) {
                     nodeDepths[out] = currDepth + 1;
@@ -1140,7 +1209,7 @@ void computeSCCOrderedCyclesWithDepth(
         }
         for (auto edge : cycleEdges) {
             size_t d = 0;
-            for (auto in : edge->getInputs()) {
+            for (auto in : view.getInputs(edge)) {
                 if (nodeToCycleIndex[in] == cid && nodeDepths.count(in)) {
                     // Edge depth = max(input depth + 1), so inner-cycle edges start from 1, cross-cycle = 0
                     d = std::max(d, nodeDepths[in] + 1);

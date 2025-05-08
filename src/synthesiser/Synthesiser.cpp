@@ -413,18 +413,18 @@ void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
     out << "graph->dumpStatistics(std::cout);\n";
     out << "graph->dumpDot(\"before_prune.dot\");\n" << std::endl;
-    out << "graph->prune(obj.getOutputRelations());\n" << std::endl;
-    out << "graph->dumpDot(\"after_prune.dot\");\n" << std::endl;
-    out << "graph->dumpStatistics(std::cout);\n";
-    if (glb.config().has("verbose")) {
-        out << "graph->dumpDot(\"derivation_graph.dot\");\n";
-    }
+    out << "auto view = graph->prune(obj.getOutputRelations());\n" << std::endl;
+    out << "view.dumpDot(\"after_prune.dot\");\n" << std::endl;
+    out << "view.dumpStatistics(std::cout);\n";
+    // if (glb.config().has("verbose")) {
+    //     out << "view->dumpDot(\"derivation_graph.dot\");\n";
+    // }
     out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
     out << "WeightedBDDManager bddManager;\n";
     out << "{\n" << std::endl;
     out << "FunctionTimer timer(\" building formulas \");\n";
-    out << "buildFormulasCyclewise(*graph, bddManager, nodeFormulas, edgeFormulas);\n";
+    out << "buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);\n";
 
     out << "}" << std::endl;
     out << "{" << std::endl;

@@ -22,7 +22,7 @@
 // 2. no special designed logic formula manager - mainly for formula's semantic equivalence checking
 template<typename FormulaNodeRef>
 void buildFormulas(
-    const DerivationGraph& graph,
+    const SubgraphView& view,
     FormulaManager<FormulaNodeRef>& formulaManager,
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
@@ -32,7 +32,7 @@ void buildFormulas(
     // Initialize formulas for input facts (nodes)
     std::map<NodePtr, FormulaNodeRef> baseNodeFormulas;
     std::map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
-    for (const auto& node : graph.getNodes()) {
+    for (const auto& node : view.getNodes()) {
         // Create a variable using the node's unique ID
         if (node->isFact) {
             std::cout << "Creating Fact Node " << node->getId() << " " << node->toString() << std::endl;
@@ -50,14 +50,14 @@ void buildFormulas(
 //    std::cout << "Weight set for nodes" << std::endl;
 
     // Initialize formulas for rule instantiations (hyperedges)
-    for (const auto& edge : graph.getEdges()) {
+    for (const auto& edge : view.getEdges()) {
         // Create a variable using the edge's unique ID; need to plus the size of graph.getNodes() to avoid conflict with node's id
         if (edge->getRule()->isDeterminstic()) {
             auto baseEdgeFormula = formulaManager.getTrue();
             baseEdgeFormulas.insert({edge, baseEdgeFormula});
         } else {
-            auto baseEdgeFormula = formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
-            formulaManager.setVariableWeight(graph.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
+            auto baseEdgeFormula = formulaManager.createVar(view.getNodes().size() + edge->getId(), *edge);
+            formulaManager.setVariableWeight(view.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
             baseEdgeFormulas.insert({edge, baseEdgeFormula});
         }
     }
@@ -68,7 +68,7 @@ void buildFormulas(
     std::set<EdgePtr> inWorklist; // Track edges in the worklist to avoid duplicates
 
     // Initialize worklist with all edges
-    for (const auto& edge : graph.getEdges()) {
+    for (const auto& edge : view.getEdges()) {
         worklist.push(edge);
         inWorklist.insert(edge);
     }
@@ -96,9 +96,9 @@ void buildFormulas(
 
         // Add the input node formulas
         bool allInputsAvailable = true;
-        for (size_t i = 0; i < edge->getInputs().size(); i++) {
-            auto input = edge->getInputs()[i];
-            auto isNegated = edge->getBodyNegations()[i];
+        for (size_t i = 0; i < view.getInputs(edge).size(); i++) {
+            auto input = view.getInputs(edge)[i];
+            auto isNegated = view.getBodyNegations(edge)[i];
             auto it = nodeFormulas.find(input);
             if (it != nodeFormulas.end()) {
                 if (!isNegated) {
@@ -141,7 +141,7 @@ void buildFormulas(
             edgeFormulas[edge] = newEdgeFormula;
 
             // Update the output node formula
-            auto output = edge->getOutput();
+            auto output = view.getOutput(edge);
 //            if (output->isFact) {
 //                // Skip fact nodes
 //                continue;
@@ -157,7 +157,7 @@ void buildFormulas(
             // Collect formulas from all incoming edges
             std::vector<FormulaNodeRef> incomingFormulas;
 //            std::cout << "Output node " << output->getId() << " " << output->getTuple().toString() << std::endl;
-            for (const auto& inEdge : output->getIncomingEdges()) {
+            for (const auto& inEdge : view.getIncomingEdges(output)) {
 
 //                std::cout << "Incoming edge " << inEdge->getId() << " " << inEdge->toString() << std::endl;
                 auto it = edgeFormulas.find(inEdge);
@@ -200,7 +200,7 @@ void buildFormulas(
 //                auto prob = formulaManager.computeWeightedModelCount(newNodeFormula);
 //                std::cout << "Probability: " << prob << std::endl;
                 // Add outgoing edges to the worklist
-                for (const auto& outEdge : output->getOutgoingEdges()) {
+                for (const auto& outEdge : view.getOutgoingEdges(output)) {
                     if (inWorklist.find(outEdge) == inWorklist.end()) {
                         worklist.push(outEdge);
                         inWorklist.insert(outEdge);
@@ -226,7 +226,7 @@ struct PrioritizedEdge {
 
 template<typename FormulaNodeRef>
 void buildFormulasCyclewise(
-    const DerivationGraph& graph,
+    const SubgraphView& view,
     FormulaManager<FormulaNodeRef>& formulaManager,
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
@@ -241,12 +241,12 @@ void buildFormulasCyclewise(
     unordered_map<NodePtr, size_t> nodeDepths;
     unordered_map<EdgePtr, size_t> edgeDepths;
 
-    computeSCCOrderedCyclesWithDepth(graph, nodeCycles, edgeCycles, nodeToCycleIndex, edgeToCycleIndex, nodeDepths, edgeDepths);
+    computeSCCOrderedCyclesWithDepth(view, nodeCycles, edgeCycles, nodeToCycleIndex, edgeToCycleIndex, nodeDepths, edgeDepths);
 
     map<NodePtr, FormulaNodeRef> baseNodeFormulas;
     map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
 
-    for (const auto& node : graph.getNodes()) {
+    for (const auto& node : view.getNodes()) {
         if (node->isFact) {
             FormulaNodeRef var = (node->getProbability() == 1.0)
                 ? formulaManager.getTrue()
@@ -257,12 +257,12 @@ void buildFormulasCyclewise(
         }
     }
 
-    for (const auto& edge : graph.getEdges()) {
+    for (const auto& edge : view.getEdges()) {
         FormulaNodeRef f = edge->getRule()->isDeterminstic()
             ? formulaManager.getTrue()
-            : formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
+            : formulaManager.createVar(view.getNodes().size() + edge->getId(), *edge);
         if (!edge->getRule()->isDeterminstic()) {
-            formulaManager.setVariableWeight(graph.getNodes().size() + edge->getId(), edge->getProbability(), 1 - edge->getProbability());
+            formulaManager.setVariableWeight(view.getNodes().size() + edge->getId(), edge->getProbability(), 1 - edge->getProbability());
         }
         baseEdgeFormulas[edge] = f;
     }
@@ -289,8 +289,8 @@ void buildFormulasCyclewise(
 
             vector<FormulaNodeRef> inputs = { baseEdgeFormulas[edge] };
             bool allAvailable = true;
-            for (size_t i = 0; i < edge->getInputs().size(); ++i) {
-                auto input = edge->getInputs()[i];
+            for (size_t i = 0; i < view.getInputs(edge).size(); ++i) {
+                auto input = view.getInputs(edge)[i];
                 auto it = nodeFormulas.find(input);
                 if (it == nodeFormulas.end()) {
                     cout << "Input node formula not available yet: " << input->getTuple().toString() << endl;
@@ -300,7 +300,7 @@ void buildFormulasCyclewise(
 
                     continue;
                 }
-                inputs.push_back(edge->getBodyNegations()[i] ? formulaManager.makeNot(it->second) : it->second);
+                inputs.push_back(view.getBodyNegations(edge)[i] ? formulaManager.makeNot(it->second) : it->second);
             }
             if (!allAvailable) {
                 worklist.push({edge, edgeDepths[edge]});
@@ -312,9 +312,9 @@ void buildFormulasCyclewise(
             if (edgeChanged) {
                 cout << "Edge " << edge->getId() << " changed.\n";
                 edgeFormulas[edge] = newEdgeF;
-                NodePtr out = edge->getOutput();
+                NodePtr out = view.getOutput(edge);
                 vector<FormulaNodeRef> inFs;
-                for (auto& inEdge : out->getIncomingEdges()) {
+                for (auto& inEdge : view.getIncomingEdges(out)) {
                     if (edgeFormulas.count(inEdge) && edgeFormulas[inEdge].get()) {
                         inFs.push_back(edgeFormulas[inEdge]);
                     }
@@ -325,7 +325,7 @@ void buildFormulasCyclewise(
                     if (nodeChanged) {
                         cout << "Node " << out->getId() << " changed.\n";
                         nodeFormulas[out] = newNodeF;
-                        for (auto& outEdge : out->getOutgoingEdges()) {
+                        for (auto& outEdge : view.getOutgoingEdges(out)) {
                             size_t targetCid = edgeToCycleIndex[outEdge];
                             if (targetCid == cid && !inWorklist.count(outEdge)) {
                                 worklist.push({outEdge, edgeDepths[outEdge]});
