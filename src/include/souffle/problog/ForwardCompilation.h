@@ -359,7 +359,7 @@ void buildFormulasCyclewise(
 
 template<typename FormulaNodeRef>
 void buildFormulasInc(
-    const IncrementalDerivationGraph& graph,
+    const IncrementalDerivationGraphViewInterface& view,
     FormulaManager<FormulaNodeRef>& formulaManager,
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
@@ -367,7 +367,7 @@ void buildFormulasInc(
     FunctionTimer timer(" forward compilation, incremental update ");
 
     // Skip if no changes
-    if (graph.getDeltaInsertEdges().empty() && graph.getDeltaDeleteEdges().empty()) {
+    if (view.getDeltaInsertEdges().empty() && view.getDeltaDeleteEdges().empty()) {
         std::cout << "No changes to apply, skipping incremental update" << std::endl;
         return;
     }
@@ -379,8 +379,8 @@ void buildFormulasInc(
         if (edge->getRule()->isDeterminstic()) {
             baseEdgeFormula = formulaManager.getTrue();
         } else {
-            baseEdgeFormula = formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
-            formulaManager.setVariableWeight(graph.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
+            baseEdgeFormula = formulaManager.createVar(view.getNodes().size() + edge->getId(), *edge);
+            formulaManager.setVariableWeight(view.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
         }
 
 //        auto baseEdgeFormula = formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
@@ -391,9 +391,9 @@ void buildFormulasInc(
 
         // Add all input node formulas
         bool allInputsAvailable = true;
-        for (size_t i = 0; i < edge->getInputs().size(); i++) {
-            auto input = edge->getInputs()[i];
-            auto isNegated = edge->getBodyNegations()[i];
+        for (size_t i = 0; i < view.getInputs(edge).size(); i++) {
+            auto input = view.getInputs(edge)[i];
+            auto isNegated = view.getBodyNegations(edge)[i];
             auto it = nodeFormulas.find(input);
 
             if (it != nodeFormulas.end()) {
@@ -426,7 +426,7 @@ void buildFormulasInc(
         // Collect formulas from all incoming edges
         std::vector<FormulaNodeRef> incomingFormulas;
 
-        for (const auto& inEdge : node->getIncomingEdges()) {
+        for (const auto& inEdge : view.getIncomingEdges(node)) {
             auto it = edgeFormulas.find(inEdge);
             if (it != edgeFormulas.end() && it->second.get()) {
                 incomingFormulas.push_back(it->second);
@@ -445,10 +445,10 @@ void buildFormulasInc(
     };
 
     // Initialize updated set with all deleted edges
-    std::set<EdgePtr> updatedSet(graph.getDeltaDeleteEdges().begin(), graph.getDeltaDeleteEdges().end());
+    std::set<EdgePtr> updatedSet(view.getDeltaDeleteEdges().begin(), view.getDeltaDeleteEdges().end());
 //    auto deltaDeleteEdgesCopy = graph.deltaDeleteEdges;
     // Process deleted edges - update their formulas and propagate changes
-    for (auto node : graph.getDeltaDeleteNodes()) {
+    for (auto node : view.getDeltaDeleteNodes()) {
         nodeFormulas.erase(node);
     }
     while (!updatedSet.empty()) {
@@ -461,7 +461,7 @@ void buildFormulasInc(
 
         // For deleted edges, set formula to False or recompute
         FormulaNodeRef newEdgeFormula;
-        if (graph.getDeltaDeleteEdges().find(edge) != graph.getDeltaDeleteEdges().end()) {
+        if (view.getDeltaDeleteEdges().find(edge) != view.getDeltaDeleteEdges().end()) {
             // Set to False (empty formula) TODO
             newEdgeFormula = formulaManager.getFalse();
         } else {
@@ -480,7 +480,7 @@ void buildFormulasInc(
             auto output = edge->getOutput();
 
             // Skip if output node is also deleted
-            if (graph.getDeltaDeleteNodes().find(output) != graph.getDeltaDeleteNodes().end()) {
+            if (view.getDeltaDeleteNodes().find(output) != view.getDeltaDeleteNodes().end()) {
                 continue;
             }
 
@@ -503,8 +503,8 @@ void buildFormulasInc(
                 nodeFormulas[output] = newNodeFormula;
 
                 // Add outgoing edges to updated set
-                for (const auto& outEdge : output->getOutgoingEdges()) {
-                    if (graph.getDeltaDeleteEdges().find(outEdge) == graph.getDeltaDeleteEdges().end()) {
+                for (const auto& outEdge : view.getOutgoingEdges(output)) {
+                    if (view.getDeltaDeleteEdges().find(outEdge) == view.getDeltaDeleteEdges().end()) {
                         updatedSet.insert(outEdge);
                     }
                 }
@@ -514,10 +514,10 @@ void buildFormulasInc(
 
     // Initialize updated set with all inserted edges
     updatedSet.clear();
-    updatedSet.insert(graph.getDeltaInsertEdges().begin(), graph.getDeltaInsertEdges().end());
-    for (auto node : graph.getDeltaInsertNodes()) {
+    updatedSet.insert(view.getDeltaInsertEdges().begin(), view.getDeltaInsertEdges().end());
+    for (auto node : view.getDeltaInsertNodes()) {
         // Create a variable using the fact's unique ID
-        if (node->getIncomingEdges().empty()) {
+        if (view.getIncomingEdges(node).empty()) {
             nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
             formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1-node->getProbability());
         }
@@ -547,7 +547,7 @@ void buildFormulasInc(
             edgeFormulas[edge] = newEdgeFormula;
 
             // Update output node formula
-            auto output = edge->getOutput();
+            auto output = view.getOutput(edge);
 
             // Store old node formula
             FormulaNodeRef oldNodeFormula;
@@ -568,13 +568,13 @@ void buildFormulasInc(
                 nodeFormulas[output] = newNodeFormula;
 
                 // Add outgoing edges to updated set
-                for (const auto& outEdge : output->getOutgoingEdges()) {
+                for (const auto& outEdge : view.getOutgoingEdges(output)) {
                     updatedSet.insert(outEdge);
                 }
             }
         }
     }
-    for (auto edge: graph.getDeltaDeleteEdges()) {
+    for (auto edge: view.getDeltaDeleteEdges()) {
         edgeFormulas.erase(edge);
     }
     std::cout << "Successfully completed incremental formula update" << std::endl;

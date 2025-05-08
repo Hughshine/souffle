@@ -434,8 +434,9 @@ public:
                 getFactProbInc(),// fact_prob_inc; cli should collect this
                 getDeletedFacts() // deletedFacts; cli should collect this
             );
-            graph->dumpDotInc("derivation-inc.dot");
-            buildFormulasInc(*graph, *bddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
+            auto view = graph->prune(program->getOutputRelations());
+            view.dumpDotInc("derivation-inc.dot");
+            buildFormulasInc(view, *bddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
             probResult.clear();
             {
                 FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(nodeFormulas->size()));
