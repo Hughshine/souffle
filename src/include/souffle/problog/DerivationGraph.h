@@ -172,7 +172,7 @@ NodePtr DerivationGraphView::getOutput(EdgePtr edge) const {
 }
 
 
-class IncrementalDerivationGraphView : public DerivationGraphView {
+class IncrementalDerivationGraphView : virtual public DerivationGraphView {
 public:
     virtual const std::set<NodePtr>& getDeltaInsertNodes() const = 0;
     virtual const std::set<EdgePtr>& getDeltaInsertEdges() const = 0;
@@ -180,7 +180,7 @@ public:
     virtual const std::set<EdgePtr>& getDeltaDeleteEdges() const = 0;
 };
 
-class DerivationGraph: public DerivationGraphView {
+class DerivationGraph: virtual public DerivationGraphView {
 public:
     DerivationGraph() : nextNodeId(0), nextEdgeId(0) {}
     DerivationGraph(const RuleManager* rm) : nextNodeId(0), nextEdgeId(0), ruleManager(rm) {}
@@ -522,7 +522,7 @@ void Node::addOutgoingEdge(EdgePtr edge) {
     outgoingEdges.push_back(edge);
 }
 
-class IncrementalDerivationGraph : public DerivationGraph {
+class IncrementalDerivationGraph : public DerivationGraph, virtual public IncrementalDerivationGraphView {
 public:
     // 构造函数
     IncrementalDerivationGraph() : DerivationGraph() {}
