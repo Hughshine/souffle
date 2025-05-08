@@ -122,7 +122,7 @@ private:
     const RuleApplication ruleApp;
 };
 
-class DerivationGraphView {
+class DerivationGraphViewInterface {
 public:
     // TODO: consider using unordered_map
     virtual const std::unordered_set<NodePtr>& getNodes() const = 0;
@@ -133,10 +133,10 @@ public:
     std::vector<NodePtr> getInputs(EdgePtr edge) const;
     NodePtr getOutput(EdgePtr edge) const;
 
-    virtual ~DerivationGraphView() = default;
+    virtual ~DerivationGraphViewInterface() = default;
 };
 
-std::vector<EdgePtr> DerivationGraphView::getIncomingEdges(NodePtr node) const {
+std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdges(NodePtr node) const {
     std::vector<EdgePtr> result;
     for (const auto& edge : node->getIncomingEdges()) {
         if (getEdges().count(edge)) {
@@ -146,7 +146,7 @@ std::vector<EdgePtr> DerivationGraphView::getIncomingEdges(NodePtr node) const {
     return result;
 }
 
-std::vector<EdgePtr> DerivationGraphView::getOutgoingEdges(NodePtr node) const {
+std::vector<EdgePtr> DerivationGraphViewInterface::getOutgoingEdges(NodePtr node) const {
     std::vector<EdgePtr> result;
     for (const auto& edge : node->getOutgoingEdges()) {
         if (getEdges().count(edge)) {
@@ -156,7 +156,7 @@ std::vector<EdgePtr> DerivationGraphView::getOutgoingEdges(NodePtr node) const {
     return result;
 }
 
-std::vector<NodePtr> DerivationGraphView::getInputs(EdgePtr edge) const {
+std::vector<NodePtr> DerivationGraphViewInterface::getInputs(EdgePtr edge) const {
     std::vector<NodePtr> result;
     for (const auto& input : edge->getInputs()) {
         if (getNodes().count(input)) {
@@ -166,13 +166,13 @@ std::vector<NodePtr> DerivationGraphView::getInputs(EdgePtr edge) const {
     return result;
 }
 
-NodePtr DerivationGraphView::getOutput(EdgePtr edge) const {
+NodePtr DerivationGraphViewInterface::getOutput(EdgePtr edge) const {
     NodePtr out = edge->getOutput();
     return getNodes().count(out) ? out : nullptr;
 }
 
 
-class IncrementalDerivationGraphView : virtual public DerivationGraphView {
+class IncrementalDerivationGraphViewInterface : virtual public DerivationGraphViewInterface {
 public:
     virtual const std::set<NodePtr>& getDeltaInsertNodes() const = 0;
     virtual const std::set<EdgePtr>& getDeltaInsertEdges() const = 0;
@@ -180,7 +180,7 @@ public:
     virtual const std::set<EdgePtr>& getDeltaDeleteEdges() const = 0;
 };
 
-class DerivationGraph: virtual public DerivationGraphView {
+class DerivationGraph: virtual public DerivationGraphViewInterface {
 public:
     DerivationGraph() : nextNodeId(0), nextEdgeId(0) {}
     DerivationGraph(const RuleManager* rm) : nextNodeId(0), nextEdgeId(0), ruleManager(rm) {}
@@ -522,7 +522,7 @@ void Node::addOutgoingEdge(EdgePtr edge) {
     outgoingEdges.push_back(edge);
 }
 
-class IncrementalDerivationGraph : public DerivationGraph, virtual public IncrementalDerivationGraphView {
+class IncrementalDerivationGraph : public DerivationGraph, virtual public IncrementalDerivationGraphViewInterface {
 public:
     // 构造函数
     IncrementalDerivationGraph() : DerivationGraph() {}
