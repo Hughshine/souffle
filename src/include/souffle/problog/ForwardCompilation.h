@@ -367,7 +367,7 @@ void buildFormulasInc(
     FunctionTimer timer(" forward compilation, incremental update ");
 
     // Skip if no changes
-    if (graph.deltaInsertEdges.empty() && graph.deltaDeleteEdges.empty()) {
+    if (graph.getDeltaInsertEdges().empty() && graph.getDeltaDeleteEdges().empty()) {
         std::cout << "No changes to apply, skipping incremental update" << std::endl;
         return;
     }
@@ -445,10 +445,10 @@ void buildFormulasInc(
     };
 
     // Initialize updated set with all deleted edges
-    std::set<EdgePtr> updatedSet(graph.deltaDeleteEdges.begin(), graph.deltaDeleteEdges.end());
+    std::set<EdgePtr> updatedSet(graph.getDeltaDeleteEdges().begin(), graph.getDeltaDeleteEdges().end());
 //    auto deltaDeleteEdgesCopy = graph.deltaDeleteEdges;
     // Process deleted edges - update their formulas and propagate changes
-    for (auto node : graph.deltaDeleteNodes) {
+    for (auto node : graph.getDeltaDeleteNodes()) {
         nodeFormulas.erase(node);
     }
     while (!updatedSet.empty()) {
@@ -461,7 +461,7 @@ void buildFormulasInc(
 
         // For deleted edges, set formula to False or recompute
         FormulaNodeRef newEdgeFormula;
-        if (graph.deltaDeleteEdges.find(edge) != graph.deltaDeleteEdges.end()) {
+        if (graph.getDeltaDeleteEdges().find(edge) != graph.getDeltaDeleteEdges().end()) {
             // Set to False (empty formula) TODO
             newEdgeFormula = formulaManager.getFalse();
         } else {
@@ -480,7 +480,7 @@ void buildFormulasInc(
             auto output = edge->getOutput();
 
             // Skip if output node is also deleted
-            if (graph.deltaDeleteNodes.find(output) != graph.deltaDeleteNodes.end()) {
+            if (graph.getDeltaDeleteNodes().find(output) != graph.getDeltaDeleteNodes().end()) {
                 continue;
             }
 
@@ -504,7 +504,7 @@ void buildFormulasInc(
 
                 // Add outgoing edges to updated set
                 for (const auto& outEdge : output->getOutgoingEdges()) {
-                    if (graph.deltaDeleteEdges.find(outEdge) == graph.deltaDeleteEdges.end()) {
+                    if (graph.getDeltaDeleteEdges().find(outEdge) == graph.getDeltaDeleteEdges().end()) {
                         updatedSet.insert(outEdge);
                     }
                 }
@@ -514,8 +514,8 @@ void buildFormulasInc(
 
     // Initialize updated set with all inserted edges
     updatedSet.clear();
-    updatedSet.insert(graph.deltaInsertEdges.begin(), graph.deltaInsertEdges.end());
-    for (auto node : graph.deltaInsertNodes) {
+    updatedSet.insert(graph.getDeltaInsertEdges().begin(), graph.getDeltaInsertEdges().end());
+    for (auto node : graph.getDeltaInsertNodes()) {
         // Create a variable using the fact's unique ID
         if (node->getIncomingEdges().empty()) {
             nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
@@ -574,7 +574,7 @@ void buildFormulasInc(
             }
         }
     }
-    for (auto edge: graph.deltaDeleteEdges) {
+    for (auto edge: graph.getDeltaDeleteEdges()) {
         edgeFormulas.erase(edge);
     }
     std::cout << "Successfully completed incremental formula update" << std::endl;

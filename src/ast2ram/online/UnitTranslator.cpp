@@ -382,16 +382,11 @@ Own<ram::Statement> UnitTranslator::generateStratumInc(std::size_t scc) const {
     // Make a new ram statement for the current SCC
     VecOwn<ram::Statement> current;
 
-    // Load all internal input relations from the facts dir with a .facts extension
-    // INC: Also load all delta changes for IDB by files having .facts.insert and .facts.delete extension
-    // TODO: here we suppose EDB does not change during fixpoint computation
-    // TODO: i.e. they are not the heads of any rules
+    // for online evaluation, all previous information is in memory. No actual load is needed.
     for (const auto& relation : context->getInputRelationsInSCC(scc)) {
         appendStmt(current, generateLoadRelationInc(relation));
     }
 
-    // Load all cached external output relations from the output dir
-    // Cached derivation info maintained separately
     for (const auto& relation : context->getOutputRelationsInSCC(scc)) {
         appendStmt(current, generateLoadRelationForIDB(relation));
     }
@@ -1475,6 +1470,8 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratumInc(
         // Add in the postamble
         appendStmt(result, generateStratumPostambleInc(scc, true)); // 最终删除全部的临时变量
     }
+
+    // TODO: rederive
 
     appendStmt(result, generateStratumPreambleInc(scc, false));
     {

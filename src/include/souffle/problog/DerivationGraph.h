@@ -122,7 +122,65 @@ private:
     const RuleApplication ruleApp;
 };
 
-class DerivationGraph {
+class DerivationGraphView {
+public:
+    // TODO: consider using unordered_map
+    virtual const std::unordered_set<NodePtr>& getNodes() const = 0;
+    virtual const std::unordered_set<EdgePtr>& getEdges() const = 0;
+
+    std::vector<EdgePtr> getIncomingEdges(NodePtr node) const;
+    std::vector<EdgePtr> getOutgoingEdges(NodePtr node) const;
+    std::vector<NodePtr> getInputs(EdgePtr edge) const;
+    NodePtr getOutput(EdgePtr edge) const;
+
+    virtual ~DerivationGraphView() = default;
+};
+
+std::vector<EdgePtr> DerivationGraphView::getIncomingEdges(NodePtr node) const {
+    std::vector<EdgePtr> result;
+    for (const auto& edge : node->getIncomingEdges()) {
+        if (getEdges().count(edge)) {
+            result.push_back(edge);
+        }
+    }
+    return result;
+}
+
+std::vector<EdgePtr> DerivationGraphView::getOutgoingEdges(NodePtr node) const {
+    std::vector<EdgePtr> result;
+    for (const auto& edge : node->getOutgoingEdges()) {
+        if (getEdges().count(edge)) {
+            result.push_back(edge);
+        }
+    }
+    return result;
+}
+
+std::vector<NodePtr> DerivationGraphView::getInputs(EdgePtr edge) const {
+    std::vector<NodePtr> result;
+    for (const auto& input : edge->getInputs()) {
+        if (getNodes().count(input)) {
+            result.push_back(input);
+        }
+    }
+    return result;
+}
+
+NodePtr DerivationGraphView::getOutput(EdgePtr edge) const {
+    NodePtr out = edge->getOutput();
+    return getNodes().count(out) ? out : nullptr;
+}
+
+
+class IncrementalDerivationGraphView : public DerivationGraphView {
+public:
+    virtual const std::set<NodePtr>& getDeltaInsertNodes() const = 0;
+    virtual const std::set<EdgePtr>& getDeltaInsertEdges() const = 0;
+    virtual const std::set<NodePtr>& getDeltaDeleteNodes() const = 0;
+    virtual const std::set<EdgePtr>& getDeltaDeleteEdges() const = 0;
+};
+
+class DerivationGraph: public DerivationGraphView {
 public:
     DerivationGraph() : nextNodeId(0), nextEdgeId(0) {}
     DerivationGraph(const RuleManager* rm) : nextNodeId(0), nextEdgeId(0), ruleManager(rm) {}
@@ -140,7 +198,7 @@ public:
 
         // 不存在则创建新节点
         auto node = std::shared_ptr<Node>(new Node(tuple, nextNodeId++));
-        nodes.push_back(node);
+        nodes.insert(node);
         node->setProbability(weight);
 
         // 添加到映射中
@@ -208,8 +266,8 @@ public:
         return findHyperedge(ruleApp.ruleId, vars, ruleApp.varValuesPure);
     }
 
-    const std::vector<NodePtr>& getNodes() const { return nodes; }
-    const std::vector<EdgePtr>& getEdges() const { return edges; }
+    const std::unordered_set<NodePtr>& getNodes() const { return nodes; }
+    const std::unordered_set<EdgePtr>& getEdges() const { return edges; }
 
     static DerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {})  {
         FunctionTimer timer(" creating derivation graph ");
@@ -278,19 +336,19 @@ public:
         }
 
         // 过滤节点和边
-        std::vector<NodePtr> newNodes;
+        std::unordered_set<NodePtr> newNodes;
         for (const auto& node : nodes) {
             if (reachableNodes.count(node)) {
-                newNodes.push_back(node);
+                newNodes.insert(node);
             } else {
                 tupleToNodeMap.erase(node->getTuple());
             }
         }
 
-        std::vector<EdgePtr> newEdges;
+        std::unordered_set<EdgePtr> newEdges;
         for (const auto& edge : edges) {
             if (reachableEdges.count(edge)) {
-                newEdges.push_back(edge);
+                newEdges.insert(edge);
             } else {
                 // 同时从映射中删除这条边
                 if (edge->getRule()) {
@@ -392,7 +450,7 @@ public:
         }
         output->addIncomingEdge(edge);
 
-        edges.push_back(edge);
+        edges.insert(edge);
         return edge;
     }
 
@@ -405,13 +463,15 @@ public:
         }
         output->addIncomingEdge(edge);
 
-        edges.push_back(edge);
+        edges.insert(edge);
         return edge;
     }
 
 protected:
-    std::vector<NodePtr> nodes;
-    std::vector<EdgePtr> edges;
+//    std::vector<NodePtr> nodes;
+//    std::vector<EdgePtr> edges;
+    std::unordered_set<NodePtr> nodes;
+    std::unordered_set<EdgePtr> edges;
     size_t nextNodeId;
     size_t nextEdgeId;
     const RuleManager* ruleManager;
@@ -537,6 +597,22 @@ public:
     std::set<EdgePtr> deltaInsertEdges;
     std::set<NodePtr> deltaDeleteNodes;
     std::set<EdgePtr> deltaDeleteEdges;
+
+    const std::set<NodePtr>& getDeltaInsertNodes() const {
+        return deltaInsertNodes;
+    }
+
+    const std::set<EdgePtr>& getDeltaInsertEdges() const {
+        return deltaInsertEdges;
+    }
+
+    const std::set<NodePtr>& getDeltaDeleteNodes() const {
+        return deltaDeleteNodes;
+    }
+
+    const std::set<EdgePtr>& getDeltaDeleteEdges() const {
+        return deltaDeleteEdges;
+    }
 };
 
 void IncrementalDerivationGraph::applyDeltaInserts(
@@ -611,7 +687,11 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
             const std::vector<std::string>& vars = rule->getVars();
             EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, vars);
-            assert(existingEdge != nullptr && "Delta delete edge does not exist in the graph");
+            if (existingEdge == nullptr) {
+                std::cout << "Did not find the edge to delete, possibly pruned, omitted: "
+                          << createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure) << std::endl;
+                continue;
+            }
 
             // 将边标记为增量删除
             deltaDeleteEdges.insert(existingEdge);
@@ -634,8 +714,9 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             }
 
             // 从图的边列表中移除这条边
-            auto& allEdges = edges;
-            allEdges.erase(std::remove(allEdges.begin(), allEdges.end(), existingEdge), allEdges.end());
+            edges.erase(existingEdge);
+//            auto& allEdges = edges;
+//            allEdges.erase(std::remove(allEdges.begin(), allEdges.end(), existingEdge), allEdges.end());
 
             // 从edgeKeyToEdgeMap中移除这条边
             std::string edgeKey = createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure);
@@ -665,7 +746,8 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
         tupleToNodeMap.erase(nodeToRemove->getTuple());
 
         // 从节点列表中移除
-        nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeToRemove), nodes.end());
+//        nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeToRemove), nodes.end());
+        nodes.erase(nodeToRemove);
     }
 
     for (const auto& tuple : deletedFacts) {
@@ -675,10 +757,12 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             tupleToNodeMap.erase(node->getTuple());
             deltaDeleteNodes.insert(node);
             // 从节点列表中移除
-            nodes.erase(std::remove(nodes.begin(), nodes.end(), node), nodes.end());
+//            nodes.erase(std::remove(nodes.begin(), nodes.end(), node), nodes.end());
+            nodes.erase(node);
             nodesToRemove.push_back(node);
         } else {
-            assert (false && "Deleted fact not found in the graph");
+            std::cout << "Deleted fact not found in the graph, possibly pruned, omitted: " << tuple.toString() << std::endl;
+            continue;
         }
     }
 }
