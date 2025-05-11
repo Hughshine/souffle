@@ -764,17 +764,29 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
         void visit_(type_identity<Clear>, const Clear& clear, std::ostream& out) override {  // TODO: should not purge real relation
             PRINT_BEGIN_COMMENT(out);
 
-            auto Relation = synthesiser.lookup(clear.getRelation());
+            auto relation = synthesiser.lookup(clear.getRelation());
             // bool isIntermediate =
             //     !contains(synthesiser.storeRelations, Relation->getName()) && !Relation->isTemp();
 
             // if (isIntermediate) {
             //     out << "if (pruneImdtRels) ";
             // }
-            if (Relation->isTemp()) {
-                out << synthesiser.getRelationName(Relation) << "->purge();\n";
+            // std::cout << "purging " << clear.getRelation() << std::endl
+            //                 << synthesiser.getRelationName(relation) << std::endl;
+            if (relation->isTemp()) {
+                out << synthesiser.getRelationName(relation) << "->purge();\n";
+            } else {
+                // TODO: cannot purge real relations now, but incremental computation might need this
+                // out << synthesiser.getRelationName(relation) << "->purge();\n";
             }
 
+            PRINT_END_COMMENT(out);
+        }
+
+        void visit_(type_identity<ExactClear>, const ExactClear& clear, std::ostream& out) override {  // TODO: should not purge real relation
+            PRINT_BEGIN_COMMENT(out);
+            auto relation = synthesiser.lookup(clear.getRelation());
+            out << synthesiser.getRelationName(relation) << "->purge();\n";
             PRINT_END_COMMENT(out);
         }
 

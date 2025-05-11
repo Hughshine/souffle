@@ -29,6 +29,7 @@
 #include "ram/Break.h"
 #include "ram/Call.h"
 #include "ram/Clear.h"
+#include "ram/ExactClear.h"
 #include "ram/Conjunction.h"
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
@@ -1384,6 +1385,12 @@ RamDomain Engine::execute(const Node* node, Context& ctxt) {
             rel->purge();
             return true;
         ESAC(Clear)
+
+        // CASE(ExactClear)
+        //     auto* rel = shadow.getRelation();
+        //     rel->purge();
+        //     return true;
+        // ESAC(ExactClear)
 
 #define ESTIMATEJOINSIZE(Structure, Arity, AuxiliaryArity, ...)         \
     CASE(EstimateJoinSize, Structure, Arity, AuxiliaryArity)            \

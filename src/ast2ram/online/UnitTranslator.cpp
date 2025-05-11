@@ -35,6 +35,7 @@
 #include "ram/Conjunction.h"
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
+#include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/Erase.h"
 #include "ram/ExistenceCheck.h"
@@ -67,7 +68,6 @@
 #include "ram/UserDefinedAggregator.h"
 #include "ram/UserDefinedOperator.h"
 #include "ram/Variable.h"
-#include "ram/DeltaUnion.h"
 #include "ram/utility/Utils.h"
 #include "reports/DebugReport.h"
 #include "reports/ErrorReport.h"
@@ -89,6 +89,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <ram/ExactClear.h>
 
 namespace souffle::ast2ram::online {
 
@@ -1562,7 +1564,7 @@ Own<ram::Statement> UnitTranslator::generateLoadRelationInc(const ast::Relation*
         std::string ramRelationName = getRelationName(relation->getQualifiedName());
         std::string ramOldRelationName = getOldRelationName(relation->getQualifiedName());
 
-        auto copyNewToOldStmt = generateMergeRelations(relation, ramOldRelationName, ramRelationName);
+        // auto copyNewToOldStmt = generateMergeRelations(relation, ramOldRelationName, ramRelationName);
         // Own<ram::Statement> copyStmt = mk<ram::Copy>(ramRelationName, ramOldRelationName);
         // Own<ram::Statement> loadStmt = mk<ram::IO>(ramOldRelationName, directives);
 
@@ -1631,8 +1633,13 @@ Own<ram::Statement> UnitTranslator::generateLoadRelationInc(const ast::Relation*
         // );
 
         // join get "new" input relation
+        // clear old; swap new and old; merge new and old
         auto mergeToNewStmt =
             mk<ram::Sequence>(
+                mk<ram::Clear>(ramOldRelationName),
+                // mk<ram::Swap>(ramOldRelationName, ramRelationName),
+                generateMergeRelations(relation, ramOldRelationName, ramRelationName),
+                mk<ram::ExactClear>(ramRelationName),
                 generateMergeRelationsWithFilter(relation,
                     getConcreteRelationName(relation->getQualifiedName()),  // new relation
                     getOldRelationName(relation->getQualifiedName()),
@@ -1652,7 +1659,8 @@ Own<ram::Statement> UnitTranslator::generateLoadRelationInc(const ast::Relation*
 
         //
 
-        Own<ram::Statement> stmts = mk<ram::Sequence>(std::move(copyNewToOldStmt), std::move(mergeToNewStmt));
+        Own<ram::Statement> stmts = mk<ram::Sequence>(std::move(mergeToNewStmt));
+        // Own<ram::Statement> stmts = mk<ram::Sequence>(std::move(copyNewToOldStmt), std::move(mergeToNewStmt));
         // Own<ram::Statement> stmts = mk<ram::Sequence>(std::move(copyNewToOldStmt), std::move(loadIncDeltaInsertStmt), std::move(loadIncDeltaDeleteStmt), std::move(removeRedundancyStmt), std::move(mergeToNewStmt));
         if (glb->config().has("profile")) {
             const std::string logTimerStatement =
@@ -1666,38 +1674,45 @@ Own<ram::Statement> UnitTranslator::generateLoadRelationInc(const ast::Relation*
 
 // TODO: this one should be useless in online mode
 Own<ram::Statement> UnitTranslator::generateLoadRelationForIDB(const ast::Relation* relation) const {
-    VecOwn<ram::Statement> storeStmts;
-    for (const auto* store : context->getStoreDirectives(relation->getQualifiedName())) {
-        // Set up the corresponding directive map
-        // std::map<std::string, std::string> directives;
-        // for (const auto& [key, value] : store->getParameters()) {
-        //     directives.insert(std::make_pair(key, unescape(value)));
-        // }
-        // directives["operation"] = "input";
-        // directives["fact-dir"] = directives["output-dir"];
-        // directives.insert(std::make_pair("incDelta", "false")); // TODO
-        // directives.insert(std::make_pair("inc-insert", "false"));
-        // directives.insert(std::make_pair("inc-delete", "false"));
-        // directives.insert(std::make_pair("suffix", "")); // TODO: read from old
-        //
-        // addAuxiliaryArity(relation, directives);
-
-        // load IDB to "old relation"
-        // std::string ramRelationName = getOldRelationName(relation->getQualifiedName());
-        // Own<ram::Statement> loadStmt = mk<ram::IO>(ramRelationName, directives);
-        std::string ramRelationName = getRelationName(relation->getQualifiedName());
-        std::string ramOldRelationName = getOldRelationName(relation->getQualifiedName());
-        auto copyNewToOldStmt = generateMergeRelations(relation, ramOldRelationName, ramRelationName);
-
-        // if (glb->config().has("profile")) {
-        //     const std::string logTimerStatement =
-        //             LogStatement::tRelationSaveTime(ramRelationName, relation->getSrcLoc());
-        //     copyNewToOldStmt = mk<ram::LogRelationTimer>(std::move(copyNewToOldStmt), logTimerStatement, ramRelationName);
-        // }
-        appendStmt(storeStmts, std::move(copyNewToOldStmt));
-    }
-    // TODO: dump delta relations for inc computation
-    return mk<ram::Sequence>(std::move(storeStmts));
+    // VecOwn<ram::Statement> storeStmts;
+    // for (const auto* store : context->getStoreDirectives(relation->getQualifiedName())) {
+    //     // Set up the corresponding directive map
+    //     // std::map<std::string, std::string> directives;
+    //     // for (const auto& [key, value] : store->getParameters()) {
+    //     //     directives.insert(std::make_pair(key, unescape(value)));
+    //     // }
+    //     // directives["operation"] = "input";
+    //     // directives["fact-dir"] = directives["output-dir"];
+    //     // directives.insert(std::make_pair("incDelta", "false")); // TODO
+    //     // directives.insert(std::make_pair("inc-insert", "false"));
+    //     // directives.insert(std::make_pair("inc-delete", "false"));
+    //     // directives.insert(std::make_pair("suffix", "")); // TODO: read from old
+    //     //
+    //     // addAuxiliaryArity(relation, directives);
+    //
+    //     // load IDB to "old relation"
+    //     // std::string ramRelationName = getOldRelationName(relation->getQualifiedName());
+    //     // Own<ram::Statement> loadStmt = mk<ram::IO>(ramRelationName, directives);
+    //     std::string ramRelationName = getRelationName(relation->getQualifiedName());
+    //     std::string ramOldRelationName = getOldRelationName(relation->getQualifiedName());
+    //     auto copyNewToOldStmt = generateMergeRelations(relation, ramOldRelationName, ramRelationName);
+    //
+    //     // if (glb->config().has("profile")) {
+    //     //     const std::string logTimerStatement =
+    //     //             LogStatement::tRelationSaveTime(ramRelationName, relation->getSrcLoc());
+    //     //     copyNewToOldStmt = mk<ram::LogRelationTimer>(std::move(copyNewToOldStmt), logTimerStatement, ramRelationName);
+    //     // }
+    //     appendStmt(storeStmts, std::move(copyNewToOldStmt));
+    // }
+    // TODO: need to correctly keep old result for all IDB relations
+    // TODO: better do this before the start or just after the end
+    // TODO: perhaps define a new subroutine for incremental pipeline, which will
+    // clear all old results, and copy new to old.
+    return mk<ram::EmptyStatement>();
+    // std::string ramRelationName = getRelationName(relation->getQualifiedName());
+    // std::string ramOldRelationName = getOldRelationName(relation->getQualifiedName());
+    // auto copyNewToOldStmt = generateMergeRelations(relation, ramOldRelationName, ramRelationName);
+    // return mk<ram::Sequence>( std::move(copyNewToOldStmt));
 }
 
 

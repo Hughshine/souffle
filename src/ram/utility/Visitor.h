@@ -28,6 +28,7 @@
 #include "ram/Break.h"
 #include "ram/Call.h"
 #include "ram/Clear.h"
+#include "ram/ExactClear.h"
 #include "ram/Condition.h"
 #include "ram/Conjunction.h"
 #include "ram/Constraint.h"
@@ -180,6 +181,7 @@ struct Visitor : souffle::detail::VisitorBase<R, NodeType, Params...> {
         SOUFFLE_VISITOR_FORWARD(IO);
         SOUFFLE_VISITOR_FORWARD(Query);
         SOUFFLE_VISITOR_FORWARD(Clear);
+        SOUFFLE_VISITOR_FORWARD(ExactClear);
         SOUFFLE_VISITOR_FORWARD(LogSize);
         SOUFFLE_VISITOR_FORWARD(EstimateJoinSize);
 
@@ -208,6 +210,7 @@ protected:
     SOUFFLE_VISITOR_LINK(IO, RelationStatement);
     SOUFFLE_VISITOR_LINK(Query, Statement);
     SOUFFLE_VISITOR_LINK(Clear, RelationStatement);
+    SOUFFLE_VISITOR_LINK(ExactClear, RelationStatement);
     SOUFFLE_VISITOR_LINK(LogSize, RelationStatement);
     SOUFFLE_VISITOR_LINK(EstimateJoinSize, RelationStatement);
     SOUFFLE_VISITOR_LINK(RelationStatement, Statement);

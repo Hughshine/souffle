@@ -196,6 +196,7 @@ public:
             NK_Query,
             NK_RelationStatement,
                 NK_Clear,
+                NK_ExactClear,
                 NK_EstimateJoinSize,
                 NK_IO,
                 NK_LogRelationTimer,
