@@ -1543,7 +1543,7 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
     return mk<ram::Sequence>(std::move(loadStmts));
 }
 
-
+// TODO: should change this to deletion and insertion, not re-copy
 Own<ram::Statement> UnitTranslator::generateLoadRelationInc(const ast::Relation* relation) const {
     VecOwn<ram::Statement> loadStmts;
     for (const auto* load : context->getLoadDirectives(relation->getQualifiedName())) {
@@ -1564,81 +1564,13 @@ Own<ram::Statement> UnitTranslator::generateLoadRelationInc(const ast::Relation*
         std::string ramRelationName = getRelationName(relation->getQualifiedName());
         std::string ramOldRelationName = getOldRelationName(relation->getQualifiedName());
 
-        // auto copyNewToOldStmt = generateMergeRelations(relation, ramOldRelationName, ramRelationName);
-        // Own<ram::Statement> copyStmt = mk<ram::Copy>(ramRelationName, ramOldRelationName);
-        // Own<ram::Statement> loadStmt = mk<ram::IO>(ramOldRelationName, directives);
-
-        // Also add IO for delta's IO; when loading those facts, the derivation mapping is also their
-        // directives["incDelta"] = "true";
-        // directives["inc-insert"] = "true";
-
-        // std::string tmpName = getTmpRelationName(relation->getQualifiedName()); // insert
-        // std::string tmp2Name = getTmp2RelationName(relation->getQualifiedName()); // delete
-        // std::string tmp3Name = getTmp3RelationName(relation->getQualifiedName()); // insert2
-        // std::string tmp4Name = getTmp4RelationName(relation->getQualifiedName()); // delete3
-
-        // std::string ramIncDeltaInsertRelationName = getIncDeltaTupleInsertRelationName((relation->getQualifiedName()));
-        // Own<ram::Statement> loadIncDeltaInsertStmt = mk<ram::IO>(tmpName, directives);
-        // Own<ram::Statement> loadIncDeltaInsertStmt = generateMergeRelations(relation, tmpName, ramIncDeltaInsertRelationName);
-        // mk<ram::IO>(tmpName, directives);
-
-        // directives["inc-insert"] = "false";
-        // directives["inc-delete"] = "true";
-
-        // auto copyNewToOldStmt = generateMergeRelations(relation, ramOldRelationName, ramRelationName);
-
-
-        // std::string ramIncDeltaDeleteRelationName = getIncDeltaTupleDeleteRelationName((relation->getQualifiedName()));
-        // // Own<ram::Statement> loadIncDeltaDeleteStmt = mk<ram::IO>(tmp2Name, directives);
-        // Own<ram::Statement> loadIncDeltaDeleteStmt = generateMergeRelations(relation, tmp2Name, ramIncDeltaDeleteRelationName);
-        // TODO: clean up these inputs operations... very messy now
-        // remove redundancy in new and old
-        // tmp = delta_R_insert - delta_R_delete
-        // delta_R_delete = delta_R_delete - delta_R_insert
-        // delta_R_insert = tmp
-        // remove all insert that already in old
-        // remove all delete that not in old
-
-
-        // do not use swap for non-tmp relations... souffle does not handle them correctly
-        // auto removeRedundancyStmt = mk<ram::Sequence>(
-        //     generateMergeRelationsWithFilter(
-        //         relation,
-        //         tmp3Name, //ramIncDeltaInsertRelationName
-        //         tmpName,
-        //         tmp2Name
-        //     ),
-        //     generateMergeRelationsWithFilter(
-        //         relation,
-        //         tmp4Name,
-        //         tmp2Name,
-        //         tmpName
-        //     ),
-        //     generateMergeRelationsWithNegativeFilter(
-        //         relation,
-        //         ramIncDeltaDeleteRelationName,
-        //         tmp4Name,
-        //         getOldRelationName(relation->getQualifiedName())
-        //     ),
-        //     generateMergeRelationsWithFilter(
-        //         relation,
-        //         ramIncDeltaInsertRelationName,
-        //         tmp3Name,
-        //         getOldRelationName(relation->getQualifiedName())
-        //     ),
-        //     mk<ram::Clear>(tmpName),
-        //     mk<ram::Clear>(tmp2Name),
-        //     mk<ram::Clear>(tmp3Name),
-        //     mk<ram::Clear>(tmp4Name)
-        // );
-
         // join get "new" input relation
         // clear old; swap new and old; merge new and old
         auto mergeToNewStmt =
             mk<ram::Sequence>(
-                mk<ram::Clear>(ramOldRelationName),
+                // mk<ram::Clear>(ramOldRelationName),
                 // mk<ram::Swap>(ramOldRelationName, ramRelationName),
-                generateMergeRelations(relation, ramOldRelationName, ramRelationName),
+                // generateMergeRelations(relation, ramOldRelationName, ramRelationName),
                 mk<ram::ExactClear>(ramRelationName),
                 generateMergeRelationsWithFilter(relation,
                     getConcreteRelationName(relation->getQualifiedName()),  // new relation
@@ -1904,6 +1836,20 @@ Own<ram::Sequence> UnitTranslator::generateProgram(const ast::TranslationUnit& t
     return mk<ram::Sequence>(std::move(res));
 }
 
+Own<ram::Statement> UnitTranslator::generateIncTableUpdate(const std::vector<std::size_t>& sccOrderings) const {
+    VecOwn<ram::Statement> res;
+    for (std::size_t i = 0; i < sccOrderings.size(); i++) {
+        for (auto& rel : context->getRelationsInSCC(sccOrderings.at(i))) {
+            // add copy-new-to-old for all relations
+            auto oldRelationName = getOldRelationName(rel->getQualifiedName());
+            auto relationName = getConcreteRelationName(rel->getQualifiedName());
+            appendStmt(res, mk<ram::Clear>(oldRelationName));
+            appendStmt(res,
+                generateMergeRelations(rel, oldRelationName, relationName));
+        }
+    }
+    return mk<ram::Sequence>(std::move(res));
+}
 
 Own<ram::Sequence> UnitTranslator::generateProgramInc(const ast::TranslationUnit& translationUnit) {
     // Check if trivial program
@@ -1913,6 +1859,12 @@ Own<ram::Sequence> UnitTranslator::generateProgramInc(const ast::TranslationUnit
     const auto& sccOrdering =
             translationUnit.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>().order();
     VecOwn<ram::Statement> incRes;
+
+    // incremental computation needs to do table update before its execution
+    // which meanly: clear all old results, and copy new to old
+    std::string stratumIncTableUpdate = "inc_table_update";
+    addRamSubroutine(stratumIncTableUpdate, generateIncTableUpdate(sccOrdering));
+    appendStmt(incRes, mk<ram::Call>("stratum_" + stratumIncTableUpdate));
 
     // Create subroutines for each SCC according to topological order
     for (std::size_t i = 0; i < sccOrdering.size(); i++) {

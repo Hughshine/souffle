@@ -96,7 +96,7 @@ protected:
     /** Low-level stratum translation */
     Own<ram::Statement> generateStratum(std::size_t scc) const;
     Own<ram::Statement> generateStratumInc(std::size_t scc) const;
-
+    Own<ram::Statement> generateIncTableUpdate(const std::vector<std::size_t>& sccOrderings) const;  // TODO
     Own<ram::Statement> generateStratumPreamble(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateStratumPreambleInc(const ast::RelationSet& scc, bool isDelete = false) const;
 
