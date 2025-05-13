@@ -122,6 +122,9 @@ public:
     WeightedBDDManager();
     ~WeightedBDDManager() override = default;
 
+    void tryGarbageCollection() {
+        Cudd_ReduceHeap(manager.get(), CUDD_REORDER_NONE, 0);
+    }
     // Basic BDD operations
     BddNodeRef createVar(int index) override;
     BddNodeRef createVar(int index, const Node& node) override;
@@ -183,6 +186,9 @@ int myHookFunc(DdManager* dd, const char* str, void* data) {
 WeightedBDDManager::WeightedBDDManager() {
     DdManager* m = Cudd_Init(0, 0, CUDD_UNIQUE_SLOTS, CUDD_CACHE_SLOTS, 16UL * 1024 * 1024 * 1024);
     Cudd_EnableGarbageCollection(m);
+//    Cudd_AutodynEnable(m, CUDD_REORDER_GROUP_SIFT);
+    Cudd_AutodynEnable(m, CUDD_REORDER_SIFT);
+
 //    Cudd_SetMaxLive(m, );
     Cudd_AddHook(m, myHookFunc, CUDD_PRE_GC_HOOK);
     Cudd_AddHook(m, myHookFunc, CUDD_POST_GC_HOOK);

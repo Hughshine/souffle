@@ -393,10 +393,10 @@ public:
         }
         for (const auto& [tuple, ruleAppSet] : ruleApps) {
             auto node = graph->createNode(tuple);
-            if (node->isFact) {
-                std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
-                continue;  // skip fact nodes currently
-            }
+//            if (node->isFact) {
+//                std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
+//                continue;  // skip fact nodes currently
+//            }
             for (const auto& ruleApp : *ruleAppSet) {
 				auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
             }
@@ -429,6 +429,9 @@ public:
         while (!workQueue.empty()) {
             NodePtr current = workQueue.front();
             workQueue.pop();
+            if (current->isFact) {
+                continue;  // skip input fact nodes
+            }
             for (const auto& edge : current->getIncomingEdges()) {
                 reachableEdges.insert(edge);
                 for (const auto& inputNode : edge->getInputs()) {
@@ -602,10 +605,10 @@ public:
         }
         for (const auto& [tuple, ruleAppSet] : ruleApps) {
             auto node = graph->createNode(tuple);
-            if (node->isFact) {
-                std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
-                continue;  // skip fact nodes currently
-            }
+//            if (node->isFact) {
+//                std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
+//                continue;  // skip fact nodes currently
+//            }
             for (const auto& ruleApp : *ruleAppSet) {
                 auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
             }
@@ -754,8 +757,9 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             const std::vector<std::string>& vars = rule->getVars();
             EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, vars);
             if (existingEdge == nullptr) {
-//                std::cout << "Did not find the edge to delete, possibly pruned, omitted: "
-//                          << createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure) << std::endl;
+                // TODO: possibly linked to input facts.
+                std::cout << "Did not find the edge to delete: "
+                          << createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure) << std::endl;
 //                continue;
                 assert(false && "Did not find the edge to delete");
             }
@@ -828,6 +832,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             nodes.erase(node);
             nodesToRemove.push_back(node);
         } else {
+            std::cout << "deleted fact not found: " << tuple.toString() << std::endl;
             assert (false && "deleted fact not found");
         }
     }
@@ -858,6 +863,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
     while (!workQueue.empty()) {
         NodePtr current = workQueue.front();
         workQueue.pop();
+        if (current->isFact) {
+            continue;  // currently skip input facts
+        }
         for (const auto& edge : current->getIncomingEdges()) {
             reachableEdges.insert(edge);
             for (const auto& inputNode : edge->getInputs()) {

@@ -451,10 +451,17 @@ void buildFormulasInc(
     for (auto node : view.getDeltaDeleteNodes()) {
         nodeFormulas.erase(node);
     }
+    size_t iteration = 0;
     while (!updatedSet.empty()) {
+        std::cout << "Iteration: " << ++iteration << std::endl;
+        std::cout << "Worklist size: " << updatedSet.size() << std::endl;
+        formulaManager.dumpProfilingStatistics();
+
         // Get an edge from the updated set
         auto edge = *updatedSet.begin();
         updatedSet.erase(updatedSet.begin());
+
+
 
         // Store old edge formula
         FormulaNodeRef oldEdgeFormula = edgeFormulas[edge];

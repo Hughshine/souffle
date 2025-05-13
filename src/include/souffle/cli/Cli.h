@@ -357,10 +357,12 @@ public:
                         auto* rel = program->getRelation(getIncDeltaTupleInsertRelationName(op.relationName));
                         if (rel == nullptr) {
                             std::cout << "Relation not found, omitted: " << op.relationName << std::endl;
+                            op.valid = false;
                             continue;
                         }
                         if (op.values.size() != rel->getArity()) {
                             std::cout << "Relation arity mismatch, omitted: " << op.relationName << std::endl;
+                            op.valid = false;
                             continue;
                         }
                         souffle::tuple relTuple = souffle::tuple(rel);
@@ -384,10 +386,12 @@ public:
                         auto insRel = program->getRelation(getIncDeltaTupleInsertRelationName(op.relationName));
                         if (rel == nullptr) {
                             std::cout << "Relation not found, omitted: " << op.relationName << std::endl;
+                            op.valid = false;
                             continue;
                         }
                         if (op.values.size() != rel->getArity()) {
                             std::cout << "Relation arity mismatch, omitted: " << op.relationName << std::endl;
+                            op.valid = false;
                             continue;
                         }
                         souffle::tuple relTuple = souffle::tuple(rel);
@@ -443,6 +447,7 @@ public:
             );
             auto view = graph->prune(program->getOutputRelations());
             view.dumpDotInc("derivation-inc.dot");
+            bddManager->tryGarbageCollection();
             buildFormulasInc(view, *bddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
             probResult.clear();
             {
