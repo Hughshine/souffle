@@ -457,11 +457,11 @@ public:
                         std::cout << "Node " << node->getId() << " not in view, skipped." << std::endl;
                         continue;
                     }
-    //                std::cout << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
-    //                std::cout << bddManager->toString(bdd) << "\t";
-    //                auto prob = bddManager->computeWeightedModelCount(bdd);
-    //                std::cout << "Probability: " << prob << std::endl;
+                    std::cout << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
+                    std::cout << bddManager->toString(bdd) << "\t";
                     auto prob = bddManager->computeWeightedModelCount(bdd);
+                    std::cout << "Probability: " << prob << std::endl;
+//                    auto prob = bddManager->computeWeightedModelCount(bdd);
                     probResult[node] = prob;
                 }
             }

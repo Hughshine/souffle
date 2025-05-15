@@ -441,6 +441,9 @@ void buildFormulasInc(
         // Compute disjunction of all incoming edge formulas
         if (incomingFormulas.empty()) {
             // If no incoming edges, node is not derivable (False)
+            if (node->isFact) {
+                assert (false && "should not be fact");
+            }
             return formulaManager.getFalse();
         } else if (incomingFormulas.size() == 1) {
             return incomingFormulas[0];
@@ -507,7 +510,8 @@ void buildFormulasInc(
             // Compute new node formula
             FormulaNodeRef newNodeFormula = updateNodeFormula(output);
 
-            if (!nodeHasFormula) {
+            // every derivable node should always have a non-false formula; or it means the inputs have not been ready yet
+            if (!nodeHasFormula || formulaManager.isSame(formulaManager.getFalse(), newNodeFormula)) {
                 updatedSet.insert(edge);
             }
             // Check if node formula changed
