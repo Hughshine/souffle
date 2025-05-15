@@ -702,6 +702,7 @@ void IncrementalDerivationGraph::applyDeltaInserts(
             deltaInsertNodes.insert(node);
         }
         node->setProbability(prob);
+        node->isFact = true;
     }
 
     for (const auto& [tuple, ruleAppSet] : deltaInsertRuleApps) {

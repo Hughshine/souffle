@@ -524,7 +524,7 @@ void buildFormulasInc(
     updatedSet.insert(view.getDeltaInsertEdges().begin(), view.getDeltaInsertEdges().end());
     for (auto node : view.getDeltaInsertNodes()) {
         // Create a variable using the fact's unique ID
-        if (view.getIncomingEdges(node).empty()) {
+        if (node->isFact) {
             nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
             formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1-node->getProbability());
         }
