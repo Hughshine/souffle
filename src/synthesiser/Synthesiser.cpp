@@ -2180,15 +2180,31 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             //     out << "varValues.insert(std::make_pair(\"" << var  << "\", "; rec(out, expr.get()); out << "));\n";
             // }
             // out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
-            out << "std::vector<souffle::RamDomain> varValues{};\n";
-            for (const auto& expr: recordDerivation.varExprs) {
-                out << "varValues.emplace_back("; rec(out, expr.get()); out << ");\n";
-            }
-            out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
-
-            out << "ruleSet->insert(ruleApplication);\n";
-            if (!recordDerivation.isComplete()) {
-                out << "ruleSet2->insert(ruleApplication);\n";
+            if (recordDerivation.isInsert()) {
+                out << "std::vector<souffle::RamDomain> varValues{};\n";
+                for (const auto& expr: recordDerivation.varExprs) {
+                    out << "varValues.emplace_back("; rec(out, expr.get()); out << ");\n";
+                }
+                out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";                out << "ruleSet->insert(ruleApplication);\n";
+                if (!recordDerivation.isComplete()) {
+                    out << "ruleSet2->insert(ruleApplication);\n";
+                }
+            } else {
+                // is delete
+                if (recordDerivation.isComplete()) {
+                    out << "std::vector<souffle::RamDomain> varValues{};\n";
+                    for (const auto& expr: recordDerivation.varExprs) {
+                        out << "varValues.emplace_back("; rec(out, expr.get()); out << ");\n";
+                    }
+                    out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";                out << "ruleSet->insert(ruleApplication);\n";
+                } else {
+                    out << "auto*& ruleSetComplete = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
+                    // over-deletion...
+                    out << "for (const auto& ruleApp: *ruleSetComplete) {" << std::endl;
+                        out << "ruleSet->insert(ruleApp);\n";
+                        out << "ruleSet2->insert(ruleApp);\n";
+                    out << "}" << std::endl;
+                }
             }
         }
 
