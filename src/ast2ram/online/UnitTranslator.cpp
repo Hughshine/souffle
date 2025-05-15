@@ -1417,6 +1417,45 @@ Own<ram::Statement> UnitTranslator::generateStratumExitSequenceInc(const ast::Re
     return mk<ram::Sequence>(std::move(exitConditions));
 }
 
+Own<ram::Statement> UnitTranslator::generateStratumLoopBodyIncRederive(const ast::RelationSet& scc) const {
+    return mk<ram::Sequence>();
+}
+Own<ram::Statement> UnitTranslator::generateStratumTableUpdatesIncRederive(const ast::RelationSet& scc) const {
+    return mk<ram::Sequence>();
+}
+Own<ram::Statement> UnitTranslator::generateStratumExitSequenceIncRederive(const ast::RelationSet& scc) const {
+    return mk<ram::Sequence>();
+}
+Own<ram::Statement> UnitTranslator::generateStratumPostambleIncRederive(const ast::RelationSet& scc) const {
+    return mk<ram::Sequence>();
+}
+
+// TODO
+Own<ram::Statement> UnitTranslator::generateStratumRederive(const ast::RelationSet& scc) const {
+    VecOwn<ram::Statement> result;
+
+    const std::string loop_counter = "loop_counter_rederive";
+    VecOwn<ram::Expression> inc;
+    inc.push_back(mk<ram::Variable>(loop_counter));
+    inc.push_back(mk<ram::UnsignedConstant>(1));
+    auto increment_counter = mk<ram::Assign>(mk<ram::Variable>(loop_counter),
+            mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(inc)), false);  // counter每一次迭代后的累加
+    // Add in the main fixpoint loop
+    auto loopBody = generateStratumLoopBodyIncRederive(scc);
+    auto exitSequence = generateStratumExitSequenceIncRederive(scc);  // 每次迭代后，如果new都为空，说明迭代结束，离开循环体；否则更新tables，开始下一次迭代
+    auto updateSequence = generateStratumTableUpdatesIncRederive(scc); // 每次迭代后，将new->真正的table，new->delta, new清空
+    auto fixpointLoop = mk<ram::Loop>(mk<ram::Sequence>(std::move(loopBody),
+            std::move(exitSequence), std::move(updateSequence), std::move(increment_counter)));
+
+    appendStmt(result, mk<ram::Assign>(mk<ram::Variable>(loop_counter), mk<ram::UnsignedConstant>(1), true));  // counter最初的赋值1
+    appendStmt(result, std::move(fixpointLoop)); // semi-naive 循环计算主体
+    // TODO: delta union only for delete
+    // Add in the postamble
+    appendStmt(result, generateStratumPostambleIncRederive(scc)); // 最终删除全部的临时变量
+
+    return mk<ram::Sequence>(std::move(result));
+}
+
 /** generate RAM code for recursive relations in a strongly-connected component */
 Own<ram::Statement> UnitTranslator::generateRecursiveStratumInc(
         const ast::RelationSet& scc, std::size_t sccNumber) const {
@@ -1474,10 +1513,13 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratumInc(
     }
 
     // TODO: rederive
+    // rederive do not need to prefill since it only cares about recursive rules in the recursive stratum
+    appendStmt(result, generateStratumRederive(scc));
 
+    // insertion
     appendStmt(result, generateStratumPreambleInc(scc, false));
     {
-        auto prefill = generateStratumNonSccPreFill(scc, false);
+        auto prefill = generateStratumNonSccPreFill(scc, false);  // This one is for recursion?
         auto updateSequence = generateStratumTableUpdatesInc(scc, false);
         appendStmt(result, std::move(prefill));
         appendStmt(result, std::move(updateSequence));

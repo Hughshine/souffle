@@ -253,7 +253,7 @@ Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQuery(const ast::
                 // if (sccAtoms.) {  // delta rules for
                     // continue;
                 // }
-                if (!isPrefill) { // skip non-recursive clause in the loop body of recursive stratum
+                if (!isPrefill) { // skip delta rules for other stratum relations within the loop body
                     bool inScc = false;
                     for (int j = 0; j < sccAtoms.size(); j++) {
                         if (sccAtoms.at(j) == atom) {

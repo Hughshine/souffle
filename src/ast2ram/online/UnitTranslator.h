@@ -72,8 +72,12 @@ protected:
     VecOwn<ram::Statement> generateClauseVersionsPrefill(
         const ast::Clause* clause, const ast::RelationSet& scc, bool isDelete) const;
     Own<ram::Statement> generateStratumTableUpdatesInc(const ast::RelationSet& scc, bool isDelete = false) const;
+    Own<ram::Statement> generateStratumTableUpdatesIncRederive(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateStratumLoopBodyInc(const ast::RelationSet& scc, bool isDelete = false) const;
+    Own<ram::Statement> generateStratumLoopBodyIncRederive(const ast::RelationSet& scc) const;
+
     Own<ram::Statement> generateStratumExitSequenceInc(const ast::RelationSet& scc, bool isDelete = false) const;
+    Own<ram::Statement> generateStratumExitSequenceIncRederive(const ast::RelationSet& scc) const;
     Own<ram::Statement> translateRecursiveClausesInc(
         const ast::RelationSet& scc, const ast::Relation* rel, bool isDelete = false, bool isPrefill = false) const;
     Own<ram::Statement> generateStratumNonSccPreFill(const ast::RelationSet& scc, bool isDelete = false) const;
@@ -87,6 +91,7 @@ protected:
     Own<ram::Statement> generateRecursiveStratum(const ast::RelationSet& scc, std::size_t sccNum) const;
     Own<ram::Statement> generateRecursiveStratumInc(
                 const ast::RelationSet& scc, std::size_t sccNumber) const;
+
     /** IO translation */
     Own<ram::Statement> generateStoreRelation(const ast::Relation* relation) const;
     Own<ram::Statement> generateLoadRelation(const ast::Relation* relation) const;
@@ -99,10 +104,12 @@ protected:
     Own<ram::Statement> generateIncTableUpdate(const std::vector<std::size_t>& sccOrderings) const;  // TODO
     Own<ram::Statement> generateStratumPreamble(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateStratumPreambleInc(const ast::RelationSet& scc, bool isDelete = false) const;
+    Own<ram::Statement> generateStratumRederive(const ast::RelationSet& scc) const;
 
     Own<ram::Statement> generateNonRecursiveDelete(const ast::Relation& rel) const;
     Own<ram::Statement> generateStratumPostamble(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateStratumPostambleInc(const ast::RelationSet& scc, bool isDelete) const;
+    Own<ram::Statement> generateStratumPostambleIncRederive(const ast::RelationSet& scc) const;
 
     Own<ram::Statement> generateStratumLoopBody(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateStratumTableUpdates(const ast::RelationSet& scc) const;
