@@ -162,13 +162,15 @@ std::vector<EdgePtr> DerivationGraphViewInterface::getOutgoingEdges(NodePtr node
 }
 
 std::vector<NodePtr> DerivationGraphViewInterface::getInputs(EdgePtr edge) const {
-    std::vector<NodePtr> result;
-    for (const auto& input : edge->getInputs()) {
-        if (getNodes().count(input)) {
-            result.push_back(input);
-        }
-    }
-    return result;
+    // if edge is in the view, then all of its input nodes should be in the view
+    return edge->getInputs();
+//    std::vector<NodePtr> result;
+//    for (const auto& input : edge->getInputs()) {
+//        if (getNodes().count(input)) {
+//            result.push_back(input);
+//        }
+//    }
+//    return result;
 }
 
 NodePtr DerivationGraphViewInterface::getOutput(EdgePtr edge) const {
@@ -177,13 +179,15 @@ NodePtr DerivationGraphViewInterface::getOutput(EdgePtr edge) const {
 }
 
 std::vector<bool> DerivationGraphViewInterface::getBodyNegations(EdgePtr edge) const {
-    std::vector<bool> result;
-    for (size_t i = 0; i < edge->getBodyNegations().size(); ++i) {
-        if (getNodes().count(edge->getInputs()[i])) {
-            result.push_back(edge->getBodyNegations()[i]);
-        }
-    }
-    return result;
+    // if edge is not pruned, then all of its input nodes should be in the view
+    return edge->getBodyNegations();
+//    std::vector<bool> result;
+//    for (size_t i = 0; i < edge->getBodyNegations().size(); ++i) {
+//        if (getNodes().count(edge->getInputs()[i])) {
+//            result.push_back(edge->getBodyNegations()[i]);
+//        }
+//    }
+//    return result;
 }
 
 class SubgraphView : public virtual DerivationGraphViewInterface {

@@ -418,11 +418,15 @@ void buildFormulasInc(
         }
 
         // Return empty formula if inputs not available
+        // TODO: should add to worklist if not all inputs are available, rather than just returning false
         return formulaManager.getFalse();
     };
 
     // Function to update node formula based on incoming edges
     auto updateNodeFormula = [&](NodePtr node) -> FormulaNodeRef {
+        if (node->isFact) {
+            return nodeFormulas[node];
+        }
         // Collect formulas from all incoming edges
         std::vector<FormulaNodeRef> incomingFormulas;
 
@@ -432,6 +436,7 @@ void buildFormulasInc(
                 incomingFormulas.push_back(it->second);
             }
         }
+
 
         // Compute disjunction of all incoming edge formulas
         if (incomingFormulas.empty()) {
@@ -452,6 +457,7 @@ void buildFormulasInc(
         nodeFormulas.erase(node);
     }
     size_t iteration = 0;
+    std::cout << "Processing deleted edges" << std::endl;
     while (!updatedSet.empty()) {
         std::cout << "Iteration: " << ++iteration << std::endl;
         std::cout << "Worklist size: " << updatedSet.size() << std::endl;
@@ -501,6 +507,9 @@ void buildFormulasInc(
             // Compute new node formula
             FormulaNodeRef newNodeFormula = updateNodeFormula(output);
 
+            if (!nodeHasFormula) {
+                updatedSet.insert(edge);
+            }
             // Check if node formula changed
             bool nodeFormulaChanged = !nodeHasFormula ||
                                      !formulaManager.isSame(oldNodeFormula, newNodeFormula);
@@ -525,12 +534,21 @@ void buildFormulasInc(
     for (auto node : view.getDeltaInsertNodes()) {
         // Create a variable using the fact's unique ID
         if (node->isFact) {
-            nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
-            formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1-node->getProbability());
+            if (node->getProbability() == 1.0) {
+                nodeFormulas[node] = formulaManager.getTrue();
+            } else {
+                // Create a variable using the node's unique ID
+                nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
+                formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1-node->getProbability());
+            }
         }
     }
     // Process inserted edges - update their formulas and propagate changes
+    std::cout << "Processing inserted edges" << std::endl;
     while (!updatedSet.empty()) {
+        std::cout << "Iteration: " << ++iteration << std::endl;
+        std::cout << "Worklist size: " << updatedSet.size() << std::endl;
+        formulaManager.dumpProfilingStatistics();
         // Get an edge from the updated set
         auto edge = *updatedSet.begin();
         updatedSet.erase(updatedSet.begin());
