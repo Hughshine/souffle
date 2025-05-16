@@ -99,7 +99,7 @@ std::string getNewRelationName(const ast::QualifiedName& name) {
 }
 
 /**
- * For inc + recursion
+ * For inc + recursion; delta_delta
  */
 std::string getDeltaDeletionRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "@delta_tuple_delete_");
@@ -132,7 +132,7 @@ std::string getDeleteRelationName(const ast::QualifiedName& name) {
 // std::string getIncDeltaRelationName(const ast::QualifiedName& name) {
 //     return getConcreteRelationName(name, "@inc_delta_");
 // }
-
+// for inc + non recursion; in recursion, we need a concept of "delta_delta"
 std::string getIncDeltaDervInsertRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "$inc_delta_derv_insert_");
 }
@@ -140,7 +140,7 @@ std::string getIncDeltaDervInsertRelationName(const ast::QualifiedName& name) {
 std::string getIncDeltaDervDeleteRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "$inc_delta_derv_delete_");
 }
-
+// for inc, final delta computed
 std::string getIncDeltaTupleInsertRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "$inc_delta_tuple_insert_");
 }
@@ -148,6 +148,33 @@ std::string getIncDeltaTupleInsertRelationName(const ast::QualifiedName& name) {
 std::string getIncDeltaTupleDeleteRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "$inc_delta_tuple_delete_");
 }
+
+/**
+ * for Dred, over-deletion and rederive
+ * - before rederive, move tuples with over-deleted derivations to @inc_delta_derv_overdelete
+ * - during rederive, rederive derivations to @inc_delta_derv_rederive
+ * - after each iteration of rederive, delta union tuples (can be considered as insertion )
+     and find real deleted tuples @inc_delta_tuple_rederive, update original relation at the same time
+ * - and @inc_delta_tuple_overdelete will minus @inc_delta_tuple_rederive
+ * if inc_delta_derv_overdelete, the rederivation finishes.
+ * @inc_delta_tuple_overdelete will be $inc_delta_tuple_delete (swap and clear)
+ */
+std::string getIncDeltaTupleOverDeleteRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@inc_delta_tuple_overdelete_");
+}
+
+std::string getIncDeltaDervOverDeleteRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@inc_delta_derv_overdelete_");
+}
+
+std::string getIncDeltaTupleRederiveRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@inc_delta_tuple_rederive_");
+}
+
+std::string getIncDeltaDervRederiveRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@inc_delta_derv_rederive_");
+}
+
 
 std::string getTmpRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "@tmp_");
@@ -169,7 +196,7 @@ const std::string& getRelationName(const ast::QualifiedName& name) {
 }
 
 std::string getBaseRelationName(const ast::QualifiedName& name) {
-    return
+    auto str =
     stripPrefix("$inc_delta_tuple_delete_",
     stripPrefix("$inc_delta_tuple_insert_",
     stripPrefix("$inc_delta_derv_delete_",
@@ -186,6 +213,12 @@ std::string getBaseRelationName(const ast::QualifiedName& name) {
                             stripPrefix("@new_",
                                 stripPrefix("@delta_",
                                     stripPrefix("@info_", name.toString()))))))))))))))));
+
+    str = stripPrefix( "@inc_delta_tuple_overdelete_", str);
+    str = stripPrefix( "@inc_delta_derv_overdelete_", str);
+    str = stripPrefix( "@inc_delta_tuple_rederive_", str);
+    str = stripPrefix( "@inc_delta_derv_rederive_", str);
+    return str;
 }
 
 void appendStmt(VecOwn<ram::Statement>& stmtList, Own<ram::Statement> stmt) {

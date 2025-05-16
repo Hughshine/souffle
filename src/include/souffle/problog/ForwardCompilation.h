@@ -515,7 +515,7 @@ void buildFormulasInc(
 
         EdgePtr edge = worklist.front();
         worklist.pop_front();
-        std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
+//        std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
 //        if (deltaInsertedEdges.count(edge)) {
 //            // the edge is inserted, so we can skip it
 //            continue;
@@ -528,10 +528,10 @@ void buildFormulasInc(
         std::vector<FormulaNodeRef> inputFormulas = {baseFormula};
         const auto& inputs = view.getInputs(edge);
         const auto& negs = view.getBodyNegations(edge);
-        for (size_t i = 0; i < inputs.size(); ++i) {
-            std::cout << "Input " << i << ": " << inputs[i]->getId() << " " << inputs[i]->toString() << std::endl;
-            std::cout << "Negation " << i << ": " << negs[i] << std::endl;
-        }
+//        for (size_t i = 0; i < inputs.size(); ++i) {
+//            std::cout << "Input " << i << ": " << inputs[i]->getId() << " " << inputs[i]->toString() << std::endl;
+//            std::cout << "Negation " << i << ": " << negs[i] << std::endl;
+//        }
         bool allInputsAvailable = true;
         for (size_t i = 0; i < inputs.size(); ++i) {
             auto it = nodeFormulas.find(inputs[i]);
@@ -550,8 +550,8 @@ void buildFormulasInc(
         FormulaNodeRef newEdge = formulaManager.makeAnd(inputFormulas);
 
         if (!formulaManager.isSame(oldEdge, newEdge)) {
-            std::cout << "oldEdge: " << formulaManager.toString(oldEdge) << std::endl;
-            std::cout << "newEdge: " << formulaManager.toString(newEdge) << std::endl;
+//            std::cout << "oldEdge: " << formulaManager.toString(oldEdge) << std::endl;
+//            std::cout << "newEdge: " << formulaManager.toString(newEdge) << std::endl;
             edgeFormulas[edge] = newEdge;
             NodePtr output = view.getOutput(edge);
             assert (output->isFact == false);

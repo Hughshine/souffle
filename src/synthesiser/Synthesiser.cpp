@@ -154,6 +154,10 @@ const std::string getBaseRelationName(const std::string& name) {
     res = stripPrefix("@delta_tuple_insert_", res);
     res = stripPrefix("@new_derv_delete_", res);
     res = stripPrefix("@new_derv_insert_", res);
+    res = stripPrefix( "@inc_delta_tuple_overdelete_", res);
+    res = stripPrefix( "@inc_delta_derv_overdelete_", res);
+    res = stripPrefix( "@inc_delta_tuple_rederive_", res);
+    res = stripPrefix( "@inc_delta_derv_rederive_", res);
     return res;
 }
 

@@ -1418,10 +1418,26 @@ Own<ram::Statement> UnitTranslator::generateStratumExitSequenceInc(const ast::Re
     return mk<ram::Sequence>(std::move(exitConditions));
 }
 
+/**
+ * for Dred, over-deletion and rederive
+ * - before rederive, move tuples with over-deleted derivations to @inc_delta_derv_overdelete
+ * - during rederive, rederive derivations to @inc_delta_derv_rederive
+ * - after each iteration of rederive, delta union tuples (can be considered as insertion )
+     and find real deleted tuples @inc_delta_tuple_rederive, update original relation at the same time
+ * - and @inc_delta_tuple_overdelete will minus @inc_delta_tuple_rederive
+ * if inc_delta_derv_overdelete, the rederivation finishes.
+ * @inc_delta_tuple_overdelete will be $inc_delta_tuple_delete (swap and clear)
+ */
+// 需要delta derivation额外scan一下；其他部分是看全量算法
+// 应该需要新的relations最好.
 Own<ram::Statement> UnitTranslator::generateStratumLoopBodyIncRederive(const ast::RelationSet& scc) const {
     return mk<ram::Sequence>();
 }
+// 基本可以复用DeltaUnion目前的功能. insert
+// 额外需要更新delete tuple/derivation
 Own<ram::Statement> UnitTranslator::generateStratumTableUpdatesIncRederive(const ast::RelationSet& scc) const {
+    VecOwn<ram::Statement> updateTable;
+
     return mk<ram::Sequence>();
 }
 Own<ram::Statement> UnitTranslator::generateStratumExitSequenceIncRederive(const ast::RelationSet& scc) const {
@@ -1465,6 +1481,7 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratumInc(
 
     // preamble already starts here
     // explicit copy old to new for recursive case... delta union do not copy old to new in recursive case
+    // TODO: do I still need this
     for (const ast::Relation* rel : scc) {
         appendStmt(result, generateMergeRelations(rel, getConcreteRelationName(rel->getQualifiedName()), getOldRelationName(rel->getQualifiedName())));
     }
@@ -1515,6 +1532,14 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratumInc(
 
     // TODO: rederive
     // rederive do not need to prefill since it only cares about recursive rules in the recursive stratum
+
+    //  counter = 1
+    //  while true:
+    //     delta semi-naive comp
+    //     if exit: exit
+    //     update rels
+    //     counter++
+    // clear all tmp rels
     appendStmt(result, generateStratumRederive(scc));
 
     // insertion
