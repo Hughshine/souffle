@@ -96,6 +96,8 @@ void buildFormulas(
 
         // Add the input node formulas
         bool allInputsAvailable = true;
+        assert (view.getInputs(edge).size() == view.getBodyNegations(edge).size());
+        assert (view.getInputs(edge).size() == edge->getInputs().size());
         for (size_t i = 0; i < view.getInputs(edge).size(); i++) {
             auto input = view.getInputs(edge)[i];
             auto isNegated = view.getBodyNegations(edge)[i];
@@ -364,249 +366,219 @@ void buildFormulasInc(
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
 ) {
-    FunctionTimer timer(" forward compilation, incremental update ");
+    FunctionTimer timer("forward compilation, incremental update");
+    auto& deltaInsertedEdges = view.getDeltaInsertEdges();
+    auto& deltaDeletedEdges = view.getDeltaDeleteEdges();
+    auto& deltaInsertedNodes = view.getDeltaInsertNodes();
+    auto& deltaDeletedNodes = view.getDeltaDeleteNodes();
 
-    // Skip if no changes
-    if (view.getDeltaInsertEdges().empty() && view.getDeltaDeleteEdges().empty()) {
-        std::cout << "No changes to apply, skipping incremental update" << std::endl;
+    std::cout << "[Info] Processing deleted edges\n";
+    if (deltaInsertedEdges.empty() && deltaDeletedEdges.empty()) {
+        std::cout << "[Info] No changes to apply, skipping incremental update\n";
         return;
     }
 
-    // Function to update edge formula based on its inputs
-    auto updateEdgeFormula = [&](EdgePtr edge) -> FormulaNodeRef {
-        // Get base edge formula (the rule probability)
-        FormulaNodeRef baseEdgeFormula;
-        if (edge->getRule()->isDeterminstic()) {
-            baseEdgeFormula = formulaManager.getTrue();
-        } else {
-            baseEdgeFormula = formulaManager.createVar(view.getNodes().size() + edge->getId(), *edge);
-            formulaManager.setVariableWeight(view.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
-        }
+    // deletion
+    std::deque<EdgePtr> worklist(view.getDeltaDeleteEdges().begin(), view.getDeltaDeleteEdges().end());
 
-//        auto baseEdgeFormula = formulaManager.createVar(graph.getNodes().size() + edge->getId(), *edge);
-
-        // Collect input formulas
-        std::vector<FormulaNodeRef> inputFormulas;
-        inputFormulas.push_back(baseEdgeFormula);
-
-        // Add all input node formulas
-        bool allInputsAvailable = true;
-        for (size_t i = 0; i < view.getInputs(edge).size(); i++) {
-            auto input = view.getInputs(edge)[i];
-            auto isNegated = view.getBodyNegations(edge)[i];
-            auto it = nodeFormulas.find(input);
-
-            if (it != nodeFormulas.end()) {
-                if (!isNegated) {
-                    inputFormulas.push_back(it->second);
-                } else {
-                    inputFormulas.push_back(formulaManager.makeNot(it->second));
-                }
-            } else {
-                allInputsAvailable = false;
-                break;
-            }
-        }
-
-        // If all inputs available, compute conjunction
-        if (allInputsAvailable) {
-            if (inputFormulas.size() == 1) {
-                return inputFormulas[0];
-            } else {
-                return formulaManager.makeAnd(inputFormulas);
-            }
-        }
-
-        // Return empty formula if inputs not available
-        // TODO: should add to worklist if not all inputs are available, rather than just returning false
-        return formulaManager.getFalse();
-    };
-
-    // Function to update node formula based on incoming edges
-    auto updateNodeFormula = [&](NodePtr node) -> FormulaNodeRef {
-        if (node->isFact) {
-            return nodeFormulas[node];
-        }
-        // Collect formulas from all incoming edges
-        std::vector<FormulaNodeRef> incomingFormulas;
-
-        for (const auto& inEdge : view.getIncomingEdges(node)) {
-            auto it = edgeFormulas.find(inEdge);
-            if (it != edgeFormulas.end() && it->second.get()) {
-                incomingFormulas.push_back(it->second);
-            }
-        }
-
-
-        // Compute disjunction of all incoming edge formulas
-        if (incomingFormulas.empty()) {
-            // If no incoming edges, node is not derivable (False)
-            if (node->isFact) {
-                assert (false && "should not be fact");
-            }
-            return formulaManager.getFalse();
-        } else if (incomingFormulas.size() == 1) {
-            return incomingFormulas[0];
-        } else {
-            return formulaManager.makeOr(incomingFormulas);
-        }
-    };
-
-    // Initialize updated set with all deleted edges
-    std::set<EdgePtr> updatedSet(view.getDeltaDeleteEdges().begin(), view.getDeltaDeleteEdges().end());
-//    auto deltaDeleteEdgesCopy = graph.deltaDeleteEdges;
-    // Process deleted edges - update their formulas and propagate changes
     for (auto node : view.getDeltaDeleteNodes()) {
         nodeFormulas.erase(node);
     }
-    size_t iteration = 0;
-    std::cout << "Processing deleted edges" << std::endl;
-    while (!updatedSet.empty()) {
-        std::cout << "Iteration: " << ++iteration << std::endl;
-        std::cout << "Worklist size: " << updatedSet.size() << std::endl;
-        formulaManager.dumpProfilingStatistics();
-
-        // Get an edge from the updated set
-        auto edge = *updatedSet.begin();
-        updatedSet.erase(updatedSet.begin());
-
-
-
-        // Store old edge formula
-        FormulaNodeRef oldEdgeFormula = edgeFormulas[edge];
-
-        // For deleted edges, set formula to False or recompute
-        FormulaNodeRef newEdgeFormula;
-        if (view.getDeltaDeleteEdges().find(edge) != view.getDeltaDeleteEdges().end()) {
-            // Set to False (empty formula) TODO
-            newEdgeFormula = formulaManager.getFalse();
-        } else {
-            // Recompute based on inputs
-            newEdgeFormula = updateEdgeFormula(edge);
-        }
-
-        // Check if formula changed
-        bool edgeFormulaChanged = !formulaManager.isSame(oldEdgeFormula, newEdgeFormula);
-
-        if (edgeFormulaChanged) {
-            // Update edge formula
-            edgeFormulas[edge] = newEdgeFormula;
-
-            // Update output node formula
-            auto output = edge->getOutput();
-
-            // Skip if output node is also deleted
-            if (view.getDeltaDeleteNodes().find(output) != view.getDeltaDeleteNodes().end()) {
-                continue;
-            }
-
-            // Store old node formula
-            FormulaNodeRef oldNodeFormula;
-            bool nodeHasFormula = nodeFormulas.find(output) != nodeFormulas.end();
-            if (nodeHasFormula) {
-                oldNodeFormula = nodeFormulas[output];
-            }
-
-            // Compute new node formula
-            FormulaNodeRef newNodeFormula = updateNodeFormula(output);
-
-            // every derivable node should always have a non-false formula; or it means the inputs have not been ready yet
-            if (!nodeHasFormula || formulaManager.isSame(formulaManager.getFalse(), newNodeFormula)) {
-                updatedSet.insert(edge);
-            }
-            // Check if node formula changed
-            bool nodeFormulaChanged = !nodeHasFormula ||
-                                     !formulaManager.isSame(oldNodeFormula, newNodeFormula);
-
-            if (nodeFormulaChanged) {
-                // Update node formula
-                nodeFormulas[output] = newNodeFormula;
-
-                // Add outgoing edges to updated set
-                for (const auto& outEdge : view.getOutgoingEdges(output)) {
-                    if (view.getDeltaDeleteEdges().find(outEdge) == view.getDeltaDeleteEdges().end()) {
-                        updatedSet.insert(outEdge);
-                    }
-                }
-            }
-        }
-    }
-
-    // Initialize updated set with all inserted edges
-    updatedSet.clear();
-    updatedSet.insert(view.getDeltaInsertEdges().begin(), view.getDeltaInsertEdges().end());
-    for (auto node : view.getDeltaInsertNodes()) {
-        // Create a variable using the fact's unique ID
-        if (node->isFact) {
-            if (node->getProbability() == 1.0) {
-                nodeFormulas[node] = formulaManager.getTrue();
-            } else {
-                // Create a variable using the node's unique ID
-                nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
-                formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1-node->getProbability());
-            }
-        }
-    }
-    // Process inserted edges - update their formulas and propagate changes
-    std::cout << "Processing inserted edges" << std::endl;
-    while (!updatedSet.empty()) {
-        std::cout << "Iteration: " << ++iteration << std::endl;
-        std::cout << "Worklist size: " << updatedSet.size() << std::endl;
-        formulaManager.dumpProfilingStatistics();
-        // Get an edge from the updated set
-        auto edge = *updatedSet.begin();
-        updatedSet.erase(updatedSet.begin());
-
-        // Store old edge formula
-        FormulaNodeRef oldEdgeFormula;
-        bool edgeHasFormula = edgeFormulas.find(edge) != edgeFormulas.end();
-        if (edgeHasFormula) {
-            oldEdgeFormula = edgeFormulas[edge];
-        }
-
-        // Compute new edge formula
-        FormulaNodeRef newEdgeFormula = updateEdgeFormula(edge);
-
-        // Check if formula changed
-        bool edgeFormulaChanged = !edgeHasFormula ||
-                                 !formulaManager.isSame(oldEdgeFormula, newEdgeFormula);
-
-        if (edgeFormulaChanged) {
-            // Update edge formula
-            edgeFormulas[edge] = newEdgeFormula;
-
-            // Update output node formula
-            auto output = view.getOutput(edge);
-
-            // Store old node formula
-            FormulaNodeRef oldNodeFormula;
-            bool nodeHasFormula = nodeFormulas.find(output) != nodeFormulas.end();
-            if (nodeHasFormula) {
-                oldNodeFormula = nodeFormulas[output];
-            }
-
-            // Compute new node formula
-            FormulaNodeRef newNodeFormula = updateNodeFormula(output);
-
-            // Check if node formula changed
-            bool nodeFormulaChanged = !nodeHasFormula ||
-                                     !formulaManager.isSame(oldNodeFormula, newNodeFormula);
-
-            if (nodeFormulaChanged) {
-                // Update node formula
-                nodeFormulas[output] = newNodeFormula;
-
-                // Add outgoing edges to updated set
-                for (const auto& outEdge : view.getOutgoingEdges(output)) {
-                    updatedSet.insert(outEdge);
-                }
-            }
-        }
-    }
-    for (auto edge: view.getDeltaDeleteEdges()) {
+    for (auto edge : view.getDeltaDeleteEdges()) {
         edgeFormulas.erase(edge);
     }
-    std::cout << "Successfully completed incremental formula update" << std::endl;
+
+    size_t iteration = 0;
+    std::cout << "[Info] Processing deleted edges\n";
+    while (!worklist.empty()) {
+        std::cout << "  Iteration: " << ++iteration
+                  << ", Worklist size: " << worklist.size() << std::endl;
+        formulaManager.dumpProfilingStatistics();
+
+        EdgePtr edge = worklist.front();
+        worklist.pop_front();
+
+        // if its a deleted edge
+        if (deltaDeletedEdges.count(edge)) {
+            auto outputNode = edge->getOutput();
+            if (deltaDeletedNodes.count(outputNode)) {
+                // the output node is deleted, so we can skip it
+                // we do not need to add its outgoing edges to the worklist since they should have already been in deltaDeletedEdges
+                continue;
+            }
+            assert (outputNode->isFact == false);
+            std::vector<FormulaNodeRef> incoming;
+            for (auto e : view.getIncomingEdges(outputNode)) {
+                auto it = edgeFormulas.find(e);
+                if (it != edgeFormulas.end() && it->second.get()) {
+                    incoming.push_back(it->second);
+                }
+            }
+            assert (!incoming.empty());
+            auto newNodeFormula = formulaManager.makeOr(incoming);
+            nodeFormulas[outputNode] = newNodeFormula;
+            for (auto outEdge : view.getOutgoingEdges(edge->getOutput())) {
+                worklist.push_back(outEdge);
+            }
+            continue;
+        }
+
+        // a propagated edge / an unknown normal edge
+        // now the edge should have its old formula (not deleted)
+        FormulaNodeRef oldEdgeFormula = edgeFormulas[edge];
+        // calculate the new formula
+        FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
+            ? formulaManager.getTrue()
+            : formulaManager.createVar(view.getNodes().size() + edge->getId(), *edge);
+        std::vector<FormulaNodeRef> inputFormulas = {baseFormula};
+        const auto& inputs = view.getInputs(edge);
+        const auto& negs = view.getBodyNegations(edge);
+
+        bool allInputsAvailable = true;
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            auto it = nodeFormulas.find(inputs[i]);
+            if (it == nodeFormulas.end()) {
+                worklist.push_back(edge);
+                allInputsAvailable = false;
+                break;
+            } else
+                inputFormulas.push_back(negs[i] ? formulaManager.makeNot(it->second) : it->second);
+        }
+        if (!allInputsAvailable) {
+            // put the edge back in the worklist for later processing
+            continue;
+        }
+
+        FormulaNodeRef newEdgeFormula = formulaManager.makeAnd(inputFormulas);
+
+        // check if the edge formula actually changed
+        if (formulaManager.isSame(oldEdgeFormula, newEdgeFormula)) continue;
+        edgeFormulas[edge] = newEdgeFormula;
+
+        NodePtr output = edge->getOutput();
+        assert (output->isFact == false);
+        assert (deltaDeletedNodes.count(output) == 0);
+
+        FormulaNodeRef oldNode = nodeFormulas[output];
+
+        std::vector<FormulaNodeRef> incoming;
+        for (auto e : view.getIncomingEdges(output)) {
+            auto it = edgeFormulas.find(e);
+            if (it != edgeFormulas.end() && it->second.get()) {
+                incoming.push_back(it->second);
+            }
+        }
+        FormulaNodeRef newNode = formulaManager.makeOr(incoming);
+        assert (!formulaManager.isSame(newNode, formulaManager.getFalse()));
+
+        if (!formulaManager.isSame(oldNode, newNode)) {
+            nodeFormulas[output] = newNode;
+            for (auto outEdge : view.getOutgoingEdges(output)) {
+                if (!view.getDeltaDeleteEdges().count(outEdge)) {
+                    worklist.push_back(outEdge);
+                }
+            }
+        }
+    }
+
+    // === 插入阶段 ===
+    std::cout << "[Info] Processing inserted edges\n";
+    worklist.assign(deltaInsertedEdges.begin(), deltaInsertedEdges.end());
+    for (auto node : deltaInsertedNodes) {
+        if (node->isFact) {
+            nodeFormulas[node] = (node->getProbability() == 1.0)
+                ? formulaManager.getTrue()
+                : formulaManager.createVar(node->getId(), *node);
+            if (node->getProbability() != 1.0)
+                formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1 - node->getProbability());
+        } else {
+            nodeFormulas[node] = formulaManager.getFalse();
+        }
+    }
+    for (auto edge : deltaInsertedEdges) {
+        if (edge->getRule()->isDeterminstic()) {
+            edgeFormulas[edge] = formulaManager.getFalse();
+        } else {
+            edgeFormulas[edge] = formulaManager.getFalse();
+            formulaManager.createVar(view.getNodes().size() + edge->getId(), *edge);
+            formulaManager.setVariableWeight(view.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1 - edge->getRule()->getProbability());
+        }
+    }
+
+    std::cout << "[Info] Processing inserted edges\n";
+
+    while (!worklist.empty()) {
+        std::cout << "  Iteration: " << ++iteration
+                  << ", Worklist size: " << worklist.size() << std::endl;
+
+        formulaManager.dumpProfilingStatistics();
+
+        EdgePtr edge = worklist.front();
+        worklist.pop_front();
+        std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
+//        if (deltaInsertedEdges.count(edge)) {
+//            // the edge is inserted, so we can skip it
+//            continue;
+//        }
+        FormulaNodeRef oldEdge = edgeFormulas[edge];
+        // calculate the new formula
+        FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
+            ? formulaManager.getTrue()
+            : formulaManager.createVar(view.getNodes().size() + edge->getId(), *edge);
+        std::vector<FormulaNodeRef> inputFormulas = {baseFormula};
+        const auto& inputs = view.getInputs(edge);
+        const auto& negs = view.getBodyNegations(edge);
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            std::cout << "Input " << i << ": " << inputs[i]->getId() << " " << inputs[i]->toString() << std::endl;
+            std::cout << "Negation " << i << ": " << negs[i] << std::endl;
+        }
+        bool allInputsAvailable = true;
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            auto it = nodeFormulas.find(inputs[i]);
+            if (it == nodeFormulas.end()) {
+//                std::cout << "Input node formula not available yet: " << inputs[i]->getTuple().toString() << std::endl;
+                allInputsAvailable = false;
+                worklist.push_back(edge);
+                break;
+            }
+            inputFormulas.push_back(negs[i] ? formulaManager.makeNot(it->second) : it->second);
+        }
+        if (!allInputsAvailable) {
+            // put the edge back in the worklist for later processing
+            continue;
+        }
+        FormulaNodeRef newEdge = formulaManager.makeAnd(inputFormulas);
+
+        if (!formulaManager.isSame(oldEdge, newEdge)) {
+            std::cout << "oldEdge: " << formulaManager.toString(oldEdge) << std::endl;
+            std::cout << "newEdge: " << formulaManager.toString(newEdge) << std::endl;
+            edgeFormulas[edge] = newEdge;
+            NodePtr output = view.getOutput(edge);
+            assert (output->isFact == false);
+//            assert (deltaInsertedNodes.count(output) == 0);
+            FormulaNodeRef oldNode = nodeFormulas[output];
+            std::vector<FormulaNodeRef> incoming;
+            for (auto e : view.getIncomingEdges(output)) {
+                auto it = edgeFormulas.find(e);
+                if (it != edgeFormulas.end() && it->second.get()) {
+                    incoming.push_back(it->second);
+                }
+            }
+            FormulaNodeRef newNode = formulaManager.makeOr(incoming);
+
+            if (!formulaManager.isSame(oldNode, newNode)) {
+                nodeFormulas[output] = newNode;
+                for (auto outEdge : view.getOutgoingEdges(output)) {
+                    worklist.push_back(outEdge);
+                }
+            }
+        }
+    }
+
+
+
+    std::cout << "[Info] Incremental formula update completed successfully.\n";
 }
+
 
 #endif //FORWARDCOMPILATION_H

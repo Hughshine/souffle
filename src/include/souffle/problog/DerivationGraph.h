@@ -91,6 +91,12 @@ public:
         std::stringstream ss;
         ss << "Hyperedge(" << id << ")[";
         ss << "rule" << ((rule)?rule->getRuleId():-1) << ",";
+        for (size_t i = 0; i < bodyNegations.size(); ++i) {
+            ss << (bodyNegations[i] ? "!" : "") << inputs[i]->getTuple().toString();
+            if (i != bodyNegations.size() - 1) {
+                ss << ",";
+            }
+        }
         for (const auto& input : inputs) {
             ss << input->getTuple().toString();
         }
@@ -102,7 +108,9 @@ public:
     bool pruned = false;
 private:
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, RuleApplication ruleApp)
-        : inputs(inputs), output(output), id(edgeId), rule(nullptr), ruleApp(ruleApp) {}
+        : inputs(inputs), output(output), id(edgeId), rule(nullptr), ruleApp(ruleApp) {
+        assert (false);
+    }
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, const Rule* rule, std::vector<bool>& bodyNegations, RuleApplication ruleApp)
         : inputs(inputs), output(output), id(edgeId), rule(rule), ruleApp(ruleApp) {
         if (rule) {
@@ -113,8 +121,12 @@ private:
         } else {
             this->bodyNegations = std::vector<bool>(rule->getBodyAtoms().size(), false);
         }
-
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            std::cout << "input: " << inputs[i]->toString() << std::endl;
+            std::cout << "isNegated: " << bodyNegations[i] << std::endl;
+        }
     }
+
 
     std::vector<NodePtr> inputs;
     std::vector<bool> bodyNegations;
@@ -162,6 +174,9 @@ std::vector<EdgePtr> DerivationGraphViewInterface::getOutgoingEdges(NodePtr node
 }
 
 std::vector<NodePtr> DerivationGraphViewInterface::getInputs(EdgePtr edge) const {
+    if (getEdges().count(edge) == 0) {
+        return std::vector<NodePtr>();
+    }
     // if edge is in the view, then all of its input nodes should be in the view
     return edge->getInputs();
 //    std::vector<NodePtr> result;
@@ -174,11 +189,17 @@ std::vector<NodePtr> DerivationGraphViewInterface::getInputs(EdgePtr edge) const
 }
 
 NodePtr DerivationGraphViewInterface::getOutput(EdgePtr edge) const {
+    if (getEdges().count(edge) == 0) {
+        return nullptr;
+    }
     NodePtr out = edge->getOutput();
     return getNodes().count(out) ? out : nullptr;
 }
 
 std::vector<bool> DerivationGraphViewInterface::getBodyNegations(EdgePtr edge) const {
+    if (getEdges().count(edge) == 0) {
+        return std::vector<bool>();
+    }
     // if edge is not pruned, then all of its input nodes should be in the view
     return edge->getBodyNegations();
 //    std::vector<bool> result;
@@ -350,7 +371,11 @@ public:
             bodyNodes.push_back(bodyNode);
             bodyNegations.push_back(bodyAtom.isNegatedAtom());
         }
-
+        std::cout << "creating hyperedge from ruleApp: " << ruleApp.ruleId << std::endl;
+        for (size_t i = 0; i < bodyNodes.size(); ++i) {
+            std::cout << "bodyNode: " << bodyNodes[i]->toString() << std::endl;
+            std::cout << "isNegated: " << bodyNegations[i] << std::endl;
+        }
         auto newEdge = createHyperedge(bodyNodes, headNode, rule, bodyNegations, ruleApp);
 
         // 将新边添加到映射中

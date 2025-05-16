@@ -91,6 +91,7 @@
 #include <vector>
 
 #include <ram/ExactClear.h>
+#include <ram/False.h>
 
 namespace souffle::ast2ram::online {
 
@@ -1424,7 +1425,7 @@ Own<ram::Statement> UnitTranslator::generateStratumTableUpdatesIncRederive(const
     return mk<ram::Sequence>();
 }
 Own<ram::Statement> UnitTranslator::generateStratumExitSequenceIncRederive(const ast::RelationSet& scc) const {
-    return mk<ram::Sequence>();
+    return mk<ram::Sequence>(mk<ram::Exit>(mk<ram::True>()));
 }
 Own<ram::Statement> UnitTranslator::generateStratumPostambleIncRederive(const ast::RelationSet& scc) const {
     return mk<ram::Sequence>();

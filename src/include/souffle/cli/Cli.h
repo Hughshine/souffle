@@ -448,6 +448,9 @@ public:
             auto view = graph->prune(program->getOutputRelations());
             view.dumpDotInc("derivation-inc.dot");
             bddManager->tryGarbageCollection();
+            for (auto edge: view.getEdges()) {
+                std::cout << edge->toString() << std::endl;
+            }
             buildFormulasInc(view, *bddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
             probResult.clear();
             {
