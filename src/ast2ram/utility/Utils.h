@@ -88,6 +88,12 @@ std::string getDeltaInsertionRelationName(const ast::QualifiedName& name);
 std::string getNewDeletionRelationName(const ast::QualifiedName& name);
 std::string getNewInsertionRelationName(const ast::QualifiedName& name);
 
+// rederivation
+std::string getIncTupleOverDeleteRelationName(const ast::QualifiedName& name);
+std::string getIncDervOverDeleteRelationName(const ast::QualifiedName& name);
+std::string getIncNewDervRederiveRelationName(const ast::QualifiedName& name);
+std::string getIncDeltaTupleRederiveRelationName(const ast::QualifiedName& name);
+
 /** Get base relation name, strip off any possible prefix */
 std::string getBaseRelationName(const ast::QualifiedName& name);
 

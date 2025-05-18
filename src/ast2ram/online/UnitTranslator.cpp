@@ -1244,6 +1244,21 @@ VecOwn<ram::Statement> UnitTranslator::generateClauseVersionsInc(
 }
 
 
+VecOwn<ram::Statement> UnitTranslator::generateClauseVersionsIncRederive(
+        const ast::Clause* clause, const ast::RelationSet& scc) const {
+    const auto& sccAtoms = getSccAtoms(clause, scc);
+
+    // Create each version
+    VecOwn<ram::Statement> clauseVersions;
+    for (std::size_t version = 0; version < sccAtoms.size(); version++) {
+        appendStmt(clauseVersions, context->translateRecursiveClauseIncRederive(*clause, scc, version));
+    }
+
+    // Check that the correct number of versions have been created
+    assert (clause->getExecutionPlan() == nullptr && "execution plan not supported");
+    return clauseVersions;
+}
+
 Own<ram::Statement> UnitTranslator::translateRecursiveClausesInc(
         const ast::RelationSet& scc, const ast::Relation* rel, bool isDelete, bool isPrefill) const {
     assert(contains(scc, rel) && "relation should belong to scc");
@@ -1261,6 +1276,27 @@ Own<ram::Statement> UnitTranslator::translateRecursiveClausesInc(
             isPrefill?
             generateClauseVersionsPrefill(clause, scc, isDelete)
             :generateClauseVersionsInc(clause, scc, isDelete);
+        for (auto& clauseVersion : clauseVersions) {
+            appendStmt(code, std::move(clauseVersion));
+        }
+    }
+    return mk<ram::Sequence>(std::move(code));
+}
+
+Own<ram::Statement> UnitTranslator::translateRecursiveClausesIncRederive(
+        const ast::RelationSet& scc, const ast::Relation* rel) const {
+    assert(contains(scc, rel) && "relation should belong to scc");
+    VecOwn<ram::Statement> code;
+
+    // Translate each recursive clasue
+    for (auto&& clause : context->getProgram()->getClauses(*rel)) {
+        // Skip non-recursive and subsumptive clauses
+        if (!context->isRecursiveClause(clause) || isA<ast::SubsumptiveClause>(clause)) {
+            continue;
+        }
+
+        // generate all delta versions of a recursive clause
+        auto clauseVersions = generateClauseVersionsInc(clause, scc);
         for (auto& clauseVersion : clauseVersions) {
             appendStmt(code, std::move(clauseVersion));
         }
@@ -1314,6 +1350,9 @@ Own<ram::Statement> UnitTranslator::generateStratumTableUpdatesInc(const ast::Re
                         "", getNewDeletionRelationName(rel->getQualifiedName()), "", getDeltaDeletionRelationName(rel->getQualifiedName())),
                         // TODO: 需要把delta同时插入到inc_delta_tuple里；rec的delta和inc的delta不同
                         generateMergeRelations(rel, getIncDeltaTupleDeleteRelationName(rel->getQualifiedName()), getDeltaDeletionRelationName(rel->getQualifiedName())),
+                        // possibly tuples with over-deleted derivations, will be rederived
+                        generateMergeRelations(rel, getIncDervOverDeleteRelationName(rel->getQualifiedName()), getNewDeletionRelationName(rel->getQualifiedName())),
+                        generateMergeRelations(rel, getIncTupleOverDeleteRelationName(rel->getQualifiedName()), getDeltaDeletionRelationName(rel->getQualifiedName())),
                     mk<ram::Clear>(getNewDeletionRelationName(rel->getQualifiedName())));
             } else {
                 updateRelTable = mk<ram::Sequence>(
@@ -1431,26 +1470,102 @@ Own<ram::Statement> UnitTranslator::generateStratumExitSequenceInc(const ast::Re
 // 需要delta derivation额外scan一下；其他部分是看全量算法
 // 应该需要新的relations最好.
 Own<ram::Statement> UnitTranslator::generateStratumLoopBodyIncRederive(const ast::RelationSet& scc) const {
-    return mk<ram::Sequence>();
+    VecOwn<ram::Statement> loopBody;
+    for (const ast::Relation* rel : scc) {
+        auto relClauses = translateRecursiveClausesIncRederive(scc, rel);
+        appendStmt(loopBody, mk<ram::Sequence>(std::move(relClauses)));
+    }
+    return mk<ram::Sequence>(std::move(loopBody));
 }
 // 基本可以复用DeltaUnion目前的功能. insert
 // 额外需要更新delete tuple/derivation
 Own<ram::Statement> UnitTranslator::generateStratumTableUpdatesIncRederive(const ast::RelationSet& scc) const {
     VecOwn<ram::Statement> updateTable;
-
-    return mk<ram::Sequence>();
+    for (const ast::Relation* rel : scc) {
+        assert (rel->getAuxiliaryArity() <= 0 && "no support for auxiliary arity");
+        assert (!context->hasSubsumptiveClause(rel->getQualifiedName()) && "no support for subsumptive clause");
+        std::string mainRelation = getConcreteRelationName(rel->getQualifiedName());
+        Own<ram::Statement> updateRelTable;
+        updateRelTable = mk<ram::Sequence>(
+            // TODO: check this
+            // clear old delta, use delta union to update it with new
+            mk<ram::Clear>(getIncNewDervRederiveRelationName(rel->getQualifiedName())),
+            // rederived derivations, if rederive a tuple, will be added to main relation
+            mk<ram::DeltaUnion>(mainRelation, "", mainRelation,
+                                    getIncNewDervRederiveRelationName(rel->getQualifiedName()), "", getIncDeltaTupleRederiveRelationName(rel->getQualifiedName()), ""),
+            // should also update overdelete info: overdelete derv, tuple
+            // TODO: could shrink overdelete derv after each iteration (as an optimization)
+            generateEraseTuples(rel, getIncTupleOverDeleteRelationName(rel->getQualifiedName()), getIncDeltaTupleRederiveRelationName(rel->getQualifiedName())),
+            // clear the new relation
+            mk<ram::Clear>(getIncNewDervRederiveRelationName(rel->getQualifiedName()))
+        );
+        appendStmt(updateTable, std::move(updateRelTable));
+    }
+    return mk<ram::Sequence>(std::move(updateTable));
 }
 Own<ram::Statement> UnitTranslator::generateStratumExitSequenceIncRederive(const ast::RelationSet& scc) const {
-    return mk<ram::Sequence>(mk<ram::Exit>(mk<ram::True>()));
+    // Helper function to add a new term to a conjunctive condition
+    auto addCondition = [&](Own<ram::Condition>& cond, Own<ram::Condition> term) {
+        cond = (cond == nullptr) ? std::move(term) : mk<ram::Conjunction>(std::move(cond), std::move(term));
+    };
+
+    VecOwn<ram::Statement> exitConditions;
+
+    // (1) if all relations in the scc are empty
+    Own<ram::Condition> emptinessCheck;
+    for (const ast::Relation* rel : scc) {
+        if (!context->hasSubsumptiveClause(rel->getQualifiedName())) {
+            addCondition(
+                    emptinessCheck, mk<ram::EmptinessCheck>(getIncNewDervRederiveRelationName(rel->getQualifiedName())));
+        } else {
+            assert (false && "non subsumptive clause");
+        }
+    }
+    appendStmt(exitConditions, mk<ram::Exit>(std::move(emptinessCheck)));
+
+    // (2) if the size limit has been reached for any limitsize relations
+    for (const ast::Relation* rel : scc) {
+        if (context->hasSizeLimit(rel)) {
+            Own<ram::Condition> limit = mk<ram::Constraint>(BinaryConstraintOp::GE,
+                    mk<ram::RelationSize>(getConcreteRelationName(rel->getQualifiedName())),
+                    mk<ram::SignedConstant>(context->getSizeLimit(rel)));
+            appendStmt(exitConditions, mk<ram::Exit>(std::move(limit)));
+        }
+    }
+
+    return mk<ram::Sequence>(std::move(exitConditions));
 }
 Own<ram::Statement> UnitTranslator::generateStratumPostambleIncRederive(const ast::RelationSet& scc) const {
-    return mk<ram::Sequence>();
+    // getIncTupleOverDeleteRelationName
+    // getIncDeltaTupleDeleteRelationName
+    VecOwn<ram::Statement> postamble;
+    for (const ast::Relation* rel : scc) {
+        // swap, get a correct delta delete; but cannot just use swap for it will be reference-based
+        appendStmt(postamble,
+        mk<ram::Sequence>(
+                mk<ram::Clear>(getIncDeltaTupleDeleteRelationName(rel->getQualifiedName())),
+                generateMergeRelations(rel, getIncDeltaTupleDeleteRelationName(rel->getQualifiedName()), getIncTupleOverDeleteRelationName(rel->getQualifiedName()))
+            )
+        );
+        appendStmt(postamble, mk<ram::Clear>(getIncNewDervRederiveRelationName(rel->getQualifiedName())));
+        appendStmt(postamble, mk<ram::Clear>(getIncDeltaTupleRederiveRelationName(rel->getQualifiedName())));
+    }
+    return mk<ram::Sequence>(std::move(postamble));
 }
 
 // TODO
 Own<ram::Statement> UnitTranslator::generateStratumRederive(const ast::RelationSet& scc) const {
     VecOwn<ram::Statement> result;
 
+    // over_delete, deletion phrase will prepare the @getIncDervOverDeleteRelationName relation
+
+    // for (auto rel : scc) {
+    //     auto copyOverDelete = generateMergeRelations(rel,
+    //         getIncDervOverDeleteRelationName(rel->getQualifiedName()),
+    //     // TODO: need to preserve (do not delete) derv_delete after during over-deletion phrase
+    //         getIncDeltaDervDeleteRelationName(rel->getQualifiedName()));
+    //     result.push_back(std::move(copyOverDelete));
+    // }
     const std::string loop_counter = "loop_counter_rederive";
     VecOwn<ram::Expression> inc;
     inc.push_back(mk<ram::Variable>(loop_counter));
@@ -1822,6 +1937,19 @@ VecOwn<ram::Relation> UnitTranslator::createRamRelations(const std::vector<std::
 
             std::string tmp4Name = getTmp4RelationName(rel->getQualifiedName());
             ramRelations.push_back(createRamRelation(rel, tmp4Name));
+
+            std::string incTupleOverdelete = getIncTupleOverDeleteRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, incTupleOverdelete));
+
+            std::string incDervOverdelete = getIncDervOverDeleteRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, incDervOverdelete));
+
+            std::string incNewTupleRederive = getIncNewDervRederiveRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, incNewTupleRederive));
+
+            std::string incDeltaDervRederive = getIncDeltaTupleRederiveRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, incDeltaDervRederive));
+
 
             // for recursion: delta and new, now have deletion and insertion version
             // delta - real tuple change, new - derivation change & record derivation

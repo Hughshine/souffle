@@ -155,7 +155,7 @@ std::vector<Own<ram::Expression>> ClauseTranslator::getClauseVarExprs(const ast:
 }
 
 Own<ram::Statement> ClauseTranslator::translateRecursiveClause(
-        const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete, bool isPrefill) {
+        const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete, bool isPrefill, bool isRederive) {
     // Update version config
     sccAtoms = filter(ast::getBodyLiterals<ast::Atom>(clause),
             [&](auto* atom) { return contains(scc, context.getProgram()->getRelation(*atom)); });

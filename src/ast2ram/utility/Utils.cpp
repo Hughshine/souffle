@@ -159,20 +159,20 @@ std::string getIncDeltaTupleDeleteRelationName(const ast::QualifiedName& name) {
  * if inc_delta_derv_overdelete, the rederivation finishes.
  * @inc_delta_tuple_overdelete will be $inc_delta_tuple_delete (swap and clear)
  */
-std::string getIncDeltaTupleOverDeleteRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@inc_delta_tuple_overdelete_");
+std::string getIncTupleOverDeleteRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@inc_tuple_overdelete_");
 }
 
-std::string getIncDeltaDervOverDeleteRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@inc_delta_derv_overdelete_");
+std::string getIncDervOverDeleteRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@inc_derv_overdelete_");
+}
+
+std::string getIncNewDervRederiveRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@inc_new_derv_rederive_");
 }
 
 std::string getIncDeltaTupleRederiveRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "@inc_delta_tuple_rederive_");
-}
-
-std::string getIncDeltaDervRederiveRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@inc_delta_derv_rederive_");
 }
 
 
@@ -214,9 +214,9 @@ std::string getBaseRelationName(const ast::QualifiedName& name) {
                                 stripPrefix("@delta_",
                                     stripPrefix("@info_", name.toString()))))))))))))))));
 
-    str = stripPrefix( "@inc_delta_tuple_overdelete_", str);
-    str = stripPrefix( "@inc_delta_derv_overdelete_", str);
-    str = stripPrefix( "@inc_delta_tuple_rederive_", str);
+    str = stripPrefix( "@inc_tuple_overdelete_", str);
+    str = stripPrefix( "@inc_derv_overdelete_", str);
+    str = stripPrefix( "@inc_new_tuple_rederive_", str);
     str = stripPrefix( "@inc_delta_derv_rederive_", str);
     return str;
 }

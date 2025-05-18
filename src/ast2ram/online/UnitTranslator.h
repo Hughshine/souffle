@@ -69,6 +69,8 @@ protected:
     /** -- Generation methods -- */
     VecOwn<ram::Statement> generateClauseVersionsInc(
         const ast::Clause* clause, const ast::RelationSet& scc, bool isDelete = false) const;
+    VecOwn<ram::Statement> generateClauseVersionsIncRederive(
+        const ast::Clause* clause, const ast::RelationSet& scc) const;
     VecOwn<ram::Statement> generateClauseVersionsPrefill(
         const ast::Clause* clause, const ast::RelationSet& scc, bool isDelete) const;
     Own<ram::Statement> generateStratumTableUpdatesInc(const ast::RelationSet& scc, bool isDelete = false) const;
@@ -80,6 +82,8 @@ protected:
     Own<ram::Statement> generateStratumExitSequenceIncRederive(const ast::RelationSet& scc) const;
     Own<ram::Statement> translateRecursiveClausesInc(
         const ast::RelationSet& scc, const ast::Relation* rel, bool isDelete = false, bool isPrefill = false) const;
+    Own<ram::Statement> translateRecursiveClausesIncRederive(
+        const ast::RelationSet& scc, const ast::Relation* rel) const;
     Own<ram::Statement> generateStratumNonSccPreFill(const ast::RelationSet& scc, bool isDelete = false) const;
     Own<ram::Statement> generateNonRecursiveRelationIns(const ast::Relation& rel) const;
     Own<ram::Statement> generateNonRecursiveRelationDel(const ast::Relation& rel) const;

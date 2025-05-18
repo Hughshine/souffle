@@ -91,7 +91,7 @@ public:
 
     /** Translate a recursive clause */
     virtual Own<ram::Statement> translateRecursiveClause(
-            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false, bool isPrefill = false) = 0; // isDelete flag is only useful for incremental computation
+            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false, bool isPrefill = false, bool isRederive = false) = 0; // isDelete flag is only useful for incremental computation
 
 protected:
     /** Translation context */

@@ -135,7 +135,7 @@ std::map<std::string, Own<ram::Expression>> ClauseTranslator::getClauseVars(cons
 }
 
 Own<ram::Statement> ClauseTranslator::translateRecursiveClause(
-        const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool /*isDelete*/, bool /*isPrefill*/) {
+        const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool /*isDelete*/, bool /*isPrefill*/, bool) {
     // Update version config
     sccAtoms = filter(ast::getBodyLiterals<ast::Atom>(clause),
             [&](auto* atom) { return contains(scc, context.getProgram()->getRelation(*atom)); });

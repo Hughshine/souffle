@@ -156,7 +156,7 @@ std::vector<Own<ram::Expression>> IncClauseTranslator::getClauseVarExprs(const a
 }
 
 Own<ram::Statement> IncClauseTranslator::translateRecursiveClause(
-        const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete, bool isPrefill) {
+        const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete, bool isPrefill, bool isRederive) {
     // Update version config
     sccAtoms = filter(ast::getBodyLiterals<ast::Atom>(clause),
             [&](auto* atom) { return contains(scc, context.getProgram()->getRelation(*atom)); });
@@ -168,11 +168,15 @@ Own<ram::Statement> IncClauseTranslator::translateRecursiveClause(
     if (isFact(clause)) {
         // TODO: Currently we allow no rule changes, so the fact must already be inserted
         // return mk<ram::EmptyStatement>();  // TODO: add EmptyStatement
-        return createRamFactQuery(clause);
+        return mk<ram::EmptyStatement>();
     }
-
-    Own<ram::Statement> rule = createRamRecDeltaRulesQuery(clause, isDelete, isPrefill);
-
+    Own<ram::Statement> rule;
+    if (!isRederive) {
+        rule = createRamRecDeltaRulesQueryRederive(clause);
+    }
+    else {
+        rule = createRamRecDeltaRulesQuery(clause, isDelete, isPrefill);
+    }
     // Add debug info
     std::ostringstream ds;
     clause.printForDebugInfo(ds);
@@ -229,7 +233,29 @@ std::vector<Own<ram::Expression>> cloneVarExprsDup(const std::vector<Own<ram::Ex
     }
     return newVarExprs;
 }
-
+Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQueryRederive(const ast::Clause& clause) {
+    assert(isRule(clause) && "clause should be rule");
+    VecOwn<ram::Statement> stmts;
+    indexClause(clause);
+    const auto head = clause.getHead();
+    auto headRelationName = getBaseRelationName(head->getQualifiedName());
+    auto clauseStr = clause.toString();
+    auto clauseVarMap = getClauseVars(clause);
+    auto clauseVarExprs = getClauseVarExprs(clause);
+    VecOwn<ram::Expression> values;  // how head argument is computed by its body (relation name is anonymous)
+    for (const auto* arg : head->getArguments()) {
+        values.push_back(context.translateValue(*valueIndex, arg));  // TODO
+    }
+    // need to add another level of scan
+    // auto op = createInsertion(clause);
+    // op = addBodyLiteralConstraints(clause, std::move(op));
+    // op = addVariableBindingConstraints(std::move(op));
+    // op = addGeneratorLevels(std::move(op), clause);
+    // op = addVariableIntroductions(clause, std::move(op));
+    // op = addEntryPoint(clause, std::move(op));
+    // return mk<ram::Query>(std::move(op));
+    return mk<ram::EmptyStatement>();
+}
 
 Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQuery(const ast::Clause& clause, bool isDelete, bool isPrefill) {
     assert(isRule(clause) && "clause should be rule");
@@ -282,7 +308,7 @@ Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQuery(const ast::
                         false, false, true)); // delete
                 op = addBodyLiteralConstraints(clause, std::move(op), isDelete);
                 op = addVariableBindingConstraints(std::move(op));
-                op = addGeneratorLevels(std::move(op), clause);
+                // op = addGeneratorLevels(std::move(op), clause);
                 op = addVariableIntroductions(clause, std::move(op), i, false);
                 op = addEntryPoint(clause, std::move(op));
                 appendStmt(stmts, std::move(mk<ram::Query>(std::move(op))));
@@ -328,7 +354,7 @@ Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQuery(const ast::
                         true, false, true)); // insert
                 op = addBodyLiteralConstraints(clause, std::move(op), isDelete);
                 op = addVariableBindingConstraints(std::move(op));
-                op = addGeneratorLevels(std::move(op), clause);
+                // op = addGeneratorLevels(std::move(op), clause);
                 op = addVariableIntroductions(clause, std::move(op), i, true);
                 op = addEntryPoint(clause, std::move(op));
                 appendStmt(stmts, std::move(mk<ram::Query>(std::move(op))));
@@ -394,7 +420,7 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQuery(const ast::Cla
                         true, false));
                 op = addBodyLiteralConstraints(clause, std::move(op), false);
                 op = addVariableBindingConstraints(std::move(op));
-                op = addGeneratorLevels(std::move(op), clause);
+                // op = addGeneratorLevels(std::move(op), clause);
                 op = addVariableIntroductions(clause, std::move(op), i, true);  // delta level, isInsert = true
                 op = addEntryPoint(clause, std::move(op));
                 appendStmt(stmts, std::move(mk<ram::Query>(std::move(op))));
@@ -411,7 +437,7 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQuery(const ast::Cla
                         false, false)); // delete
                 op = addBodyLiteralConstraints(clause, std::move(op), true);
                 op = addVariableBindingConstraints(std::move(op));
-                op = addGeneratorLevels(std::move(op), clause);
+                // op = addGeneratorLevels(std::move(op), clause);
                 op = addVariableIntroductions(clause, std::move(op), i, false);
                 op = addEntryPoint(clause, std::move(op));
                 appendStmt(stmts, std::move(mk<ram::Query>(std::move(op))));
@@ -476,7 +502,7 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQueryDel(const ast::
                         false, false)); // delete
                 op = addBodyLiteralConstraints(clause, std::move(op), true);
                 op = addVariableBindingConstraints(std::move(op));
-                op = addGeneratorLevels(std::move(op), clause);
+                // op = addGeneratorLevels(std::move(op), clause);
                 op = addVariableIntroductions(clause, std::move(op), i, false);
                 op = addEntryPoint(clause, std::move(op));
                 appendStmt(stmts, std::move(mk<ram::Query>(std::move(op))));
@@ -542,7 +568,7 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQueryIns(const ast::
                         true, false));
                 op = addBodyLiteralConstraints(clause, std::move(op), false);
                 op = addVariableBindingConstraints(std::move(op));
-                op = addGeneratorLevels(std::move(op), clause);
+                // op = addGeneratorLevels(std::move(op), clause);
                 op = addVariableIntroductions(clause, std::move(op), i, true);  // delta level, isInsert = true
                 op = addEntryPoint(clause, std::move(op));
                 appendStmt(stmts, std::move(mk<ram::Query>(std::move(op))));
@@ -857,6 +883,7 @@ Own<ram::Operation> IncClauseTranslator::addAdtUnpack(
 
 Own<ram::Operation> IncClauseTranslator::addVariableIntroductions(
         const ast::Clause& clause, Own<ram::Operation> op, std::size_t deltaLevel, bool isInsert) {
+    // TODO: add a scan for over-deletion
     for (std::size_t p = operators.size(); p > 0; p--) {
         std::size_t i = p - 1;
         const auto* curOp = operators.at(i);
@@ -970,6 +997,7 @@ Own<ram::Operation> IncClauseTranslator::instantiateMultiResultFunctor(
 
 Own<ram::Operation> IncClauseTranslator::addGeneratorLevels(
         Own<ram::Operation> op, const ast::Clause& clause) const {
+    assert (false && "addGeneratorLevels not supported");
     std::size_t curLevel = operators.size() + generators.size() - 1;
     for (const auto* generator : reverse(generators)) {
         if (auto agg = as<ast::Aggregator>(generator)) {

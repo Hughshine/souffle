@@ -59,7 +59,7 @@ public:
     Own<ram::Statement> translateNonRecursiveClauseDel(const ast::Clause& clause);
     Own<ram::Statement> translateNonRecursiveClauseIns(const ast::Clause& clause);
     Own<ram::Statement> translateRecursiveClause(
-            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false, bool isPrefill = false);
+            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false, bool isPrefill = false, bool isRederive = false);
 
 protected:
     std::size_t version{0};
@@ -92,6 +92,7 @@ std::vector<Own<ram::Expression>> getClauseVarExprs(const ast::Clause& clause) c
     virtual Own<ram::Statement> createRamDeltaRulesQueryDel(const ast::Clause& clause);
     virtual Own<ram::Statement> createRamDeltaRulesQueryIns(const ast::Clause& clause);
     virtual Own<ram::Statement> createRamRecDeltaRulesQuery(const ast::Clause& clause, bool isDelete = false, bool isPrefill = false);
+    virtual Own<ram::Statement> createRamRecDeltaRulesQueryRederive(const ast::Clause& clause);
     virtual Own<ram::Operation> createInsertion(const ast::Clause& clause) const;
     virtual Own<ram::Condition> createCondition(const ast::Clause& clause) const;
 

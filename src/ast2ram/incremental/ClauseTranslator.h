@@ -59,7 +59,7 @@ public:
     Own<ram::Statement> translateNonRecursiveClauseDel(const ast::Clause& clause);
     Own<ram::Statement> translateNonRecursiveClauseIns(const ast::Clause& clause);
     Own<ram::Statement> translateRecursiveClause(
-            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false, bool isPrefill = false);
+            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false, bool isPrefill = false, bool isRederive = false);
 
 protected:
     std::size_t version{0};

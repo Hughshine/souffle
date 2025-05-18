@@ -399,6 +399,12 @@ Own<ram::Statement> TranslatorContext::translateRecursiveClauseInc(const ast::Cl
     return clauseTranslator->translateRecursiveClause(clause, scc, version, isDelete, isPrefill);
 }
 
+Own<ram::Statement> TranslatorContext::translateRecursiveClauseIncRederive(const ast::Clause& clause, const ast::RelationSet& scc,
+          std::size_t version, TranslationMode mode) const {
+    auto clauseTranslator = Own<ClauseTranslator>(translationStrategy->createClauseTranslatorInc(*this, mode));
+    return clauseTranslator->translateRecursiveClause(clause, scc, version, false, false, true);
+}
+
 Own<ram::Expression> TranslatorContext::translateValue(
         const ValueIndex& index, const ast::Argument* arg) const {
     auto valueTranslator = Own<ValueTranslator>(translationStrategy->createValueTranslator(*this, index));
