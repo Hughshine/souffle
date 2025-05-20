@@ -1488,7 +1488,7 @@ Own<ram::Statement> UnitTranslator::generateStratumTableUpdatesIncRederive(const
         updateRelTable = mk<ram::Sequence>(
             // TODO: check this
             // clear old delta, use delta union to update it with new
-            mk<ram::Clear>(getIncNewDervRederiveRelationName(rel->getQualifiedName())),
+            mk<ram::Clear>(getIncDeltaTupleRederiveRelationName(rel->getQualifiedName())),
             // rederived derivations, if rederive a tuple, will be added to main relation
             mk<ram::DeltaUnion>(mainRelation, "", mainRelation,
                                     getIncNewDervRederiveRelationName(rel->getQualifiedName()), "", getIncDeltaTupleRederiveRelationName(rel->getQualifiedName()), ""),

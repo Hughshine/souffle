@@ -156,8 +156,8 @@ const std::string getBaseRelationName(const std::string& name) {
     res = stripPrefix("@new_derv_insert_", res);
     res = stripPrefix( "@inc_tuple_overdelete_", res);
     res = stripPrefix( "@inc_derv_overdelete_", res);
-    res = stripPrefix( "@inc_new_tuple_rederive_", res);
-    res = stripPrefix( "@inc_delta_derv_rederive_", res);
+    res = stripPrefix( "@inc_new_derv_rederive_", res);
+    res = stripPrefix( "@inc_delta_tuple_rederive_", res);
     return res;
 }
 
@@ -2271,6 +2271,9 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     << deltaUnion.getRelation() << "\",tupleDeltaDervInsert);\n";
                 // if (insertOnly) { // also means recursive...
                     out << "auto*& untypedDeltaDervTupleInsertRuleSet = DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
+                // out << "if (untypedDeltaDervTupleInsertRuleSet == nullptr) {\n";
+                // out << "untypedDeltaDervTupleInsertRuleSet = new std::unordered_set<RuleApplication>();\n" << std::endl;
+                // out << "}\n";
                 // } else {
                 //     out << "auto*& untypedDeltaDervTupleInsertRuleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
                 // }

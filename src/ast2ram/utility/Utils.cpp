@@ -229,8 +229,8 @@ std::string getBaseRelationName(const ast::QualifiedName& name) {
 
     str = stripPrefix( "@inc_tuple_overdelete_", str);
     str = stripPrefix( "@inc_derv_overdelete_", str);
-    str = stripPrefix( "@inc_new_tuple_rederive_", str);
-    str = stripPrefix( "@inc_delta_derv_rederive_", str);
+    str = stripPrefix( "@inc_new_derv_rederive_", str);
+    str = stripPrefix( "@inc_delta_tuple_rederive_", str);
     return str;
 }
 

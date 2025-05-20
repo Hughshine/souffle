@@ -381,6 +381,7 @@ void buildFormulasInc(
     // deletion
     std::deque<EdgePtr> worklist(view.getDeltaDeleteEdges().begin(), view.getDeltaDeleteEdges().end());
 
+    // TODO: we need to do over-deletion first
     for (auto node : view.getDeltaDeleteNodes()) {
         nodeFormulas.erase(node);
     }
@@ -388,6 +389,7 @@ void buildFormulasInc(
         edgeFormulas.erase(edge);
     }
 
+    // TODO: and have a similar re-derivation phrase
     size_t iteration = 0;
     std::cout << "[Info] Processing deleted edges\n";
     while (!worklist.empty()) {
@@ -397,7 +399,7 @@ void buildFormulasInc(
 
         EdgePtr edge = worklist.front();
         worklist.pop_front();
-
+        std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
         // if its a deleted edge
         if (deltaDeletedEdges.count(edge)) {
             auto outputNode = edge->getOutput();
@@ -411,12 +413,17 @@ void buildFormulasInc(
             for (auto e : view.getIncomingEdges(outputNode)) {
                 auto it = edgeFormulas.find(e);
                 if (it != edgeFormulas.end() && it->second.get()) {
+                    // TODO: needs to do overdeletion
                     incoming.push_back(it->second);
                 }
             }
             assert (!incoming.empty());
             auto newNodeFormula = formulaManager.makeOr(incoming);
             nodeFormulas[outputNode] = newNodeFormula;
+            std::cout << "Node " << outputNode->toString() << " changed.\n";
+            std::cout << "Node new formula: " << formulaManager.toString(nodeFormulas[outputNode]) << std::endl;
+            std::cout << "Node new formula???: " << formulaManager.toString(newNodeFormula) << std::endl;
+
             for (auto outEdge : view.getOutgoingEdges(edge->getOutput())) {
                 worklist.push_back(outEdge);
             }

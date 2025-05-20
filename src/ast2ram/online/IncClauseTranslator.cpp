@@ -251,11 +251,10 @@ Own<ram::Operation> IncClauseTranslator::createInsertionRederive(const ast::Clau
     auto clauseStr = clause.toString();
 
     // Prob: Record Derivation at the same time
-    // if complete, then there is no difference between "insert/delete"
     auto recordDerivation = mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)),
                         context.getClauseNum(&clause), clauseStr,
-                        std::move(cloneClauseVarMapDup(clauseVarMap)), std::move(cloneVarExprsDup(varExprs)), false, true);
+                        std::move(cloneClauseVarMapDup(clauseVarMap)), std::move(cloneVarExprsDup(varExprs)), true, false, true);
 
 
     // Propositions
