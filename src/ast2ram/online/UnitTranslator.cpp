@@ -2045,6 +2045,10 @@ Own<ram::Statement> UnitTranslator::generateIncTableUpdate(const std::vector<std
             appendStmt(res, mk<ram::Clear>(oldRelationName));
             appendStmt(res,
                 generateMergeRelations(rel, oldRelationName, relationName));
+            auto overdeleteName = getIncTupleOverDeleteRelationName(rel->getQualifiedName());
+            auto dervOverdeleteName = getIncDervOverDeleteRelationName(rel->getQualifiedName());
+            appendStmt(res, mk<ram::ExactClear>(overdeleteName));
+            appendStmt(res, mk<ram::ExactClear>(dervOverdeleteName));
         }
     }
     return mk<ram::Sequence>(std::move(res));
