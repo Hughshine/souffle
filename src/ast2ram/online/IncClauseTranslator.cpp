@@ -133,6 +133,7 @@ std::map<std::string, Own<ram::Expression>> IncClauseTranslator::getClauseVars(c
             // assert(false && "constraints are not supported");
             continue;
         }
+        if (atom->isRederive) continue;
         for (const auto* arg : atom->getArguments()) {
             if (const auto& var = as<ast::Variable>(arg)) {
                 const auto& varName = var->getName();
@@ -171,7 +172,7 @@ Own<ram::Statement> IncClauseTranslator::translateRecursiveClause(
         return mk<ram::EmptyStatement>();
     }
     Own<ram::Statement> rule;
-    if (!isRederive) {
+    if (isRederive) {
         rule = createRamRecDeltaRulesQueryRederive(clause);
     }
     else {
@@ -233,28 +234,201 @@ std::vector<Own<ram::Expression>> cloneVarExprsDup(const std::vector<Own<ram::Ex
     }
     return newVarExprs;
 }
+
+
+Own<ram::Operation> IncClauseTranslator::createInsertionRederive(const ast::Clause& clause) const {
+    const auto head = clause.getHead();
+    auto headRelationName = getClauseAtomName(clause, head);
+
+    auto clauseVarMap = getClauseVars(clause);
+    auto varExprs = getClauseVarExprs(clause);
+
+    VecOwn<ram::Expression> values;
+    for (const auto* arg : head->getArguments()) {
+        values.push_back(context.translateValue(*valueIndex, arg));
+    }
+
+    auto clauseStr = clause.toString();
+
+    // Prob: Record Derivation at the same time
+    // if complete, then there is no difference between "insert/delete"
+    auto recordDerivation = mk<ram::RecordDerivation>(
+                        headRelationName, std::move(clone(values)),
+                        context.getClauseNum(&clause), clauseStr,
+                        std::move(cloneClauseVarMapDup(clauseVarMap)), std::move(cloneVarExprsDup(varExprs)), false, true);
+
+
+    // Propositions
+    if (head->getArity() == 0) {
+        return mk<ram::Filter>(
+            mk<ram::EmptinessCheck>(headRelationName),
+            mk<ram::SequentialOperation>(
+                mk<ram::Insert>(headRelationName, std::move(values),
+                    context.getClauseNum(&clause), clauseStr,
+                    std::move(cloneClauseVarMapDup(clauseVarMap))),
+                    std::move(recordDerivation)));
+    }
+
+    // Relations with functional dependency constraints
+    if (auto guardedConditions = getFunctionalDependencies(clause)) {
+        return mk<ram::SequentialOperation>(mk<ram::GuardedInsert>(headRelationName,
+            std::move(values), std::move(guardedConditions),
+            context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMapDup(clauseVarMap))),
+            std::move(recordDerivation));
+    }
+
+    // Everything else
+    return mk<ram::SequentialOperation>(mk<ram::Insert>(headRelationName, std::move(values),
+        context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMapDup(clauseVarMap)))
+        , std::move(recordDerivation));
+}
+
+Own<ram::Operation> IncClauseTranslator::addNegatedDeltaAtomRederive(
+        Own<ram::Operation> op, const ast::Atom* atom) const {
+    std::size_t arity = atom->getArity();
+    std::string name = getIncDeltaTupleRederiveRelationName(atom->getQualifiedName());  // TODO:
+
+    if (arity == 0) {
+        // for a nullary, negation is a simple emptiness check
+        return mk<ram::Filter>(mk<ram::EmptinessCheck>(name), std::move(op));
+    }
+
+    // else, we construct the atom and create a negation
+    VecOwn<ram::Expression> values;
+    auto args = atom->getArguments();
+    for (std::size_t i = 0; i < arity; i++) {
+        values.push_back(context.translateValue(*valueIndex, args[i]));
+    }
+
+    return mk<ram::Filter>(
+            mk<ram::Negation>(mk<ram::ExistenceCheck>(name, std::move(values))), std::move(op));
+}
+
+Own<ram::Operation> IncClauseTranslator::addBodyLiteralConstraintsRederive(
+        const ast::Clause& clause, Own<ram::Operation> op) const {
+    for (const auto* lit : clause.getBodyLiterals()) {
+        // constraints become literals
+        if (auto condition = context.translateConstraint(*valueIndex, lit)) {
+            op = mk<ram::Filter>(std::move(condition), std::move(op));
+        }
+    }
+
+    if (isA<ast::SubsumptiveClause>(clause)) {
+        assert (false);
+    }
+
+    if (isRecursive()) {
+        if (clause.getHead()->getArity() > 0) {
+            // also negate the head
+            op = addNegatedAtomDerived(std::move(op), clause, clause.getHead());
+        }
+        // also add in prev stuff
+        for (std::size_t i = version + 1; i < sccAtoms.size(); i++) {
+            op = addNegatedDeltaAtomRederive(std::move(op), sccAtoms.at(i));
+        }
+    }
+
+    return op;
+}
+
+
+Own<ram::Operation> IncClauseTranslator::addAtomScanRederive(Own<ram::Operation> op, const ast::Atom* atom,
+        const ast::Clause& clause, std::size_t curLevel) const {
+    const ast::Atom* head = clause.getHead();
+
+    // add constraints
+    op = addConstantConstraints(curLevel, atom->getArguments(), std::move(op));
+
+    // add check for emptiness for an atom
+    op = mk<ram::Filter>(
+            mk<ram::Negation>(mk<ram::EmptinessCheck>(getClauseAtomName(clause, atom))), std::move(op));
+
+    // check whether all arguments are unnamed variables
+    bool isAllArgsUnnamed = all_of(
+            atom->getArguments(), [&](const ast::Argument* arg) { return isA<ast::UnnamedVariable>(arg); });
+
+    // add a scan level
+    if (atom->getArity() != 0 && !isAllArgsUnnamed) {
+        if (head->getArity() == 0) {
+            op = mk<ram::Break>(mk<ram::Negation>(mk<ram::EmptinessCheck>(getClauseAtomName(clause, head))),
+                    std::move(op));
+        }
+
+        std::stringstream ss;
+        if (context.getGlobal()->config().has("profile")) {
+            ss << "@frequency-atom" << ';';
+            ss << clause.getHead()->getQualifiedName() << ';';
+            ss << version << ';';
+            ss << stringify(getClauseString(clause)) << ';';
+            ss << stringify(getClauseAtomName(clause, atom)) << ';';
+            ss << stringify(toString(clause)) << ';';
+            ss << curLevel << ';';
+        }
+        op = mk<ram::Scan>(getClauseAtomName(clause, atom), curLevel, std::move(op), ss.str());
+    }
+
+    return op;
+}
+
+Own<ram::Operation> IncClauseTranslator::addVariableIntroductionsRederive(
+        const ast::Clause& clause, Own<ram::Operation> op) {
+    for (std::size_t p = operators.size(); p > 0; p--) {
+        std::size_t i = p - 1;
+        const auto* curOp = operators.at(i);
+        if (const auto* atom = as<ast::Atom>(curOp)) {
+            // add atom arguments through a scan
+            op = addAtomScanRederive(std::move(op), atom, clause, i);
+        } else if (const auto* rec = as<ast::RecordInit>(curOp)) {
+            // add record arguments through an unpack
+            // op = addRecordUnpack(std::move(op), rec, i);
+            assert (false);
+        } else if (const auto* adt = as<ast::BranchInit>(curOp)) {
+            // add adt arguments through an unpack
+            // op = addAdtUnpack(std::move(op), adt, i);
+            // if (!context.isADTBranchSimple(adt)) {
+            //     // for non-simple ADTs (arity > 1), we introduced two
+            //     // nesting levels
+            //     p--;
+            // }
+            assert (false);
+        } else {
+            fatal("Unsupported AST node for creation of scan-level!");
+        }
+    }
+    return op;
+}
+
 Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQueryRederive(const ast::Clause& clause) {
     assert(isRule(clause) && "clause should be rule");
     VecOwn<ram::Statement> stmts;
-    indexClause(clause);
-    const auto head = clause.getHead();
+    // TODO: should create a new clause
+    ast::Clause* rederiveVersionClause = clause.cloning();
+    Own<ast::Atom> headClone(rederiveVersionClause->getHead()->cloning());
+    headClone->isRederive = true;
+    rederiveVersionClause->isRederive = true;
+    rederiveVersionClause->setClauseId(context.getClauseNum(&clause));
+    // context.clauseNums. rederiveVersionClause] = -1; //
+    rederiveVersionClause->addToBody(std::move(headClone)); // TODO
+    std::cout << "rederiveVersionClause: " << rederiveVersionClause->toString() << std::endl;
+    // TODO: add rederive version for all the methods.
+    indexClause(*rederiveVersionClause);
+    const auto head = rederiveVersionClause->getHead();
     auto headRelationName = getBaseRelationName(head->getQualifiedName());
-    auto clauseStr = clause.toString();
-    auto clauseVarMap = getClauseVars(clause);
-    auto clauseVarExprs = getClauseVarExprs(clause);
+    auto clauseStr = rederiveVersionClause->toString();
+    auto clauseVarMap = getClauseVars(*rederiveVersionClause);
+    auto clauseVarExprs = getClauseVarExprs(*rederiveVersionClause);
     VecOwn<ram::Expression> values;  // how head argument is computed by its body (relation name is anonymous)
     for (const auto* arg : head->getArguments()) {
         values.push_back(context.translateValue(*valueIndex, arg));  // TODO
     }
     // need to add another level of scan
-    // auto op = createInsertion(clause);
-    // op = addBodyLiteralConstraints(clause, std::move(op));
-    // op = addVariableBindingConstraints(std::move(op));
-    // op = addGeneratorLevels(std::move(op), clause);
-    // op = addVariableIntroductions(clause, std::move(op));
-    // op = addEntryPoint(clause, std::move(op));
-    // return mk<ram::Query>(std::move(op));
-    return mk<ram::EmptyStatement>();
+    auto op = createInsertionRederive(*rederiveVersionClause);
+    op = addBodyLiteralConstraintsRederive(*rederiveVersionClause, std::move(op));
+    op = addVariableBindingConstraints(std::move(op));
+    op = addGeneratorLevels(std::move(op), *rederiveVersionClause);
+    op = addVariableIntroductionsRederive(*rederiveVersionClause, std::move(op));
+    op = addEntryPoint(*rederiveVersionClause, std::move(op));
+    return mk<ram::Query>(std::move(op));
 }
 
 Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQuery(const ast::Clause& clause, bool isDelete, bool isPrefill) {
@@ -997,7 +1171,6 @@ Own<ram::Operation> IncClauseTranslator::instantiateMultiResultFunctor(
 
 Own<ram::Operation> IncClauseTranslator::addGeneratorLevels(
         Own<ram::Operation> op, const ast::Clause& clause) const {
-    assert (false && "addGeneratorLevels not supported");
     std::size_t curLevel = operators.size() + generators.size() - 1;
     for (const auto* generator : reverse(generators)) {
         if (auto agg = as<ast::Aggregator>(generator)) {
@@ -1303,7 +1476,11 @@ std::vector<ast::Atom*> IncClauseTranslator::getAtomOrdering(const ast::Clause& 
         atomNames.push_back(getClauseAtomName(clause, atom));
     }
     auto newOrder = context.getSipsMetric()->getReordering(&clause, atomNames);
-    return reorderAtoms(atoms, newOrder);
+    auto reorderedAtoms = reorderAtoms(atoms, newOrder);
+    std::stable_partition(reorderedAtoms.begin(), reorderedAtoms.end(), [](ast::Atom* atom) {
+        return atom->isRederive;
+    });
+    return reorderedAtoms;
 }
 
 std::size_t IncClauseTranslator::addOperatorLevel(const ast::Node* node) {

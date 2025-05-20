@@ -77,6 +77,7 @@ std::vector<Own<ram::Expression>> getClauseVarExprs(const ast::Clause& clause) c
     virtual Own<ram::Operation> addNegatedAtom(
             Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const;
     virtual Own<ram::Operation> addNegatedDeltaAtom(Own<ram::Operation> op, const ast::Atom* atom, bool isDelete) const;
+    virtual Own<ram::Operation> addNegatedDeltaAtomRederive(Own<ram::Operation> op, const ast::Atom* atom) const;
     virtual Own<ram::Operation> addDistinct(
             Own<ram::Operation> op, const ast::Atom* atom1, const ast::Atom* atom2) const;
     virtual Own<ram::Operation> addNegatedAtomDerived(
@@ -94,6 +95,7 @@ std::vector<Own<ram::Expression>> getClauseVarExprs(const ast::Clause& clause) c
     virtual Own<ram::Statement> createRamRecDeltaRulesQuery(const ast::Clause& clause, bool isDelete = false, bool isPrefill = false);
     virtual Own<ram::Statement> createRamRecDeltaRulesQueryRederive(const ast::Clause& clause);
     virtual Own<ram::Operation> createInsertion(const ast::Clause& clause) const;
+    virtual Own<ram::Operation> createInsertionRederive(const ast::Clause& clause) const;
     virtual Own<ram::Condition> createCondition(const ast::Clause& clause) const;
 
     std::vector<ast::Atom*> getAtomOrdering(const ast::Clause& clause) const;
@@ -112,13 +114,18 @@ std::vector<Own<ram::Expression>> getClauseVarExprs(const ast::Clause& clause) c
     Own<ram::Operation> addVariableBindingConstraints(Own<ram::Operation> op) const;
     virtual Own<ram::Operation> addBodyLiteralConstraints(
             const ast::Clause& clause, Own<ram::Operation> op, bool isDelete) const;
+    virtual Own<ram::Operation> addBodyLiteralConstraintsRederive(
+            const ast::Clause& clause, Own<ram::Operation> op) const;
     Own<ram::Operation> addGeneratorLevels(Own<ram::Operation> op, const ast::Clause& clause) const;
     Own<ram::Operation> addVariableIntroductions(const ast::Clause& clause, Own<ram::Operation> op, std::size_t deltaLevel, bool isInsert);
+    Own<ram::Operation> addVariableIntroductionsRederive(const ast::Clause& clause, Own<ram::Operation> op);
     Own<ram::Operation> addEntryPoint(const ast::Clause& clause, Own<ram::Operation> op) const;
 
     /** Levelling methods */
     virtual Own<ram::Operation> addAtomScan(Own<ram::Operation> op, const ast::Atom* atom,
             const ast::Clause& clause, std::size_t curLevel, std::size_t deltaLevel, bool isInsert) const;
+        virtual Own<ram::Operation> addAtomScanRederive(Own<ram::Operation> op, const ast::Atom* atom,
+            const ast::Clause& clause, std::size_t curLevel) const;
     virtual Own<ram::Operation> addAtomScanRec(Own<ram::Operation> op, const ast::Atom* atom,
         const ast::Clause& clause, const std::size_t curLevel, const std::size_t deltaLevel, const bool isInsert) const;
     Own<ram::Operation> addRecordUnpack(

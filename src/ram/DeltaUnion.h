@@ -31,7 +31,8 @@ public:
             : RelationStatement(NK_DeltaUnion, rel),
     oldRel(oldRel), newRel(newRel),
     deltaDervInsertRel(deltaDervInsertRel), deltaDervDeleteRel(deltaDervDeleteRel),
-    deltaTupleInsertRel(deltaTupleInsertRel), deltaTupleDeleteRel(deltaTupleDeleteRel){}
+    deltaTupleInsertRel(deltaTupleInsertRel), deltaTupleDeleteRel(deltaTupleDeleteRel)
+    {}
 
     DeltaUnion* cloning() const override {
         return new DeltaUnion(relation, oldRel, newRel,
@@ -48,8 +49,9 @@ public:
     std::string getDeltaDervDeleteRel() const { return deltaDervDeleteRel; }
     std::string getDeltaTupleInsertRel() const { return deltaTupleInsertRel; }
     std::string getDeltaTupleDeleteRel() const { return deltaTupleDeleteRel; }
-
+    // bool isOverdelete() const { return overdelete; }
 protected:
+    bool overdelete;
     void print(std::ostream& os, int tabpos) const override {
         os << times(" ", tabpos);
         os << "DELTA UNION " << relation << std::endl;

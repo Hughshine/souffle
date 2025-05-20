@@ -137,6 +137,9 @@ bool TranslatorContext::isRecursiveClause(const ast::Clause* clause) const {
 }
 
 std::size_t TranslatorContext::getClauseNum(const ast::Clause* clause) const {
+    if (clause->isRederive) {
+        return clause->getClauseId();  // return getClauseId()?
+    }
     assert(contains(clauseNums, clause) && "clause num should exist for all clauses");
     return clauseNums.at(clause);
 }
@@ -401,6 +404,7 @@ Own<ram::Statement> TranslatorContext::translateRecursiveClauseInc(const ast::Cl
 
 Own<ram::Statement> TranslatorContext::translateRecursiveClauseIncRederive(const ast::Clause& clause, const ast::RelationSet& scc,
           std::size_t version, TranslationMode mode) const {
+    // TODO: mode = isIncremental
     auto clauseTranslator = Own<ClauseTranslator>(translationStrategy->createClauseTranslatorInc(*this, mode));
     return clauseTranslator->translateRecursiveClause(clause, scc, version, false, false, true);
 }

@@ -101,6 +101,14 @@ public:
         return this->probability;
     }
 
+    void setRecursive(bool recursive) {
+        this->recursive = recursive;
+    }
+
+    bool isRecursive() const {
+        return recursive;
+    }
+
     void setClauseId(const std::size_t id) {
         clauseId = id;
     }
@@ -116,6 +124,10 @@ public:
     void setVariables(const std::vector<std::string>& v) {
         variables = v;
     }
+    Clause* cloning() const override;
+
+    bool isRederive = false;
+
 protected:
     // void initializeVariables(VecOwn<Literal> bodyLiterals);
     std::vector<std::string> variables;
@@ -124,8 +136,8 @@ protected:
     NodeVec getChildren() const override;
 
     bool equal(const Node& node) const override;
+    bool recursive = false;
 
-    Clause* cloning() const override;
 
 protected:
     /** Head of the clause */

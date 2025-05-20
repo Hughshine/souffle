@@ -29,6 +29,9 @@ public:
     bool hasRule(std::size_t ruleId) const;
     std::size_t size() const;
     std::string toString() const;
+    bool isRecursive(std::size_t ruleId) const {
+        return getRule(ruleId)->isRecursive();
+    }
 
 private:
     std::unordered_map<std::size_t, Rule> rules;
@@ -242,4 +245,5 @@ ExampleRuleComponents::~ExampleRuleComponents() {
     freeMap(exampleRuleApps2);
 }
 
+static RuleManager ruleManager({});
 #endif //RULEMANAGER_H

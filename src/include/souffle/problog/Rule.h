@@ -17,7 +17,7 @@
 
 class Rule {
 public:
-    Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms = {}, std::vector<std::string> vars = {}, double probability = 1.0);
+    Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms = {}, std::vector<std::string> vars = {}, double probability = 1.0, bool recursive = false);
 
     const Atom& getHead() const;
     const std::vector<Atom>& getBodyAtoms() const;
@@ -31,24 +31,29 @@ public:
     bool isDeterminstic() const {
         return probability == 1.0;
     }
+    bool isRecursive() const {
+        return recursive;
+    }
 private:
     std::size_t ruleId;
     Atom head;
     std::vector<Atom> bodyAtoms;
     std::vector<std::string> vars;
     double probability;
-
+    bool recursive;
     void addBodyAtom(Atom atom);
 };
 
 
-Rule::Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms, std::vector<std::string> vars, double probability)
+Rule::Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms, std::vector<std::string> vars, double probability, bool recursive)
     : ruleId(ruleId)
     , head(std::move(head))
     , bodyAtoms(std::move(bodyAtoms))
     , vars(std::move(vars))
-    , probability(probability) {
+    , probability(probability)
+    , recursive(recursive) {
 }
+
 const Atom& Rule::getHead() const {
     return head;
 }
@@ -78,6 +83,9 @@ std::string Rule::toString() const {
     oss << "[Rule " << ruleId;
     if (probability != 1.0) {
         oss << ", prob=" << probability;
+    }
+    if (recursive) {
+        oss << ", recursive";
     }
     oss << "] " << head.toString();
 

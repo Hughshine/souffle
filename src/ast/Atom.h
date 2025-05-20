@@ -65,7 +65,8 @@ public:
     double probability = 1.0f;  // only for the parsing of head atom.. simple change
     void setProbability(double p) { probability = p; }
     double getProbability() const { return probability; }
-
+    Atom* cloning() const override;
+    bool isRederive = false;
 protected:
     void print(std::ostream& os) const override;
 
@@ -74,7 +75,6 @@ protected:
 private:
     bool equal(const Node& node) const override;
 
-    Atom* cloning() const override;
 
 private:
     /** Name of atom */

@@ -186,7 +186,6 @@ Own<ram::Statement> UnitTranslator::generateNonRecursiveDelete(const ast::Relati
         if (!isA<ast::SubsumptiveClause>(clause)) {
             continue;
         }
-
         // Translate subsumptive clause
         Own<ram::Statement> rule = context->translateNonRecursiveClause(*clause, SubsumeDeleteCurrentCurrent);
 
@@ -1296,7 +1295,7 @@ Own<ram::Statement> UnitTranslator::translateRecursiveClausesIncRederive(
         }
 
         // generate all delta versions of a recursive clause
-        auto clauseVersions = generateClauseVersionsInc(clause, scc);
+        auto clauseVersions = generateClauseVersionsIncRederive(clause, scc);
         for (auto& clauseVersion : clauseVersions) {
             appendStmt(code, std::move(clauseVersion));
         }
@@ -1866,8 +1865,12 @@ Own<ram::Relation> UnitTranslator::createRamRelation(
     auto auxArity = mergeAuxiliary ? baseRelation->getAuxiliaryArity() : 0;
     // auto representation = baseRelation->getRepresentation();  // TODO: do not know whether this will affect evaluation
     auto representation = RelationRepresentation::BTREE_DELETE;
-    if (representation == RelationRepresentation::BTREE_DELETE && (ramRelationName[0] == '@' || ramRelationName[0] == '$')) {
+    if (representation == RelationRepresentation::BTREE_DELETE
+        && (ramRelationName[0] == '@' || ramRelationName[0] == '$')) {
         representation = RelationRepresentation::DEFAULT;
+    }
+    if (ramRelationName.find("tuple_overdelete") != std::string::npos) {
+        representation = RelationRepresentation::BTREE_DELETE;
     }
 
     std::vector<std::string> attributeNames;
@@ -2097,6 +2100,13 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
     auto ram_start = std::chrono::high_resolution_clock::now();
     context = mk<TranslatorContext>(tu);
 
+    for (auto* clause: context->getProgram()->getClauses()) {
+        if (context->isRecursiveClause(clause)) {
+            clause->setRecursive(true);
+        } else {
+            clause->setRecursive(false);
+        }
+    }
     /* -- Translation -- */
     // Generate the RAM program code
     auto ramMain = generateProgram(tu);

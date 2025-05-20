@@ -1,0 +1,112 @@
+.type s <: number
+.type BitSet <: number
+.type ind <: number
+.decl assign(v0: s, v1: s)
+.decl TDEP(v0: s, v1: s)
+.decl xor_assign_left(v0: s, v1: s)
+.decl xor_assign_right(v0: s, v1: s)
+.decl load_assign(v0: s, v1: s)
+.decl store_assign(v0: s, v1: s)
+.decl zext_assign(v0: s, v1: s)
+.decl icmp_assign(v0: s, v1: s)
+.decl trunc_assign(v0: s, v1: s)
+.decl share(v0: s, v1: s)
+.decl binary_constant(v0: s, v1: s)
+.decl equal_assign(v0: s, v1: s)
+.decl KEY_SENSITIVE(v0: s)
+.decl KEY_IND(v0: s)
+.decl RAND(v0: s)
+.decl HD_SENSITIVE(v0: s, v1: s)
+.decl RAND_NUMBER(v0: ind, v1: BitSet)
+.decl KEY_NUMBER(v0: ind, v1: BitSet)
+.decl REC_RAND_VAR(v0: s, v1: ind, v2: BitSet)
+.decl REC_ALL_INC(v0: s, v1: ind, v2: BitSet)
+.decl Time(v0: ind)
+.decl XOR_RUD1_ALL_INC(v0: BitSet, v1: BitSet, v2: BitSet, v3: BitSet, v4: BitSet, v5: BitSet)
+.decl BVAND_REC(v0: s, v1: s, v2: s, v3: ind)
+.decl BVOR_RAND_REC(v0: s, v1: s, v2: s, v3: ind)
+.decl BVOR_ALL_REC(v0: s, v1: s, v2: s, v3: ind)
+.decl BV_INTERSECT_REC(v0: s, v1: s, v2: ind, v3: BitSet)
+.decl INTERSECT_LABEL(v0: s, v1: s)
+.decl BV_DIFF_REC(v0: s, v1: s, v2: ind, v3: BitSet)
+.decl DIFF_LABEL(v0: s, v1: s)
+.decl BV_SAME_REC(v0: s, v1: s, v2: ind, v3: BitSet)
+.decl CHECK_SAME(v0: s, v1: s)
+.decl SET_SUM_REC(v0: s, v1: s, v2: s, v3: ind)
+.decl XOR_RUD1_ALL_INC_REC(v0: s, v1: s, v2: s, v3: ind)
+.decl BV_EQUAL_RAND_REC(v0: s, v1: s, v2: ind)
+.decl BV_EQUAL_ALL_REC(v0: s, v1: s, v2: ind)
+.decl BV_ZERO_REC(v0: s, v1: s, v2: ind)
+.output KEY_IND
+.output KEY_SENSITIVE
+.input assign
+.input xor_assign_left
+.input xor_assign_right
+.input load_assign
+.input store_assign
+.input zext_assign
+.input icmp_assign
+.input trunc_assign
+.input share
+.input binary_constant
+.input KEY_SENSITIVE
+.output KEY_SENSITIVE
+.input KEY_IND
+.output KEY_IND
+.input RAND
+.input RAND_NUMBER
+.input KEY_NUMBER
+.input REC_RAND_VAR
+.input REC_ALL_INC
+.input Time
+.input BVAND_REC
+.input BVOR_RAND_REC
+.input BVOR_ALL_REC
+.input BV_INTERSECT_REC
+.input BV_DIFF_REC
+.input BV_SAME_REC
+.input BV_EQUAL_RAND_REC
+.input BV_EQUAL_ALL_REC
+.input BV_ZERO_REC
+
+CHECK_SAME(from1, from2) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), Time(Times), ((RAND(from1), BV_DIFF_REC(from1, from2, Times, int_res0), (int_res0 = 0)), (RAND(from2), BV_DIFF_REC(from2, from1, Times, int_res1), (int_res1 = 0)))).
+DIFF_LABEL(from1, from2) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), RAND(from1)).
+DIFF_LABEL(from2, from1) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), RAND(from2)).
+0.994382::HD_SENSITIVE(to, from) :- (share(to, from), equal_assign(from_e, from), equal_assign(to_e, to), xor_assign_left(to_e, from1), xor_assign_right(to_e, from_e), KEY_SENSITIVE(from1)).
+		  0.994382::HD_SENSITIVE(to, from) :- (share(to, from), equal_assign(from_e, from), equal_assign(to_e, to), xor_assign_left(to_e, from_e), xor_assign_right(to_e, from1), KEY_SENSITIVE(from1)).
+					0.849833::HD_SENSITIVE(to, from1) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), share(to, from1), KEY_SENSITIVE(from2)).
+							  0.849833::HD_SENSITIVE(to, from2) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), share(to, from2), KEY_SENSITIVE(from1)).
+										0.912716::INTERSECT_LABEL(from1, from2) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), KEY_IND(from1), KEY_IND(from2)).
+KEY_IND(to) :- ((equal_assign(from1, to); to = from1), KEY_IND(from1)).
+KEY_IND(to) :- ((equal_assign(to, from1); to = from1), KEY_IND(from1)).
+0.95548::KEY_IND(to) :- (binary_constant(to, from1), KEY_IND(from1)).
+		 0.814331::KEY_IND(to) :- (load_assign(to, from1), KEY_IND(from1)).
+				   0.843516::KEY_IND(to) :- (store_assign(to, from1), KEY_IND(from1)).
+KEY_IND(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), KEY_IND(from1), KEY_IND(from2), Time(Times), BV_INTERSECT_REC(from1, from2, Times, int_res0), (int_res0 = 0)).
+KEY_IND(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), Time(Times), (RAND(from1); RAND(from2)), BV_SAME_REC(from1, from2, Times, int_res0), (int_res0 = 0)).
+KEY_SENSITIVE(to) :- ((equal_assign(from1, to); to = from1), KEY_SENSITIVE(from1)).
+KEY_SENSITIVE(to) :- ((equal_assign(to, from1); to = from1), KEY_SENSITIVE(from1)).
+0.855186::KEY_SENSITIVE(to) :- (binary_constant(to, from1), KEY_SENSITIVE(from1)).
+		  0.81677::KEY_SENSITIVE(to) :- (load_assign(to, from1), KEY_SENSITIVE(from1)).
+				   0.833725::KEY_SENSITIVE(to) :- (store_assign(to, from1), KEY_SENSITIVE(from1)).
+KEY_SENSITIVE(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), KEY_IND(from1), KEY_IND(from2), Time(Times), BV_INTERSECT_REC(from1, from2, Times, int_res0), !((int_res0 = 0))).
+0.954252::KEY_SENSITIVE(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), KEY_SENSITIVE(from1), KEY_SENSITIVE(from2)).
+KEY_SENSITIVE(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), Time(Times), (RAND(from1); RAND(from2)), BV_SAME_REC(from1, from2, Times, int_res0), !((int_res0 = 0))).
+RAND(to) :- ((equal_assign(from1, to); to = from1), RAND(from1)).
+RAND(to) :- ((equal_assign(to, from1); to = from1), RAND(from1)).
+0.896764::RAND(to) :- (binary_constant(to, from1), RAND(from1)).
+		  0.84821::RAND(to) :- (load_assign(to, from1), RAND(from1)).
+				   0.939405::RAND(to) :- (store_assign(to, from1), RAND(from1)).
+RAND(to) :- (xor_assign_left(to, from1), xor_assign_right(to, from2), Time(Times), ((RAND(from1), BV_DIFF_REC(from1, from2, Times, int_res0), !((int_res0 = 0))); (RAND(from2), BV_DIFF_REC(from2, from1, Times, int_res1), !((int_res1 = 0))))).
+0.982548::TDEP(to, from) :- assign(to, from).
+		  0.822016::TDEP(to, prev) :- (assign(to, from), TDEP(from, prev)).
+					0.911705::assign(to, from) :- load_assign(to, from).
+							  0.993681::assign(to, from) :- store_assign(to, from).
+										0.992146::assign(to, from2) :- (assign(to, from1), assign(from1, from2)).
+												  0.975596::equal_assign(from1, to) :- (equal_assign(from1, from2), equal_assign(from2, to)).
+															0.824633::equal_assign(to, from1) :- assign(to, from1).
+																	  0.816296::equal_assign(to, from1) :- binary_constant(to, from1).
+																				0.981936::load_assign(to, from1) :- icmp_assign(to, from1).
+																						  0.826274::load_assign(to, from1) :- trunc_assign(to, from1).
+																									0.948581::load_assign(to, from1) :- zext_assign(to, from1).
+																											  0.842829::share(from2, from1) :- share(from1, from2).

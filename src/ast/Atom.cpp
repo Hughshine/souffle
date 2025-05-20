@@ -55,15 +55,20 @@ Node::NodeVec Atom::getChildren() const {
 void Atom::print(std::ostream& os) const {
     printAnnotations(os);
     os << getQualifiedName() << "(" << join(arguments) << ")";
+    if (isRederive) {
+        os << "<rederive>";
+    }
 }
 
 bool Atom::equal(const Node& node) const {
     const auto& other = asAssert<Atom>(node);
-    return name == other.name && equal_targets(arguments, other.arguments);
+    return name == other.name && equal_targets(arguments, other.arguments) && isRederive == other.isRederive;
 }
 
 Atom* Atom::cloning() const {
-    return new Atom(name, clone(arguments), getSrcLoc());
+    auto* atom = new Atom(name, clone(arguments), getSrcLoc());
+    atom->isRederive = isRederive;
+    return atom;
 }
 
 bool Atom::classof(const Node* n) {

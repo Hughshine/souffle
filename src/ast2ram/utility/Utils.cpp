@@ -42,7 +42,20 @@ std::string getAtomName(const ast::Clause& clause, const ast::Atom* atom,
     if (isA<ast::SubsumptiveClause>(clause)) {
         assert(false && "subsumptive clause not supported");
     }
-
+    if (atom->isRederive) {
+            // isIncremental
+        assert (isRecursive);
+        return getIncDervOverDeleteRelationName(atom->getQualifiedName());
+    }
+    if (clause.isRederive) {
+        if (clause.getHead() == atom) {
+            return getIncNewDervRederiveRelationName(atom->getQualifiedName());
+        }
+        if (sccAtoms.at(version) == atom) {
+            return getIncDeltaTupleRederiveRelationName(atom->getQualifiedName());
+        }
+        return getConcreteRelationName(atom->getQualifiedName());
+    }
     if (!isRecursive) {
         if (mode == Auxiliary && clause.getHead() == atom) {
             assert (false && "auxiliary mode not supported");

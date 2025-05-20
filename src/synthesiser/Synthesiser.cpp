@@ -406,9 +406,10 @@ void Synthesiser::emitRules (std::ostream& out) {
         << "{" << join(map(clause->getVariables(),
             [](const std::string& s) { return "\"" + s + "\"";}), ", ") << "}, "
         << std::to_string(clause->getProbability())
+        << ", " << std::to_string(clause->isRecursive())
         << ");" << std::endl;
     }
-    out << "RuleManager ruleManager = RuleManager({" << join(ruleNames, ", ") << "});" << std::endl;
+    out << "ruleManager = RuleManager({" << join(ruleNames, ", ") << "});" << std::endl;
     // out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
     out << "std::cout << ruleManager.toString();\n";
 }
@@ -2179,11 +2180,6 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "ruleSet2 = new std::unordered_set<RuleApplication>();\n";
                 out << "}\n";
             }
-            // out << "std::map<std::string, souffle::RamDomain> varValues{};\n";
-            // for (const auto& [var, expr]: recordDerivation.varExprMap) {
-            //     out << "varValues.insert(std::make_pair(\"" << var  << "\", "; rec(out, expr.get()); out << "));\n";
-            // }
-            // out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
             if (recordDerivation.isInsert()) {
                 out << "std::vector<souffle::RamDomain> varValues{};\n";
                 for (const auto& expr: recordDerivation.varExprs) {
@@ -2200,14 +2196,28 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     for (const auto& expr: recordDerivation.varExprs) {
                         out << "varValues.emplace_back("; rec(out, expr.get()); out << ");\n";
                     }
-                    out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";                out << "ruleSet->insert(ruleApplication);\n";
+                    out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
+                    out << "ruleSet->insert(ruleApplication);\n";
                 } else {
+                    out << "std::vector<souffle::RamDomain> varValues{};\n";
+                    for (const auto& expr: recordDerivation.varExprs) {
+                        out << "varValues.emplace_back("; rec(out, expr.get()); out << ");\n";
+                    }
+                    out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
+                    out << "ruleSet->insert(ruleApplication);\n";
+                    out << "ruleSet2->insert(ruleApplication);\n";
+
+                    // TODO: optimize the dynamic recursive check
+                    out << "if (ruleManager.isRecursive(ruleApplication.ruleId)) {\n";
                     out << "auto*& ruleSetComplete = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
                     // over-deletion...
                     out << "for (const auto& ruleApp: *ruleSetComplete) {" << std::endl;
+                        out << "if(ruleManager.isRecursive(ruleApp.ruleId)) {\n";
                         out << "ruleSet->insert(ruleApp);\n";
                         out << "ruleSet2->insert(ruleApp);\n";
+                        out << "}\n";
                     out << "}" << std::endl;
+                    out << "}\n";
                 }
             }
         }

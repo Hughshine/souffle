@@ -70,13 +70,17 @@ void Clause::addToBody(Own<Literal> literal) {
         bodyLiterals.push_back(std::move(literal));
         return;
     }
-    for (const auto* arg : atom->getArguments()) {
-        if (const auto& var = as<ast::Variable>(arg)) {
-            const auto& varName = var->getName();
-            if (std::find(variables.begin(), variables.end(), varName) == variables.end()) {
-                variables.emplace_back(varName);
+    if (!atom->isRederive) {
+        for (const auto* arg : atom->getArguments()) {
+            if (const auto& var = as<ast::Variable>(arg)) {
+                const auto& varName = var->getName();
+                if (std::find(variables.begin(), variables.end(), varName) == variables.end()) {
+                    variables.emplace_back(varName);
+                }
             }
         }
+    } else {
+        isRederive = true;
     }
     bodyLiterals.push_back(std::move(literal));
 }
@@ -162,6 +166,8 @@ Clause* Clause::cloning() const {
     cl->setClauseId(clauseId);
     cl->setProbability(probability);
     cl->setVariables(variables);
+    cl->isRederive = isRederive;
+    cl->setRecursive(recursive);
     return cl;
 }
 

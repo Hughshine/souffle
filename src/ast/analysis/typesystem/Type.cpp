@@ -331,13 +331,23 @@ bool TypeAnalysis::hasValidTypeInfo(const FunctorDeclaration& decl) const {
 }
 
 NumericConstant::Type TypeAnalysis::getPolymorphicNumericConstantType(const NumericConstant& nc) const {
-    assert(hasValidTypeInfo(nc) && "numeric constant type not set");
+    // assert(hasValidTypeInfo(nc) && "numeric constant type not set");
+    if (!hasValidTypeInfo(nc)) {
+        // FIXME
+        // This is a workaround for the fact that the numeric constant type is not set
+        // mostly for rederive
+        return NumericConstant::Type::Int;
+    }
     return numericConstantType.at(&nc);
 }
 
 BinaryConstraintOp TypeAnalysis::getPolymorphicOperator(const BinaryConstraint& bc) const {
-    assert(contains(constraintType, &bc) && "binary constraint operator not set");
-    return constraintType.at(&bc);
+    // assert(contains(constraintType, &bc) && "binary constraint operator not set");
+    if (contains(constraintType, &bc)) {
+        return constraintType.at(&bc);
+    }
+    // TODO: Fixme, for rederive...
+    return bc.getBaseOperator();
 }
 
 AggregateOp TypeAnalysis::getPolymorphicOperator(const IntrinsicAggregator& agg) const {
