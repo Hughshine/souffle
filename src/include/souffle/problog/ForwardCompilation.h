@@ -389,10 +389,12 @@ void buildFormulasInc(
             que.pop_front();
             edgeFormulas[edge] = formulaManager.getFalse();
             worklist.push_back(edge);
-            nodeFormulas[view.getOutput(edge)] = formulaManager.getFalse();
-            nodes.insert(view.getOutput(edge));
             std::cout << edge->toString() << " is deleted.\n";
-            for (auto outEdge: view.getOutgoingEdges(view.getOutput(edge))) {
+            auto outNode = view.getOutput(edge);
+            if (outNode == nullptr) continue;
+            nodes.insert(outNode);
+            nodeFormulas[view.getOutput(edge)] = formulaManager.getFalse();
+            for (auto outEdge: view.getOutgoingEdges(outNode)) {
                 if (edgeFormulas.count(outEdge) == 0 || formulaManager.isSame(edgeFormulas[outEdge], formulaManager.getFalse())) {
                     continue;
                 }

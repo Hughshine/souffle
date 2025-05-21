@@ -32,6 +32,9 @@ public:
     bool isRecursive(std::size_t ruleId) const {
         return getRule(ruleId)->isRecursive();
     }
+    bool isInRecursiveStratum(std::size_t ruleId) const {
+        return getRule(ruleId)->isInRecursiveStratum();
+    }
 
 private:
     std::unordered_map<std::size_t, Rule> rules;

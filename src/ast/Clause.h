@@ -109,6 +109,12 @@ public:
         return recursive;
     }
 
+    void setInRecursiveStratum(bool recursiveStratum) {
+        this->inRecursiveStratum = recursiveStratum;
+    }
+    bool isInRecursiveStratum() const {
+        return inRecursiveStratum;
+    }
     void setClauseId(const std::size_t id) {
         clauseId = id;
     }
@@ -137,7 +143,7 @@ protected:
 
     bool equal(const Node& node) const override;
     bool recursive = false;
-
+    bool inRecursiveStratum = false;
 
 protected:
     /** Head of the clause */

@@ -2118,6 +2118,16 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
 
     // Create the relevant RAM relations
     const auto& sccOrdering = tu.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>().order();
+
+    for (const auto scc: sccOrdering) {
+        for (auto* rel: context->getRelationsInSCC(scc)) {
+            bool isRecursiveScc = context->isRecursiveSCC(scc);
+            for (auto* clause: context->getProgram()->getClauses(*rel)) {
+                clause->setInRecursiveStratum(isRecursiveScc);
+            }
+        }
+    }
+
     auto ramRelations = createRamRelations(sccOrdering);
 
     // Combine all parts into the final RAM program

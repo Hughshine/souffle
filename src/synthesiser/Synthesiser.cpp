@@ -407,6 +407,7 @@ void Synthesiser::emitRules (std::ostream& out) {
             [](const std::string& s) { return "\"" + s + "\"";}), ", ") << "}, "
         << std::to_string(clause->getProbability())
         << ", " << std::to_string(clause->isRecursive())
+        << ", " << std::to_string(clause->isInRecursiveStratum())
         << ");" << std::endl;
     }
     out << "ruleManager = RuleManager({" << join(ruleNames, ", ") << "});" << std::endl;
@@ -2208,7 +2209,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     out << "ruleSet2->insert(ruleApplication);\n";
 
                     // TODO: optimize the dynamic recursive check
-                    out << "if (ruleManager.isRecursive(ruleApplication.ruleId)) {\n";
+                    out << "if (ruleManager.isInRecursiveStratum(ruleApplication.ruleId)) {\n";
                     out << "auto*& ruleSetComplete = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
                     // over-deletion...
                     out << "for (const auto& ruleApp: *ruleSetComplete) {" << std::endl;

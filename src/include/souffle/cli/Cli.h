@@ -457,6 +457,7 @@ public:
                 FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(nodeFormulas->size()));
                 for (const auto& [node, bdd] : *nodeFormulas) {
                     if (view.getNodes().find(node) == view.getNodes().end()) {
+                        std::cout << "isNullptr: " << (node == nullptr) << std::endl;
                         std::cout << "Node " << node->getId() << " not in view, skipped." << std::endl;
                         continue;
                     }

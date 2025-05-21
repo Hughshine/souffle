@@ -168,6 +168,7 @@ Clause* Clause::cloning() const {
     cl->setVariables(variables);
     cl->isRederive = isRederive;
     cl->setRecursive(recursive);
+    cl->setInRecursiveStratum(inRecursiveStratum);
     return cl;
 }
 

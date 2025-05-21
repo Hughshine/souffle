@@ -17,7 +17,7 @@
 
 class Rule {
 public:
-    Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms = {}, std::vector<std::string> vars = {}, double probability = 1.0, bool recursive = false);
+    Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms = {}, std::vector<std::string> vars = {}, double probability = 1.0, bool recursive = false, bool recursiveStratum = false);
 
     const Atom& getHead() const;
     const std::vector<Atom>& getBodyAtoms() const;
@@ -34,6 +34,9 @@ public:
     bool isRecursive() const {
         return recursive;
     }
+    bool isInRecursiveStratum() const {
+        return recursiveStratum;
+    }
 private:
     std::size_t ruleId;
     Atom head;
@@ -41,17 +44,19 @@ private:
     std::vector<std::string> vars;
     double probability;
     bool recursive;
+    bool recursiveStratum;
     void addBodyAtom(Atom atom);
 };
 
 
-Rule::Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms, std::vector<std::string> vars, double probability, bool recursive)
+Rule::Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms, std::vector<std::string> vars, double probability, bool recursive, bool recursiveStratum)
     : ruleId(ruleId)
     , head(std::move(head))
     , bodyAtoms(std::move(bodyAtoms))
     , vars(std::move(vars))
     , probability(probability)
-    , recursive(recursive) {
+    , recursive(recursive)
+    , recursiveStratum(recursiveStratum) {
 }
 
 const Atom& Rule::getHead() const {

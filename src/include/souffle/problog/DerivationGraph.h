@@ -459,6 +459,9 @@ public:
                 continue;  // skip input fact nodes
             }
             for (const auto& edge : current->getIncomingEdges()) {
+                if (std::find(edge->getInputs().begin(), edge->getInputs().end(), current) != edge->getInputs().end()) {
+                    continue;  // if the edge reports self-dependency, then it is redundant
+                }
                 reachableEdges.insert(edge);
                 for (const auto& inputNode : edge->getInputs()) {
                     if (reachableNodes.insert(inputNode).second) {
@@ -894,6 +897,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
             continue;  // currently skip input facts
         }
         for (const auto& edge : current->getIncomingEdges()) {
+            if (std::find(edge->getInputs().begin(), edge->getInputs().end(), current) != edge->getInputs().end()) {
+                continue;  // if the edge reports self-dependency, then it is redundant
+            }
             reachableEdges.insert(edge);
             for (const auto& inputNode : edge->getInputs()) {
                 if (reachableNodes.insert(inputNode).second) {
