@@ -189,9 +189,6 @@ std::vector<NodePtr> DerivationGraphViewInterface::getInputs(EdgePtr edge) const
 }
 
 NodePtr DerivationGraphViewInterface::getOutput(EdgePtr edge) const {
-    if (getEdges().count(edge) == 0) {
-        return nullptr;
-    }
     NodePtr out = edge->getOutput();
     return getNodes().count(out) ? out : nullptr;
 }

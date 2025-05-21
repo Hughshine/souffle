@@ -379,16 +379,48 @@ void buildFormulasInc(
     }
 
     // deletion
-    std::deque<EdgePtr> worklist(view.getDeltaDeleteEdges().begin(), view.getDeltaDeleteEdges().end());
+    std::deque<EdgePtr> worklist;
+    // over-delete all formulas that are impacted by the deleted edges
+    {
+        std::deque<EdgePtr> que(view.getDeltaDeleteEdges().begin(), view.getDeltaDeleteEdges().end());
+        std::set<NodePtr> nodes;
+        while (!que.empty()) {
+            auto edge = que.front();
+            que.pop_front();
+            edgeFormulas[edge] = formulaManager.getFalse();
+            worklist.push_back(edge);
+            nodeFormulas[view.getOutput(edge)] = formulaManager.getFalse();
+            nodes.insert(view.getOutput(edge));
+            std::cout << edge->toString() << " is deleted.\n";
+            for (auto outEdge: view.getOutgoingEdges(view.getOutput(edge))) {
+                if (edgeFormulas.count(outEdge) == 0 || formulaManager.isSame(edgeFormulas[outEdge], formulaManager.getFalse())) {
+                    continue;
+                }
+                que.push_back(outEdge);
+            }
+        }
+        for (auto node : nodes) {
+            std::vector<FormulaNodeRef> incoming;
+            for (auto e : view.getIncomingEdges(node)) {
+                auto it = edgeFormulas.find(e);
+                if (it != edgeFormulas.end() && it->second.get()) {
+                    incoming.push_back(it->second);
+                }
+            }
+            assert (!incoming.empty());
+            auto newNodeFormula = formulaManager.makeOr(incoming);
+            nodeFormulas[node] = newNodeFormula;
+        }
+    }
 
-    // TODO: we need to do over-deletion first
     for (auto node : view.getDeltaDeleteNodes()) {
         nodeFormulas.erase(node);
     }
     for (auto edge : view.getDeltaDeleteEdges()) {
         edgeFormulas.erase(edge);
     }
-
+    // change all nodes and edges that are reachable to FALSE - to discard the the impacted formulas
+    // TODO: can be optimized
     // TODO: and have a similar re-derivation phrase
     size_t iteration = 0;
     std::cout << "[Info] Processing deleted edges\n";
