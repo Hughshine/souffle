@@ -254,7 +254,7 @@ Own<ram::Operation> IncClauseTranslator::createInsertionRederive(const ast::Clau
     auto recordDerivation = mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)),
                         context.getClauseNum(&clause), clauseStr,
-                        std::move(cloneClauseVarMapDup(clauseVarMap)), std::move(cloneVarExprsDup(varExprs)), true, false, true);
+                        std::move(cloneClauseVarMapDup(clauseVarMap)), std::move(cloneVarExprsDup(varExprs)), true, false, true, true);
 
 
     // Propositions

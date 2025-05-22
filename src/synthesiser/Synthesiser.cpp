@@ -2162,9 +2162,13 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "auto*& ruleSet = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
             } else {
                 if (recordDerivation.isInsert()) {
-                    out << "auto*& ruleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedTuple];\n";
+                    if (!recordDerivation.isRederive()) {
+                        out << "auto*& ruleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedTuple];\n";
+                    } else {
+                        out << "auto*& ruleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedTuple];\n";
+                    }
                     // if (isRecursive) {
-                        out << "auto*& ruleSet2 = DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications[untypedTuple];\n";
+                    out << "auto*& ruleSet2 = DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications[untypedTuple];\n";
                     // }
                 } else {
                     out << "auto*& ruleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedTuple];\n";
@@ -2186,7 +2190,12 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 for (const auto& expr: recordDerivation.varExprs) {
                     out << "varValues.emplace_back("; rec(out, expr.get()); out << ");\n";
                 }
-                out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";                out << "ruleSet->insert(ruleApplication);\n";
+                out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
+                if (!recordDerivation.isRederive()) {
+                    out << "ruleSet->insert(ruleApplication);\n";
+                } else {
+                    out << "ruleSet->erase(ruleApplication);\n";
+                }
                 if (!recordDerivation.isComplete()) {
                     out << "ruleSet2->insert(ruleApplication);\n";
                 }

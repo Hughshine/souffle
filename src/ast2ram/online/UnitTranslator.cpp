@@ -1313,6 +1313,12 @@ Own<ram::Statement> UnitTranslator::generateStratumNonSccPreFill(const ast::Rela
             auto relClauses = translateRecursiveClausesInc(scc, rel, true, true);
             appendStmt(prefill, mk<ram::Sequence>(std::move(relClauses)));
         }
+        for (const ast::Relation* rel : scc) {
+            appendStmt(prefill, mk<ram::Sequence>(
+                generateMergeRelations(rel, getIncDervOverDeleteRelationName(rel->getQualifiedName()), getIncDeltaDervDeleteRelationName(rel->getQualifiedName()))
+            ));
+        }
+        // non-recursive rules in scc could result in over-deletion
     } else {
         for (const ast::Relation* rel : scc) {
             auto relClauses = translateRecursiveClausesInc(scc, rel, false, true);

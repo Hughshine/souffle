@@ -42,20 +42,20 @@ namespace souffle::ram {
 class RecordDerivation : public Operation {
 public:
 
-    RecordDerivation(std::string rel, VecOwn<Expression> expressions, bool insert = true, bool complete = true, bool isRecursive = false)
+    RecordDerivation(std::string rel, VecOwn<Expression> expressions, bool insert = true, bool complete = true, bool isRecursive = false, bool rederive = false)
             : RecordDerivation(std::move(rel),
-                std::move(expressions), insert, complete, isRecursive, -1, "UNKNOWN CLAUSE", {}, {}) {}
+                std::move(expressions), insert, complete, isRecursive, -1, "UNKNOWN CLAUSE", {}, {}, rederive) {}
 
     RecordDerivation(std::string rel, VecOwn<Expression> expressions,
-            std::size_t clauseID, std::string clauseStr, bool insert = true, bool complete = true, bool isRecursive = false)
+            std::size_t clauseID, std::string clauseStr, bool insert = true, bool complete = true, bool isRecursive = false, bool rederive = false)
             : RecordDerivation(std::move(rel), std::move(expressions)
-                , insert, complete, isRecursive, clauseID, std::move(clauseStr), {}, {}) {}
+                , insert, complete, isRecursive, clauseID, std::move(clauseStr), {}, {}, rederive) {}
 
     RecordDerivation(std::string rel, VecOwn<Expression> expressions,
             std::size_t clauseID, std::string clauseStr, std::map<std::string, Own<Expression>>&& varExprMap, std::vector<Own<ram::Expression>>&& varExprs,
-            bool insert = true, bool complete = true, bool isRecursive = false)
+            bool insert = true, bool complete = true, bool isRecursive = false, bool rederive = false)
             : RecordDerivation(std::move(rel), std::move(expressions)
-                , insert, complete, isRecursive, clauseID, std::move(clauseStr), std::move(varExprMap), std::move(varExprs)) {}
+                , insert, complete, isRecursive, clauseID, std::move(clauseStr), std::move(varExprMap), std::move(varExprs), rederive) {}
 
 
     /** @brief Get relation */
@@ -91,7 +91,12 @@ public:
     bool isDelta() const {
         return !complete;
     }
-
+    bool isRederive() const {
+        return rederive;
+    }
+    void setRederive(bool rederive) {
+        this->rederive = rederive;
+    }
     RecordDerivation* cloning() const override {
         VecOwn<Expression> newValues;
         for (auto& expr : expressions) {
@@ -105,7 +110,7 @@ public:
         for (auto& expr : varExprs) {
             newVarExprs.emplace_back(expr->cloning());
         }
-        return new RecordDerivation(relation, std::move(newValues), insert, complete, isRecursive, clauseID, clauseStr, std::move(newVarExprMap), std::move(newVarExprs));
+        return new RecordDerivation(relation, std::move(newValues), insert, complete, isRecursive, clauseID, clauseStr, std::move(newVarExprMap), std::move(newVarExprs), isRederive());
     }
 
     void apply(const NodeMapper& map) override {
@@ -128,10 +133,10 @@ public:
 
 // protected:
     RecordDerivation(std::string rel, VecOwn<Expression> expressions, bool insert, bool complete, bool isRecursive,
-        std::size_t clauseID, std::string clauseStr, std::map<std::string, Own<ram::Expression>>&& varExprMap, std::vector<Own<ram::Expression>>&& varExprs) //
+        std::size_t clauseID, std::string clauseStr, std::map<std::string, Own<ram::Expression>>&& varExprMap, std::vector<Own<ram::Expression>>&& varExprs, bool rederive) //
             : Operation(NK_RecordDerivation), relation(std::move(rel)), expressions(std::move(expressions)),
             clauseID(clauseID), clauseStr(std::move(clauseStr)), varExprMap(std::move(varExprMap)),
-                insert(insert), complete(complete), isRecursive(isRecursive), varExprs(std::move(varExprs)) {
+                insert(insert), complete(complete), isRecursive(isRecursive), varExprs(std::move(varExprs)), rederive(rederive) {
             // clauseID(std::move(clauseID)), clauseStr(std::move(clauseStr)) {
         assert(allValidPtrs(expressions));
         // TODO
@@ -180,6 +185,7 @@ public:
     bool insert; // true for insert, false for delete
     bool complete; // true for complete, false for delta
     bool isRecursive; // true for recursive, false for non-recursive
+    bool rederive = false;
 };
 
 }  // namespace souffle::ram
