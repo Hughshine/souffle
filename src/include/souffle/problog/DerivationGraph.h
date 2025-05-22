@@ -53,6 +53,7 @@ public:
     }
     bool isFact = false;
     bool pruned = false;
+    bool needOutput = false;
 
 private:
     explicit Node(const UntypedTuple& t, size_t nodeId, double prob = 1.0)
@@ -448,6 +449,7 @@ public:
                 std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
                 reachableNodes.insert(node);
                 workQueue.push(node);
+                node->needOutput = true;
             }
         }
 
@@ -886,6 +888,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
             std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
             reachableNodes.insert(node);
             workQueue.push(node);
+            node->needOutput = true;
         }
     }
 
@@ -1207,9 +1210,11 @@ void dumpProbabilities(
     std::ofstream outputFile(
         outputDir + "/" + "facts" + ".prob"
     );
-
+    outputFile << std::setprecision(8);
     for (auto& [node, prob] : nodeProbabilities) {
-        outputFile << node->getTuple().toString() << " : " << prob << std::endl;
+        if (node->needOutput) {
+            outputFile << node->getTuple().toString() << " : " << prob << std::endl;
+        }
     }
 
 }

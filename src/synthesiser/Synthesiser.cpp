@@ -416,6 +416,7 @@ void Synthesiser::emitRules (std::ostream& out) {
 }
 
 void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
+    out << "std::cout << std::fixed << std::setprecision(10);\n";
     out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
     out << "graph->dumpStatistics(std::cout);\n";
     out << "graph->dumpDot(\"before_prune.dot\");\n" << std::endl;
