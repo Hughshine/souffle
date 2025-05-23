@@ -122,10 +122,10 @@ private:
         } else {
             this->bodyNegations = std::vector<bool>(rule->getBodyAtoms().size(), false);
         }
-        for (size_t i = 0; i < inputs.size(); ++i) {
-            std::cout << "input: " << inputs[i]->toString() << std::endl;
-            std::cout << "isNegated: " << bodyNegations[i] << std::endl;
-        }
+//        for (size_t i = 0; i < inputs.size(); ++i) {
+//            std::cout << "input: " << inputs[i]->toString() << std::endl;
+//            std::cout << "isNegated: " << bodyNegations[i] << std::endl;
+//        }
     }
 
 
@@ -369,11 +369,11 @@ public:
             bodyNodes.push_back(bodyNode);
             bodyNegations.push_back(bodyAtom.isNegatedAtom());
         }
-        std::cout << "creating hyperedge from ruleApp: " << ruleApp.ruleId << std::endl;
-        for (size_t i = 0; i < bodyNodes.size(); ++i) {
-            std::cout << "bodyNode: " << bodyNodes[i]->toString() << std::endl;
-            std::cout << "isNegated: " << bodyNegations[i] << std::endl;
-        }
+//        std::cout << "creating hyperedge from ruleApp: " << ruleApp.ruleId << std::endl;
+//        for (size_t i = 0; i < bodyNodes.size(); ++i) {
+//            std::cout << "bodyNode: " << bodyNodes[i]->toString() << std::endl;
+//            std::cout << "isNegated: " << bodyNegations[i] << std::endl;
+//        }
         auto newEdge = createHyperedge(bodyNodes, headNode, rule, bodyNegations, ruleApp);
 
         // 将新边添加到映射中
@@ -670,12 +670,14 @@ public:
         const std::unordered_map<UntypedTuple, double>& fact_prob = {},
         const std::vector<UntypedTuple>& deletedFacts = {}
     ) {
+        std::cout << "Applying delta inserts ..." << std::endl;
         for (const auto& app : deltaInsertRuleApps) {
             std::cout << app.first.toString() << std::endl;
             for (const auto& ruleApp : *(app.second)) {
                 std::cout << RuleApplication::toString(ruleApp) << std::endl;
             }
         }
+        std::cout << "Applying delta deletes ..." << std::endl;
         for (const auto& app : deltaDeleteRuleApps) {
             std::cout << app.first.toString() << std::endl;
             for (const auto& ruleApp : *(app.second)) {
@@ -912,6 +914,26 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
         }
     }
 
+    std::unordered_set<NodePtr> newNodes;
+    for (const auto& node : nodes) {
+        if (reachableNodes.count(node)) {
+            newNodes.insert(node);
+            node->pruned = false;  // reset pruned flag
+        } else {
+            node->pruned = true;
+        }
+    }
+
+    std::unordered_set<EdgePtr> newEdges;
+    for (const auto& edge : edges) {
+        if (reachableEdges.count(edge)) {
+            newEdges.insert(edge);
+            edge->pruned = false;  // reset pruned flag
+        } else {
+            edge->pruned = true;
+        }
+    }
+
     // 过滤节点和边
     std::set<NodePtr> newDeltaDeletedNodes;
     std::set<EdgePtr> newDeltaDeletedEdges;
@@ -926,23 +948,8 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
         }
     }
 
-    std::unordered_set<NodePtr> newNodes;
-    for (const auto& node : nodes) {
-        if (reachableNodes.count(node)) {
-            newNodes.insert(node);
-        } else {
-            node->pruned = true;
-        }
-    }
 
-    std::unordered_set<EdgePtr> newEdges;
-    for (const auto& edge : edges) {
-        if (reachableEdges.count(edge)) {
-            newEdges.insert(edge);
-        } else {
-            edge->pruned = true;
-        }
-    }
+
 
     // TODO: update nodes incoming and outgoing edges
 //    for (const auto& node : newNodes) {

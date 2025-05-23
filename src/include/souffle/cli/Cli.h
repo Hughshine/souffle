@@ -458,13 +458,13 @@ public:
                 for (const auto& [node, bdd] : *nodeFormulas) {
                     if (view.getNodes().find(node) == view.getNodes().end()) {
                         std::cout << "isNullptr: " << (node == nullptr) << std::endl;
-                        std::cout << "Node " << node->getId() << " not in view, skipped." << std::endl;
+                        std::cout << "Node " << node->toString() << " not in view, skipped." << std::endl;
                         continue;
                     }
-                    std::cout << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
-                    std::cout << bddManager->toString(bdd) << "\t";
+//                    std::cout << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
+//                    std::cout << bddManager->toString(bdd) << "\t";
                     auto prob = bddManager->computeWeightedModelCount(bdd);
-                    std::cout << "Probability: " << prob << std::endl;
+//                    std::cout << "Probability: " << prob << std::endl;
 //                    auto prob = bddManager->computeWeightedModelCount(bdd);
                     probResult[node] = prob;
                 }

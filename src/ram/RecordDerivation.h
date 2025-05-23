@@ -158,7 +158,10 @@ public:
 
     bool equal(const Node& node) const override {
         const auto& other = asAssert<RecordDerivation>(node);
-        return relation == other.relation && equal_targets(expressions, other.expressions);
+        return relation == other.relation && equal_targets(expressions, other.expressions) &&
+               clauseID == other.clauseID && clauseStr == other.clauseStr &&
+               insert == other.insert && complete == other.complete &&
+               isRecursive == other.isRecursive && rederive == other.rederive;
         // TODO: equal mapping?
     }
 

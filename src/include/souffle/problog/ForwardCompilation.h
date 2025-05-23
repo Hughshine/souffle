@@ -389,7 +389,7 @@ void buildFormulasInc(
             que.pop_front();
             edgeFormulas[edge] = formulaManager.getFalse();
             worklist.push_back(edge);
-            std::cout << edge->toString() << " is deleted.\n";
+//            std::cout << edge->toString() << " is deleted.\n";
             auto outNode = view.getOutput(edge);
             if (outNode == nullptr) continue;
             nodes.insert(outNode);
@@ -443,6 +443,7 @@ void buildFormulasInc(
                 continue;
             }
             assert (outputNode->isFact == false);
+            std::cout << "Preprocessing Node " << outputNode->toString() << " is deleted.\n";
             std::vector<FormulaNodeRef> incoming;
             for (auto e : view.getIncomingEdges(outputNode)) {
                 auto it = edgeFormulas.find(e);
@@ -455,8 +456,8 @@ void buildFormulasInc(
             auto newNodeFormula = formulaManager.makeOr(incoming);
             nodeFormulas[outputNode] = newNodeFormula;
             std::cout << "Node " << outputNode->toString() << " changed.\n";
-            std::cout << "Node new formula: " << formulaManager.toString(nodeFormulas[outputNode]) << std::endl;
-            std::cout << "Node new formula???: " << formulaManager.toString(newNodeFormula) << std::endl;
+//            std::cout << "Node new formula: " << formulaManager.toString(nodeFormulas[outputNode]) << std::endl;
+//            std::cout << "Node new formula???: " << formulaManager.toString(newNodeFormula) << std::endl;
 
             for (auto outEdge : view.getOutgoingEdges(edge->getOutput())) {
                 worklist.push_back(outEdge);

@@ -1554,6 +1554,8 @@ Own<ram::Statement> UnitTranslator::generateStratumPostambleIncRederive(const as
         );
         appendStmt(postamble, mk<ram::Clear>(getIncNewDervRederiveRelationName(rel->getQualifiedName())));
         appendStmt(postamble, mk<ram::Clear>(getIncDeltaTupleRederiveRelationName(rel->getQualifiedName())));
+        appendStmt(postamble, mk<ram::Clear>(getIncTupleOverDeleteRelationName(rel->getQualifiedName())));
+        appendStmt(postamble, mk<ram::Clear>(getIncDervOverDeleteRelationName(rel->getQualifiedName())));
     }
     return mk<ram::Sequence>(std::move(postamble));
 }
