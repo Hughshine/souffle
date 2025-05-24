@@ -191,6 +191,11 @@ struct RuleApplication {
                              toStringVarValuesPure(ruleApplication.varValuesPure) + "]";
         return result;
     }
+    std::string toString() const {
+        std::string result = std::to_string(ruleId) + "[" +
+                     toStringVarValuesPure(varValuesPure) + "]";
+        return result;
+    }
     static std::string toStringVarValues(const std::map<std::string, souffle::RamDomain>& varValues) {
         std::string result;
         bool first = true;
@@ -493,5 +498,13 @@ public:
 };
 
 // relation string -> int mapping, for optimization, reuse string
-
+static std::unordered_set<UntypedTuple> inputFactSet;
+bool isInputFact(UntypedTuple tuple) {
+    return inputFactSet.count(tuple) != 0;
+}
+void dumpInputFacts(std::ostream& os = std::cout) {
+    for (auto& tuple : inputFactSet) {
+        os << UntypedTuple::toString(tuple) << '\n';
+    }
+}
 #endif //DERIVATION_H

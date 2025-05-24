@@ -1715,6 +1715,8 @@ Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* re
         directives.insert(std::make_pair("incDelta", "false"));
         directives.insert(std::make_pair("inc-insert", "false"));
         directives.insert(std::make_pair("inc-delete", "false"));
+        directives.insert(std::make_pair("cache", "true"));  // maintain a copy of input facts
+
         if (glb->config().has("no-warn")) {
             directives.insert(std::make_pair("no-warn", "true"));
         }

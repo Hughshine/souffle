@@ -1,8 +1,13 @@
 .decl edge(x: number, y:number)
 .input edge
+
+.decl edge1(x: number, y:number)
+.output edge1
 .decl path(x: number, y:number)
 .output path
 // equivalent relation
-path(x, y) :- edge(x, y).
-path(x, y) :- path(y, x).
-path(x, y) :- path(x, z), path(z, y).
+edge1(x, y) :- edge(x, y).
+path(x, y) :- edge1(x, y).
+// path(x, y) :- path(y, x).
+// path(x, y) :- path(x, z), path(z, y).
+path(x, z) :- path(x, y), edge1(y, z).

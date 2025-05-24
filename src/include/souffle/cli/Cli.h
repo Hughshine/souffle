@@ -215,7 +215,7 @@ public:
                 if (i > 0) std::cout << ", ";
                 std::cout << values[i];
             }
-            std::cout << "], Probability = " << std::fixed << std::setprecision(2) << probability << std::endl;
+            std::cout << "], Probability = " << std::setprecision(8) << probability << std::endl;
 
         } else if (cmd == "delete" || cmd == "remove") {
             // Get the rest of the line

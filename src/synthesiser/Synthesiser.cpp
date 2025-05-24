@@ -613,6 +613,17 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     out << "directiveMap, symTable, recordTable";
                     out << ")->readAll(*" << synthesiser.getRelationName(synthesiser.lookup(io.getRelation()));
                     out << ");\n";
+                    const std::string& cache = io.get("cache");
+                    // we cache all input facts to a set
+                    if (cache == "true") {
+                        // TODO
+                        out << "for (auto& tuple: *" << synthesiser.getRelationName(synthesiser.lookup(io.getRelation()))
+                            << ") {" << std::endl;
+                            out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << getBaseRelationName(io.getRelation()) << "\",tuple);\n";
+                            out << "inputFactSet.insert(untypedTuple);\n";
+                        out << "}" << std::endl;
+                        out << "dumpInputFacts();\n";
+                    }
                 } else {
                     const std::string& isInsert = io.get("inc-insert");
                     const std::string& isDelete = io.get("inc-delete");
@@ -2195,6 +2206,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 if (!recordDerivation.isRederive()) {
                     out << "ruleSet->insert(ruleApplication);\n";
                 } else {
+                    out << "std::cout << \"rederive: \" << untypedTuple.toString() << \" \" << ruleApplication.toString() << std::endl;\n";
                     out << "ruleSet->erase(ruleApplication);\n";
                 }
                 if (!recordDerivation.isComplete()) {
@@ -2291,6 +2303,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
                 out << "if (untypedDeltaDervTupleRuleSet == nullptr) {" << std::endl;
                 out << "untypedDeltaDervTupleRuleSet = untypedDeltaDervTupleInsertRuleSet;\n" << std::endl;
+                out << "if(!isInputFact(untypedDeltaDervTupleInsert))" << std::endl;
                 out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleInsertRel())) << "->insert(tupleDeltaDervInsert);\n "<< std::endl;
                 out << "} else {" << std::endl;
                 out << "untypedDeltaDervTupleRuleSet->insert(untypedDeltaDervTupleInsertRuleSet->begin(), untypedDeltaDervTupleInsertRuleSet->end());\n" << std::endl;
@@ -2319,6 +2332,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "delete untypedDeltaDervTupleRuleSet;\n" << std::endl;
                 // out << "untypedDeltaDervTupleRuleSet = nullptr;\n" << std::endl;
                 out << "DerivationManager::untypedTuple2RuleApplications.erase(untypedDeltaDervTupleDelete);\n" << std::endl;
+                out << "if(!isInputFact(untypedDeltaDervTupleDelete))" << std::endl;
                 out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel())) << "->insert(tupleDeltaDervDelete);\n "<< std::endl;
                 out << "}" << std::endl;
                 out << "}" << std::endl;
@@ -2327,11 +2341,10 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             // ADD EVERYTHING UP TO NEW
             // out <<
             if (both) {
-                out << "for(const auto& oldTuple: *" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getOldRel())) << ") {\n" << std::endl;
-                out << "if (!" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel()))
-                    << "->contains(oldTuple)) {"  << std::endl;
-                out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getNewRel())) << "->insert(oldTuple);\n" << std::endl;
-                out << "}}\n" << std::endl;
+                // TODO: should optimize, use erase
+                out << "for(const auto& deletedTuple: *" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel())) << ") {\n" << std::endl;
+                out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getNewRel())) << "->erase(deletedTuple);\n" << std::endl;
+                out << "}\n" << std::endl;
                 out << "for(const auto& insertedTuple: *" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleInsertRel())) << ") {\n" << std::endl;
                 out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getNewRel())) << "->insert(insertedTuple);\n" << std::endl;
                 out << "}\n" << std::endl;
