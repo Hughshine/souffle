@@ -1213,9 +1213,10 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
 inline std::unordered_map<NodePtr, double> probResult;
 
 void dumpProbabilities(
-    std::unordered_map<NodePtr, double>& nodeProbabilities, const std::string& outputDir = "./output/") {
+    std::unordered_map<NodePtr, double>& nodeProbabilities, const std::string& outputDir = "./output/",
+          const std::string& fileName = "facts") {
     std::ofstream outputFile(
-        outputDir + "/" + "facts" + ".prob"
+        outputDir + "/" + fileName + ".prob"
     );
     outputFile << std::setprecision(8);
     for (auto& [node, prob] : nodeProbabilities) {

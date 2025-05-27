@@ -470,7 +470,7 @@ public:
                     probResult[node] = prob;
                 }
             }
-            dumpProbabilities(probResult,"./output/");
+            dumpProbabilities(probResult,"./output/","fact-inc");
 //            for (const auto& [edge, bdd] : *edgeFormulas) {
 //                std::cout << edge->toString() << " : ";
 //                std::cout << bddManager->toString(bdd) << "\t";
