@@ -137,14 +137,14 @@ public:
     BddNodeRef makeNot(const BddNodeRef& a) override;
     bool isSame(const BddNodeRef& a, const BddNodeRef& b) override;
 
-    BddNodeRef getTrue() {
+    BddNodeRef getTrue() override {
         return BddNodeRef(manager, Cudd_ReadOne(manager.get()));
     }
-    BddNodeRef getFalse() {
+    BddNodeRef getFalse() override {
         return BddNodeRef(manager, Cudd_ReadLogicZero(manager.get()));
     }
 
-    std::string toString(const BddNodeRef& nodeRef);
+    std::string toString(const BddNodeRef& nodeRef) override;
 
     // Weight-related operations
     void setVariableWeight(int varIndex, double posWeight, double negWeight) override;
@@ -155,7 +155,7 @@ public:
     // Utility functions
     void printInfo(const BddNodeRef& node, const std::string& name) override;
     DdManager* getManager() const { return manager.get(); }
-    void dumpProfilingStatistics() {
+    void dumpProfilingStatistics() override {
             std::cout << "Current live nodes: " << Cudd_ReadNodeCount(manager.get()) << std::endl;
             std::cout << "Memory usage: " << Cudd_ReadMemoryInUse(manager.get()) / (1024.0 * 1024) << " MB" << std::endl;
     };

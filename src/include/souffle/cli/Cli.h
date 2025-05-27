@@ -35,7 +35,7 @@ private:
         bool valid = true;
         std::string relationName;
         std::vector<std::string> values;
-        float probability;
+        double probability;
 
         std::string toString() const {
             std::stringstream ss;
@@ -58,11 +58,11 @@ private:
 
     // Parse a tuple with potential probability
     // Returns: relation name, values, probability, success flag
-    std::tuple<std::string, std::vector<std::string>, float, bool>
+    std::tuple<std::string, std::vector<std::string>, double, bool>
     parseInsertCommand(const std::string& str) {
         std::string relName;
         std::vector<std::string> values;
-        float probability = 1.0; // Default probability
+        double probability = 1.0; // Default probability
         bool success = false;
 
         // Pattern for prefix probability format: probability::relation_name(...)
@@ -79,7 +79,7 @@ private:
         // Try matching prefix probability pattern
         if (std::regex_search(str, matches, prefixProbRegex) && matches.size() > 3) {
             try {
-                probability = std::stof(matches[1].str());
+                probability = std::stod(matches[1].str());
                 if (probability < 0.0 || probability > 1.0) {
                     return std::make_tuple("", std::vector<std::string>(), 0.0, false);
                 }
@@ -97,7 +97,8 @@ private:
                 relName = matches[1].str();
                 std::string valuesStr = matches[2].str();
                 values = parseValues(valuesStr);
-                probability = std::stof(matches[3].str());
+
+                probability = std::stod(matches[3].str());
                 if (probability < 0.0 || probability > 1.0) {
                     return std::make_tuple("", std::vector<std::string>(), 0.0, false);
                 }
