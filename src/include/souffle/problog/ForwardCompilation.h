@@ -16,7 +16,24 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
+#include <climits>
 
+int nextFormulaNodeId = 0;
+std::unordered_map<size_t, int> nodeIdMap;
+std::unordered_map<size_t, int> edgeIdMap;
+
+int mapNodeId(size_t id) {
+    if (nodeIdMap.find(id) == nodeIdMap.end()) {
+        nodeIdMap[id] = nextFormulaNodeId++;
+    }
+    return nodeIdMap[id];
+}
+int mapEdgeId(size_t id) {
+    if (edgeIdMap.find(id) == edgeIdMap.end()) {
+        edgeIdMap[id] = nextFormulaNodeId++;
+    }
+    return edgeIdMap[id];
+}
 // Currently support CuddManager only; not optimized version
 // 1. no stratum-by-stratum and cycle-by-cycle processing
 // 2. no special designed logic formula manager - mainly for formula's semantic equivalence checking
@@ -39,10 +56,10 @@ void buildFormulas(
             if (node->getProbability() == 1.0) {
                 nodeFormulas[node] = formulaManager.getTrue();
             } else {
-                nodeFormulas[node] = formulaManager.createVar(node->getId(), *node);
+                nodeFormulas[node] = formulaManager.createVar(mapNodeId(node->getId()), *node);
             }
             baseNodeFormulas.insert({node, nodeFormulas[node]});
-            formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1-node->getProbability());
+            formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1-node->getProbability());
             std::cout << "Setting weight for node " << node->toString() << " with probability " << node->getProbability() << std::endl;
         }
 //            std::cout << "Setting weight for node " << node->getId() << " with probability " << node->getProbability() << std::endl;
@@ -56,8 +73,8 @@ void buildFormulas(
             auto baseEdgeFormula = formulaManager.getTrue();
             baseEdgeFormulas.insert({edge, baseEdgeFormula});
         } else {
-            auto baseEdgeFormula = formulaManager.createVar(view.getNodes().size() + edge->getId(), *edge);
-            formulaManager.setVariableWeight(view.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
+            auto baseEdgeFormula = formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
+            formulaManager.setVariableWeight(mapEdgeId(edge->getId()), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
             baseEdgeFormulas.insert({edge, baseEdgeFormula});
         }
     }
@@ -252,8 +269,8 @@ void buildFormulasCyclewise(
         if (node->isFact) {
             FormulaNodeRef var = (node->getProbability() == 1.0)
                 ? formulaManager.getTrue()
-                : formulaManager.createVar(node->getId(), *node);
-            formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1 - node->getProbability());
+                : formulaManager.createVar(mapNodeId(node->getId()), *node);
+            formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1 - node->getProbability());
             nodeFormulas[node] = var;
             baseNodeFormulas[node] = var;
         }
@@ -262,9 +279,9 @@ void buildFormulasCyclewise(
     for (const auto& edge : view.getEdges()) {
         FormulaNodeRef f = edge->getRule()->isDeterminstic()
             ? formulaManager.getTrue()
-            : formulaManager.createVar(view.getNodes().size() + edge->getId(), *edge);
+            : formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
         if (!edge->getRule()->isDeterminstic()) {
-            formulaManager.setVariableWeight(view.getNodes().size() + edge->getId(), edge->getProbability(), 1 - edge->getProbability());
+            formulaManager.setVariableWeight(mapEdgeId(edge->getId()), edge->getProbability(), 1 - edge->getProbability());
         }
         baseEdgeFormulas[edge] = f;
     }
@@ -471,7 +488,7 @@ void buildFormulasInc(
         // calculate the new formula
         FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
             ? formulaManager.getTrue()
-            : formulaManager.createVar(view.getNodes().size() + edge->getId(), *edge);
+            : formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
         std::vector<FormulaNodeRef> inputFormulas = {baseFormula};
         const auto& inputs = view.getInputs(edge);
         const auto& negs = view.getBodyNegations(edge);
@@ -530,9 +547,9 @@ void buildFormulasInc(
         if (node->isFact) {
             nodeFormulas[node] = (node->getProbability() == 1.0)
                 ? formulaManager.getTrue()
-                : formulaManager.createVar(node->getId(), *node);
+                : formulaManager.createVar(mapNodeId(node->getId()), *node);
             if (node->getProbability() != 1.0)
-                formulaManager.setVariableWeight(node->getId(), node->getProbability(), 1 - node->getProbability());
+                formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1 - node->getProbability());
         } else {
             nodeFormulas[node] = formulaManager.getFalse();
         }
@@ -542,8 +559,8 @@ void buildFormulasInc(
             edgeFormulas[edge] = formulaManager.getFalse();
         } else {
             edgeFormulas[edge] = formulaManager.getFalse();
-            formulaManager.createVar(view.getNodes().size() + edge->getId(), *edge);
-            formulaManager.setVariableWeight(view.getNodes().size() + edge->getId(), edge->getRule()->getProbability(), 1 - edge->getRule()->getProbability());
+            formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
+            formulaManager.setVariableWeight(mapEdgeId(edge->getId()), edge->getRule()->getProbability(), 1 - edge->getRule()->getProbability());
         }
     }
 
@@ -566,7 +583,7 @@ void buildFormulasInc(
         // calculate the new formula
         FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
             ? formulaManager.getTrue()
-            : formulaManager.createVar(view.getNodes().size() + edge->getId(), *edge);
+            : formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
         std::vector<FormulaNodeRef> inputFormulas = {baseFormula};
         const auto& inputs = view.getInputs(edge);
         const auto& negs = view.getBodyNegations(edge);

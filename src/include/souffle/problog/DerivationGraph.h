@@ -670,18 +670,21 @@ public:
         const std::unordered_map<UntypedTuple, double>& fact_prob = {},
         const std::vector<UntypedTuple>& deletedFacts = {}
     ) {
-        std::cout << "Applying delta inserts ..." << std::endl;
-        for (const auto& app : deltaInsertRuleApps) {
-            std::cout << app.first.toString() << std::endl;
-            for (const auto& ruleApp : *(app.second)) {
-                std::cout << RuleApplication::toString(ruleApp) << std::endl;
+        {
+            std::ofstream os("./delta.txt");
+            os << "Applying delta inserts ..." << std::endl;
+            for (const auto& app : deltaInsertRuleApps) {
+                os << app.first.toString() << std::endl;
+                for (const auto& ruleApp : *(app.second)) {
+                    os << RuleApplication::toString(ruleApp) << std::endl;
+                }
             }
-        }
-        std::cout << "Applying delta deletes ..." << std::endl;
-        for (const auto& app : deltaDeleteRuleApps) {
-            std::cout << app.first.toString() << std::endl;
-            for (const auto& ruleApp : *(app.second)) {
-                std::cout << RuleApplication::toString(ruleApp) << std::endl;
+            os << "Applying delta deletes ..." << std::endl;
+            for (const auto& app : deltaDeleteRuleApps) {
+                os << app.first.toString() << std::endl;
+                for (const auto& ruleApp : *(app.second)) {
+                    os << RuleApplication::toString(ruleApp) << std::endl;
+                }
             }
         }
 
@@ -733,6 +736,7 @@ void IncrementalDerivationGraph::applyDeltaInserts(
         if (node == nullptr) {
             node = createNode(tuple);
             deltaInsertNodes.insert(node);
+            std::cout << "new fact inserted: " << node->toString() << std::endl;
         }
         node->setProbability(prob);
         node->isFact = true;
@@ -764,7 +768,8 @@ void IncrementalDerivationGraph::applyDeltaInserts(
                 deltaDeleteNodes.erase(outputNode);
             } else {
                 // 否则，将其添加到插入集合中（如果尚未添加）
-                deltaInsertNodes.insert(outputNode);
+                if (!outputNode->isFact)
+                    deltaInsertNodes.insert(outputNode);
             }
         }
     }
@@ -828,7 +833,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             edgeKeyToEdgeMap.erase(edgeKey);
 
             // 检查输出节点是否还有其他导出路径
-            if (outputNode->getIncomingEdges().empty()) {
+            if (!outputNode->isFact && outputNode->getIncomingEdges().empty()) {
                 // 对于派生节点，如果没有入边，应该从图中删除
                 // 如果这是一个新插入的节点被删除
                 if (deltaInsertNodes.find(outputNode) != deltaInsertNodes.end()) {
@@ -918,6 +923,10 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
     for (const auto& node : nodes) {
         if (reachableNodes.count(node)) {
             newNodes.insert(node);
+            if (node->pruned) {
+                std::cout << "reusing a pruned node: " << node->getTuple().toString() << std::endl;
+                deltaInsertNodes.insert(node);
+            }
             node->pruned = false;  // reset pruned flag
         } else {
             node->pruned = true;
@@ -928,6 +937,10 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
     for (const auto& edge : edges) {
         if (reachableEdges.count(edge)) {
             newEdges.insert(edge);
+            if (edge->pruned) {
+                std::cout << "reusing a pruned edge: " << edge->toString() << std::endl;
+                deltaInsertEdges.insert(edge);
+            }
             edge->pruned = false;  // reset pruned flag
         } else {
             edge->pruned = true;

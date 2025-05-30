@@ -456,16 +456,17 @@ public:
             probResult.clear();
             {
                 FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(nodeFormulas->size()));
+//                std::ofstream formulaFile("./formula.txt");
                 for (const auto& [node, bdd] : *nodeFormulas) {
                     if (view.getNodes().find(node) == view.getNodes().end()) {
-                        std::cout << "isNullptr: " << (node == nullptr) << std::endl;
+//                        std::cout << "isNullptr: " << (node == nullptr) << std::endl;
                         std::cout << "Node " << node->toString() << " not in view, skipped." << std::endl;
                         continue;
                     }
-//                    std::cout << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
-//                    std::cout << bddManager->toString(bdd) << "\t";
+//                    formulaFile << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
+//                    formulaFile << bddManager->toString(bdd) << "\t";
                     auto prob = bddManager->computeWeightedModelCount(bdd);
-//                    std::cout << "Probability: " << prob << std::endl;
+//                    formulaFile << "Probability: " << prob << std::endl;
 //                    auto prob = bddManager->computeWeightedModelCount(bdd);
                     probResult[node] = prob;
                 }
