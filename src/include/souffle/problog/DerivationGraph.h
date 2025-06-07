@@ -98,9 +98,6 @@ public:
                 ss << ",";
             }
         }
-        for (const auto& input : inputs) {
-            ss << input->getTuple().toString();
-        }
         ss << "->" << output->getTuple().toString() << "]";
 
         return ss.str();
