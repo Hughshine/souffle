@@ -27,6 +27,7 @@ std::string getIncDeltaTupleInsertRelationName(const std::string& name) {
     return getConcreteRelationName(name, "$inc_delta_tuple_insert_");
 }
 
+template<typename NodeRef>
 class IncrementalCLI {
 private:
     // Structure to represent a pending operation
@@ -141,19 +142,20 @@ private:
     souffle::SouffleProgram* program;
     IncrementalDerivationGraph* graph;
     RuleManager* ruleManager;
-    std::map<NodePtr, BddNodeRef>* nodeFormulas;
-    std::map<EdgePtr, BddNodeRef>* edgeFormulas;
-    WeightedBDDManager* bddManager = nullptr;
+//    std::map<NodePtr, BddNodeRef>* nodeFormulas;
+    std::map<NodePtr, NodeRef>* nodeFormulas;
+    std::map<EdgePtr, NodeRef>* edgeFormulas;
+    DDManager<NodeRef>* ddManager = nullptr;
 
 public:
     IncrementalCLI(souffle::SouffleProgram* prog = nullptr,
             IncrementalDerivationGraph* graph = nullptr,
             RuleManager* rm = nullptr,
-            WeightedBDDManager* bddManager = nullptr,
-            std::map<NodePtr, BddNodeRef>* nodeFormulas = {},
-            std::map<EdgePtr, BddNodeRef>* edgeFormulas = {}
+            DDManager<NodeRef>* ddManager = nullptr,
+            std::map<NodePtr, NodeRef>* nodeFormulas = {},
+            std::map<EdgePtr, NodeRef>* edgeFormulas = {}
             )
-            : program(prog), graph(graph), ruleManager(rm), bddManager(bddManager), nodeFormulas(nodeFormulas), edgeFormulas(edgeFormulas) {
+            : program(prog), graph(graph), ruleManager(rm), ddManager(ddManager), nodeFormulas(nodeFormulas), edgeFormulas(edgeFormulas) {
         // Initialize readline
         using_history();
     }
@@ -448,16 +450,15 @@ public:
             );
             auto view = graph->prune(program->getOutputRelations());
             view.dumpDotInc("derivation-inc.dot");
-            bddManager->tryGarbageCollection();
             for (auto edge: view.getEdges()) {
                 std::cout << edge->toString() << std::endl;
             }
-            buildFormulasInc(view, *bddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
+            buildFormulasInc(view, *ddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
             probResult.clear();
             {
                 FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(nodeFormulas->size()));
 //                std::ofstream formulaFile("./formula.txt");
-                for (const auto& [node, bdd] : *nodeFormulas) {
+                for (const auto& [node, dd] : *nodeFormulas) {
                     if (view.getNodes().find(node) == view.getNodes().end()) {
 //                        std::cout << "isNullptr: " << (node == nullptr) << std::endl;
                         std::cout << "Node " << node->toString() << " not in view, skipped." << std::endl;
@@ -465,7 +466,7 @@ public:
                     }
 //                    formulaFile << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
 //                    formulaFile << bddManager->toString(bdd) << "\t";
-                    auto prob = bddManager->computeWeightedModelCount(bdd);
+                    auto prob = ddManager->computeWeightedModelCount(dd);
 //                    formulaFile << "Probability: " << prob << std::endl;
 //                    auto prob = bddManager->computeWeightedModelCount(bdd);
                     probResult[node] = prob;

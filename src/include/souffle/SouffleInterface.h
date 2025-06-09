@@ -709,6 +709,10 @@ public:
     }
 };
 
+enum Knowledge {
+    BDD,
+    SDD
+};
 /**
  * Abstract base class for generated Datalog programs.
  */
@@ -759,6 +763,10 @@ protected:
      */
     bool pruneImdtRels = true;
 
+    /**
+     */
+
+    Knowledge knowledge = BDD;
     /**
      * Add the relation to relationMap (with its name) and allRelations,
      * depends on the properties of the relation, if the relation is an input relation, it will be added to
@@ -860,8 +868,16 @@ public:
     /**
      * Get the number of threads to be used
      */
-    std::size_t getNumThreads() {
+    [[nodiscard]] std::size_t getNumThreads() const {
         return numThreads;
+    }
+
+    [[nodiscard]] Knowledge getKnowledge() const {
+        return knowledge;
+    }
+
+    void setKnowledge(const Knowledge knowledge) {
+        this->knowledge = knowledge;
     }
 
     /**
@@ -1219,4 +1235,10 @@ public:
         }
     }
 };
+
+// void problog(SouffleProgram* prog) {
+//     std::cout << std::fixed << std::setprecision(10);
+//     auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);
+// }
+
 }  // namespace souffle

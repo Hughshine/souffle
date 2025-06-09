@@ -67,6 +67,10 @@ protected:
      */
     std::size_t num_jobs;
 
+    /**
+    * knowledge representation
+    */
+    std::string knowledge_representation;  // bdd, sdd are supported
 public:
     // all argument constructor
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj)
@@ -114,6 +118,10 @@ public:
         return num_jobs;
     }
 
+    const std::string& getKnowledgeRepresentation() const {
+        return knowledge_representation;
+    }
+
     /**
      * Parses the given command line parameters, handles -h help requests or errors
      * and returns whether the parsing was successful or not.
@@ -132,12 +140,13 @@ public:
         // long options
         option longOptions[] = {{"facts", true, nullptr, 'F'}, {"output", true, nullptr, 'D'},
                 {"profile", true, nullptr, 'p'}, {"jobs", true, nullptr, 'j'}, {"index", true, nullptr, 'i'},
+                {"knowledge", true, nullptr, 'k'},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
         // check whether all options are fine
         bool ok = true;
-
+        knowledge_representation = "bdd";  // default knowledge representation
         int c; /* command-line arguments processing */
         while ((c = getopt_long(argc, argv, "D:F:hp:j:i:", longOptions, nullptr)) != EOF) {
             switch (c) {
@@ -181,6 +190,16 @@ public:
 #else
                     std::cerr << "\nWarning: OpenMP was not enabled in compilation\n\n";
 #endif
+                    break;
+                case 'k':
+                   if (std::string(optarg) == "bdd") {
+                        knowledge_representation = "bdd";
+                    } else if (std::string(optarg) == "sdd") {
+                        knowledge_representation = "sdd";
+                    } else {
+                        std::cerr << "Invalid knowledge representation: " << optarg << ", defaultly change to bdd\n";
+                        knowledge_representation = "bdd";
+                    }
                     break;
                 default: printHelpPage(exec_name); return false;
             }

@@ -128,6 +128,7 @@
 #include <ast/NumericConstant.h>
 #include <ast/StringConstant.h>
 #include <ast/UnnamedVariable.h>
+#include <souffle/SouffleInterface.h>
 
 namespace souffle::synthesiser {
 
@@ -412,10 +413,10 @@ void Synthesiser::emitRules (std::ostream& out) {
     }
     out << "ruleManager = RuleManager({" << join(ruleNames, ", ") << "});" << std::endl;
     // out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
-    out << "std::cout << ruleManager.toString();\n";
+        out << "std::cout << ruleManager.toString();\n";
 }
 
-void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
+void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "std::cout << std::fixed << std::setprecision(10);\n";
     out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
     out << "graph->dumpStatistics(std::cout);\n";
@@ -427,6 +428,7 @@ void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     // if (glb.config().has("verbose")) {
     //     out << "view->dumpDot(\"derivation_graph.dot\");\n";
     // }
+    out << "if (obj.getKnowledge() == souffle::Knowledge::BDD) {\n";
     out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
     out << "WeightedBDDManager bddManager;\n";
@@ -450,9 +452,17 @@ void Synthesiser::emitProblogPipelineCudd(std::ostream& out) {
     out << "    probResult[node] = prob;\n";
     out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
     out << "}\n";
-    // dump the node probabilities
     out << "dumpProbabilities(probResult, \"" << glb.config().get("output-dir") << "\");\n";
-    out << "}" << std::endl;
+    if (glb.config().has("online")) {
+        out << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
+        out << "cli.run();\n";
+    }
+    out << "}\n" << std::endl;
+    out << "}\n" << std::endl;
+    out << "else if (obj.getKnowledge() == souffle::Knowledge::SDD) {\n";
+    out << "assert(false && \"SDD not implemented yet\");\n";
+    out << "}\n";
+    // dump the node probabilities
 
     // out << "for (const auto& [edge, bdd] : edgeFormulas) {\n";
     // out << "    std::cout << edge->toString() << \" : \";\n";
@@ -3984,6 +3994,14 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << classname + " obj;\n";
     }
 
+    // set knowledge representation
+    hook << "if (opt.getKnowledgeRepresentation() == \"bdd\") {\n";
+    hook << "obj.setKnowledge(souffle::Knowledge::BDD);\n";
+    hook << "} else if (opt.getKnowledgeRepresentation() == \"sdd\") {\n";
+    hook << "obj.setKnowledge(souffle::Knowledge::SDD);\n";
+    hook << "} else { std::cout << \"opt.getKnowledgeRepresentation()\" "
+            << "<< opt.getKnowledgeRepresentation() << std::endl;\n assert(false && \"unknown knowledge representation\"); }\n";
+
     hook << "#if defined(_OPENMP) \n";
     hook << "obj.setNumThreads(opt.getNumJobs());\n";
     hook << "\n#endif\n";
@@ -4051,19 +4069,19 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
     db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
     db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
+    if (glb.config().has("online")) {
+        db.addGlobalInclude("\"souffle/cli/Cli.h\"");
+    }
 
     // synthesize rules
     emitRules(hook);
     // synthesize forward compilation
-    emitProblogPipelineCudd(hook);
+
+    emitProblogPipeline(hook);
 
 
     // add online incremental&interactive computation
-    if (glb.config().has("online")) {
-        db.addGlobalInclude("\"souffle/cli/Cli.h\"");
-        hook << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
-        hook << "cli.run();\n";
-    }
+
 
     hook << "} catch (std::exception& e) {std::cerr << \"Problog colc failed\" << e.what() << std::endl;}\n";
     // }

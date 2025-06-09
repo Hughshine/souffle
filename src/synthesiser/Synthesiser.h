@@ -156,7 +156,7 @@ protected:
     /** Generate code */
     void emitCode(std::ostream& out, const ram::Statement& stmt);
     void emitRules(std::ostream& out);
-    void emitProblogPipelineCudd(std::ostream& out);
+    void emitProblogPipeline(std::ostream& out);
     /** Lookup frequency counter */
     unsigned lookupFreqIdx(const std::string& txt);
 

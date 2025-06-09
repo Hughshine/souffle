@@ -288,6 +288,7 @@ void buildFormulasCyclewise(
 
     size_t iteration = 0;
     for (size_t cid = 0; cid < edgeCycles.size(); ++cid) {
+        FunctionTimer cycleTimer("Cycle " + to_string(cid));
         priority_queue<PrioritizedEdge> worklist;
         set<EdgePtr> inWorklist;
         for (const auto& edge : edgeCycles[cid]) {
@@ -296,6 +297,7 @@ void buildFormulasCyclewise(
         }
 
         while (!worklist.empty()) {
+            FunctionTimer edgeTimer("Processing Edge in Cycle " + to_string(cid));
             std::cout << "Cycle id: " << cid << std::endl;
             std::cout << "Iteration: " << ++iteration << std::endl;
             std::cout << "Worklist size: " << worklist.size() << std::endl;

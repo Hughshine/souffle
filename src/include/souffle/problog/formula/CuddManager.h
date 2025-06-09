@@ -176,23 +176,80 @@ private:
 
 };
 
-// Implementation
-int myHookFunc(DdManager* dd, const char* str, void* data) {
-    fprintf(stderr, "[GC] Dead = %u, Keys = %u, Mem = %zu\n",
+using Clock = std::chrono::steady_clock;
+using Duration = std::chrono::duration<double>;
+std::chrono::time_point<Clock> _cudd_gc_start_time;
+std::chrono::time_point<Clock> _cudd_gc_end_time;
+int _cudd_gc_count = 0;
+bool gc_begin = true;
+int myGCFunc(DdManager* dd, const char* str, void* data) {
+    fprintf(stdout, "[GC] Dead = %u, Keys = %u, Mem = %zu\n",
             Cudd_ReadDead(dd), Cudd_ReadKeys(dd), Cudd_ReadMemoryInUse(dd));
+    if (gc_begin) {
+        fprintf(stdout, "[GC] Starting GC: %d\n", ++_cudd_gc_count);
+        _cudd_gc_start_time = Clock::now();
+        gc_begin = false;
+    } else {
+        _cudd_gc_end_time = Clock::now();
+        Duration duration = _cudd_gc_end_time - _cudd_gc_start_time;
+        std::cout << "[GC] Time taken: " << duration.count() << " seconds" << std::endl;
+        gc_begin = true;
+    }
     return 1;
 }
 
+Cudd_ReorderingType currentReorderingType = CUDD_REORDER_NONE;
+void adaptiveReorder(DdManager* manager) {
+    size_t node_count = Cudd_ReadNodeCount(manager);
+    Cudd_ReorderingType next = CUDD_REORDER_NONE;
+
+    if (node_count < 10000) next = CUDD_REORDER_SIFT_CONVERGE;
+    else if (node_count < 30000) next = CUDD_REORDER_SIFT;
+    else if (node_count < 50000) next = CUDD_REORDER_LAZY_SIFT;
+    else if (node_count < 100000) next = CUDD_REORDER_WINDOW4;
+    else if (node_count < 300000) next = CUDD_REORDER_WINDOW3;
+    else if (node_count < 1000000) next = CUDD_REORDER_WINDOW2;
+    else next = CUDD_REORDER_NONE;
+
+    if (next != currentReorderingType) {
+        Cudd_AutodynEnable(manager, next);
+        currentReorderingType = next;
+        std::cout << "Switched reordering to " << next << " at node count " << node_count << std::endl;
+    }
+}
+
+int _cudd_reordering_count = 0;
+std::chrono::time_point<Clock> _cudd_reordering_start_time;
+std::chrono::time_point<Clock> _cudd_reordering_end_time;
+bool reordering_begin = true;
+int myVRFunc(DdManager* dd, const char* str, void* data) {
+    if (reordering_begin) {
+        _cudd_reordering_start_time = Clock::now();
+        reordering_begin = false;
+        std::cout << "[VR] Starting reordering " << ++_cudd_reordering_count << "..." << std::endl;
+    } else {
+        _cudd_reordering_end_time = Clock::now();
+        Duration duration = _cudd_reordering_end_time - _cudd_reordering_start_time;
+        std::cout << "[VR] Time taken: " << duration.count() << " seconds" << std::endl;
+        reordering_begin = true;
+        // set next reordering threshold
+        adaptiveReorder(dd);
+    }
+    return 1;
+}
+// Implementation
 WeightedBDDManager::WeightedBDDManager() {
     DdManager* m = Cudd_Init(0, 0, CUDD_UNIQUE_SLOTS, CUDD_CACHE_SLOTS, 16UL * 1024 * 1024 * 1024);
     Cudd_EnableGarbageCollection(m);
 //    Cudd_AutodynEnable(m, CUDD_REORDER_GROUP_SIFT);
-    Cudd_AutodynEnable(m, CUDD_REORDER_SIFT);
-
+    currentReorderingType = CUDD_REORDER_SIFT_CONVERGE;
+    Cudd_AutodynEnable(m, currentReorderingType);
+//    adaptiveReorder(m);
 //    Cudd_SetMaxLive(m, );
-    Cudd_AddHook(m, myHookFunc, CUDD_PRE_GC_HOOK);
-    Cudd_AddHook(m, myHookFunc, CUDD_POST_GC_HOOK);
-
+    Cudd_AddHook(m, myGCFunc, CUDD_PRE_GC_HOOK);
+    Cudd_AddHook(m, myGCFunc, CUDD_POST_GC_HOOK);
+    Cudd_AddHook(m, myVRFunc, CUDD_PRE_REORDERING_HOOK);
+    Cudd_AddHook(m, myVRFunc, CUDD_POST_REORDERING_HOOK);
 
     if (m == nullptr) {
         throw std::runtime_error("Failed to initialize CUDD manager");
@@ -243,7 +300,9 @@ BddNodeRef WeightedBDDManager::createVar(int index, const Hyperedge& edge) {
 BddNodeRef WeightedBDDManager::makeAnd(const BddNodeRef& a, const BddNodeRef& b) {
     DdNode* result = Cudd_bddAnd(manager.get(), a.get(), b.get());
     if (result == nullptr) {
-        throw std::runtime_error("makeAnd failed");
+        std::cout << (Cudd_ReadErrorCode(manager.get())) << std::endl;
+//        throw std::runtime_error("makeAnd failed");
+        assert(false);
     }
     return BddNodeRef(manager, result);
 }
@@ -252,11 +311,27 @@ BddNodeRef WeightedBDDManager::makeAnd(const std::vector<BddNodeRef>& nodes) {
     if (nodes.empty()) {
         return BddNodeRef(manager, Cudd_ReadOne(manager.get()));
     }
+    for (const auto& node : nodes) {
+        if (node.get() == nullptr) {
+            assert (false && "makeAnd received a null node");
+        }
+    }
     BddNodeRef result(manager, nodes[0].get());
     for (size_t i = 1; i < nodes.size(); i++) {
-        result = BddNodeRef(manager, Cudd_bddAnd(manager.get(), result.get(), nodes[i].get()));
+        assert (nodes[i].get() != nullptr && "makeAnd received a null node");
+        assert (result.get() != nullptr && "makeAnd received a null result node");
+        assert (manager.get() != nullptr && "makeAnd received a null manager");
+        auto node = Cudd_bddAnd(manager.get(), result.get(), nodes[i].get());
+        result = BddNodeRef(manager, node);
         if (result.get() == nullptr) {
-            throw std::runtime_error("makeAnd failed");
+                std::cout << "Anding node " << i-1 << " and " << i << "\n";
+                std::cout << "  Node A: " << result.get() << (Cudd_IsComplement(result.get()) ? " (complemented)\n" : "\n");
+                std::cout << "  Node B: " << nodes[i].get() << (Cudd_IsComplement(nodes[i].get()) ? " (complemented)\n" : "\n");
+                std::cout << (Cudd_ReadErrorCode(manager.get())) << std::endl;
+//                throw std::runtime_error("makeAnd failed");
+//                exit(1);
+                assert (node != nullptr && "Cudd_bddAnd failed");
+                assert(false);
         }
     }
     return result;
