@@ -26,6 +26,7 @@
 class Node;
 class Hyperedge;
 class DerivationGraph;
+struct CycleDependencyGraph;
 
 using NodePtr = std::shared_ptr<Node>;
 using EdgePtr = std::shared_ptr<Hyperedge>;
@@ -1237,174 +1238,220 @@ void dumpProbabilities(
 
 }
 
-void computeSCCOrderedCyclesWithDepth(
-    const SubgraphView& view,
-    std::vector<std::unordered_set<NodePtr>>& nodeCycles,
-    std::vector<std::unordered_set<EdgePtr>>& edgeCycles,
-    std::unordered_map<NodePtr, size_t>& nodeToCycleIndex,
-    std::unordered_map<EdgePtr, size_t>& edgeToCycleIndex,
-    std::unordered_map<NodePtr, size_t>& nodeDepths,
-    std::unordered_map<EdgePtr, size_t>& edgeDepths
-) {
-    FunctionTimer timer("Computing SCC Ordered Cycles with Depth");
-    const auto& nodes = view.getNodes();
-    size_t index = 0, currentSCC = 0;
-    std::unordered_map<NodePtr, size_t> indices, lowlinks;
-    std::stack<NodePtr> stack;
-    std::unordered_set<NodePtr> onStack;
-    std::vector<std::unordered_set<NodePtr>> rawNodeCycles;
-    std::unordered_map<NodePtr, size_t> rawNodeToCycle;
+struct CycleDependencyGraph {
+    const DerivationGraphViewInterface& graph;
 
-    std::function<void(NodePtr)> strongconnect = [&](NodePtr v) {
-        indices[v] = lowlinks[v] = index++;
-        stack.push(v);
-        onStack.insert(v);
+    std::vector<std::unordered_set<NodePtr>> nodeCycles;
+    std::vector<std::unordered_set<EdgePtr>> edgeCycles;
 
-        for (const auto& edge : view.getOutgoingEdges(v)) {
-            NodePtr w = view.getOutput(edge);
-            if (indices.find(w) == indices.end()) {
-                strongconnect(w);
-                lowlinks[v] = std::min(lowlinks[v], lowlinks[w]);
-            } else if (onStack.count(w)) {
-                lowlinks[v] = std::min(lowlinks[v], indices[w]);
+    std::unordered_map<NodePtr, size_t> nodeToCycleIndex;
+    std::unordered_map<EdgePtr, size_t> edgeToCycleIndex;
+
+    std::vector<std::unordered_set<size_t>> dependencies;  // edges: i -> j means i depends on j
+    std::vector<std::unordered_set<size_t>> reverseDependencies;
+    std::vector<size_t> inDegrees;
+
+    std::unordered_map<NodePtr, size_t> nodeDepthsGlobal;
+    std::unordered_map<EdgePtr, size_t> edgeDepthsGlobal;
+
+    explicit CycleDependencyGraph(const DerivationGraphViewInterface& g) : graph(g) {
+        computeSCCs();
+        computeDependencies();
+        computeDepths();
+    }
+
+    void dumpCycles(std::ostream& out = std::cout) const {
+        out << "Number of SCCs: " << nodeCycles.size() << "\n";
+        for (size_t i = 0; i < nodeCycles.size(); ++i) {
+            out << "Cycle " << i << " nodes:\n";
+            for (const auto& n : nodeCycles[i]) {
+                out << "  " << n->toString() << "\n";
+                if (nodeDepthsGlobal.count(n) > 0) {
+                    out << "    Depth: " << nodeDepthsGlobal.at(n) << "\n";
+                } else {
+                    out << "    Depth: N/A\n";
+                }
+            }
+            out << "Cycle " << i << " edges:\n";
+            for (const auto& e : edgeCycles[i]) {
+                out << "  " << e->toString() << "\n";
+                if (edgeDepthsGlobal.count(e) > 0) {
+                    out << "    Depth: " << edgeDepthsGlobal.at(e) << "\n";
+                } else {
+                    out << "    Depth: N/A\n";
+                }
+            }
+            // depth
+
+            out << "Depends on: ";
+            for (auto d : dependencies[i]) {
+                out << d << " ";
+            }
+            out << "\nReverse depends on: ";
+            for (auto d : reverseDependencies[i]) {
+                out << d << " ";
+            }
+            out << "\nIn-degree: " << inDegrees[i] << "\n";
+            out << "\n----\n";
+        }
+    }
+
+
+    void dumpDot(const std::string& filename) const {
+        std::ofstream out(filename);
+        if (!out.is_open()) {
+            throw std::runtime_error("Cannot open file: " + filename);
+        }
+
+        out << "digraph CycleDependencyGraph {\n";
+        out << "  rankdir=LR;\n";
+        out << "  node [shape=box, style=filled, fillcolor=lightyellow];\n";
+
+        // 输出每个 SCC 节点
+        for (size_t i = 0; i < nodeCycles.size(); ++i) {
+            out << "  C" << i << " [label=\"Cycle " << i << "\\n";
+            size_t count = 0;
+            for (const auto& n : nodeCycles[i]) {
+                out << n->getTuple().toString();
+                if (++count >= 3) { out << "\\n..."; break; }
+                out << "\\n";
+            }
+            out << "\"];\n";
+        }
+
+        // 输出依赖边
+        for (size_t i = 0; i < dependencies.size(); ++i) {
+            for (auto dep : dependencies[i]) {
+                out << "  C" << dep << " -> C" << i << ";\n";
             }
         }
 
-        if (lowlinks[v] == indices[v]) {
-            std::unordered_set<NodePtr> scc;
-            NodePtr w;
-            do {
-                w = stack.top(); stack.pop();
-                onStack.erase(w);
-                scc.insert(w);
-                rawNodeToCycle[w] = currentSCC;
-            } while (w != v);
-            rawNodeCycles.push_back(std::move(scc));
-            ++currentSCC;
-        }
-    };
-
-    for (const auto& node : nodes) {
-        if (indices.find(node) == indices.end()) {
-            strongconnect(node);
-        }
+        out << "}\n";
+        out.close();
     }
 
-    // Build dependency graph of SCCs (revised: use all inputs of each edge)
-    std::vector<std::unordered_set<size_t>> sccGraph(currentSCC);
-    std::vector<size_t> indegree(currentSCC, 0);
-    for (const auto& edge : view.getEdges()) {
-        size_t outCycle = rawNodeToCycle[view.getOutput(edge)];
-        for (const auto& input : view.getInputs(edge)) {
-            size_t inCycle = rawNodeToCycle[input];
-            if (inCycle != outCycle && !sccGraph[inCycle].count(outCycle)) {
-                sccGraph[inCycle].insert(outCycle);
-                indegree[outCycle]++;
+private:
+    void computeSCCs() {
+        size_t index = 0, currentSCC = 0;
+        std::unordered_map<NodePtr, size_t> indices, lowlinks;
+        std::stack<NodePtr> stack;
+        std::unordered_set<NodePtr> onStack;
+
+        std::function<void(NodePtr)> strongconnect = [&](NodePtr v) {
+            indices[v] = lowlinks[v] = index++;
+            stack.push(v);
+            onStack.insert(v);
+
+            for (auto& edge : graph.getOutgoingEdges(v)) {
+                NodePtr w = graph.getOutput(edge);
+                if (!indices.count(w)) {
+                    strongconnect(w);
+                    lowlinks[v] = std::min(lowlinks[v], lowlinks[w]);
+                } else if (onStack.count(w)) {
+                    lowlinks[v] = std::min(lowlinks[v], indices[w]);
+                }
+            }
+
+            if (lowlinks[v] == indices[v]) {
+                std::unordered_set<NodePtr> scc;
+                NodePtr w;
+                do {
+                    w = stack.top(); stack.pop();
+                    onStack.erase(w);
+                    scc.insert(w);
+                    nodeToCycleIndex[w] = currentSCC;
+                } while (w != v);
+                nodeCycles.push_back(std::move(scc));
+                edgeCycles.emplace_back();
+                ++currentSCC;
+            }
+        };
+
+        for (auto& node : graph.getNodes()) {
+            if (!indices.count(node)) {
+                strongconnect(node);
+            }
+        }
+
+        for (auto& edge : graph.getEdges()) {
+            NodePtr out = graph.getOutput(edge);
+            if (nodeToCycleIndex.count(out)) {
+                size_t cid = nodeToCycleIndex[out];
+                edgeToCycleIndex[edge] = cid;
+                edgeCycles[cid].insert(edge);
             }
         }
     }
 
-    // Kahn's algorithm for topological sort
-    std::queue<size_t> q;
-    for (size_t i = 0; i < indegree.size(); ++i) {
-        if (indegree[i] == 0) q.push(i);
-    }
-    std::vector<size_t> topoOrder;
-    while (!q.empty()) {
-        size_t cid = q.front(); q.pop();
-        topoOrder.push_back(cid);
-        for (size_t succ : sccGraph[cid]) {
-            if (--indegree[succ] == 0) q.push(succ);
+    void computeDependencies() {
+        size_t n = nodeCycles.size();
+        dependencies.resize(n);
+        reverseDependencies.resize(n);
+        inDegrees.resize(n, 0);  // ensure all entries initialized
+
+        for (auto& edge : graph.getEdges()) {
+            size_t outCid = nodeToCycleIndex[graph.getOutput(edge)];
+            for (auto& input : graph.getInputs(edge)) {
+                size_t inCid = nodeToCycleIndex[input];
+                if (inCid != outCid && !dependencies[outCid].count(inCid)) {
+                    dependencies[outCid].insert(inCid);             // out depends on in
+                    reverseDependencies[inCid].insert(outCid);      // in is depended on by out
+                    inDegrees[outCid]++;
+                }
+            }
         }
     }
+    void computeDepths() {
+        nodeDepthsGlobal.clear();
+        edgeDepthsGlobal.clear();
 
-    // Rebuild nodeCycles and edgeCycles with new topo order
-    nodeCycles.clear();
-    edgeCycles.clear();
-    nodeToCycleIndex.clear();
-    edgeToCycleIndex.clear();
+        for (size_t cid = 0; cid < nodeCycles.size(); ++cid) {
+            const auto& nodes = nodeCycles[cid];
+            const auto& edges = edgeCycles[cid];
 
-    std::unordered_map<size_t, size_t> oldToNewCycleId;
-    for (size_t newId = 0; newId < topoOrder.size(); ++newId) {
-        size_t oldId = topoOrder[newId];
-        oldToNewCycleId[oldId] = newId;
-        nodeCycles.push_back(rawNodeCycles[oldId]);
-        edgeCycles.emplace_back();
-        for (auto node : rawNodeCycles[oldId]) {
-            nodeToCycleIndex[node] = newId;
-        }
-    }
-    for (const auto& edge : view.getEdges()) {
-        NodePtr out = view.getOutput(edge);
-        if (nodeToCycleIndex.count(out)) {
-            size_t cid = nodeToCycleIndex[out];
-            edgeCycles[cid].insert(edge);
-            edgeToCycleIndex[edge] = cid;
-        }
-    }
-
-    // Compute depth within each cycle
-    for (size_t cid = 0; cid < nodeCycles.size(); ++cid) {
-        const auto& cycleNodes = nodeCycles[cid];
-        const auto& cycleEdges = edgeCycles[cid];
-        std::queue<NodePtr> q;
-        for (auto node : cycleNodes) {
-            bool isEntry = false;
-            for (auto& inEdge : view.getIncomingEdges(node)) {
-                bool allOutOfCycle = true;
-                for (auto& inNode : view.getInputs(inEdge)) {
-                    if (nodeToCycleIndex[inNode] == cid) {
-                        allOutOfCycle = false;
-                        break;
+            std::queue<NodePtr> q;
+            for (NodePtr node : nodes) {
+                bool isEntry = false;
+                for (auto& inEdge : graph.getIncomingEdges(node)) {
+                    for (auto& inNode : graph.getInputs(inEdge)) {
+                        if (nodeToCycleIndex[inNode] != cid) {
+                            isEntry = true;
+                            break;
+                        }
                     }
                 }
-                if (allOutOfCycle) {
-                    isEntry = true;
-                    break;
+                if (node->isFact || graph.getIncomingEdges(node).empty()) isEntry = true;
+                if (isEntry) {
+                    nodeDepthsGlobal[node] = 0;
+                    q.push(node);
                 }
             }
-            if (node->isFact || view.getIncomingEdges(node).empty()) isEntry = true;
-            if (isEntry) {
-                nodeDepths[node] = 0;
-                q.push(node);
-            }
-        }
-        while (!q.empty()) {
-            NodePtr curr = q.front(); q.pop();
-            size_t currDepth = nodeDepths[curr];
-            for (auto& outEdge : view.getOutgoingEdges(curr)) {
-                NodePtr out = view.getOutput(outEdge);
-                if (nodeToCycleIndex[out] != cid) continue;
-                if (!nodeDepths.count(out) || nodeDepths[out] > currDepth + 1) {
-                    nodeDepths[out] = currDepth + 1;
-                    q.push(out);
-                }
-            }
-        }
-        for (auto edge : cycleEdges) {
-            size_t d = 0;
-            for (auto in : view.getInputs(edge)) {
-                if (nodeToCycleIndex[in] == cid && nodeDepths.count(in)) {
-                    // Edge depth = max(input depth + 1), so inner-cycle edges start from 1, cross-cycle = 0
-                    d = std::max(d, nodeDepths[in] + 1);
-                }
-            }
-            edgeDepths[edge] = d;
-        }
-    }
 
-    std::cout << "Number of SCCs: " << nodeCycles.size() << "\n";
-    for (size_t i = 0; i < nodeCycles.size(); ++i) {
-        std::cout << "Cycle " << i << " nodes:\n";
-        for (auto n : nodeCycles[i]) {
-            std::cout << "  " << n->toString() << " (depth=" << nodeDepths[n] << ")\n";
+            while (!q.empty()) {
+                NodePtr curr = q.front(); q.pop();
+                size_t d = nodeDepthsGlobal[curr];
+                for (auto& outEdge : graph.getOutgoingEdges(curr)) {
+                    NodePtr out = graph.getOutput(outEdge);
+                    if (nodeToCycleIndex[out] == cid) {
+                        if (!nodeDepthsGlobal.count(out) || nodeDepthsGlobal[out] > d + 1) {
+                            nodeDepthsGlobal[out] = d + 1;
+                            q.push(out);
+                        }
+                    }
+                }
+            }
+
+            for (auto edge : edges) {
+                size_t d = 0;
+                for (auto in : graph.getInputs(edge)) {
+                    if (nodeToCycleIndex[in] == cid && nodeDepthsGlobal.count(in)) {
+                        d = std::max(d, nodeDepthsGlobal[in] + 1);
+                    }
+                }
+                edgeDepthsGlobal[edge] = d;
+            }
         }
-        std::cout << "Cycle " << i << " edges:\n";
-        for (auto e : edgeCycles[i]) {
-            std::cout << "  " << e->toString() << " (depth=" << edgeDepths[e] << ")\n";
-        }
-        std::cout << "----\n";
     }
-}
+};
 
 #endif //DERIVATIONGRAPH_H

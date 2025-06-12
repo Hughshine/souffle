@@ -453,7 +453,7 @@ public:
             for (auto edge: view.getEdges()) {
                 std::cout << edge->toString() << std::endl;
             }
-            buildFormulasInc(view, *ddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
+            buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
             probResult.clear();
             {
                 FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(nodeFormulas->size()));

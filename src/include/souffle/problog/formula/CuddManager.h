@@ -198,19 +198,24 @@ int myGCFunc(DdManager* dd, const char* str, void* data) {
     return 1;
 }
 
-Cudd_ReorderingType currentReorderingType = CUDD_REORDER_NONE;
+Cudd_ReorderingType currentReorderingType = CUDD_REORDER_SAME;
 void adaptiveReorder(DdManager* manager) {
     size_t node_count = Cudd_ReadNodeCount(manager);
-    Cudd_ReorderingType next = CUDD_REORDER_NONE;
+    Cudd_ReorderingType next = CUDD_REORDER_SAME;
 
-    if (node_count < 10000) next = CUDD_REORDER_SIFT_CONVERGE;
-    else if (node_count < 30000) next = CUDD_REORDER_SIFT;
-    else if (node_count < 50000) next = CUDD_REORDER_LAZY_SIFT;
-    else if (node_count < 100000) next = CUDD_REORDER_WINDOW4;
-    else if (node_count < 300000) next = CUDD_REORDER_WINDOW3;
-    else if (node_count < 1000000) next = CUDD_REORDER_WINDOW2;
-    else next = CUDD_REORDER_NONE;
+    if (node_count < 10000) {next = CUDD_REORDER_SIFT_CONVERGE; }
+//    else if (node_count < 30000) next = CUDD_REORDER_SIFT;
+    else if (node_count < 50000) {next = CUDD_REORDER_SIFT; }
+    else if (node_count < 100000) {next = CUDD_REORDER_WINDOW4_CONV; }
+    else if (node_count < 300000) {next = CUDD_REORDER_WINDOW4;}
+    else if (node_count < 1000000) {next = CUDD_REORDER_WINDOW2;}
+    else if (node_count < 3000000) {next = CUDD_REORDER_WINDOW2;}
+    else next = CUDD_REORDER_SAME;
 
+    if (next == CUDD_REORDER_SAME) {
+        Cudd_AutodynDisable(manager);
+        return;
+    }
     if (next != currentReorderingType) {
         Cudd_AutodynEnable(manager, next);
         currentReorderingType = next;
@@ -239,11 +244,17 @@ int myVRFunc(DdManager* dd, const char* str, void* data) {
 }
 // Implementation
 WeightedBDDManager::WeightedBDDManager() {
-    DdManager* m = Cudd_Init(0, 0, CUDD_UNIQUE_SLOTS, CUDD_CACHE_SLOTS, 16UL * 1024 * 1024 * 1024);
+    // could make this static, TODO
+//    DdManager* m = Cudd_Init(0, 0, 4096 * 2, 2048 * 2024, 32UL * 1024 * 1024 * 1024);
+    // 这些参数对性能的影响很复杂。memory设置太大会减少gc=>reordering，reordering不频繁不好，太频繁也不好.
+    DdManager* m = Cudd_Init(0, 0, 1024, 1 << 21, 0);
     Cudd_EnableGarbageCollection(m);
 //    Cudd_AutodynEnable(m, CUDD_REORDER_GROUP_SIFT);
     currentReorderingType = CUDD_REORDER_SIFT_CONVERGE;
     Cudd_AutodynEnable(m, currentReorderingType);
+//    Cudd_SetLooseUpTo(m, 4);  // Set loose up to 4
+//    Cudd_SetNextReordering(m, 4);
+//    Cudd_SetMaxCacheHard(m, 1 << 28);
 //    adaptiveReorder(m);
 //    Cudd_SetMaxLive(m, );
     Cudd_AddHook(m, myGCFunc, CUDD_PRE_GC_HOOK);
@@ -322,17 +333,22 @@ BddNodeRef WeightedBDDManager::makeAnd(const std::vector<BddNodeRef>& nodes) {
         assert (result.get() != nullptr && "makeAnd received a null result node");
         assert (manager.get() != nullptr && "makeAnd received a null manager");
         auto node = Cudd_bddAnd(manager.get(), result.get(), nodes[i].get());
-        result = BddNodeRef(manager, node);
-        if (result.get() == nullptr) {
+        if (node == nullptr) {
                 std::cout << "Anding node " << i-1 << " and " << i << "\n";
-                std::cout << "  Node A: " << result.get() << (Cudd_IsComplement(result.get()) ? " (complemented)\n" : "\n");
-                std::cout << "  Node B: " << nodes[i].get() << (Cudd_IsComplement(nodes[i].get()) ? " (complemented)\n" : "\n");
+//                std::cout << "  Node A: " << result.get() << (Cudd_IsComplement(result.get()) ? " (complemented)\n" : "\n");
+//                std::cout << "  Node B: " << nodes[i].get() << (Cudd_IsComplement(nodes[i].get()) ? " (complemented)\n" : "\n");
+//                std::cout << "node " << node;
+                Cudd_PrintDebug(manager.get(), result.get(), 1, 1);
+                Cudd_PrintDebug(manager.get(), nodes[i].get(), 0, 1);
                 std::cout << (Cudd_ReadErrorCode(manager.get())) << std::endl;
+                std::cerr << "Slots used: " << Cudd_ReadUsedSlots(manager.get()) << std::endl;
+
 //                throw std::runtime_error("makeAnd failed");
 //                exit(1);
                 assert (node != nullptr && "Cudd_bddAnd failed");
                 assert(false);
         }
+        result = BddNodeRef(manager, node);
     }
     return result;
 }
