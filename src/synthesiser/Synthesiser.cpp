@@ -460,7 +460,35 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "}\n" << std::endl;
     out << "}\n" << std::endl;
     out << "else if (obj.getKnowledge() == souffle::Knowledge::SDD) {\n";
-    out << "assert(false && \"SDD not implemented yet\");\n";
+    out << "std::map<NodePtr, SddNodeRef> nodeFormulas;";
+    out << "std::map<EdgePtr, SddNodeRef> edgeFormulas;";
+    out << "SddFormulaManager sddManager;\n";
+    out << "{\n" << std::endl;
+    out << "FunctionTimer timer(\" building formulas \");\n";
+    out << "buildFormulasCyclewise(view, sddManager, nodeFormulas, edgeFormulas);\n";
+
+    out << "}" << std::endl;
+    out << "{" << std::endl;
+    out << "FunctionTimer timer(\" wmc and output probability \");\n";
+    // print result to cout; TODO print to files
+    out << "std::cout << \"nodeFormulas size: \" << nodeFormulas.size() << std::flush;\n";
+    out << "std::cout << \"edgeFormulas size: \" << edgeFormulas.size() << std::flush;\n";
+    // out << "size_t count = 0;\n";
+    // out << "std::unordered_map<NodePtr, double> nodeProbabilities;\n";
+    out << "for (const auto& [node, sdd] : nodeFormulas) {\n";
+    out << "//    std::cout << \"Node\" << node->getId() ;\n";
+    out << "//    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
+    out << "//    std::cout << sddManager.toString(sdd) << \"\\t\";\n";
+    out << "    auto prob = sddManager.computeWeightedModelCount(sdd);\n";
+    out << "    probResult[node] = prob;\n";
+    out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
+    out << "}\n";
+    out << "dumpProbabilities(probResult, \"" << glb.config().get("output-dir") << "\");\n";
+    if (glb.config().has("online")) {
+        out << "IncrementalCLI cli(&obj, graph, &ruleManager, &sddManager, &nodeFormulas, &edgeFormulas);\n";
+        out << "cli.run();\n";
+    }
+    out << "}\n" << std::endl;
     out << "}\n";
     // dump the node probabilities
 
@@ -4068,6 +4096,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     db.addGlobalInclude("\"souffle/problog/Rule.h\"");
     db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
     db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
+    db.addGlobalInclude("\"souffle/problog/formula/SddManager.h\"");
     db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
     if (glb.config().has("online")) {
         db.addGlobalInclude("\"souffle/cli/Cli.h\"");

@@ -1,3 +1,5 @@
+souffle --online -F./input -D./output compute.souffle.dl -L/usr/local/lib -lsdd++ -lsdd -lm  -I/usr/local/include -o compute
+
 You should install Cudd first.
 
 after your cmake build (follow souffle's original build guideline), you can use ctest [-j8] for testing. 
