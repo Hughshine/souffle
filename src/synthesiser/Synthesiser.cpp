@@ -462,7 +462,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "else if (obj.getKnowledge() == souffle::Knowledge::SDD) {\n";
     out << "std::map<NodePtr, SddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, SddNodeRef> edgeFormulas;";
-    out << "SddFormulaManager sddManager;\n";
+    out << "SddFormulaManager sddManager(view.getNodes().size() + view.getEdges().size());\n";
     out << "{\n" << std::endl;
     out << "FunctionTimer timer(\" building formulas \");\n";
     out << "buildFormulasCyclewise(view, sddManager, nodeFormulas, edgeFormulas);\n";
