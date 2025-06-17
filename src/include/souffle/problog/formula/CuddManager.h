@@ -162,6 +162,10 @@ public:
 
 
 private:
+    BddNodeRef makeAndBalanced(const std::vector<BddNodeRef>& nodes, size_t begin, size_t end);
+    BddNodeRef makeOrBalanced(const std::vector<BddNodeRef>& nodes, size_t begin, size_t end);
+    BddNodeRef makeAndSequential(const std::vector<BddNodeRef>& nodes);
+    BddNodeRef makeOrSequential(const std::vector<BddNodeRef>& nodes);
     double recursiveWeightedModelCount(DdNode* node,
                                      std::unordered_map<DdNode*, double>& cache);
 
@@ -176,6 +180,16 @@ private:
 
 };
 
+double getCacheHitRate(DdManager* manager) {
+    double hits = static_cast<double>(Cudd_ReadCacheHits(manager));
+    double lookups = static_cast<double>(Cudd_ReadCacheLookUps(manager));
+    if (lookups == 0.0) return 0.0;
+    return hits / lookups;
+}
+
+
+
+
 using Clock = std::chrono::steady_clock;
 using Duration = std::chrono::duration<double>;
 std::chrono::time_point<Clock> _cudd_gc_start_time;
@@ -185,6 +199,9 @@ bool gc_begin = true;
 int myGCFunc(DdManager* dd, const char* str, void* data) {
     fprintf(stdout, "[GC] Dead = %u, Keys = %u, Mem = %zu\n",
             Cudd_ReadDead(dd), Cudd_ReadKeys(dd), Cudd_ReadMemoryInUse(dd));
+    fprintf(stdout, "[GC] Recursive calls = %.2f, Cache Used = %.2f, Cache hits = %.0f, lookups = %.0f, hit rate = %.2f%%\n",
+            Cudd_ReadRecursiveCalls(dd), Cudd_ReadUsedSlots(dd), Cudd_ReadCacheHits(dd), Cudd_ReadCacheLookUps(dd),
+            getCacheHitRate(dd) * 100.0);
     if (gc_begin) {
         fprintf(stdout, "[GC] Starting GC: %d\n", ++_cudd_gc_count);
         _cudd_gc_start_time = Clock::now();
@@ -247,7 +264,9 @@ WeightedBDDManager::WeightedBDDManager() {
     // could make this static, TODO
 //    DdManager* m = Cudd_Init(0, 0, 4096 * 2, 2048 * 2024, 32UL * 1024 * 1024 * 1024);
     // 这些参数对性能的影响很复杂。memory设置太大会减少gc=>reordering，reordering不频繁不好，太频繁也不好.
-    DdManager* m = Cudd_Init(0, 0, 1024, 1 << 21, 0);
+    DdManager* m = Cudd_Init(0, 0, 4096, 1 << 24, 32UL * 1024 * 1024 * 1024);
+    Cudd_SetMaxCacheHard(m, 10000000);
+
     Cudd_EnableGarbageCollection(m);
 //    Cudd_AutodynEnable(m, CUDD_REORDER_GROUP_SIFT);
     currentReorderingType = CUDD_REORDER_SIFT_CONVERGE;
@@ -319,6 +338,11 @@ BddNodeRef WeightedBDDManager::makeAnd(const BddNodeRef& a, const BddNodeRef& b)
 }
 
 BddNodeRef WeightedBDDManager::makeAnd(const std::vector<BddNodeRef>& nodes) {
+//    return makeAndSequential(nodes);
+    return makeAndBalanced(nodes, 0, nodes.size());
+}
+
+BddNodeRef WeightedBDDManager::makeAndSequential(const std::vector<BddNodeRef>& nodes) {
     if (nodes.empty()) {
         return BddNodeRef(manager, Cudd_ReadOne(manager.get()));
     }
@@ -334,23 +358,34 @@ BddNodeRef WeightedBDDManager::makeAnd(const std::vector<BddNodeRef>& nodes) {
         assert (manager.get() != nullptr && "makeAnd received a null manager");
         auto node = Cudd_bddAnd(manager.get(), result.get(), nodes[i].get());
         if (node == nullptr) {
-                std::cout << "Anding node " << i-1 << " and " << i << "\n";
-//                std::cout << "  Node A: " << result.get() << (Cudd_IsComplement(result.get()) ? " (complemented)\n" : "\n");
-//                std::cout << "  Node B: " << nodes[i].get() << (Cudd_IsComplement(nodes[i].get()) ? " (complemented)\n" : "\n");
-//                std::cout << "node " << node;
-                Cudd_PrintDebug(manager.get(), result.get(), 1, 1);
-                Cudd_PrintDebug(manager.get(), nodes[i].get(), 0, 1);
-                std::cout << (Cudd_ReadErrorCode(manager.get())) << std::endl;
-                std::cerr << "Slots used: " << Cudd_ReadUsedSlots(manager.get()) << std::endl;
-
-//                throw std::runtime_error("makeAnd failed");
-//                exit(1);
                 assert (node != nullptr && "Cudd_bddAnd failed");
-                assert(false);
         }
         result = BddNodeRef(manager, node);
     }
     return result;
+}
+
+BddNodeRef WeightedBDDManager::makeAndBalanced(const std::vector<BddNodeRef>& nodes, size_t begin, size_t end) {
+    if (begin >= end) {
+        return BddNodeRef(manager, Cudd_ReadOne(manager.get()));
+    }
+    if (end - begin == 1) {
+        return nodes[begin];
+    }
+
+    size_t mid = begin + (end - begin) / 2;
+    BddNodeRef left = makeAndBalanced(nodes, begin, mid);
+    BddNodeRef right = makeAndBalanced(nodes, mid, end);
+
+    if (left.get() == nullptr || right.get() == nullptr || manager.get() == nullptr) {
+        throw std::runtime_error("makeAndBalanced received null input or manager");
+    }
+
+    DdNode* and_node = Cudd_bddAnd(manager.get(), left.get(), right.get());
+    if (and_node == nullptr) {
+        throw std::runtime_error("Cudd_bddAnd failed in makeAndBalanced");
+    }
+    return BddNodeRef(manager, and_node);
 }
 
 BddNodeRef WeightedBDDManager::makeOr(const BddNodeRef& a, const BddNodeRef& b) {
@@ -362,6 +397,11 @@ BddNodeRef WeightedBDDManager::makeOr(const BddNodeRef& a, const BddNodeRef& b) 
 }
 
 BddNodeRef WeightedBDDManager::makeOr(const std::vector<BddNodeRef>& nodes) {
+//    return makeOrSequential(nodes);
+    return makeOrBalanced(nodes, 0, nodes.size());
+}
+
+BddNodeRef WeightedBDDManager::makeOrSequential(const std::vector<BddNodeRef>& nodes) {
     if (nodes.empty()) {
         return BddNodeRef(manager, Cudd_ReadZero(manager.get()));
     }
@@ -373,6 +413,25 @@ BddNodeRef WeightedBDDManager::makeOr(const std::vector<BddNodeRef>& nodes) {
         }
     }
     return result;
+}
+
+BddNodeRef WeightedBDDManager::makeOrBalanced(const std::vector<BddNodeRef>& nodes, size_t begin, size_t end) {
+    if (begin >= end) {
+        return BddNodeRef(manager, Cudd_ReadZero(manager.get()));
+    }
+    if (end - begin == 1) {
+        return nodes[begin];
+    }
+
+    size_t mid = begin + (end - begin) / 2;
+    BddNodeRef left = makeOrBalanced(nodes, begin, mid);
+    BddNodeRef right = makeOrBalanced(nodes, mid, end);
+
+    DdNode* or_node = Cudd_bddOr(manager.get(), left.get(), right.get());
+    if (or_node == nullptr) {
+        throw std::runtime_error("makeOrBalanced failed");
+    }
+    return BddNodeRef(manager, or_node);
 }
 
 BddNodeRef WeightedBDDManager::makeNot(const BddNodeRef& a) {
