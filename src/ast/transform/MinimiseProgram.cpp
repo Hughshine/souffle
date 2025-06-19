@@ -218,6 +218,8 @@ bool MinimiseProgramTransformer::areBijectivelyEquivalent(
         return false;
     }
 
+    // TODO: should only eliminate rules with probability 1.0
+
     // head atoms must have the same arity (names do not matter)
     if (leftElements[0].params.size() != rightElements[0].params.size()) {
         return false;

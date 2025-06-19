@@ -4,7 +4,6 @@
 #ifndef SDDMANAGER_H
 #define SDDMANAGER_H
 
-#include <sdd++/sdd++.hpp>
 #include <vector>
 #include <string>
 #include <sdd/sdd.h>
