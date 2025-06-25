@@ -572,7 +572,7 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQuery(const ast::Cla
             // TODO: delta rule for non sccAtoms should executes only ones? no fixpoint computation? lifting to loop front.
             // Propositions
             if (head->getArity() == 0) {
-                assert (false && "proposition (0 arity relation) not supported");
+                 assert (false && "proposition (0 arity relation) not supported");
                 // TODO: maybe there is a clever way
             }
 

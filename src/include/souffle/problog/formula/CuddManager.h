@@ -125,6 +125,9 @@ public:
     void tryGarbageCollection() {
         Cudd_ReduceHeap(manager.get(), CUDD_REORDER_NONE, 0);
     }
+    void stopDynamicOptimization() override {
+        Cudd_AutodynDisable(manager.get());
+    }
     // Basic BDD operations
     BddNodeRef createVar(int index) override;
     BddNodeRef createVar(int index, const Node& node) override;

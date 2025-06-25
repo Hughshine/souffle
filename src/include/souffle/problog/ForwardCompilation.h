@@ -649,6 +649,7 @@ void buildFormulasIncCyclewise(
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
 ) {
+    formulaManager.stopDynamicOptimization();
     FunctionTimer timer("forward compilation, incremental update (cyclewise)");
 
     CycleDependencyGraph depGraph(view);  // 包括 computeSCCs, computeDependencies, computeDepths
@@ -738,7 +739,7 @@ void buildFormulasIncCyclewise(
         while (!worklist.empty()) {
             round++;
             EdgePtr edge = worklist.front(); worklist.pop_front();
-
+            formulaManager.dumpProfilingStatistics();
             std::cout << "  [EVAL] Edge " << edge->getId() << ": " << edge->toString() << std::endl;
 
             if (deltaDeletedEdges.count(edge)) {
@@ -851,7 +852,7 @@ void buildFormulasIncCyclewise(
 
         while (!worklist.empty()) {
             EdgePtr edge = worklist.front(); worklist.pop_front();
-
+            formulaManager.dumpProfilingStatistics();
             std::cout << "  [EVAL] Edge " << edge->getId() << ": " << edge->toString() << std::endl;
 
             FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()

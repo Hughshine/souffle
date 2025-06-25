@@ -347,6 +347,8 @@ public:
              }
         }
     }
+
+    size_t iteration = 1;
     void commit() {
         static size_t commitCount = 0;
         // TODO: should clean all delta relations after each commit
@@ -449,7 +451,7 @@ public:
                 getDeletedFacts() // deletedFacts; cli should collect this
             );
             auto view = graph->prune(program->getOutputRelations());
-            view.dumpDotInc("derivation-inc.dot");
+            view.dumpDotInc("derivation-inc" + std::to_string(iteration++) + ".dot");
             for (auto edge: view.getEdges()) {
                 std::cout << edge->toString() << std::endl;
             }
