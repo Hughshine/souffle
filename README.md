@@ -1,3 +1,26 @@
+What information we need to record?
+
+We have multiple stages:
+1. semi-naive evaluation (we do not need to much detailed profiling for this, just time and memory for each stratum I guess)
+   * it has different strata
+   * each stratum has its own set of rules, and iterations
+2. pruning 
+   * previous and final graph size, nodes/edges/cycles
+3. forward compilation
+    * iterations, memory and time, formula size, dynamic reordering algorithms
+4. weight model counting
+
+
+This should be some differences between full compilation and incremental compilation.
+1. Dred
+    * it has different strata
+    * deletion/rederive/insertion, iterations
+2. pruning
+    * impacted nodes/edges/cycle count
+3. incremental forward compilation
+4. incremental model counting
+---
+
 souffle --online -F./input -D./output compute.souffle.dl -L/usr/local/lib -lsdd++ -lsdd -lm  -I/usr/local/include -o compute
 
 You should install Cudd first.

@@ -738,6 +738,8 @@ void buildFormulasIncCyclewise(
         size_t round = 0;
         while (!worklist.empty()) {
             round++;
+            std::cout << "  [DELETION ROUND " << round << "] Cycle " << cid
+                      << ", Worklist size: " << worklist.size() << std::endl;
             EdgePtr edge = worklist.front(); worklist.pop_front();
             formulaManager.dumpProfilingStatistics();
             std::cout << "  [EVAL] Edge " << edge->getId() << ": " << edge->toString() << std::endl;
@@ -849,10 +851,13 @@ void buildFormulasIncCyclewise(
         scheduled[cid] = true;
         auto& worklist = cycleWorklists[cid];
         std::cout << "[CYCLE " << cid << "] Begin Insertion Phase, worklist size: " << worklist.size() << std::endl;
-
+        int round = 0;
         while (!worklist.empty()) {
             EdgePtr edge = worklist.front(); worklist.pop_front();
             formulaManager.dumpProfilingStatistics();
+            round++;
+            std::cout << "  [INSERTION ROUND " << round << "] Cycle " << cid
+                      << ", Worklist size: " << worklist.size() << std::endl;
             std::cout << "  [EVAL] Edge " << edge->getId() << ": " << edge->toString() << std::endl;
 
             FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
