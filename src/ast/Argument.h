@@ -32,6 +32,10 @@ public:
         const NodeKind kind = n->getKind();
         return (kind >= NK_Argument && kind < NK_LastArgument);
     }
+
+    virtual std::string serialize() const {
+      return "<arg-serialization-not-supported>";
+    };
 };
 
 }  // namespace souffle::ast

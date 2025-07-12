@@ -669,21 +669,21 @@ public:
         const std::vector<UntypedTuple>& deletedFacts = {}
     ) {
         {
-            std::ofstream os("./delta.txt");
-            os << "Applying delta inserts ..." << std::endl;
-            for (const auto& app : deltaInsertRuleApps) {
-                os << app.first.toString() << std::endl;
-                for (const auto& ruleApp : *(app.second)) {
-                    os << RuleApplication::toString(ruleApp) << std::endl;
-                }
-            }
-            os << "Applying delta deletes ..." << std::endl;
-            for (const auto& app : deltaDeleteRuleApps) {
-                os << app.first.toString() << std::endl;
-                for (const auto& ruleApp : *(app.second)) {
-                    os << RuleApplication::toString(ruleApp) << std::endl;
-                }
-            }
+//            std::ofstream os("./delta.txt");
+//            os << "Applying delta inserts ..." << std::endl;
+//            for (const auto& app : deltaInsertRuleApps) {
+//                os << app.first.toString() << std::endl;
+//                for (const auto& ruleApp : *(app.second)) {
+//                    os << RuleApplication::toString(ruleApp) << std::endl;
+//                }
+//            }
+//            os << "Applying delta deletes ..." << std::endl;
+//            for (const auto& app : deltaDeleteRuleApps) {
+//                os << app.first.toString() << std::endl;
+//                for (const auto& ruleApp : *(app.second)) {
+//                    os << RuleApplication::toString(ruleApp) << std::endl;
+//                }
+//            }
         }
 
         this->deltaInsertNodes.clear();
@@ -890,7 +890,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
     // 初始化：从所有输出 relation 的节点出发
     for (const auto& node : nodes) {
         if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
-            std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
+//            std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
             reachableNodes.insert(node);
             workQueue.push(node);
             node->needOutput = true;
@@ -922,7 +922,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
         if (reachableNodes.count(node)) {
             newNodes.insert(node);
             if (node->pruned) {
-                std::cout << "reusing a pruned node: " << node->getTuple().toString() << std::endl;
+//                std::cout << "reusing a pruned node: " << node->getTuple().toString() << std::endl;
                 deltaInsertNodes.insert(node);
             }
             node->pruned = false;  // reset pruned flag
@@ -936,7 +936,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
         if (reachableEdges.count(edge)) {
             newEdges.insert(edge);
             if (edge->pruned) {
-                std::cout << "reusing a pruned edge: " << edge->toString() << std::endl;
+//                std::cout << "reusing a pruned edge: " << edge->toString() << std::endl;
                 deltaInsertEdges.insert(edge);
             }
             edge->pruned = false;  // reset pruned flag

@@ -2124,8 +2124,11 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
     /* -- Translation -- */
     // Generate the RAM program code
     auto ramMain = generateProgram(tu);
-    auto ramInc = generateProgramInc(tu);
-
+    // TODO: debugging purpose
+    Own<ram::Statement> ramInc = mk<ram::EmptyStatement>();
+    if (!glb->config().has("full-only")) {
+        ramInc = generateProgramInc(tu);
+    }
     // Create the relevant RAM relations
     const auto& sccOrdering = tu.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>().order();
 

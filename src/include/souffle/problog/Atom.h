@@ -30,16 +30,177 @@ struct VariableField {
     std::string name;
 };
 
+using AtomicField = std::variant<IntegerField, FloatField, StringField, VariableField>;
+std::string atomicToString(const AtomicField& field) {
+    if (std::holds_alternative<IntegerField>(field)) {
+        return std::to_string(std::get<IntegerField>(field).value);
+    } else if (std::holds_alternative<FloatField>(field)) {
+        return std::to_string(std::get<FloatField>(field).value);
+    } else if (std::holds_alternative<StringField>(field)) {
+        return '"' + std::get<StringField>(field).value + '"';
+    } else if (std::holds_alternative<VariableField>(field)) {
+        return std::get<VariableField>(field).name;
+    }
+    assert(false && "Unknown atomic type");
+    return "";
+}
+souffle::RamDomain evaluateAtomic(const AtomicField& field, const std::vector<std::string>& vars, const std::vector<int>& values) {
+    if (std::holds_alternative<IntegerField>(field)) {
+        return std::get<IntegerField>(field).value;
+    } else if (std::holds_alternative<VariableField>(field)) {
+        const std::string& var = std::get<VariableField>(field).name;
+        for (size_t i = 0; i < vars.size(); ++i) {
+            if (vars[i] == var) {
+                return values[i];
+            }
+        }
+        assert(false && "Variable not found in context");
+    }
+    assert(false && "Unsupported atomic field type in evaluation");
+    return 0;
+}
+
+struct ExprField;
+using ExprFieldPtr = std::shared_ptr<ExprField>;
+using ExprFieldReal = std::variant<AtomicField, ExprFieldPtr>;
+
+
+struct ExprField {
+    enum class OpType { And, Or, Neg, Atom, Add, Sub };
+    OpType op;
+    std::vector<ExprFieldReal> operands;
+    ExprField(OpType op, std::vector<ExprFieldReal> ops)
+    : op(op), operands(std::move(ops)) {}
+
+    souffle::RamDomain evaluate(const std::vector<std::string>& vars, const std::vector<int>& values);
+
+    static std::shared_ptr<ExprField> makeAtom(IntegerField field) {
+        return std::make_shared<ExprField>(OpType::Atom, std::vector{ExprFieldReal{std::move(field)}});
+    }
+    static std::shared_ptr<ExprField> makeAtom(FloatField field) {
+        return std::make_shared<ExprField>(OpType::Atom, std::vector{ExprFieldReal{std::move(field)}});
+    }
+    static std::shared_ptr<ExprField> makeAtom(StringField field) {
+        return std::make_shared<ExprField>(OpType::Atom, std::vector{ExprFieldReal{std::move(field)}});
+    }
+    static std::shared_ptr<ExprField> makeAtom(VariableField field) {
+        return std::make_shared<ExprField>(OpType::Atom, std::vector{ExprFieldReal{std::move(field)}});
+    }
+    static std::shared_ptr<ExprField> makeAtom(AtomicField field) {
+        return std::make_shared<ExprField>(OpType::Atom, std::vector{ExprFieldReal{std::move(field)}});
+    }
+
+    static std::shared_ptr<ExprField> makeAdd(ExprFieldReal lhs, ExprFieldReal rhs) {
+        return std::make_shared<ExprField>(OpType::Add, std::vector{std::move(lhs), std::move(rhs)});
+    }
+
+    static std::shared_ptr<ExprField> makeSub(ExprFieldReal lhs, ExprFieldReal rhs) {
+        return std::make_shared<ExprField>(OpType::Sub, std::vector{std::move(lhs), std::move(rhs)});
+    }
+
+    static std::shared_ptr<ExprField> makeAnd(ExprFieldReal lhs, ExprFieldReal rhs) {
+        return std::make_shared<ExprField>(OpType::And, std::vector{std::move(lhs), std::move(rhs)});
+    }
+
+    static std::shared_ptr<ExprField> makeOr(ExprFieldReal lhs, ExprFieldReal rhs) {
+        return std::make_shared<ExprField>(OpType::Or, std::vector{std::move(lhs), std::move(rhs)});
+    }
+
+    static std::shared_ptr<ExprField> makeNeg(ExprFieldReal child) {
+        return std::make_shared<ExprField>(OpType::Neg, std::vector{std::move(child)});
+    }
+
+    std::string exprFieldRealToString(const ExprFieldReal& expr) {
+        if (std::holds_alternative<AtomicField>(expr)) {
+            return atomicToString(std::get<AtomicField>(expr));
+        } else if (std::holds_alternative<ExprFieldPtr>(expr)) {
+            return exprFieldToString(*std::get<ExprFieldPtr>(expr));
+        }
+        assert(false && "Unknown ExprFieldReal type");
+        return "<invalid-expr-real>";
+    }
+
+    std::string exprFieldToString(const ExprField& expr) {
+        using Op = ExprField::OpType;
+        const auto& ops = expr.operands;
+
+        switch (expr.op) {
+            case Op::Add:
+                assert(ops.size() == 2);
+            return "(" + exprFieldRealToString(ops[0]) + " + " + exprFieldRealToString(ops[1]) + ")";
+            case Op::Sub:
+                assert(ops.size() == 2);
+            return "(" + exprFieldRealToString(ops[0]) + " - " + exprFieldRealToString(ops[1]) + ")";
+            case Op::Neg:
+                assert(ops.size() == 1);
+            return "(not " + exprFieldRealToString(ops[0]) + ")";
+            case Op::And:
+                assert(ops.size() == 2);
+            return "(" + exprFieldRealToString(ops[0]) + " and " + exprFieldRealToString(ops[1]) + ")";
+            case Op::Or:
+                assert(ops.size() == 2);
+            return "(" + exprFieldRealToString(ops[0]) + " or " + exprFieldRealToString(ops[1]) + ")";
+            case Op::Atom:
+                assert(ops.size() == 1);
+            return exprFieldRealToString(ops[0]);
+        }
+        return "<invalid-expr>";
+    }
+};
+
+souffle::RamDomain evaluateExprReal(const ExprFieldReal& real, const std::vector<std::string>& vars, const std::vector<int>& values) {
+    if (std::holds_alternative<AtomicField>(real)) {
+        return evaluateAtomic(std::get<AtomicField>(real), vars, values);
+    } else if (std::holds_alternative<ExprFieldPtr>(real)) {
+        return std::get<ExprFieldPtr>(real)->evaluate(vars, values);
+    }
+    assert(false && "Unknown ExprFieldReal type");
+    return 0;
+}
+souffle::RamDomain ExprField::evaluate(const std::vector<std::string>& vars, const std::vector<int>& values) {
+    using Op = ExprField::OpType;
+    assert(op == Op::Atom || operands.size() >= 1);
+
+    switch (op) {
+        case Op::Atom:
+            return evaluateExprReal(operands[0], vars, values);
+        case Op::Add:
+            assert(operands.size() == 2);
+        return evaluateExprReal(operands[0], vars, values) +
+               evaluateExprReal(operands[1], vars, values);
+        case Op::Sub:
+            assert(operands.size() == 2);
+        return evaluateExprReal(operands[0], vars, values) -
+               evaluateExprReal(operands[1], vars, values);
+        case Op::And:
+            assert(operands.size() == 2);
+        return evaluateExprReal(operands[0], vars, values) &&
+               evaluateExprReal(operands[1], vars, values);
+        case Op::Or:
+            assert(operands.size() == 2);
+        return evaluateExprReal(operands[0], vars, values) ||
+               evaluateExprReal(operands[1], vars, values);
+        case Op::Neg:
+            assert(operands.size() == 1);
+        return !evaluateExprReal(operands[0], vars, values);
+    }
+    assert(false && "Unknown expression op in evaluation");
+    return 0;
+}
+
 struct SymbolicField {
     std::variant<IntegerField,
                  FloatField,
                  StringField,
-                 VariableField> field;
+                 VariableField,
+                 std::shared_ptr<ExprField>> field;
 
     explicit SymbolicField(int value) : field(IntegerField{value}) {}
     explicit SymbolicField(double value) : field(FloatField{value}) {}
     explicit SymbolicField(const StringField& field) : field(field) {}
     explicit SymbolicField(const VariableField& field) : field(field) {}
+    SymbolicField(const std::shared_ptr<ExprField>& ptr) : field(ptr) {}
+    SymbolicField(std::shared_ptr<ExprField>&& ptr) : field(std::move(ptr)) {}
 
     static SymbolicField makeVariable(const std::string& varname) {
         SymbolicField result{VariableField{varname}};
@@ -55,6 +216,8 @@ struct SymbolicField {
             return '"' + std::get<StringField>(field).value + '"';
         } else if (std::holds_alternative<VariableField>(field)) {
             return std::get<VariableField>(field).name;
+        } else if (std::holds_alternative<std::shared_ptr<ExprField>>(field)) {
+            return std::get<std::shared_ptr<ExprField>>(field)->exprFieldToString(*std::get<std::shared_ptr<ExprField>>(field));
         }
         assert (false && "Unknown field type");
     }
@@ -109,7 +272,7 @@ public:
         return vars;
     }
 
-    std::vector<souffle::RamDomain> instantiatedFields(const std::vector<std::string> vars, const std::vector<int>& values) const {
+    std::vector<souffle::RamDomain> instantiatedFields(const std::vector<std::string>& vars, const std::vector<int>& values) const {
         std::vector<souffle::RamDomain> result;  // TODO
         for (const auto& field : fields) {
             if (std::holds_alternative<VariableField>(field.field)) {
@@ -125,8 +288,12 @@ public:
                 if (!found) {
                     assert(false && "Variable not found in map");
                 }
-        } else if (std::holds_alternative<IntegerField>(field.field)) {
-	            result.push_back(std::get<IntegerField>(field.field).value);
+            } else if (std::holds_alternative<IntegerField>(field.field)) {
+	                result.push_back(std::get<IntegerField>(field.field).value);
+            } else if (std::holds_alternative<std::shared_ptr<ExprField>>(field.field)) {
+                // Handle expression fields, if needed
+                result.push_back(
+                    std::get<std::shared_ptr<ExprField>>(field.field)->evaluate(vars, values));
             }
         }
         return result;

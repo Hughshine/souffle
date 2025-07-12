@@ -124,9 +124,11 @@
 #include <utility>
 #include <vector>
 #include <ast/Constant.h>
+#include <ast/IntrinsicFunctor.h>
 #include <ast/Negation.h>
 #include <ast/NumericConstant.h>
 #include <ast/StringConstant.h>
+#include <ast/Term.h>
 #include <ast/UnnamedVariable.h>
 #include <souffle/SouffleInterface.h>
 
@@ -298,6 +300,7 @@ void Synthesiser::emitRules (std::ostream& out) {
             ast::Atom* headAtom = as<ast::Atom>(clause->getHead());
             std::vector<std::pair<char, std::string>> fields;
             // std::vector<std::string> fieldVars{};  // only consider variables for now
+            // TODO: change to use serialize()
             for (auto field: headAtom->getArguments()) {
                 if (isA<ast::Variable>(field)) {
                     auto var = as<ast::Variable>(field);
@@ -323,30 +326,41 @@ void Synthesiser::emitRules (std::ostream& out) {
                 } else if (isA<ast::StringConstant>(field)) {
                     auto constant = as<ast::StringConstant>(field);
                     fields.emplace_back('S', constant->getConstant());
+                } else if (isA<ast::IntrinsicFunctor>(field)) {
+                    // rec_rand_var(Var_z,Times,(X||Y)) :- ...
+                    auto fieldFunctor = as<ast::IntrinsicFunctor>(field);
+                    fields.emplace_back('E', fieldFunctor->serialize());
                 } else {
+                    std::cout << headAtom->getQualifiedName().toString() << std::endl;
                     assert (false && "Not impl yet, atom");
                     // TODO: can we just omit all constraints?
                     continue;
                 }
             }
-            out << "const Atom " << headAtomName << " = Atom{\"" << headAtom->getQualifiedName().toString() << "\", {";
-            for (auto [tag, field]: fields) {
+            out << "const Atom " << headAtomName << " = Atom(\"" << headAtom->getQualifiedName().toString() << "\", std::vector<SymbolicField>{";
+            for (size_t ii = 0; ii < fields.size(); ++ii) {
+                const auto& [tag, field] = fields[ii];
                 switch (tag) {
                     case 'V':
-                        out << "SymbolicField::makeVariable(\"" << field << "\"), ";
+                        out << "SymbolicField::makeVariable(\"" << field << "\")";
                         break;
                     case 'I':
                     case 'F':
                     case 'U':
-                        out << "SymbolicField{" << field << "}, "; break;
+                        out << "SymbolicField{" << field << "}"; break;
                     case 'S':
-                        out << "SymbolicField{StringField{" << field << "}}, "; break;
+                        out << "SymbolicField{StringField{" << field << "}}"; break;
+                    case 'E':
+                        out << "SymbolicField(std::shared_ptr<ExprField>(" << field << "))"; break;
+                        // out << field << ", "; break;
                     default:
                         assert (false && "Unknown field type");
                 }
-                // out << "SymbolicField::makeVariable(\"" << var << "\"), ";
+                if (ii + 1 != fields.size()) {
+                    out << ", ";
+                }
             }
-            out << "}};" << std::endl;
+            out << "});" << std::endl;
         }
         // const auto& initialBodyLiterals = initClause->getBodyLiterals();
         const auto& bodyLiterals = clause->getBodyLiterals();
@@ -413,18 +427,20 @@ void Synthesiser::emitRules (std::ostream& out) {
     }
     out << "ruleManager = RuleManager({" << join(ruleNames, ", ") << "});" << std::endl;
     // out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
-        out << "std::cout << ruleManager.toString();\n";
+        // out << "std::cout << ruleManager.toString();\n";
 }
 
 void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "std::cout << std::fixed << std::setprecision(10);\n";
     out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
-    out << "graph->dumpStatistics(std::cout);\n";
-    out << "graph->dumpDot(\"before_prune.dot\");\n" << std::endl;
+    out << "// graph->dumpStatistics(std::cout);\n";
+    out << "// graph->dumpDot(\"before_prune.dot\");\n" << std::endl;
+    out << "debugger.startStage(StageKind::PRUNING_FULL);\n";
     out << "auto view = graph->prune(obj.getOutputRelations());\n" << std::endl;
+    out << "debugger.endStage();\n";
     out << "view.dumpDot(\"after_prune.dot\");\n" << std::endl;
     // out << "view.dumpStatistics(std::cout);\n";
-    out << "view.dumpStatisticsInc(std::cout);\n";
+    // out << "view.dumpStatisticsInc(std::cout);\n";
     // if (glb.config().has("verbose")) {
     //     out << "view->dumpDot(\"derivation_graph.dot\");\n";
     // }
@@ -433,15 +449,18 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
     out << "WeightedBDDManager bddManager;\n";
     out << "{\n" << std::endl;
-    out << "FunctionTimer timer(\" building formulas \");\n";
+    // out << "FunctionTimer timer(\" building formulas \");\n";
+    out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
     out << "buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);\n";
-
+    out << "debugger.endStage();\n";
     out << "}" << std::endl;
     out << "{" << std::endl;
-    out << "FunctionTimer timer(\" wmc and output probability \");\n";
+    out << "debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);\n";
+
+    // out << "FunctionTimer timer(\" wmc and output probability \");\n";
     // print result to cout; TODO print to files
-    out << "std::cout << \"nodeFormulas size: \" << nodeFormulas.size() << std::flush;\n";
-    out << "std::cout << \"edgeFormulas size: \" << edgeFormulas.size() << std::flush;\n";
+    // out << "std::cout << \"nodeFormulas size: \" << nodeFormulas.size() << std::flush;\n";
+    // out << "std::cout << \"edgeFormulas size: \" << edgeFormulas.size() << std::flush;\n";
     // out << "size_t count = 0;\n";
     // out << "std::unordered_map<NodePtr, double> nodeProbabilities;\n";
     out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
@@ -452,7 +471,10 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "    probResult[node] = prob;\n";
     out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
     out << "}\n";
+    out << "debugger.endStage();\n";
     out << "dumpProbabilities(probResult, \"" << glb.config().get("output-dir") << "\");\n";
+    out << "debugger.endTurn();\n";
+
     if (glb.config().has("online")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
         out << "cli.run();\n";
@@ -464,15 +486,16 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "std::map<EdgePtr, SddNodeRef> edgeFormulas;";
     out << "SddFormulaManager sddManager(view.getNodes().size() + view.getEdges().size());\n";
     out << "{\n" << std::endl;
-    out << "FunctionTimer timer(\" building formulas \");\n";
+    // out << "FunctionTimer timer(\" building formulas \");\n";
     out << "buildFormulasCyclewise(view, sddManager, nodeFormulas, edgeFormulas);\n";
 
     out << "}" << std::endl;
     out << "{" << std::endl;
-    out << "FunctionTimer timer(\" wmc and output probability \");\n";
+    out << "debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);\n";
+    // out << "FunctionTimer timer(\" wmc and output probability \");\n";
     // print result to cout; TODO print to files
-    out << "std::cout << \"nodeFormulas size: \" << nodeFormulas.size() << std::flush;\n";
-    out << "std::cout << \"edgeFormulas size: \" << edgeFormulas.size() << std::flush;\n";
+    // out << "std::cout << \"nodeFormulas size: \" << nodeFormulas.size() << std::flush;\n";
+    // out << "std::cout << \"edgeFormulas size: \" << edgeFormulas.size() << std::flush;\n";
     // out << "size_t count = 0;\n";
     // out << "std::unordered_map<NodePtr, double> nodeProbabilities;\n";
     out << "for (const auto& [node, sdd] : nodeFormulas) {\n";
@@ -483,6 +506,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "    probResult[node] = prob;\n";
     out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
     out << "}\n";
+    out << "debugger.endStage();\n";
     out << "dumpProbabilities(probResult, \"" << glb.config().get("output-dir") << "\");\n";
     if (glb.config().has("online")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &sddManager, &nodeFormulas, &edgeFormulas);\n";
@@ -497,7 +521,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     // out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
     // out << "    std::cout << \"Probability: \" << prob << std::endl;\n";
     // out << "}\n";
-    out << "std::cout << \"Done\" << std::endl;\n";
+    // out << "std::cout << \"Done\" << std::endl;\n";
 }
 
 void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
@@ -660,7 +684,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                             out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << getBaseRelationName(io.getRelation()) << "\",tuple);\n";
                             out << "inputFactSet.insert(untypedTuple);\n";
                         out << "}" << std::endl;
-                        out << "dumpInputFacts();\n";
+                        // out << "dumpInputFacts();\n";
                     }
                 } else {
                     const std::string& isInsert = io.get("inc-insert");
@@ -954,6 +978,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             out << "FunctionTimer timer(\"" <<  call.getName() << "\");\n";
             out << " std::vector<RamDomain> args, ret;\n";
             out << synthesiser.convertStratumIdent(call.getName()) << ".run(args, ret);\n";
+            out << "debugger.endStage();\n";
             out << "}\n";
             PRINT_END_COMMENT(out);
         }
@@ -2244,7 +2269,8 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 if (!recordDerivation.isRederive()) {
                     out << "ruleSet->insert(ruleApplication);\n";
                 } else {
-                    out << "std::cout << \"rederive: \" << untypedTuple.toString() << \" \" << ruleApplication.toString() << std::endl;\n";
+                    // rederiving overdeleted derivations
+                    // out << "std::cout << \"rederive: \" << untypedTuple.toString() << \" \" << ruleApplication.toString() << std::endl;\n";
                     out << "ruleSet->erase(ruleApplication);\n";
                 }
                 if (!recordDerivation.isComplete()) {
@@ -4052,7 +4078,10 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     //     hook << R"(DerivationManager::untypedTuple2RuleApplications = DerivationManager::derivationInfoFromJsonFile(opt.getSourceFileName(),"", opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n"; // Read old computation
     // hook << "}\n";
     // }
+    hook << "debugger.startTurn();\n";
+    hook << "debugger.startStage(StageKind::SEMINAIVE_FULL);\n";
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
+    hook << "debugger.endStage();\n";
     // hook << "{\n";
     // hook << "FunctionTimer timer(\"dumping derivations\");\n";
     // hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "", DerivationManager::untypedTuple2RuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // Should be complete, take into new deltas into account
@@ -4098,6 +4127,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
     db.addGlobalInclude("\"souffle/problog/formula/SddManager.h\"");
     db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
+    db.addGlobalInclude("\"souffle/problog/debug/Debugger.h\"");
     if (glb.config().has("online")) {
         db.addGlobalInclude("\"souffle/cli/Cli.h\"");
     }
@@ -4108,11 +4138,15 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     emitProblogPipeline(hook);
 
-
+    hook << "Debugger& debugger = Debugger::getInstance();\n";
+    hook << "std::string reportFile = generateFilename();\n";
+    hook << "std::ofstream ofs = std::ofstream(reportFile);\n";
+    hook << "debugger.printReport(ofs);\n";
+    hook << "debugger.printReport(std::cout);\n";
     // add online incremental&interactive computation
 
 
-    hook << "} catch (std::exception& e) {std::cerr << \"Problog colc failed\" << e.what() << std::endl;}\n";
+    hook << "} catch (std::exception& e) {std::cerr << \"Problog calc failed\" << e.what() << std::endl;}\n";
     // }
 
 

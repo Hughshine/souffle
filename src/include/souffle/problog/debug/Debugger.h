@@ -11,10 +11,10 @@
 #include <sstream>
 #include <utility>
 #include <cassert>
-
+class Debugger;
 enum class Level { INFO, WARNING, ERROR, DEBUG };
 
-std::string levelToString(Level level) {
+inline std::string levelToString(Level level) {
     switch (level) {
         case Level::INFO: return "INFO";
         case Level::WARNING: return "WARNING";
@@ -35,7 +35,7 @@ enum class StageKind {
     WEIGHTED_MODEL_COUNTING_INC
 };
 
-inline std::string stageKindToString(StageKind kind) {
+inline std::string stageKindToString(const StageKind kind) {
     switch (kind) {
         case StageKind::SEMINAIVE_FULL: return "SEMINAIVE_FULL";
         case StageKind::PRUNING_FULL: return "PRUNING_FULL";
@@ -66,11 +66,11 @@ public:
     }
 
     std::string getInfo(const std::string& key) const {
-        auto it = infoMap_.find(key);
+        const auto it = infoMap_.find(key);
         return it != infoMap_.end() ? it->second : "";
     }
 
-    void logMessage(Level level, const std::string& message) {
+    void logMessage(const Level level, const std::string& message) {
         logs_[level].push_back(message);
     }
 
@@ -99,8 +99,7 @@ public:
 class IterationInfo : public Info {
 public:
     int iterationIndex;
-
-    IterationInfo(int idx) : iterationIndex(idx) {}
+    explicit IterationInfo(const int idx) : iterationIndex(idx) {}
 };
 
 class StageInfo : public Info {
@@ -108,7 +107,7 @@ public:
     StageKind kind;
     std::vector<IterationInfo> iterations;
 
-    StageInfo(StageKind k)
+    explicit StageInfo(const StageKind k)
         : kind(k) {}
 };
 
@@ -119,7 +118,7 @@ public:
     size_t inputSize = 0;
     std::vector<StageInfo> stages;
 
-    TurnInfo(int idx, std::string mode)
+    TurnInfo(const int idx, std::string mode)
         : turnIndex(idx), algMode(std::move(mode)) {}
 };
 
@@ -136,13 +135,13 @@ public:
     TurnInfo* startTurn(const std::string& mode = "DEFAULT") {
         std::lock_guard<std::mutex> lock(mtx_);
         assert (mode == "DEFAULT" || mode == "FULL" || mode == "INC");
-        std::string realMode = "";
-        if (turnCount_ == 0) {
+        std::string realMode;
+        if (turnCount_ == 0 || mode == "FULL") {
             realMode = "FULL";  // Default mode if not specified
         } else if (mode == "DEFAULT" && turnCount_ > 0) {
             realMode = "INC";
         } else {
-            realMode = "FULL";
+            realMode = "INC";
         }
         turns_.emplace_back(++turnCount_, realMode);
         TurnInfo& turn = turns_.back();
@@ -160,6 +159,7 @@ public:
         currentTurn_->markEndTime();
         currentTurn_ = nullptr;
     }
+
 
     StageInfo* startStage(StageKind kind) {
         std::lock_guard<std::mutex> lock(mtx_);
@@ -185,7 +185,7 @@ public:
         std::lock_guard<std::mutex> lock(mtx_);
         if (!currentStage_) return nullptr;
         size_t idx = currentStage_->iterations.size();
-        currentStage_->iterations.emplace_back((int)idx);
+        currentStage_->iterations.emplace_back(static_cast<int>(idx));
         IterationInfo& iter = currentStage_->iterations.back();
         iter.setMemStart(getCurrentMemoryUsage());
         iter.markStartTime();
@@ -202,14 +202,14 @@ public:
         currentIteration_ = nullptr;
     }
 
-    void addInfo(const std::string& key, const std::string& value) {
+    void addInfo(const std::string& key, const std::string& value) const {
         std::lock_guard<std::mutex> lock(mtx_);
         if (currentIteration_) currentIteration_->setInfo(key, value);
         else if (currentStage_) currentStage_->setInfo(key, value);
         else if (currentTurn_) currentTurn_->setInfo(key, value);
     }
 
-    void logMessage(Level level, const std::string& message) {
+    void logMessage(Level level, const std::string& message) const {
         std::lock_guard<std::mutex> lock(mtx_);
         if (currentIteration_) currentIteration_->logMessage(level, message);
         else if (currentStage_) currentStage_->logMessage(level, message);
@@ -240,18 +240,22 @@ public:
                         os << "    [" << levelToString(lvl) << "] " << msg << "\n";
                     }
                 }
-                for (const auto& iter : stage.iterations) {
-                    os << "    Iteration " << iter.iterationIndex << ": Time=" << iter.getDurationSeconds()
-                       << "s, MemUsage=" << iter.getMemEnd() << "KB, Peak=" << iter.getMemPeak() << "KB\n";
-                    for (const auto& [k, v] : iter.getInfoMap()) {
-                        os << "      " << k << ": " << v << "\n";
-                    }
-                    for (const auto& [lvl, msgs] : iter.getLogs()) {
-                        for (const auto& msg : msgs) {
-                            os << "      [" << levelToString(lvl) << "] " << msg << "\n";
+                // TODO: temporarily disable detailed iteration logs
+                if (false) {
+                    for (const auto& iter : stage.iterations) {
+                        os << "    Iteration " << iter.iterationIndex << ": Time=" << iter.getDurationSeconds()
+                           << "s, MemUsage=" << iter.getMemEnd() << "KB, Peak=" << iter.getMemPeak() << "KB\n";
+                        for (const auto& [k, v] : iter.getInfoMap()) {
+                            os << "      " << k << ": " << v << "\n";
+                        }
+                        for (const auto& [lvl, msgs] : iter.getLogs()) {
+                            for (const auto& msg : msgs) {
+                                os << "      [" << levelToString(lvl) << "] " << msg << "\n";
+                            }
                         }
                     }
                 }
+
             }
         }
     }

@@ -27,6 +27,20 @@ bool NumericConstant::equal(const Node& node) const {
     return Constant::equal(node) && fixedType == other.fixedType;
 }
 
+std::string NumericConstant::serialize() const {
+    if (fixedType.has_value()) {
+        switch (*fixedType) {
+            case Type::Int:
+                return "IntegerField{" + this->getConstant() + "}";
+            case Type::Uint:
+                return "UnsignedField{" + this->getConstant() + "}";
+            case Type::Float:
+                return "FloatField{" + this->getConstant() + "}";
+        }
+    }
+    return "IntegerField{" + this->getConstant() + "}";
+}
+
 NumericConstant* NumericConstant::cloning() const {
     return new NumericConstant(getConstant(), getFixedType(), getSrcLoc());
 }

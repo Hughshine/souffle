@@ -32,6 +32,32 @@ void IntrinsicFunctor::print(std::ostream& os) const {
     }
 }
 
+// This is only for problog, rule synthesis
+// +/-,land,lor,lneg
+std::string IntrinsicFunctor::serialize() const {
+    // args: VecOwn<Argument> ;
+    // function: std::string; +, -, land, lor, lneg
+    std::string result;
+    if (function == "+" && args.size() == 2) {
+        result = "ExprField::makeAdd(" +
+            args[0]->serialize() + ", " + args[1]->serialize() + ")";
+    } else if (function == "-" && args.size() == 2) {
+        result = "ExprField::makeSub(" +
+            args[0]->serialize() + ", " + args[1]->serialize() + ")";
+    } else if (function == "&&" && args.size() == 2) {
+        result = "ExprField::makeAnd(" +
+            args[0]->serialize() + ", " + args[1]->serialize() + ")";
+    } else if (function == "||" && args.size() == 2) {
+        result = "ExprField::makeOr(" +
+            args[0]->serialize() + ", " + args[1]->serialize() + ")";
+    } else if (function == "!" && args.size() == 1) {
+        result = "ExprField::makeNeg(" + args[0]->serialize() + ")";
+    } else {
+        assert (false && "IntrinsicFunctor::serialize() not implemented for this functor");
+    }
+    return result;
+}
+
 bool IntrinsicFunctor::equal(const Node& node) const {
     const auto& other = asAssert<IntrinsicFunctor>(node);
     return function == other.function && Functor::equal(node);

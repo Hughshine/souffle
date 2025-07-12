@@ -19,6 +19,11 @@ void StringConstant::print(std::ostream& os) const {
     os << "\"" << getConstant() << "\"";
 }
 
+std::string StringConstant::serialize() const {
+    return "SymbolicField{StringField{" + getConstant() + "}}";
+}
+
+
 StringConstant* StringConstant::cloning() const {
     return new StringConstant(getConstant(), getSrcLoc());
 }

@@ -511,7 +511,7 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
             mk<ast::transform::ResolveAliasesTransformer>(),
             mk<ast::transform::MinimiseProgramTransformer>(),  // TODO, avoid removing probablistic clauses
             // mk<ast::transform::InlineUnmarkExcludedTransform>(),
-            mk<ast::transform::InlineRelationsTransformer>(),
+            // mk<ast::transform::InlineRelationsTransformer>(),
             mk<ast::transform::GroundedTermsChecker>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
             mk<ast::transform::SimplifyConstantBinaryConstraintsTransformer>(),
@@ -740,6 +740,8 @@ std::vector<MainOption> getMainOptions() {
             "Enable full compilation that considering delta (incremental fact update)"}, // TODO
     {"online", 'O', "", "", false,
           "Enable online compilation that allows interactive incremental updates"}, // TODO
+    {"full-only", 'x', "", "", false,
+        "Debugging purpose... do not generate inc code for online mode"}, // TODO
       {"show", nextOptChar++, "[ <see-list> ]", "", true,
           "Print selected program information.\n"
           "Modes:\n"
