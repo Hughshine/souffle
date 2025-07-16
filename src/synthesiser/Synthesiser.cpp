@@ -439,6 +439,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "auto view = graph->prune(obj.getOutputRelations());\n" << std::endl;
     out << "debugger.endStage();\n";
     out << "view.dumpDot(\"after_prune.dot\");\n" << std::endl;
+    out << "view.dumpJson(\"derivation.json\");\n";
     // out << "view.dumpStatistics(std::cout);\n";
     // out << "view.dumpStatisticsInc(std::cout);\n";
     // if (glb.config().has("verbose")) {

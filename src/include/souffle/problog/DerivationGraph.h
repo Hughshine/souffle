@@ -1,6 +1,7 @@
 #ifndef DERIVATIONGRAPH_H
 #define DERIVATIONGRAPH_H
 
+#include <iostream>
 #pragma once
 
 #include <vector>
@@ -142,6 +143,7 @@ public:
     virtual const std::unordered_set<NodePtr>& getNodes() const = 0;
     virtual const std::unordered_set<EdgePtr>& getEdges() const = 0;
     void dumpDot(const std::string& filename) const;
+    void dumpJson(const std::string& filename) const;
 
     std::vector<EdgePtr> getIncomingEdges(NodePtr node) const;
     std::vector<EdgePtr> getOutgoingEdges(NodePtr node) const;
@@ -224,6 +226,74 @@ protected:
     std::unordered_set<NodePtr> nodes_;
     std::unordered_set<EdgePtr> edges_;
 };
+
+void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
+    std::ofstream out(filename);
+    if (!out.is_open()) {
+        throw std::runtime_error("Cannot open file: " + filename);
+    }
+
+    out << "{\n";
+    
+    // Facts section
+    out << "  \"facts\": [\n";
+    bool first = true;
+    for (const auto& node : getNodes()) {
+        std::cout << node->getTuple().toString() << " is fact?" << node->isFact << std::endl;
+        if (node->isFact) {
+            if (!first) {
+                out << ",\n";
+            }
+            first = false;
+            out << "    {\"name\": \"" << node->getTuple().toString() << "\",";
+            out << "     \"probability\": " << node->getProbability() << "}";
+        }
+    }
+    out << "\n  ],\n";
+    
+    // Rules section
+    out << "  \"rules\": [\n";
+    first = true;
+    for (const auto& edge : getEdges()) {
+        if (!first) {
+            out << ",\n";
+        }
+        first = false;
+        
+        out << "    {\n";
+        
+        // Head
+        NodePtr headNode = this->getOutput(edge);
+        out << "      \"head\": \"" << headNode->getTuple().toString() << "\",\n";
+        // Probability
+        out << "      \"probability\": " << edge->getProbability() << ",\n";
+        // Bodies
+        out << "      \"bodies\": [\n";
+        
+        std::vector<NodePtr> inputs = this->getInputs(edge);
+        std::vector<bool> negations = this->getBodyNegations(edge);
+        
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            if (i > 0) {
+                out << ",\n";
+            }
+            out << "        {\n";
+            
+            // Handle negation - default to false if negations vector is too short
+            bool isNegated = (i < negations.size()) ? negations[i] : false;
+            out << "          \"negation\": " << (isNegated ? "true" : "false") << ",\n";
+            out << "          \"name\": \"" << inputs[i]->getTuple().toString() << "\"\n";
+            out << "        }";
+        }
+        
+        out << "\n      ]\n";
+        out << "    }";
+    }
+    
+    out << "\n  ]\n";
+    out << "}\n";
+    out.close();
+}
 
 void DerivationGraphViewInterface::dumpDot(const std::string& filename) const {
     std::ofstream out(filename);
