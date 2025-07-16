@@ -310,7 +310,7 @@ bool MinimiseProgramTransformer::reduceSingletonRelations(TranslationUnit& trans
         if (ioTypes.isIO(rel)) continue;
 
         auto clauses = program.getClauses(*rel);
-        if (clauses.size() == 1) {
+        if (clauses.size() == 1 && clauses[0]->getProbability() == 1.0) {
             singletonRelationClauses.push_back(&*clauses[0]);
         }
     }
