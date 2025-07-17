@@ -47,8 +47,6 @@ public:
 
     static bool classof(const Node*);
 
-    std::string serialize() const override;
-
 private:
     bool equal(const Node& node) const override;
 

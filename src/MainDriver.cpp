@@ -28,6 +28,7 @@
 #include "ast/transform/ComponentInstantiation.h"
 #include "ast/transform/Conditional.h"
 #include "ast/transform/DebugDeltaRelation.h"
+#include "ast/transform/EvidenceChecker.h"
 #include "ast/transform/ExecutionPlanChecker.h"
 #include "ast/transform/ExpandEqrels.h"
 #include "ast/transform/Fixpoint.h"
@@ -489,6 +490,7 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
     //
     // // Main pipeline // TODO: Maybe some passes is unused or invalid or should be changed under prob setting
     auto pipeline = mk<ast::transform::PipelineTransformer>(mk<ast::transform::ComponentChecker>(),
+            mk<ast::transform::EvidenceSemanticChecker>(),
             mk<ast::transform::ComponentInstantiationTransformer>(),
             // mk<ast::transform::LatticeTransformer>(),
             mk<ast::transform::DebugDeltaRelationTransformer>(),
@@ -509,9 +511,9 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
             mk<ast::transform::ResolveAliasesTransformer>(),
             mk<ast::transform::RemoveBooleanConstraintsTransformer>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
-            mk<ast::transform::MinimiseProgramTransformer>(),  // TODO, avoid removing probablistic clauses
+            mk<ast::transform::MinimiseProgramTransformer>(),
             // mk<ast::transform::InlineUnmarkExcludedTransform>(),
-            // mk<ast::transform::InlineRelationsTransformer>(),
+            mk<ast::transform::InlineRelationsTransformer>(),
             mk<ast::transform::GroundedTermsChecker>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
             mk<ast::transform::SimplifyConstantBinaryConstraintsTransformer>(),
@@ -740,8 +742,6 @@ std::vector<MainOption> getMainOptions() {
             "Enable full compilation that considering delta (incremental fact update)"}, // TODO
     {"online", 'O', "", "", false,
           "Enable online compilation that allows interactive incremental updates"}, // TODO
-    {"full-only", 'x', "", "", false,
-        "Debugging purpose... do not generate inc code for online mode"}, // TODO
       {"show", nextOptChar++, "[ <see-list> ]", "", true,
           "Print selected program information.\n"
           "Modes:\n"

@@ -168,6 +168,7 @@ WS [ \t\r\v\f]
                                         }
                                       }
 "query"                               { return yy::parser::make_QUERY(yylloc); }
+"evidence"                            { return yy::parser::make_EVIDENCE(yylloc); }
 "debug_delta"                         { return yy::parser::make_DEBUG_DELTA(yylloc); }
 "autoinc"                             { return yy::parser::make_AUTOINC(yylloc); }
 "band"                                { return yy::parser::make_BW_AND(yylloc); }

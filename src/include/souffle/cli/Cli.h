@@ -347,8 +347,6 @@ public:
              }
         }
     }
-
-    size_t iteration = 1;
     void commit() {
         static size_t commitCount = 0;
         // TODO: should clean all delta relations after each commit
@@ -425,12 +423,24 @@ public:
                 DerivationManager::untypedTuple2DeltaDeleteRuleApplications.clear();
                 DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();
                 DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();
-                debugger.startTurn();
-                debugger.startStage(StageKind::SEMINAIVE_INC);
+                FunctionTimer timer("runAllInc" + std::to_string(++commitCount));
+                std::cout << "runAllInc()..." << std::endl;
                 program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);
-                debugger.endStage();
             }
-            debugger.startStage(StageKind::PRUNING_INC);
+//            {
+//                for (auto ruleapp: DerivationManager::untypedTuple2DeltaInsertRuleApplications) {
+//                    std::cout << "insert rule application: " << ruleapp.first.toString() << std::endl;
+//                    for (auto t: *(ruleapp.second)) {
+//                        std::cout << "insert rule application tuple: " << RuleApplication::toString(t) << std::endl;
+//                    }
+//                }
+//                for (auto ruleapp: DerivationManager::untypedTuple2DeltaDeleteRuleApplications) {
+//                    std::cout << "delete rule application: " << ruleapp.first.toString() << std::endl;
+//                    for (auto t: *(ruleapp.second)) {
+//                        std::cout << "delete rule application tuple: " << RuleApplication::toString(t) << std::endl;
+//                    }
+//                }
+//            }
             graph->applyDelta(
                 DerivationManager::untypedTuple2DeltaInsertRuleApplications,
                 DerivationManager::untypedTuple2DeltaDeleteRuleApplications,
@@ -439,14 +449,13 @@ public:
                 getDeletedFacts() // deletedFacts; cli should collect this
             );
             auto view = graph->prune(program->getOutputRelations());
-            debugger.endStage();
-            view.dumpDotInc("derivation-inc" + std::to_string(iteration++) + ".dot");
-            debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
+            view.dumpDotInc("derivation-inc.dot");
+            for (auto edge: view.getEdges()) {
+                std::cout << edge->toString() << std::endl;
+            }
             buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
-            debugger.endStage();
             probResult.clear();
             {
-                debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
                 FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(nodeFormulas->size()));
 //                std::ofstream formulaFile("./formula.txt");
                 for (const auto& [node, dd] : *nodeFormulas) {
@@ -462,9 +471,7 @@ public:
 //                    auto prob = bddManager->computeWeightedModelCount(bdd);
                     probResult[node] = prob;
                 }
-                debugger.endStage();
             }
-            debugger.endTurn();
             dumpProbabilities(probResult,"./output/","fact-inc");
 //            for (const auto& [edge, bdd] : *edgeFormulas) {
 //                std::cout << edge->toString() << " : ";
@@ -472,7 +479,7 @@ public:
 //                auto prob = bddManager->computeWeightedModelCount(bdd);
 //                std::cout << "Probability: " << prob << std::endl;
 //            }
-//            std::cout << "Done" << std::endl;
+            std::cout << "Done" << std::endl;
         } else {
             std::cout << "No program loaded." << std::endl;
         }

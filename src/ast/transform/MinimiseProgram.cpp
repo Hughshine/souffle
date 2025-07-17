@@ -218,8 +218,6 @@ bool MinimiseProgramTransformer::areBijectivelyEquivalent(
         return false;
     }
 
-    // TODO: should only eliminate rules with probability 1.0
-
     // head atoms must have the same arity (names do not matter)
     if (leftElements[0].params.size() != rightElements[0].params.size()) {
         return false;
@@ -310,7 +308,7 @@ bool MinimiseProgramTransformer::reduceSingletonRelations(TranslationUnit& trans
         if (ioTypes.isIO(rel)) continue;
 
         auto clauses = program.getClauses(*rel);
-        if (clauses.size() == 1 && clauses[0]->getProbability() == 1.0) {
+        if (clauses.size() == 1) {
             singletonRelationClauses.push_back(&*clauses[0]);
         }
     }

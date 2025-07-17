@@ -33,8 +33,6 @@ public:
 
     static bool classof(const Node*);
 
-    std::string serialize() const override;
-
 protected:
     void print(std::ostream& os) const override;
 

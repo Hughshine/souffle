@@ -7,35 +7,17 @@
 #include "souffle/RamTypes.h"
 #include "utility/json11.h"
 
-#include "souffle/problog/debug//Debugger.h"
 #include <cassert>
-#include <chrono>
-#include <filesystem>
 #include <fstream>
-#include <functional>
-#include <iostream>
 #include <map>
 #include <set>
-#include <string>
 #include <unordered_set>
 #include <vector>
-
-inline std::string generateFilename(const std::string& prefix = "log") {
-    std::time_t now = std::time(nullptr);
-    std::tm* local = std::localtime(&now);
-
-    std::ostringstream oss;
-    oss << prefix << "_"
-        << (1900 + local->tm_year)
-        << (local->tm_mon + 1)
-        << local->tm_mday << "_"
-        << local->tm_hour
-        << local->tm_min
-        << local->tm_sec
-        << ".txt";
-
-    return oss.str();
-}
+#include <chrono>
+#include <iostream>
+#include <string>
+#include <functional>
+#include <filesystem>
 
 // TODO: move to another file
 class FunctionTimer {
@@ -47,8 +29,6 @@ private:
     std::string function_name_;
     TimePoint start_time_;
     bool print_on_destruction_;
-
-    Debugger& debugger = Debugger::getInstance();
 
 public:
     // Constructor with optional function name

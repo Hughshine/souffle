@@ -4,6 +4,7 @@
 #ifndef SDDMANAGER_H
 #define SDDMANAGER_H
 
+#include <sdd++/sdd++.hpp>
 #include <vector>
 #include <string>
 #include <sdd/sdd.h>
@@ -121,11 +122,14 @@ inline SddFormulaManager::SddFormulaManager(int var_count) {
     SddManager* raw_mgr = sdd_manager_new(vtree);
     sdd_manager_set_vtree_apply_time_limit(5.0, raw_mgr);
     sdd_manager_set_vtree_cartesian_product_limit(1000000, raw_mgr);
+    sdd_manager_set_vtree_operation_memory_limit(500, raw_mgr);
+    sdd_manager_set_vtree_search_time_limit(2, raw_mgr);
+
+    sdd_manager_auto_gc_and_minimize_on(raw_mgr);
 
     manager_ = std::shared_ptr<SddManager>(raw_mgr, sdd_manager_free);
     sdd_manager_garbage_collect(manager_.get());
-
-
+    sdd_manager_minimize_limited(manager_.get());
 }
 
 

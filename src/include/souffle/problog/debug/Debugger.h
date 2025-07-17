@@ -1,20 +1,125 @@
-#ifndef DEBUGGER_HPP
-#define DEBUGGER_HPP
-
+// Debugger.h
+#pragma once
 #include <string>
-#include <vector>
 #include <unordered_map>
-#include <mutex>
+#include <vector>
 #include <chrono>
-#include <iostream>
 #include <fstream>
+#include <iostream>
 #include <sstream>
-#include <utility>
-#include <cassert>
-class Debugger;
-enum class Level { INFO, WARNING, ERROR, DEBUG };
+#include <iomanip>
+#include <optional>
+#include "souffle/utility/json11.h" // Replace nlohmann with json11
 
-inline std::string levelToString(Level level) {
+class Debugger {
+public:
+    enum class Level { INFO, WARNING, ERROR, DEBUG };
+
+    struct IterationInfo {
+        int iteration;
+        double duration_sec;
+        size_t memory_kb;
+        size_t bdd_node_count;
+        std::optional<double> gc_time;
+        std::optional<double> reordering_time;
+    };
+
+    struct MetaInfo {
+        std::chrono::steady_clock::time_point program_start;
+        std::chrono::steady_clock::time_point program_end;
+        size_t peak_memory_kb = 0;
+        std::unordered_map<std::string, std::string> config;
+
+        double getDurationInSeconds() const {
+            return std::chrono::duration<double>(program_end - program_start).count();
+        }
+    };
+
+    struct StageInfo {
+        std::string name;
+        std::chrono::steady_clock::time_point start_time;
+        std::chrono::steady_clock::time_point end_time;
+        size_t peak_memory_kb = 0;
+        size_t bdd_node_count = 0;
+        std::vector<std::pair<Level, std::string>> logs;
+        std::vector<IterationInfo> iterations;
+
+        double getDurationInSeconds() const {
+            return std::chrono::duration<double>(end_time - start_time).count();
+        }
+    };
+
+    void startStage(const std::string& stageName);
+    void endStage(const std::string& stageName, size_t bdd_nodes = 0);
+    void log(Level level, const std::string& stageName, const std::string& message);
+    void addIteration(const std::string& stageName, const IterationInfo& iter);
+    void finalize();
+    json11::Json toJson(const std::string& path = "");
+
+    // meta-info API
+    void markProgramStart();
+    void markProgramEnd();
+    void setMetaConfig(const std::string& key, const std::string& value);
+
+private:
+    std::unordered_map<std::string, StageInfo> stages;
+    MetaInfo meta;
+
+    size_t getCurrentMemoryKB() const;
+    std::string levelToString(Level level) const;
+};
+
+// Debugger.cpp
+#include "Debugger.h"
+
+void Debugger::startStage(const std::string& name) {
+    stages[name] = StageInfo{name, std::chrono::steady_clock::now()};
+}
+
+void Debugger::endStage(const std::string& name, size_t bdd_nodes) {
+    auto& stage = stages.at(name);
+    stage.end_time = std::chrono::steady_clock::now();
+    stage.peak_memory_kb = getCurrentMemoryKB();
+    stage.bdd_node_count = bdd_nodes;
+}
+
+void Debugger::log(Level level, const std::string& stageName, const std::string& message) {
+    stages[stageName].logs.emplace_back(level, message);
+}
+
+void Debugger::addIteration(const std::string& stageName, const IterationInfo& iter) {
+    stages[stageName].iterations.push_back(iter);
+}
+
+void Debugger::markProgramStart() {
+    meta.program_start = std::chrono::steady_clock::now();
+}
+
+void Debugger::markProgramEnd() {
+    meta.program_end = std::chrono::steady_clock::now();
+    meta.peak_memory_kb = getCurrentMemoryKB();
+}
+
+void Debugger::setMetaConfig(const std::string& key, const std::string& value) {
+    meta.config[key] = value;
+}
+
+size_t Debugger::getCurrentMemoryKB() const {
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    while (std::getline(status, line)) {
+        if (line.substr(0, 6) == "VmRSS:") {
+            std::istringstream iss(line);
+            std::string key, unit;
+            size_t value;
+            iss >> key >> value >> unit;
+            return value;
+        }
+    }
+    return 0;
+}
+
+std::string Debugger::levelToString(Level level) const {
     switch (level) {
         case Level::INFO: return "INFO";
         case Level::WARNING: return "WARNING";
@@ -24,279 +129,98 @@ inline std::string levelToString(Level level) {
     }
 }
 
-enum class StageKind {
-    SEMINAIVE_FULL,
-    PRUNING_FULL,
-    FORWARD_COMPILATION_FULL,
-    WEIGHTED_MODEL_COUNTING_FULL,
-    SEMINAIVE_INC,
-    PRUNING_INC,
-    FORWARD_COMPILATION_INC,
-    WEIGHTED_MODEL_COUNTING_INC
-};
-
-inline std::string stageKindToString(const StageKind kind) {
-    switch (kind) {
-        case StageKind::SEMINAIVE_FULL: return "SEMINAIVE_FULL";
-        case StageKind::PRUNING_FULL: return "PRUNING_FULL";
-        case StageKind::FORWARD_COMPILATION_FULL: return "FORWARD_COMPILATION_FULL";
-        case StageKind::WEIGHTED_MODEL_COUNTING_FULL: return "WEIGHTED_MODEL_COUNTING_FULL";
-        case StageKind::SEMINAIVE_INC: return "SEMINAIVE_INC";
-        case StageKind::PRUNING_INC: return "PRUNING_INC";
-        case StageKind::FORWARD_COMPILATION_INC: return "FORWARD_COMPILATION_INC";
-        case StageKind::WEIGHTED_MODEL_COUNTING_INC: return "WEIGHTED_MODEL_COUNTING_INC";
-        default: return "UNKNOWN";
+void Debugger::finalize() {
+    std::cout << "========== Debug Summary ==========" << std::endl;
+    std::cout << "[Meta] Duration: " << std::fixed << std::setprecision(3) << meta.getDurationInSeconds()
+              << "s, Peak Mem: " << meta.peak_memory_kb << " KB" << std::endl;
+    for (const auto& [k, v] : meta.config) {
+        std::cout << "  Config: " << k << " = " << v << std::endl;
     }
+    for (const auto& [name, stage] : stages) {
+        std::cout << "[Stage] " << name << "\n"
+                  << "  Duration: " << std::fixed << std::setprecision(3) << stage.getDurationInSeconds() << "s\n"
+                  << "  Peak Memory: " << stage.peak_memory_kb << " KB\n"
+                  << "  BDD Nodes: " << stage.bdd_node_count << "\n";
+        for (const auto& iter : stage.iterations) {
+            std::cout << "  Iteration " << iter.iteration << ": " << iter.duration_sec << "s, Mem: " << iter.memory_kb << "KB, BDD: " << iter.bdd_node_count;
+            if (iter.gc_time) std::cout << ", GC: " << *iter.gc_time << "s";
+            if (iter.reordering_time) std::cout << ", Reorder: " << *iter.reordering_time << "s";
+            std::cout << std::endl;
+        }
+        std::cout << "  Logs:" << std::endl;
+        for (const auto& [lvl, msg] : stage.logs) {
+            std::cout << "    [" << levelToString(lvl) << "] " << msg << std::endl;
+        }
+    }
+    std::cout << "===================================" << std::endl;
 }
 
-class Info {
-protected:
-    std::unordered_map<std::string, std::string> infoMap_;
-    std::unordered_map<Level, std::vector<std::string>> logs_;
-    size_t memStart_ = 0;
-    size_t memEnd_ = 0;
-    size_t memPeak_ = 0;
+json11::Json Debugger::toJson(const std::string& path) {
+    using namespace json11;
+    Json::object j;
 
-    std::chrono::steady_clock::time_point startTime_;
-    std::chrono::steady_clock::time_point endTime_;
-
-public:
-    void setInfo(const std::string& key, const std::string& value) {
-        infoMap_[key] = value;
+    // meta info
+    Json::object meta_j;
+    meta_j["duration"] = meta.getDurationInSeconds();
+    meta_j["peak_memory_kb"] = static_cast<double>(meta.peak_memory_kb);
+    Json::object config_j;
+    for (const auto& [k, v] : meta.config) {
+        config_j[k] = v;
     }
+    meta_j["config"] = config_j;
+    j["meta"] = meta_j;
 
-    std::string getInfo(const std::string& key) const {
-        const auto it = infoMap_.find(key);
-        return it != infoMap_.end() ? it->second : "";
-    }
+    // stages
+    Json::object stage_j;
+    for (const auto& [name, stage] : stages) {
+        Json::object s;
+        s["duration"] = stage.getDurationInSeconds();
+        s["peak_memory_kb"] = static_cast<double>(stage.peak_memory_kb);
+        s["bdd_nodes"] = static_cast<double>(stage.bdd_node_count);
 
-    void logMessage(const Level level, const std::string& message) {
-        logs_[level].push_back(message);
-    }
-
-    void setMemStart(size_t m) { memStart_ = m; }
-    size_t getMemStart() const { return memStart_; }
-
-    void setMemEnd(size_t m) { memEnd_ = m; }
-    size_t getMemEnd() const { return memEnd_; }
-
-    void setMemPeak(size_t m) { memPeak_ = m; }
-    size_t getMemPeak() const { return memPeak_; }
-
-    void markStartTime() { startTime_ = std::chrono::steady_clock::now(); }
-    void markEndTime() { endTime_ = std::chrono::steady_clock::now(); }
-
-    double getDurationSeconds() const {
-        return std::chrono::duration<double>(endTime_ - startTime_).count();
-    }
-
-    const std::unordered_map<std::string, std::string>& getInfoMap() const { return infoMap_; }
-    const std::unordered_map<Level, std::vector<std::string>>& getLogs() const { return logs_; }
-
-    virtual ~Info() = default;
-};
-
-class IterationInfo : public Info {
-public:
-    int iterationIndex;
-    explicit IterationInfo(const int idx) : iterationIndex(idx) {}
-};
-
-class StageInfo : public Info {
-public:
-    StageKind kind;
-    std::vector<IterationInfo> iterations;
-
-    explicit StageInfo(const StageKind k)
-        : kind(k) {}
-};
-
-class TurnInfo : public Info {
-public:
-    int turnIndex;
-    std::string algMode;
-    size_t inputSize = 0;
-    std::vector<StageInfo> stages;
-
-    TurnInfo(const int idx, std::string mode)
-        : turnIndex(idx), algMode(std::move(mode)) {}
-};
-
-class Debugger {
-public:
-    static Debugger& getInstance() {
-        static Debugger instance;
-        return instance;
-    }
-
-    Debugger(const Debugger&) = delete;
-    Debugger& operator=(const Debugger&) = delete;
-
-    TurnInfo* startTurn(const std::string& mode = "DEFAULT") {
-        std::lock_guard<std::mutex> lock(mtx_);
-        assert (mode == "DEFAULT" || mode == "FULL" || mode == "INC");
-        std::string realMode;
-        if (turnCount_ == 0 || mode == "FULL") {
-            realMode = "FULL";  // Default mode if not specified
-        } else if (mode == "DEFAULT" && turnCount_ > 0) {
-            realMode = "INC";
-        } else {
-            realMode = "INC";
+        Json::array logs;
+        for (const auto& [lvl, msg] : stage.logs) {
+            logs.push_back(Json::object{{"level", levelToString(lvl)}, {"msg", msg}});
         }
-        turns_.emplace_back(++turnCount_, realMode);
-        TurnInfo& turn = turns_.back();
-        turn.setMemStart(getCurrentMemoryUsage());
-        turn.markStartTime();
-        currentTurn_ = &turn;
-        return &turn;
-    }
+        s["logs"] = logs;
 
-    void endTurn() {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (!currentTurn_) return;
-        currentTurn_->setMemEnd(getCurrentMemoryUsage());
-        currentTurn_->setMemPeak(getPeakMemoryUsage());
-        currentTurn_->markEndTime();
-        currentTurn_ = nullptr;
-    }
-
-
-    StageInfo* startStage(StageKind kind) {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (!currentTurn_) return nullptr;
-        currentTurn_->stages.emplace_back(kind);
-        StageInfo& stage = currentTurn_->stages.back();
-        stage.setMemStart(getCurrentMemoryUsage());
-        stage.markStartTime();
-        currentStage_ = &stage;
-        return &stage;
-    }
-
-    void endStage() {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (!currentStage_ || !currentTurn_) return;
-        currentStage_->setMemEnd(getCurrentMemoryUsage());
-        currentStage_->setMemPeak(getPeakMemoryUsage());
-        currentStage_->markEndTime();
-        currentStage_ = nullptr;
-    }
-
-    IterationInfo* startIteration() {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (!currentStage_) return nullptr;
-        size_t idx = currentStage_->iterations.size();
-        currentStage_->iterations.emplace_back(static_cast<int>(idx));
-        IterationInfo& iter = currentStage_->iterations.back();
-        iter.setMemStart(getCurrentMemoryUsage());
-        iter.markStartTime();
-        currentIteration_ = &iter;
-        return &iter;
-    }
-
-    void endIteration() {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (!currentIteration_) return;
-        currentIteration_->setMemEnd(getCurrentMemoryUsage());
-        currentIteration_->setMemPeak(getPeakMemoryUsage());
-        currentIteration_->markEndTime();
-        currentIteration_ = nullptr;
-    }
-
-    void addInfo(const std::string& key, const std::string& value) const {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (currentIteration_) currentIteration_->setInfo(key, value);
-        else if (currentStage_) currentStage_->setInfo(key, value);
-        else if (currentTurn_) currentTurn_->setInfo(key, value);
-    }
-
-    void logMessage(Level level, const std::string& message) const {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (currentIteration_) currentIteration_->logMessage(level, message);
-        else if (currentStage_) currentStage_->logMessage(level, message);
-        else if (currentTurn_) currentTurn_->logMessage(level, message);
-    }
-
-    void printReport(std::ostream& os) {
-        std::lock_guard<std::mutex> lock(mtx_);
-        for (const auto& turn : turns_) {
-            os << "Turn " << turn.turnIndex << " [" << turn.algMode << "]: "
-               << "Time=" << turn.getDurationSeconds() << "s, PeakMem=" << turn.getMemPeak() << "KB\n";
-            for (const auto& [k, v] : turn.getInfoMap()) {
-                os << "    " << k << ": " << v << "\n";
-            }
-            for (const auto& [lvl, msgs] : turn.getLogs()) {
-                for (const auto& msg : msgs) {
-                    os << "    [" << levelToString(lvl) << "] " << msg << "\n";
-                }
-            }
-            for (const auto& stage : turn.stages) {
-                os << "  Stage " << stageKindToString(stage.kind) << ": Time=" << stage.getDurationSeconds()
-                   << "s, PeakMem=" << stage.getMemPeak() << "KB\n";
-                for (const auto& [k, v] : stage.getInfoMap()) {
-                    os << "    " << k << ": " << v << "\n";
-                }
-                for (const auto& [lvl, msgs] : stage.getLogs()) {
-                    for (const auto& msg : msgs) {
-                        os << "    [" << levelToString(lvl) << "] " << msg << "\n";
-                    }
-                }
-                // TODO: temporarily disable detailed iteration logs
-                if (false) {
-                    for (const auto& iter : stage.iterations) {
-                        os << "    Iteration " << iter.iterationIndex << ": Time=" << iter.getDurationSeconds()
-                           << "s, MemUsage=" << iter.getMemEnd() << "KB, Peak=" << iter.getMemPeak() << "KB\n";
-                        for (const auto& [k, v] : iter.getInfoMap()) {
-                            os << "      " << k << ": " << v << "\n";
-                        }
-                        for (const auto& [lvl, msgs] : iter.getLogs()) {
-                            for (const auto& msg : msgs) {
-                                os << "      [" << levelToString(lvl) << "] " << msg << "\n";
-                            }
-                        }
-                    }
-                }
-
-            }
+        Json::array iters;
+        for (const auto& iter : stage.iterations) {
+            Json::object one = {
+                {"iteration", iter.iteration},
+                {"duration", iter.duration_sec},
+                {"memory_kb", static_cast<double>(iter.memory_kb)},
+                {"bdd_nodes", static_cast<double>(iter.bdd_node_count)}
+            };
+            if (iter.gc_time) one["gc_time"] = *iter.gc_time;
+            if (iter.reordering_time) one["reordering_time"] = *iter.reordering_time;
+            iters.push_back(one);
         }
+        s["iterations"] = iters;
+
+        stage_j[name] = s;
     }
+    j["stages"] = stage_j;
 
-private:
-    Debugger() : turnCount_(0), currentTurn_(nullptr), currentStage_(nullptr), currentIteration_(nullptr) {}
-
-    mutable std::mutex mtx_;
-    int turnCount_;
-    std::vector<TurnInfo> turns_;
-    TurnInfo* currentTurn_;
-    StageInfo* currentStage_;
-    IterationInfo* currentIteration_;
-
-    size_t getCurrentMemoryUsage() const {
-        std::ifstream status("/proc/self/status");
-        std::string line;
-        while (std::getline(status, line)) {
-            if (line.rfind("VmRSS:", 0) == 0) {
-                std::istringstream iss(line);
-                std::string label, value, unit;
-                iss >> label >> value >> unit;
-                return std::stoul(value);
-            }
-        }
-        return 0;
+    Json result = j;
+    if (!path.empty()) {
+        std::ofstream out(path);
+        out << result.dump() << std::endl;
     }
+    return result;
+}
 
-    size_t getPeakMemoryUsage() const {
-        std::ifstream status("/proc/self/status");
-        std::string line;
-        while (std::getline(status, line)) {
-            if (line.rfind("VmHWM:", 0) == 0) {
-                std::istringstream iss(line);
-                std::string label, value, unit;
-                iss >> label >> value >> unit;
-                return std::stoul(value);
-            }
-        }
-        return 0;
+// RAII helper
+class DebuggerFinalizer {
+    Debugger& dbg;
+    std::string jsonPath;
+public:
+    DebuggerFinalizer(Debugger& d, const std::string& path = "debug_output.json") : dbg(d), jsonPath(path) {
+        dbg.markProgramStart();
+    }
+    ~DebuggerFinalizer() {
+        dbg.markProgramEnd();
+        dbg.finalize();
+        dbg.toJson(jsonPath);
     }
 };
-
-#endif // DEBUGGER_HPP

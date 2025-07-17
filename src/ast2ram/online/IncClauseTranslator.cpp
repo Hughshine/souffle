@@ -509,10 +509,10 @@ Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQuery(const ast::
                     if (!inScc) {continue;}
                 }
                 // Propositions
-                // if (head->getArity() == 0) {
-                //     assert (false && "proposition (0 arity relation) not supported");
-                //     // TODO: maybe there is a clever way
-                // }
+                if (head->getArity() == 0) {
+                    assert (false && "proposition (0 arity relation) not supported");
+                    // TODO: maybe there is a clever way
+                }
                 // Relations with functional dependency constraints
                 if (auto guardedConditions = getFunctionalDependencies(clause)) {
                     assert (false && "functional dependencies not supported");
@@ -571,10 +571,10 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQuery(const ast::Cla
         if (const auto& atom = as<ast::Atom>(lit)) {
             // TODO: delta rule for non sccAtoms should executes only ones? no fixpoint computation? lifting to loop front.
             // Propositions
-            // if (head->getArity() == 0) {
-            //      assert (false && "proposition (0 arity relation) not supported");
-            //     // TODO: maybe there is a clever way
-            // }
+            if (head->getArity() == 0) {
+                 assert (false && "proposition (0 arity relation) not supported");
+                // TODO: maybe there is a clever way
+            }
 
             // Relations with functional dependency constraints
             if (auto guardedConditions = getFunctionalDependencies(clause)) {
@@ -654,10 +654,10 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQueryDel(const ast::
         // INC: now we try to create delta rule for lit
         if (const auto& atom = as<ast::Atom>(lit)) {
             // Propositions
-            // if (head->getArity() == 0) {
-            //     assert (false && "proposition (0 arity relation) not supported");
-            //     // TODO: maybe there is a clever way
-            // }
+            if (head->getArity() == 0) {
+                assert (false && "proposition (0 arity relation) not supported");
+                // TODO: maybe there is a clever way
+            }
 
             // Relations with functional dependency constraints
             if (auto guardedConditions = getFunctionalDependencies(clause)) {
@@ -719,10 +719,10 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQueryIns(const ast::
         // INC: now we try to create delta rule for lit
         if (const auto& atom = as<ast::Atom>(lit)) {
             // Propositions
-            // if (head->getArity() == 0) {
-            //     assert (false && "proposition (0 arity relation) not supported");
-            //     // TODO: maybe there is a clever way
-            // }
+            if (head->getArity() == 0) {
+                assert (false && "proposition (0 arity relation) not supported");
+                // TODO: maybe there is a clever way
+            }
 
             // Relations with functional dependency constraints
             if (auto guardedConditions = getFunctionalDependencies(clause)) {
@@ -807,7 +807,7 @@ Own<ram::Operation> IncClauseTranslator::addVariableBindingConstraints(Own<ram::
     return op;
 }
 
-Own<ram::Operation> IncClauseTranslator::createInsertion(const ast::Clause & clause) const {
+Own<ram::Operation> IncClauseTranslator::createInsertion(const ast::Clause& clause) const {
     const auto head = clause.getHead();
     auto headRelationName = getClauseAtomName(clause, head);
 
@@ -823,9 +823,9 @@ Own<ram::Operation> IncClauseTranslator::createInsertion(const ast::Clause & cla
 
     // Propositions
     if (head->getArity() == 0) {
-        // assert (false && "proposition (0 arity relation) not supported"); // TODO: maybe there is a clever way
-        return mk<ram::Filter>(mk<ram::EmptinessCheck>(headRelationName),
-                mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMapDup(clauseVarMap))));
+        assert (false && "proposition (0 arity relation) not supported"); // TODO: maybe there is a clever way
+        // return mk<ram::Filter>(mk<ram::EmptinessCheck>(headRelationName),
+                // mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMapDup(clauseVarMap))));
     }
 
     // Relations with functional dependency constraints
@@ -936,7 +936,7 @@ Own<ram::Operation> IncClauseTranslator::addAtomScanRec(Own<ram::Operation> op, 
     // add a scan level
     if (atom->getArity() != 0 && !isAllArgsUnnamed) {
         if (head->getArity() == 0) {
-            // assert (false && "zero arity");
+            assert (false && "zero arity");
             op = mk<ram::Break>(mk<ram::Negation>(mk<ram::EmptinessCheck>(getClauseAtomName(clause, head))),
                     std::move(op));
         }
@@ -977,7 +977,7 @@ Own<ram::Operation> IncClauseTranslator::addAtomScan(Own<ram::Operation> op, con
     // add a scan level
     if (atom->getArity() != 0 && !isAllArgsUnnamed) {
         if (head->getArity() == 0) {
-            // assert (false && "zero arity");
+            assert (false && "zero arity");
             op = mk<ram::Break>(mk<ram::Negation>(mk<ram::EmptinessCheck>(getClauseAtomName(clause, head))),
                     std::move(op));
         }

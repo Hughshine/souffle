@@ -28,7 +28,6 @@ public:
 
     virtual void printInfo(const NodeRef& node, const std::string& name) = 0;
     virtual void dumpProfilingStatistics() = 0;
-    virtual void stopDynamicOptimization() {};
 };
 
 template<typename NodeRef>

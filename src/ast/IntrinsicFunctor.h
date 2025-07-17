@@ -55,10 +55,8 @@ public:
 
     static bool classof(const Node*);
 
-// protected:
+protected:
     void print(std::ostream& os) const override;
-
-    std::string serialize() const override;
 
 private:
     bool equal(const Node& node) const override;

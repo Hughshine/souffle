@@ -151,9 +151,6 @@ if args.with_cudd:
     cudd_lib_path = str(cudd_dir / "lib")
     if cudd_lib_path not in RPATHS:
         RPATHS.append(cudd_lib_path)
-    # TODO: add sdd options
-    additional_link_options += f" -lsdd++ -lsdd"
-
 
 if args.swiglang:
     if not (souffle_include_dir and (souffle_include_dir / "souffle" / "swig").exists()):

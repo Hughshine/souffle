@@ -57,53 +57,46 @@ bool RemoveRelationCopiesTransformer::removeRelationCopies(TranslationUnit& tran
             continue;
         }
         const auto& clauses = program.getClauses(*rel);
-
         if (!ioType.isIO(rel) && clauses.size() == 1u) {
             // .. of shape r(x,y,..) :- s(x,y,..)
             Clause* cl = clauses[0];
+            std::vector<Atom*> bodyAtoms = getBodyLiterals<Atom>(*cl);
+            if (!isFact(*cl) && cl->getBodyLiterals().size() == 1u && bodyAtoms.size() == 1u) {
+                Atom* atom = bodyAtoms[0];
+                if (equal_targets(cl->getHead()->getArguments(), atom->getArguments())) {
+                    // Requirements:
+                    // 1) (checked) It is a rule with exactly one body.
+                    // 3) (checked) The body consists of an atom.
+                    // 4) (checked) The atom's arguments must be identical to the rule's head.
+                    // 5) (pending) The rules's head must consist only of either:
+                    //  5a) Variables
+                    //  5b) Records unpacked into variables
+                    // 6) (pending) Each variable must have a distinct name.
+                    // 7) (checked?) Head rule cannot have any functional dependency.
+                    bool onlyDistinctHeadVars = true;
+                    std::set<std::string> headVars;
 
-            if (cl->getProbability() == 1.0) {  // skip rules with non-deterministic probabilities
-                std::vector<Atom*> bodyAtoms = getBodyLiterals<Atom>(*cl);
-                if (!isFact(*cl) && cl->getBodyLiterals().size() == 1u && bodyAtoms.size() == 1u) {
-                    Atom* atom = bodyAtoms[0];
-                    if (equal_targets(cl->getHead()->getArguments(), atom->getArguments())) {
-                        // Requirements:
-                        // 1) (checked) It is a rule with exactly one body.
-                        // 3) (checked) The body consists of an atom.
-                        // 4) (checked) The atom's arguments must be identical to the rule's head.
-                        // 5) (pending) The rules's head must consist only of either:
-                        //  5a) Variables
-                        //  5b) Records unpacked into variables
-                        // 6) (pending) Each variable must have a distinct name.
-                        // 7) (checked?) Head rule cannot have any functional dependency.
-                        // newly add: 8) it should have probability 1.0
+                    auto args = cl->getHead()->getArguments();
+                    while (onlyDistinctHeadVars && !args.empty()) {
+                        const auto cur = args.back();
+                        args.pop_back();
 
-
-                        bool onlyDistinctHeadVars = true;
-                        std::set<std::string> headVars;
-
-                        auto args = cl->getHead()->getArguments();
-                        while (onlyDistinctHeadVars && !args.empty()) {
-                            const auto cur = args.back();
-                            args.pop_back();
-
-                            if (auto var = as<ast::Variable>(cur)) {
-                                onlyDistinctHeadVars &= headVars.insert(var->getName()).second;
-                            } else if (auto init = as<RecordInit>(cur)) {
-                                // records are decomposed and their arguments are checked
-                                for (auto rec_arg : init->getArguments()) {
-                                    args.push_back(rec_arg);
-                                }
-                            } else {
-                                onlyDistinctHeadVars = false;
+                        if (auto var = as<ast::Variable>(cur)) {
+                            onlyDistinctHeadVars &= headVars.insert(var->getName()).second;
+                        } else if (auto init = as<RecordInit>(cur)) {
+                            // records are decomposed and their arguments are checked
+                            for (auto rec_arg : init->getArguments()) {
+                                args.push_back(rec_arg);
                             }
+                        } else {
+                            onlyDistinctHeadVars = false;
                         }
+                    }
 
-                        if (onlyDistinctHeadVars) {
-                            // all arguments are either distinct variables or records unpacked into distinct
-                            // variables
-                            isDirectAliasOf[cl->getHead()->getQualifiedName()] = atom->getQualifiedName();
-                        }
+                    if (onlyDistinctHeadVars) {
+                        // all arguments are either distinct variables or records unpacked into distinct
+                        // variables
+                        isDirectAliasOf[cl->getHead()->getQualifiedName()] = atom->getQualifiedName();
                     }
                 }
             }
