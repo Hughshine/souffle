@@ -618,154 +618,41 @@ void buildFormulasIncCyclewise(
     std::map<size_t, std::deque<EdgePtr>> cycleWorklists;
 //    std::set<EdgePtr> inWorklist;
 
-    debugger.logMessage(Level::INFO, "Performing overdeletion");
-    // over-delete all formulas that are impacted by the deleted edges
+    /// just realize that we do not need to do over-deletion
+    /// we just need to apply neg to all impacted nodes and edges
+    debugger.logMessage(Level::INFO, "Performing deletion");
     {
-        std::deque<EdgePtr> que(deltaDeletedEdges.begin(), deltaDeletedEdges.end());
-        std::set<NodePtr> affectedNodes;
+        // for each deleted node, apply its neg to all its reachable edges and nodes
+        for (auto node : deltaDeletedNodes) {
+            auto formula = nodeFormulas[node];
+            std::set<NodePtr> impactedNodes, visitedNodes;
 
-        while (!que.empty()) {
-            EdgePtr edge = que.front(); que.pop_front();
-            edgeFormulas[edge] = formulaManager.getFalse();
-            if (!(deltaDeletedEdges.count(edge))) {
-                size_t cid = depGraph.edgeToCycleIndex.at(edge);
-                cycleWorklists[cid].push_back(edge);
-//                std::cout << "Edge " << edge->getId() << " is impacted by deletion, added to cycle worklist " << cid << std::endl;
-            }
-
-            NodePtr outNode = view.getOutput(edge);
-            if (!outNode || deltaDeletedNodes.count(outNode)) continue;
-
-            affectedNodes.insert(outNode);
-            nodeFormulas[outNode] = formulaManager.getFalse();
-
-            for (EdgePtr outEdge : view.getOutgoingEdges(outNode)) {
-                if (deltaDeletedEdges.count(outEdge)) continue;
-                if (!depGraph.edgeToCycleIndex.count(outEdge)) continue;
-                if (edgeFormulas.count(outEdge) == 0) continue;
-                if (formulaManager.isSame(edgeFormulas[outEdge], formulaManager.getFalse())) continue;
-//                std::cout << "Edge " << outEdge->getId() << " is impacted by deletion but not deleted" << std::endl;
-                que.push_back(outEdge);
-            }
-        }
-
-        for (NodePtr node : affectedNodes) {
-            std::vector<FormulaNodeRef> incoming;
-            for (EdgePtr e : view.getIncomingEdges(node)) {
-                if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
-                    incoming.push_back(edgeFormulas[e]);
+            impactedNodes.insert(node);
+            visitedNodes.insert(node);
+            while (!impactedNodes.empty()) {
+                NodePtr currentNode = *impactedNodes.begin();
+                impactedNodes.erase(currentNode);
+                nodeFormulas[currentNode] = formulaManager.makeAnd(nodeFormulas[currentNode], formulaManager.makeNot(formula));  // TODO: should be make conditioning
+                // for each impacted edge
+                for (EdgePtr edge : view.getOutgoingEdges(currentNode)) {
+                    if (deltaDeletedEdges.count(edge)) edgeFormulas.erase(edge);
+                    edgeFormulas[edge] = formulaManager.makeAnd(edgeFormulas[edge], formulaManager.makeNot(formula));  // TODO: should be make conditioning
+                    NodePtr outNode = view.getOutput(edge);
+                    if (outNode && visitedNodes.count(outNode) == 0 && !deltaDeletedNodes.count(outNode)) {
+                        impactedNodes.insert(outNode);
+                        visitedNodes.insert(outNode);
+                    }
                 }
-            }
-            assert (!incoming.empty() && "Node should have at least one incoming edge formula, or it is deleted");
-            if (!incoming.empty()) {
-                nodeFormulas[node] = formulaManager.makeOr(incoming);
+                nodeFormulas.erase(node);
+                // TODO: update the variable ordering here, by pushing deleted nodes to the very front.
             }
         }
     }
 
-    for (auto n : deltaDeletedNodes) nodeFormulas.erase(n);
-    for (auto e : deltaDeletedEdges) edgeFormulas.erase(e);
-
-    debugger.logMessage(Level::INFO, "Overdeletion completed, starting re-derivation phase");
 
     std::vector<size_t> inDegree = depGraph.inDegrees;
     std::queue<size_t> ready;  // cycles with in-degree 0
-    std::vector<bool> scheduled(depGraph.nodeCycles.size(), false);  // whether the cycle has been scheduled for deletion phase
-
-    for (size_t cid = 0; cid < depGraph.nodeCycles.size(); ++cid) {
-        if (inDegree[cid] == 0) {
-            ready.push(cid); scheduled[cid] = true;  // scheduled is used to avoid re-insertion to worklist
-        }
-    }
-
-
-    while (!ready.empty()) {
-        size_t cid = ready.front(); ready.pop();
-        scheduled[cid] = true;
-        auto& worklist = cycleWorklists[cid];
-
-//        std::cout << "[CYCLE " << cid << "] Begin Deletion Phase, worklist size: " << worklist.size() << std::endl;
-
-        size_t round = 0;
-        while (!worklist.empty()) {
-            round++;
-            debugger.startIteration();
-//            std::cout << "  [DELETION ROUND " << round << "] Cycle " << cid
-//                      << ", Worklist size: " << worklist.size() << std::endl;
-            EdgePtr edge = worklist.front(); worklist.pop_front();
-//            formulaManager.dumpProfilingStatistics();
-//            std::cout << "  [EVAL] Edge " << edge->getId() << ": " << edge->toString() << std::endl;
-
-            if (deltaDeletedEdges.count(edge)) {
-                assert (false && "Deleted edge should not be in the worklist");
-            }
-
-            FormulaNodeRef oldEdgeFormula = edgeFormulas[edge];
-            FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
-                ? formulaManager.getTrue()
-                : formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
-            std::vector<FormulaNodeRef> inputFormulas{baseFormula};
-
-            bool allInputsAvailable = true;
-            const auto& inputs = view.getInputs(edge);
-            const auto& negs = view.getBodyNegations(edge);
-            for (size_t i = 0; i < inputs.size(); ++i) {
-                auto it = nodeFormulas.find(inputs[i]);
-                if (it == nodeFormulas.end()) {
-//                    std::cout << "    [WAIT] Missing input node formula: " << inputs[i]->toString() << std::endl;
-                    allInputsAvailable = false;
-                    break;
-                }
-                inputFormulas.push_back(negs[i] ? formulaManager.makeNot(it->second) : it->second);
-            }
-            if (!allInputsAvailable) {
-                worklist.push_back(edge);
-                continue;
-            }
-
-            FormulaNodeRef newEdgeFormula = formulaManager.makeAnd(inputFormulas);
-            if (formulaManager.isSame(oldEdgeFormula, newEdgeFormula)) {
-//                std::cout << "    [SKIP] No change in edge formula\n";
-                debugger.endIteration();
-                continue;
-            }
-
-//            std::cout << "    [CHANGE] Edge formula updated\n";
-            edgeFormulas[edge] = newEdgeFormula;
-
-            NodePtr output = view.getOutput(edge);
-            if (!output || output->isFact || deltaDeletedNodes.count(output)) {
-                debugger.endIteration();
-                continue;
-            }
-
-            FormulaNodeRef oldNodeFormula = nodeFormulas[output];
-            std::vector<FormulaNodeRef> incoming;
-            for (EdgePtr e : view.getIncomingEdges(output)) {
-                if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
-                    incoming.push_back(edgeFormulas[e]);
-                }
-            }
-
-            FormulaNodeRef newNodeFormula = formulaManager.makeOr(incoming);
-            if (!formulaManager.isSame(oldNodeFormula, newNodeFormula)) {
-//                std::cout << "    [UPDATE] Node formula changed: " << output->toString() << std::endl;
-                nodeFormulas[output] = newNodeFormula;
-                for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
-                    if (deltaDeletedEdges.count(outEdge)) continue;
-                    if (!depGraph.edgeToCycleIndex.count(outEdge)) continue;
-                    size_t outCid = depGraph.edgeToCycleIndex.at(outEdge);
-                    cycleWorklists[outCid].push_back(outEdge);
-                }
-            }
-        }
-
-        for (size_t succ : depGraph.reverseDependencies[cid]) {
-            if (--inDegree[succ] == 0 && !scheduled[succ]) {
-                ready.push(succ);
-            }
-        }
-    }
+    std::vector<bool> scheduled(depGraph.nodeCycles.size(), false);  // whether the cycle has been scheduled for insertion phase
 
     // === 插入阶段 ===
     debugger.logMessage(Level::INFO, "Processing inserted edges");
