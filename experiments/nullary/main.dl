@@ -1,35 +1,32 @@
-.decl a_young()
+
 .decl a_adult()
 .decl a_old()
-.decl s_M()
-.decl s_F()
+.decl a_young()
 .decl e_high()
 .decl e_uni()
 .decl o_emp()
 .decl o_self()
-.decl r_small()
 .decl r_big()
+.decl r_small()
+.decl s_F()
+.decl s_M()
 .decl t_car()
-.decl t_train()
 .decl t_other()
+.decl t_train()
 .output e_high
 .output e_uni
 .output o_emp
 .output o_self
-.output r_small
 .output r_big
+.output r_small
 .output t_car
-.output t_train
 .output t_other
-.output a_young
+.output t_train
 0.3::a_young.
 0.5::a_adult.
 0.2::a_old.
 0.6::s_M.
 0.4::s_F.
-0.2::a_young :- s_F.
-0.0::a_young :- a_adult.
-0.0::a_young :- a_old.
 0.9::e_high :- a_old,s_F.
 0.36::e_uni :- a_young,s_F.
 0.96::o_emp :- e_high.
@@ -39,13 +36,3 @@
 0.7::t_car :- o_self,r_big.
 0.42::t_train :- o_emp,r_small.
 0.18::t_other :- o_emp,r_big.
-0.0::s_M :- s_F.
-query(e_high).
-query(e_uni).
-query(o_emp).
-query(o_self).
-query(r_small).
-query(r_big).
-query(t_car).
-query(t_train).
-query(t_other).

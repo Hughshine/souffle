@@ -34,7 +34,7 @@ namespace souffle::ram {
  * @brief Breaks out of the loop if a condition holds
  *
  * The following example will break out of the inner-most
- * loop if the condition (t1.1 = 4) holds:
+ * loop if the condition (t0.1 = 4) holds:
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~
  * FOR t0 in A
  *   FOR t1 in B

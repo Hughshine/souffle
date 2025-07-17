@@ -164,7 +164,6 @@ struct UntypedTuple {
         return relation_name == other.relation_name && fields == other.fields;
     }
 
-    // TODO: avoid non-reference passing
     template<std::size_t N>
     static UntypedTuple fromTypedTuple(const std::string& relationName, const souffle::Tuple<souffle::RamDomain, N>& typedTuple) {
         UntypedTuple result;
@@ -173,6 +172,11 @@ struct UntypedTuple {
             result.fields.push_back(field);
         }
         return result;
+    }
+
+    // for nullary
+    static UntypedTuple fromTypedTuple(const std::string& relationName, const int* const&) {
+        return UntypedTuple{relationName, {}};
     }
 };
 

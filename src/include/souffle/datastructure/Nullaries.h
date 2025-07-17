@@ -102,6 +102,11 @@ public:
     void purge() {
         data = false;
     }
+    bool erase(const int* const& /* t */) {
+        bool old = data;
+        data = false;
+        return old;
+    }
     void printStatistics(std::ostream& /* o */) const {}
 };
 
