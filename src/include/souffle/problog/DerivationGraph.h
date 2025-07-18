@@ -15,23 +15,43 @@
 #include "souffle/problog/RuleManager.h"
 #include "souffle/RamTypes.h"
 #include "souffle/SouffleInterface.h"
-
 // example rule application sets
 // rule 1: path(x,y) :- edge(x,y).
 // rule 2: path(x,y) :- path(x,z), edge(z,y).
 // facts: edge(1,2), edge(2,3)
 // (derived) paths: path(1,2), path(2,3), path(1,3)
+// evidence(path(1,3), true).
 
 // Forward declarations
 class Node;
 class Hyperedge;
+class Evidence;
 class DerivationGraph;
 struct CycleDependencyGraph;
 
 using NodePtr = std::shared_ptr<Node>;
 using EdgePtr = std::shared_ptr<Hyperedge>;
-
+using EvidencePtr = std::shared_ptr<Evidence>;
 // TODO: derivation graph now does not support negation...
+
+class Evidence {
+public:
+    friend class DerivationGraph;
+    friend class IncrementalDerivationGraph;
+    Evidence(const UntypedTuple tuple, bool value) : tuple(tuple), value(value) {}
+
+    const UntypedTuple& getTuple() const {return tuple;}
+    bool getValue() const {return value;}
+
+    std::string toString() const {
+        std::stringstream ss;
+        ss << "evidence(" << tuple.toString() << ", " << (value ? "true" : "false") << ")";
+        return ss.str();
+    }
+private:
+    UntypedTuple tuple;
+    bool value;
+};
 
 class Node {
 public:
@@ -47,11 +67,21 @@ public:
     void setProbability(double prob) { probability = prob; }
     double getProbability() const { return probability; }
     std::string toString() const {
-        return tuple.toString();
-//        std::stringstream ss;
-//        ss << "Node(" << tuple.toString() << ")";
-//        return ss.str();
+        std::stringstream ss;
+        ss << tuple.toString();
+        if (evidence) {
+            ss << "[E:" << (evidence->getValue() ? "true" : "false") << "]";
+        }
+        return ss.str();
     }
+    bool hasEvidence() const { return evidence != nullptr; }
+    bool getEvidenceValue() const {
+    assert(evidence);
+    return evidence->getValue();
+}
+    void setEvidence(EvidencePtr e){ evidence = std::move(e); }
+    EvidencePtr getEvidence() const {return evidence;}
+
     bool isFact = false;
     bool pruned = false;
     bool needOutput = false;
@@ -65,6 +95,8 @@ private:
     std::vector<EdgePtr> outgoingEdges;
     size_t id;
     double probability;
+
+    EvidencePtr evidence = nullptr;
 
     void addIncomingEdge(EdgePtr edge);
     void addOutgoingEdge(EdgePtr edge);
@@ -340,6 +372,21 @@ public:
         return node;
     }
 
+    void attachEvidence(const std::vector<Evidence>& evidenceList) {
+        for (const auto& e : evidenceList) {
+            NodePtr node = findNode(e.getTuple());
+            if (node) {
+                auto evPtr = std::make_shared<Evidence>(e.getTuple(), e.getValue());
+                node ->setEvidence(evPtr);
+                evidences.insert(evPtr);
+                tupleToEvidenceMap[e.getTuple()] = evPtr;
+                std::cout << "[Info] Attached evidence" << e.toString() << " to node "<< node->toString() << std::endl;
+            } else {
+                std::cerr << "Evidence" << e.toString() << "does not match any node" <<std::endl;
+            }
+        }
+    }
+
 
     EdgePtr createHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& rm) {
         // 先查找是否存在对应的边
@@ -407,9 +454,9 @@ public:
     const std::unordered_set<NodePtr>& getNodes() const { return nodes; }
     const std::unordered_set<EdgePtr>& getEdges() const { return edges; }
 
-    static DerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {})  {
+    static DerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<::Evidence>& evidences = {})  {
+        std::cout << "[Debug] Enter DerivationGraph::createFrom()" << std::endl;
         FunctionTimer timer(" creating derivation graph ");
-
         auto graph = new DerivationGraph(&ruleManager);
         for (const auto& [tuple, prob] : fact_prob) {
             auto node = graph->createNode(tuple);  // actually "find node" here
@@ -426,6 +473,12 @@ public:
 				auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
             }
         }
+        std::cout << "[Debug] Current nodes in graph:" << std::endl;
+        graph->attachEvidence(evidences);
+        for (const auto& node : graph->getNodes()) {
+            std::cout << "  " << node->getTuple().toString() << std::endl;
+        }
+
         return graph;
     }
 
@@ -474,8 +527,11 @@ public:
         // 过滤节点和边
         std::unordered_set<NodePtr> newNodes;
         for (const auto& node : nodes) {
-            if (reachableNodes.count(node)) {
+            if (reachableNodes.count(node)){
                 newNodes.insert(node);
+            if (!reachableNodes.count(node)) {
+                node->needOutput = true;
+            }
             }
         }
 
@@ -565,6 +621,7 @@ protected:
 //    std::vector<EdgePtr> edges;
     std::unordered_set<NodePtr> nodes;
     std::unordered_set<EdgePtr> edges;
+    std::unordered_set<EvidencePtr> evidences;
     size_t nextNodeId;
     size_t nextEdgeId;
     const RuleManager* ruleManager;
@@ -574,6 +631,9 @@ protected:
 
     // 添加边键到边的映射
     std::map<std::string, EdgePtr> edgeKeyToEdgeMap;
+
+    //
+    std::map<UntypedTuple, EvidencePtr> tupleToEvidenceMap;
 
     // 创建边的唯一键
     std::string createEdgeKey(souffle::RamDomain ruleId,
@@ -623,9 +683,10 @@ public:
 
     IncSubgraphView prune(const std::vector<souffle::Relation*>& outputRelations);
 
-    static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {})  {
+    static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<Evidence>& evidences = {})  {
+        std::cerr << "[Debug] Entering DerivationGraph::createFrom()" << std::endl;
+        //assert(false && "You are now inside createFrom!");
         FunctionTimer timer(" creating derivation graph ");
-
         auto graph = new IncrementalDerivationGraph(&ruleManager);
         for (const auto& [tuple, prob] : fact_prob) {
             auto node = graph->createNode(tuple);  // actually "find node" here
@@ -642,7 +703,17 @@ public:
                 auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
             }
         }
-
+        for (const auto& e : evidences) {
+            NodePtr node = graph->findNode(e.getTuple());
+            if (node) {
+                auto evPtr = std::make_shared<Evidence>(e.getTuple(), e.getValue());
+                node ->setEvidence(evPtr);
+                graph->tupleToEvidenceMap[e.getTuple()] = evPtr;
+            } else {
+                std::cerr << "Evidence" << e.toString() << "does not match any node" <<std::endl;
+            }
+        }
+        graph->attachEvidence(evidences);
         return graph;
     }
 
@@ -897,6 +968,14 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
         }
     }
 
+    for (const auto&ev : evidences) {
+        NodePtr node = findNode(ev->getTuple());
+        if (node && reachableNodes.insert(node).second){
+            std::cout << "Found evidence node: " << node->toString() << std::endl;
+            workQueue.push(node);
+        }
+    }
+
     // 反向 BFS 遍历
     while (!workQueue.empty()) {
         NodePtr current = workQueue.front();
@@ -919,7 +998,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
 
     std::unordered_set<NodePtr> newNodes;
     for (const auto& node : nodes) {
-        if (reachableNodes.count(node)) {
+        if (reachableNodes.count(node)){
             newNodes.insert(node);
             if (node->pruned) {
 //                std::cout << "reusing a pruned node: " << node->getTuple().toString() << std::endl;

@@ -23,6 +23,7 @@
 #include "ast2ram/utility/TranslatorContext.h"
 #include "ram/Condition.h"
 #include "ram/Expression.h"
+#include "ram/Program.h"
 
 namespace souffle::ast2ram::online {
 

@@ -35,6 +35,7 @@
 #include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/EmptyStatement.h"
+#include "ram/Evidence.h"
 #include "ram/Erase.h"
 #include "ram/ExistenceCheck.h"
 #include "ram/Exit.h"
@@ -432,8 +433,8 @@ void Synthesiser::emitRules (std::ostream& out) {
 
 void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "std::cout << std::fixed << std::setprecision(10);\n";
-    out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
-    out << "// graph->dumpStatistics(std::cout);\n";
+    out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob, evidences);\n";
+    out << "graph->dumpStatistics(std::cout);\n";
     out << "graph->dumpDot(\"before_prune.dot\");\n" << std::endl;
     out << "debugger.startStage(StageKind::PRUNING_FULL);\n";
     out << "auto view = graph->prune(obj.getOutputRelations());\n" << std::endl;
@@ -463,15 +464,45 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     // out << "std::cout << \"edgeFormulas size: \" << edgeFormulas.size() << std::flush;\n";
     // out << "size_t count = 0;\n";
     // out << "std::unordered_map<NodePtr, double> nodeProbabilities;\n";
-    out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+    //out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
     out << "//    std::cout << \"Node\" << node->getId() ;\n";
     out << "//    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
     out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
-    out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
-    out << "    probResult[node] = prob;\n";
-    out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
+    out << "// --- Check that all evidences are in the graph ---\n";
+    out << "for (const auto& e : evidences) {\n";
+    out << "    NodePtr node = graph->findNode(e.getTuple());\n";
+    out << "    if (!node) {\n";
+    out << "        std::cerr << \"Error: evidence \" << e.toString() << \" is not found in the graph.\" << std::endl;\n";
+    out << "        exit(1);\n";
+    out << "    }\n";
     out << "}\n";
     out << "debugger.endStage();\n";
+    out << "\n";
+    out << "// --- Compute W(evidence) ---\n";
+    out << "auto evidenceBdd = bddManager.getTrue();\n";
+    out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+    out << "    if (node->hasEvidence()) {\n";
+    out << "        evidenceBdd = bddManager.makeAnd(evidenceBdd, bdd);\n";
+    out << "    }\n";
+    out << "}\n";
+    out << "double evidenceWeight = bddManager.computeWeightedModelCount(evidenceBdd);\n";
+    out << "std::cout << \"Evidence WMC: \" << evidenceWeight << std::endl;\n\n";
+    out << "// --- Compute conditional probabilities P(node | evidence) ---\n";
+    out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+    out << "    auto conditionedBdd = bdd;\n";
+    out << "    for (const auto& [eNode, ebdd] : nodeFormulas) {\n";
+    out << "        if (eNode->hasEvidence()) {\n";
+    out << "            conditionedBdd = bddManager.makeAnd(conditionedBdd, ebdd);\n";
+    out << "        }\n";
+    out << "    }\n";
+    out << "    double weightedCount = bddManager.computeWeightedModelCount(conditionedBdd);\n";
+    out << "    double prob = (evidenceWeight == 0.0) ? 0.0 : weightedCount / evidenceWeight;\n";
+    out << "    probResult[node] = prob;\n";
+    out << "}\n";
+    //out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
+    //out << "    probResult[node] = prob;\n";
+    //out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
+    //out << "}\n";
     out << "dumpProbabilities(probResult, \"" << glb.config().get("output-dir") << "\");\n";
     out << "debugger.endTurn();\n";
 
@@ -840,6 +871,8 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 
             PRINT_END_COMMENT(out);
         }
+
+
 
         void visit_(type_identity<Clear>, const Clear& clear, std::ostream& out) override {  // TODO: should not purge real relation
             PRINT_BEGIN_COMMENT(out);
@@ -3410,6 +3443,30 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         }
     });
 
+    //-------------------------------------
+    // generate evidences
+    //--------------------------------------
+    if (!prog.getEvidences().empty()) {
+        std::stringstream ss;
+        ss << "std::vector<Evidence> evidences = {\n";
+
+        for (const auto& evi : prog.getEvidences()) {
+            const auto& tupleStr = evi->getTupleString();
+            const auto& relName = evi->getRelation();
+            const auto& value = evi->getValue();
+
+            size_t l = tupleStr.find("(");
+            size_t r = tupleStr.find(")");
+            std::string field = tupleStr.substr(l+1, r - l -1);
+
+            ss << "    Evidence(UntypedTuple{\"" << relName << "\", {" << field
+              << "}}, " << (value ? "true" : "false") << "),\n";
+        }
+
+        ss << "};\n";
+        mainClass.hooks() << ss.str();
+    }
+
     // identify relations used by each subroutines
     std::multimap<std::string /* stratum_* */, std::string> subroutineUses;
 
@@ -4121,6 +4178,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << "}\n";
     }
     hook << "}\n";
+
     db.addGlobalInclude("\"souffle/problog/Atom.h\"");
     db.addGlobalInclude("\"souffle/problog/Rule.h\"");
     db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");

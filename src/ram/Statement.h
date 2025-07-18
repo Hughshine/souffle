@@ -20,9 +20,7 @@
 #include "ram/Node.h"
 #include <cassert>
 #include <ostream>
-
 namespace souffle::ram {
-
 /**
  * @class Statement
  * @brief Abstract class for RAM statements
@@ -36,7 +34,7 @@ public:
         return (kind >= NK_Statement && kind < NK_LastStatement);
     }
 
-// protected:
+    // protected:
     Statement(NodeKind kind) : Node(kind) {
         assert(kind > NK_Statement && kind < NK_LastStatement);
     }
@@ -56,4 +54,4 @@ public:
     friend class Program;
 };
 
-}  // namespace souffle::ram
+}
