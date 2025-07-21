@@ -635,36 +635,50 @@ void buildFormulasIncCyclewise(
         }
         // The impact information is not complete...
         // TODO: update via reachability information
-        for (auto node: view.getNodes()) {
-            if (deltaDeletedNodes.count(node)) {
-                continue;
-            }
-//            auto formula = ;
-            for (auto deletedFact: deletedFacts) {
-                if (formulaManager.isSame(nodeFormulas[node], formulaManager.getFalse())) {
+        for (const auto& [deletedFact, impactedNodes]: view.getNodeImpactedByDeltaDelete()) {
+            for (auto node: impactedNodes) {
+                if (deltaDeletedNodes.count(node)) {
+                    continue;  // skip deleted nodes
+                }
+                if (nodeFormulas.count(node) == 0 || formulaManager.isSame(nodeFormulas[node], formulaManager.getFalse())) {
                     continue;  // no need to update
                 }
-                auto deletedFactIndex = mapNodeId(deletedFact->getId());
-                // apply negation to the formula
-                std::cout << "Updating node: " << node->getId() << " " << node->toString() << std::endl;
-//                std::cout << "Deleted fact formula: " << formulaManager.toString(deletedFactFormula) << std::endl;
-                std::cout << "Old formula: " << formulaManager.toString(nodeFormulas[node]) << std::endl;
-                nodeFormulas[node] = formulaManager.makeCondition(nodeFormulas[node], {}, {deletedFactIndex});
-                std::cout << "New formula: " << formulaManager.toString(nodeFormulas[node]) << std::endl;
+                nodeFormulas[node] = formulaManager.makeCondition(nodeFormulas[node], {}, {mapNodeId(deletedFact->getId())});
             }
         }
-        for (auto edge: view.getEdges()) {
-            if (deltaDeletedEdges.count(edge)) {
-                continue;
-            }
-            for (auto deletedFact: deletedFacts) {
-                if (formulaManager.isSame(edgeFormulas[edge], formulaManager.getFalse())) {
-                    assert (false && "Edge formula should not be False at this point");
+        for (const auto& [deletedFact, impactedEdges]: view.getEdgeImpactedByDeltaDelete()) {
+            for (auto edge: impactedEdges) {
+                if (deltaDeletedEdges.count(edge)) {
+                    continue;  // skip deleted edges
                 }
-                // apply negation to the formula
                 edgeFormulas[edge] = formulaManager.makeCondition(edgeFormulas[edge], {}, {mapNodeId(deletedFact->getId())});
             }
         }
+//        for (auto node: view.getNodes()) {
+//            if (deltaDeletedNodes.count(node)) {
+//                continue;
+//            }
+////            auto formula = ;
+//            for (auto deletedFact: deletedFacts) {
+//                if (formulaManager.isSame(nodeFormulas[node], formulaManager.getFalse())) {
+//                    continue;  // no need to update
+//                }
+//                auto deletedFactIndex = mapNodeId(deletedFact->getId());
+//                nodeFormulas[node] = formulaManager.makeCondition(nodeFormulas[node], {}, {deletedFactIndex});
+//            }
+//        }
+//        for (auto edge: view.getEdges()) {
+//            if (deltaDeletedEdges.count(edge)) {
+//                continue;
+//            }
+//            for (auto deletedFact: deletedFacts) {
+//                if (formulaManager.isSame(edgeFormulas[edge], formulaManager.getFalse())) {
+//                    assert (false && "Edge formula should not be False at this point");
+//                }
+//                // apply negation to the formula
+//                edgeFormulas[edge] = formulaManager.makeCondition(edgeFormulas[edge], {}, {mapNodeId(deletedFact->getId())});
+//            }
+//        }
 //            auto formula = nodeFormulas[node];
 //            std::set<NodePtr> impactedNodes, visitedNodes;
 //            std::cout << "Processing deleted fact: " << node->getId() << " " << node->toString() << std::endl;

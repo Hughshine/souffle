@@ -270,6 +270,13 @@ public:
     virtual const std::set<EdgePtr>& getDeltaInsertEdges() const = 0;
     virtual const std::set<NodePtr>& getDeltaDeleteNodes() const = 0;
     virtual const std::set<EdgePtr>& getDeltaDeleteEdges() const = 0;
+    virtual const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaDelete() const = 0;
+    virtual const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const = 0;
+    virtual const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaInsert() const = 0;
+    virtual const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const = 0;
+    // deletion impacted
+    // insertion impacted
+
     void dumpDotInc(const std::string& filename) const;
     void dumpStatisticsInc(std::ostream& out) const {
         out << "IncrementalDerivationGraph Statistics:" << std::endl;
@@ -279,6 +286,34 @@ public:
         out << "  Number of delta insert edges: " << getDeltaInsertEdges().size() << std::endl;
         out << "  Number of delta delete nodes: " << getDeltaDeleteNodes().size() << std::endl;
         out << "  Number of delta delete edges: " << getDeltaDeleteEdges().size() << std::endl;
+        for (const auto& [deletedFact, impactedFact]: getNodeImpactedByDeltaDelete()) {
+            out << "  Node " << deletedFact->getId() << " impacted by delta delete: ";
+            for (const auto& fact : impactedFact) {
+                out << fact->toString() << " ";
+            }
+            out << std::endl;
+        }
+        for (const auto& [deletedEdge, impactedEdge]: getEdgeImpactedByDeltaDelete()) {
+            out << "  Edge " << deletedEdge->getId() << " impacted by delta delete: ";
+            for (const auto& edge : impactedEdge) {
+                out << edge->getId() << " ";
+            }
+            out << std::endl;
+        }
+        for (const auto& [insertedFact, impactedFact]: getNodeImpactedByDeltaInsert()) {
+            out << "  Node " << insertedFact->getId() << " impacted by delta insert: ";
+            for (const auto& fact : impactedFact) {
+                out << fact->toString() << " ";
+            }
+            out << std::endl;
+        }
+        for (const auto& [insertedEdge, impactedEdge]: getEdgeImpactedByDeltaInsert()) {
+            out << "  Edge " << insertedEdge->getId() << " impacted by delta insert: ";
+            for (const auto& edge : impactedEdge) {
+                out << edge->getId() << " ";
+            }
+            out << std::endl;
+        }
     }
 };
 
@@ -289,12 +324,20 @@ public:
                     const std::set<NodePtr>& deltaInsertNodes,
                     const std::set<EdgePtr>& deltaInsertEdges,
                     const std::set<NodePtr>& deltaDeleteNodes,
-                    const std::set<EdgePtr>& deltaDeleteEdges)
+                    const std::set<EdgePtr>& deltaDeleteEdges,
+            const std::unordered_map<NodePtr, std::set<NodePtr>>& nodeImpactedByDeltaDelete = {},
+            const std::unordered_map<NodePtr, std::set<EdgePtr>>& edgeImpactedByDeltaDelete = {},
+            const std::unordered_map<NodePtr, std::set<NodePtr>>& nodeImpactedByDeltaInsert = {},
+            const std::unordered_map<NodePtr, std::set<EdgePtr>>& edgeImpactedByDeltaInsert = {})
             : SubgraphView(nodes, edges),
               deltaInsertNodes_(deltaInsertNodes),
               deltaInsertEdges_(deltaInsertEdges),
               deltaDeleteNodes_(deltaDeleteNodes),
-              deltaDeleteEdges_(deltaDeleteEdges) {};
+              deltaDeleteEdges_(deltaDeleteEdges),
+            nodeImpactedByDeltaDelete_(nodeImpactedByDeltaDelete),
+            edgeImpactedByDeltaDelete_(edgeImpactedByDeltaDelete),
+            nodeImpactedByDeltaInsert_(nodeImpactedByDeltaInsert),
+            edgeImpactedByDeltaInsert_(edgeImpactedByDeltaInsert) {};
 
     // getNodes() / getEdges() from DerivationGraphView
     const std::unordered_set<NodePtr>& getNodes() const override {return nodes_; };
@@ -305,6 +348,18 @@ public:
     const std::set<NodePtr>& getDeltaDeleteNodes() const override {return deltaDeleteNodes_; };
     const std::set<EdgePtr>& getDeltaDeleteEdges() const override {return deltaDeleteEdges_; };
 
+    const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaDelete() const override {
+        return nodeImpactedByDeltaDelete_;
+    }
+    const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const override {
+        return edgeImpactedByDeltaDelete_;
+    }
+    const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaInsert() const override {
+        return nodeImpactedByDeltaInsert_;
+    }
+    const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const override {
+        return edgeImpactedByDeltaInsert_;
+    }
     // 可选：dumpDot for incremental view
 
 protected:
@@ -312,6 +367,10 @@ protected:
     std::set<EdgePtr> deltaInsertEdges_;
     std::set<NodePtr> deltaDeleteNodes_;
     std::set<EdgePtr> deltaDeleteEdges_;
+    std::unordered_map<NodePtr, std::set<NodePtr>> nodeImpactedByDeltaDelete_;
+    std::unordered_map<NodePtr, std::set<EdgePtr>> edgeImpactedByDeltaDelete_;
+    std::unordered_map<NodePtr, std::set<NodePtr>> nodeImpactedByDeltaInsert_;
+    std::unordered_map<NodePtr, std::set<EdgePtr>> edgeImpactedByDeltaInsert_;
 };
 
 class DerivationGraph: virtual public DerivationGraphViewInterface {
@@ -690,6 +749,11 @@ public:
         this->deltaInsertEdges.clear();
         this->deltaDeleteNodes.clear();
         this->deltaDeleteEdges.clear();
+
+        this->deletedFactImpactedNodes.clear();
+        this->deletedFactImpactedEdges.clear();
+        this->insertedFactImpactedNodes.clear();
+        this->insertedFactImpactedEdges.clear();
         // 先应用删除，再应用插入
         applyDeltaDeletes(deltaDeleteRuleApps, ruleManager, deletedFacts);
         applyDeltaInserts(deltaInsertRuleApps, ruleManager, fact_prob);
@@ -700,6 +764,11 @@ public:
     std::set<EdgePtr> deltaInsertEdges;
     std::set<NodePtr> deltaDeleteNodes;
     std::set<EdgePtr> deltaDeleteEdges;
+
+    std::unordered_map<NodePtr, std::set<NodePtr>> deletedFactImpactedNodes;
+    std::unordered_map<NodePtr, std::set<EdgePtr>> deletedFactImpactedEdges;
+    std::unordered_map<NodePtr, std::set<NodePtr>> insertedFactImpactedNodes;
+    std::unordered_map<NodePtr, std::set<EdgePtr>> insertedFactImpactedEdges;
 
     const std::set<NodePtr>& getDeltaInsertNodes() const {
         return deltaInsertNodes;
@@ -715,6 +784,22 @@ public:
 
     const std::set<EdgePtr>& getDeltaDeleteEdges() const {
         return deltaDeleteEdges;
+    }
+
+    const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaDelete() const {
+        return deletedFactImpactedNodes;
+    }
+
+    const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const {
+        return deletedFactImpactedEdges;
+    }
+
+    const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaInsert() const {
+        return insertedFactImpactedNodes;
+    }
+
+    const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const {
+        return insertedFactImpactedEdges;
     }
 };
 
@@ -771,6 +856,49 @@ void IncrementalDerivationGraph::applyDeltaInserts(
             }
         }
     }
+
+    for (const auto& [insertedFact, _]: fact_prob) {
+        auto node = this->findNode(insertedFact);
+        assert (node != nullptr && "Inserted fact node not found in the graph");
+        if (node != nullptr) {
+            // 记录被插入的事实影响的节点和边
+            std::queue<EdgePtr> impactedEdgesQueue;
+            std::set<EdgePtr> impactedEdges;
+            std::set<NodePtr> impactedNodes;
+            impactedNodes.insert(node);
+            for (const auto& edge : node->getOutgoingEdges()) {
+                impactedEdges.insert(edge);
+                impactedEdgesQueue.push(edge);
+            }
+            while (!impactedEdgesQueue.empty()) {
+                EdgePtr edge = impactedEdgesQueue.front();
+                impactedEdgesQueue.pop();
+                NodePtr outputNode = edge->getOutput();
+                if (impactedNodes.find(outputNode) == impactedNodes.end()) {
+                    impactedNodes.insert(outputNode);
+                    for (const auto& edge: outputNode->getOutgoingEdges()) {
+                        impactedEdges.insert(edge);
+                        impactedEdgesQueue.push(edge);
+                    }
+                }
+            }
+            for (const auto& edge : impactedEdges) {
+                insertedFactImpactedEdges[node].insert(edge);
+            }
+            for (const auto& impactedNode : impactedNodes) {
+                insertedFactImpactedNodes[node].insert(impactedNode);
+            }
+        }
+    }
+
+    // For debugging
+//    for (const auto& [insertedFact, impactedNodes] : insertedFactImpactedNodes) {
+//        std::cout << "Inserted fact: " << insertedFact->toString() << " impacts nodes: ";
+//        for (const auto& impactedNode : impactedNodes) {
+//            std::cout << impactedNode->toString() << ", ";
+//        }
+//        std::cout << std::endl;
+//    }
 }
 
 void IncrementalDerivationGraph::applyDeltaDeletes(
@@ -783,6 +911,44 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
         return;
     }
     FunctionTimer timer("applying delta deletes");
+
+    {
+        // update impact information
+        for (auto deletedFact : deletedFacts) {
+            auto node = this->findNode(deletedFact);
+            assert (node != nullptr && "Deleted fact node not found in the graph");
+            if (node != nullptr) {
+                // 记录被删除的事实影响的节点和边
+                std::queue<EdgePtr> impactedEdgesQueue;
+                std::set<EdgePtr> impactedEdges;
+                std::set<NodePtr> impactedNodes;
+                impactedNodes.insert(node);
+                for (const auto& edge : node->getOutgoingEdges()) {
+                    impactedEdges.insert(edge);
+                    impactedEdgesQueue.push(edge);
+                }
+                while (!impactedEdgesQueue.empty()) {
+                    EdgePtr edge = impactedEdgesQueue.front();
+                    impactedEdgesQueue.pop();
+                    NodePtr outputNode = edge->getOutput();
+                    if (impactedNodes.find(outputNode) == impactedNodes.end()) {
+//                        std::cout << "Impacting node: " << outputNode->toString() << std::endl;
+                        impactedNodes.insert(outputNode);
+                        for (const auto& edge: outputNode->getOutgoingEdges()) {
+                            impactedEdges.insert(edge);
+                            impactedEdgesQueue.push(edge);
+                        }
+                    }
+                }
+                for (const auto& edge : impactedEdges) {
+                    deletedFactImpactedEdges[node].insert(edge);
+                }
+                for (const auto& impactedNode : impactedNodes) {
+                    deletedFactImpactedNodes[node].insert(impactedNode);
+                }
+            }
+        }
+    }
 
     // 跟踪需要删除的节点
     std::vector<NodePtr> nodesToRemove;
@@ -852,7 +1018,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
     for (const auto& nodeToRemove : nodesToRemove) {
         // 从映射中移除
         tupleToNodeMap.erase(nodeToRemove->getTuple());
-        std::cout << "removing node " << nodeToRemove->toString() << std::endl;
+//        std::cout << "removing node " << nodeToRemove->toString() << std::endl;
         // 从节点列表中移除
 //        nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeToRemove), nodes.end());
         nodes.erase(nodeToRemove);
@@ -873,6 +1039,42 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             assert (false && "deleted fact not found");
         }
     }
+
+    for (auto& [fact, impactedEdges]: deletedFactImpactedEdges) {
+        std::set<EdgePtr> newImpactedEdges;
+        for (const auto& impactedEdge : impactedEdges) {
+            // 如果这个边已经被标记为删除，则不需要再次添加
+            if (deltaDeleteEdges.find(impactedEdge) != deltaDeleteEdges.end()) {
+                continue;
+            }
+            // 否则，将其添加到新的影响边集合中
+            newImpactedEdges.insert(impactedEdge);
+        }
+        // 更新影响边集合
+        impactedEdges = std::move(newImpactedEdges);
+    }
+    for (auto& [fact, impactedNodes]: deletedFactImpactedNodes) {
+        std::set<NodePtr> newImpactedNodes;
+        for (const auto& impactedNode : impactedNodes) {
+            // 如果这个节点已经被标记为删除，则不需要再次添加
+            if (deltaDeleteNodes.find(impactedNode) != deltaDeleteNodes.end()) {
+                continue;
+            }
+            // 否则，将其添加到新的影响节点集合中
+            newImpactedNodes.insert(impactedNode);
+//            std::cout << "Deleted fact: " << fact->toString() << " impacts node: " << impactedNode->toString() << std::endl;
+        }
+        // 更新影响节点集合
+        impactedNodes = newImpactedNodes;
+    }
+
+//    for (const auto& [deletedFact, impactedNodes] : deletedFactImpactedNodes) {
+//        std::cout << "Deleted fact: " << deletedFact->toString() << " impacts nodes: ";
+//        for (const auto& impactedNode : impactedNodes) {
+//            std::cout << impactedNode->toString() << ", ";
+//        }
+//        std::cout << std::endl;
+//    }
 }
 
 IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Relation*>& outputRelations) {
@@ -995,15 +1197,57 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
     }
 
 
-
-//        nodes = std::move(newNodes);
-//        edges = std::move(newEdges);
+    std::unordered_map<NodePtr, std::set<NodePtr>> newInsertedFactImpactedNodes;
+    std::unordered_map<NodePtr, std::set<EdgePtr>> newInsertedFactImpactedEdges;
+    for (const auto& [fact, impactedNodes] : insertedFactImpactedNodes) {
+        std::set<NodePtr> newImpactedNodes;
+        for (const auto& impactedNode : impactedNodes) {
+            if (reachableNodes.count(impactedNode)) {
+                newImpactedNodes.insert(impactedNode);
+            }
+        }
+        newInsertedFactImpactedNodes[fact] = std::move(newImpactedNodes);
+    }
+    for (const auto& [fact, impactedEdges] : insertedFactImpactedEdges) {
+        std::set<EdgePtr> newImpactedEdges;
+        for (const auto& impactedEdge : impactedEdges) {
+            if (reachableEdges.count(impactedEdge)) {
+                newImpactedEdges.insert(impactedEdge);
+            }
+        }
+        newInsertedFactImpactedEdges[fact] = std::move(newImpactedEdges);
+    }
+    std::unordered_map<NodePtr, std::set<NodePtr>> newDeletedFactImpactedNodes;
+    std::unordered_map<NodePtr, std::set<EdgePtr>> newDeletedFactImpactedEdges;
+    for (const auto& [fact, impactedNodes] : deletedFactImpactedNodes) {
+        std::set<NodePtr> newImpactedNodes;
+        for (const auto& impactedNode : impactedNodes) {
+            if (reachableNodes.count(impactedNode)) {
+                newImpactedNodes.insert(impactedNode);
+            }
+        }
+        newDeletedFactImpactedNodes[fact] = std::move(newImpactedNodes);
+    }
+    for (const auto& [fact, impactedEdges] : deletedFactImpactedEdges) {
+        std::set<EdgePtr> newImpactedEdges;
+        for (const auto& impactedEdge : impactedEdges) {
+            if (reachableEdges.count(impactedEdge)) {
+                newImpactedEdges.insert(impactedEdge);
+            }
+        }
+        newDeletedFactImpactedEdges[fact] = std::move(newImpactedEdges);
+    }
 
     auto view = IncSubgraphView(std::move(newNodes), std::move(newEdges),
                            std::move(newDeltaInsertedNodes),
                            std::move(newDeltaInsertedEdges),
                            std::move(newDeltaDeletedNodes),
-                           std::move(newDeltaDeletedEdges));
+                           std::move(newDeltaDeletedEdges),
+                            std::move(newDeletedFactImpactedNodes),
+                            std::move(newDeletedFactImpactedEdges),
+                            std::move(newInsertedFactImpactedNodes),
+                            std::move(newInsertedFactImpactedEdges)
+            );
     view.dumpStatisticsInc(std::cout);
     return view;
 }
