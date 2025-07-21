@@ -56,6 +56,7 @@ void buildFormulas(
         if (node->isFact) {
             if (node->getProbability() == 1.0) {
                 nodeFormulas[node] = formulaManager.getTrue();
+//                nodeFormulas[node] = formulaManager.createVar(mapNodeId(node->getId()), *node);
             } else {
                 nodeFormulas[node] = formulaManager.createVar(mapNodeId(node->getId()), *node);
             }
@@ -623,29 +624,83 @@ void buildFormulasIncCyclewise(
     debugger.logMessage(Level::INFO, "Performing deletion");
     {
         // for each deleted node, apply its neg to all its reachable edges and nodes
+        std::set<NodePtr> deletedFacts;
+//        std::vector<FormulaNodeRef> deletedFactsFormulas;
         for (auto node : deltaDeletedNodes) {
-            auto formula = nodeFormulas[node];
-            std::set<NodePtr> impactedNodes, visitedNodes;
-
-            impactedNodes.insert(node);
-            visitedNodes.insert(node);
-            while (!impactedNodes.empty()) {
-                NodePtr currentNode = *impactedNodes.begin();
-                impactedNodes.erase(currentNode);
-                nodeFormulas[currentNode] = formulaManager.makeAnd(nodeFormulas[currentNode], formulaManager.makeNot(formula));  // TODO: should be make conditioning
-                // for each impacted edge
-                for (EdgePtr edge : view.getOutgoingEdges(currentNode)) {
-                    if (deltaDeletedEdges.count(edge)) edgeFormulas.erase(edge);
-                    edgeFormulas[edge] = formulaManager.makeAnd(edgeFormulas[edge], formulaManager.makeNot(formula));  // TODO: should be make conditioning
-                    NodePtr outNode = view.getOutput(edge);
-                    if (outNode && visitedNodes.count(outNode) == 0 && !deltaDeletedNodes.count(outNode)) {
-                        impactedNodes.insert(outNode);
-                        visitedNodes.insert(outNode);
-                    }
-                }
-                nodeFormulas.erase(node);
-                // TODO: update the variable ordering here, by pushing deleted nodes to the very front.
+            if (node->isFact) {
+                deletedFacts.insert(node);
+//                deletedFactsFormulas.emplace_back(nodeFormulas[node]);
+                formulaManager.setVariableWeight(mapNodeId(node->getId()), 0.0, 1.0);  // set weight to 0
             }
+        }
+        // The impact information is not complete...
+        // TODO: update via reachability information
+        for (auto node: view.getNodes()) {
+            if (deltaDeletedNodes.count(node)) {
+                continue;
+            }
+//            auto formula = ;
+            for (auto deletedFact: deletedFacts) {
+                if (formulaManager.isSame(nodeFormulas[node], formulaManager.getFalse())) {
+                    continue;  // no need to update
+                }
+                auto deletedFactIndex = mapNodeId(deletedFact->getId());
+                // apply negation to the formula
+                std::cout << "Updating node: " << node->getId() << " " << node->toString() << std::endl;
+//                std::cout << "Deleted fact formula: " << formulaManager.toString(deletedFactFormula) << std::endl;
+                std::cout << "Old formula: " << formulaManager.toString(nodeFormulas[node]) << std::endl;
+                nodeFormulas[node] = formulaManager.makeCondition(nodeFormulas[node], {}, {deletedFactIndex});
+                std::cout << "New formula: " << formulaManager.toString(nodeFormulas[node]) << std::endl;
+            }
+        }
+        for (auto edge: view.getEdges()) {
+            if (deltaDeletedEdges.count(edge)) {
+                continue;
+            }
+            for (auto deletedFact: deletedFacts) {
+                if (formulaManager.isSame(edgeFormulas[edge], formulaManager.getFalse())) {
+                    assert (false && "Edge formula should not be False at this point");
+                }
+                // apply negation to the formula
+                edgeFormulas[edge] = formulaManager.makeCondition(edgeFormulas[edge], {}, {mapNodeId(deletedFact->getId())});
+            }
+        }
+//            auto formula = nodeFormulas[node];
+//            std::set<NodePtr> impactedNodes, visitedNodes;
+//            std::cout << "Processing deleted fact: " << node->getId() << " " << node->toString() << std::endl;
+//            std::cout << formulaManager.toString(formula) << std::endl;
+//            impactedNodes.insert(node);
+//            visitedNodes.insert(node);
+//            while (!impactedNodes.empty()) {
+//                NodePtr currentNode = *impactedNodes.begin();
+//                impactedNodes.erase(currentNode);
+//                if (!deltaDeletedNodes.count(currentNode)) {
+//                    nodeFormulas[currentNode] = formulaManager.makeAnd(nodeFormulas[currentNode], formulaManager.makeNot(formula));  // TODO: should be make conditioning
+//                    std::cout << "Updating node: " << currentNode->getId() << " " << currentNode->toString() << std::endl;
+//                    std::cout << "New formula: " << formulaManager.toString(nodeFormulas[currentNode]) << std::endl;
+//                }
+//                // for each impacted edge
+//                for (EdgePtr edge : currentNode->getOutgoingEdges()) {  // could not use "view"
+//                    if (!deltaDeletedEdges.count(edge))
+//                        edgeFormulas[edge] = formulaManager.makeAnd(edgeFormulas[edge], formulaManager.makeNot(formula));  // TODO: should be make conditioning
+//                    std::cout << "Updating edge: " << edge->getId() << " " << edge->toString() << std::endl;
+//                    NodePtr outNode = view.getOutput(edge);
+//                    if (outNode && visitedNodes.count(outNode) == 0) {
+//                        std::cout << "Add impacted node: " << outNode->getId() << " " << outNode->toString() << std::endl;
+//                        impactedNodes.insert(outNode);
+//                        visitedNodes.insert(outNode);
+//                    }
+//                }
+//                nodeFormulas.erase(node);
+//                // TODO: update the variable ordering here, by pushing deleted nodes to the very front.
+//            }
+        // update deleted derived nodes formulas
+        for (auto node: deltaDeletedNodes) {
+            nodeFormulas.erase(node);
+        }
+        // update deleted edges formulas
+        for (auto edge: deltaDeletedEdges) {
+            edgeFormulas.erase(edge);
         }
     }
 

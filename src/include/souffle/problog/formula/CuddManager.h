@@ -138,6 +138,8 @@ public:
     BddNodeRef makeOr(const BddNodeRef& a, const BddNodeRef& b) override;
     BddNodeRef makeOr(const std::vector<BddNodeRef>& nodes) override;
     BddNodeRef makeNot(const BddNodeRef& a) override;
+    BddNodeRef makeCondition(const BddNodeRef& f,
+        const std::vector<int>& trueIndexes, const std::vector<int>& falseIndexes) override;
     bool isSame(const BddNodeRef& a, const BddNodeRef& b) override;
 
     BddNodeRef getTrue() override {
@@ -440,6 +442,20 @@ BddNodeRef WeightedBDDManager::makeOrBalanced(const std::vector<BddNodeRef>& nod
 BddNodeRef WeightedBDDManager::makeNot(const BddNodeRef& a) {
     DdNode* result = Cudd_Not(a.get());
     return BddNodeRef(manager, result);
+}
+
+BddNodeRef WeightedBDDManager::makeCondition(const BddNodeRef& f,
+        const std::vector<int>& trueIndexes, const std::vector<int>& falseIndexes) {
+    BddNodeRef cube = getTrue();
+    for (int index : trueIndexes) {
+        BddNodeRef x = createVar(index);  // find
+        cube = makeAnd(cube, x);
+    }
+    for (int index : falseIndexes) {
+        BddNodeRef x = createVar(index);  // find
+        cube = makeAnd(cube, makeNot(x));
+    }
+    return BddNodeRef(manager, Cudd_bddRestrict(manager.get(), f.get(), cube.get()));
 }
 
 bool WeightedBDDManager::isSame(const BddNodeRef& a, const BddNodeRef& b) {

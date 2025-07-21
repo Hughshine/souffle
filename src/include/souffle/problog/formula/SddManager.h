@@ -86,6 +86,8 @@ public:
     SddNodeRef makeOr(const SddNodeRef& a, const SddNodeRef& b) override;
     SddNodeRef makeOr(const std::vector<SddNodeRef>& nodes) override;
     SddNodeRef makeNot(const SddNodeRef& a) override;
+    SddNodeRef makeCondition(const SddNodeRef& f,
+        const std::vector<int>& trueIndexes, const std::vector<int>& falseIndexes) override;
 
     SddNodeRef getTrue() override;
     SddNodeRef getFalse() override;
@@ -181,6 +183,18 @@ inline SddNodeRef SddFormulaManager::getTrue() {
 
 inline SddNodeRef SddFormulaManager::getFalse() {
     return SddNodeRef(manager_, sdd_manager_false(manager_.get()));
+}
+
+inline SddNodeRef SddFormulaManager::makeCondition(const SddNodeRef& f,
+        const std::vector<int>& trueIndexes, const std::vector<int>& falseIndexes) {
+    SddNodeRef result;
+    for (int index : trueIndexes) {
+        result = SddNodeRef(manager_, sdd_condition(index, f.get(), manager_.get()));
+    }
+    for (int index : falseIndexes) {
+        result = SddNodeRef(manager_, sdd_condition(-index, f.get(), manager_.get()));
+    }
+    return result;
 }
 
 inline bool SddFormulaManager::isSame(const SddNodeRef& a, const SddNodeRef& b) {
