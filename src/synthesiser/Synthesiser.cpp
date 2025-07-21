@@ -4100,13 +4100,13 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     hook << "std::unordered_map<UntypedTuple, double> fact_prob;\n";
     hook << "{\n";
-    hook << "FunctionTimer timer(\" reading fact probability \");\n";
+    hook << "FunctionTimer timer(\"Reading fact probability from \" + opt.getInputFileDir());\n";
     for (auto input : loadIOs) {
         auto rel = input->getRelation();
         hook << "{\n";
         hook << "std::string rel = \"" << rel << "\";\n";
-        hook << "std::ifstream factFile(\"input/\" + rel + \".facts\");";
-        hook << "std::ifstream probFile(\"input/\" + rel + \".prob\");";
+        hook << "std::ifstream factFile(opt.getInputFileDir() + \"/\" + rel + \".facts\");";
+        hook << "std::ifstream probFile(opt.getInputFileDir() + \"/\" + rel + \".prob\");";
         hook << "std::string factLine, probLine;";
         hook << "while (std::getline(factFile, factLine) && std::getline(probFile, probLine)) {";
         hook << "std::istringstream fs(factLine);";
