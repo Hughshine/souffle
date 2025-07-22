@@ -724,6 +724,7 @@ void buildFormulasIncCyclewise(
     std::vector<bool> scheduled(depGraph.nodeCycles.size(), false);  // whether the cycle has been scheduled for insertion phase
 
     // === 插入阶段 ===
+    std::cout << "Processing inserted edges" << std::endl;
     debugger.logMessage(Level::INFO, "Processing inserted edges");
     // initialized formulas for newly inserted nodes and edges
     for (auto node : deltaInsertedNodes) {

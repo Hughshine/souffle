@@ -1499,7 +1499,6 @@ Own<ram::Statement> UnitTranslator::generateStratumTableUpdatesIncRederive(const
             mk<ram::DeltaUnion>(mainRelation, "", mainRelation,
                                     getIncNewDervRederiveRelationName(rel->getQualifiedName()), "", getIncDeltaTupleRederiveRelationName(rel->getQualifiedName()), ""),
             // should also update overdelete info: overdelete derv, tuple
-            // TODO: could shrink overdelete derv after each iteration (as an optimization)
             generateEraseTuples(rel, getIncTupleOverDeleteRelationName(rel->getQualifiedName()), getIncDeltaTupleRederiveRelationName(rel->getQualifiedName())),
             // clear the new relation
             mk<ram::Clear>(getIncNewDervRederiveRelationName(rel->getQualifiedName()))
@@ -1548,7 +1547,7 @@ Own<ram::Statement> UnitTranslator::generateStratumPostambleIncRederive(const as
         // swap, get a correct delta delete; but cannot just use swap for it will be reference-based
         appendStmt(postamble,
         mk<ram::Sequence>(
-                mk<ram::Clear>(getIncDeltaTupleDeleteRelationName(rel->getQualifiedName())),
+                mk<ram::ExactClear>(getIncDeltaTupleDeleteRelationName(rel->getQualifiedName())),
                 generateMergeRelations(rel, getIncDeltaTupleDeleteRelationName(rel->getQualifiedName()), getIncTupleOverDeleteRelationName(rel->getQualifiedName()))
             )
         );

@@ -438,9 +438,10 @@ public:
                 getFactProbInc(),// fact_prob_inc; cli should collect this
                 getDeletedFacts() // deletedFacts; cli should collect this
             );
+            graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
             auto view = graph->prune(program->getOutputRelations());
             debugger.endStage();
-            view.dumpDotInc("derivation-inc" + std::to_string(iteration++) + ".dot");
+            view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration++) + ".dot");
             debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
             buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
             debugger.endStage();
