@@ -886,7 +886,9 @@ Own<ram::Statement> UnitTranslator::generateStratumPreambleInc(const ast::Relati
         std::string deltaTupleInsRelation = getIncDeltaTupleInsertRelationName(rel->getQualifiedName());
         if (isDelete) {
             appendStmt(preamble, generateMergeRelations(rel, deltaDelRelation, deltaTupleDelRelation));
-        } else {
+            // recursion treat deletions in over-delete relations
+            appendStmt(preamble, generateMergeRelations(rel, getIncTupleOverDeleteRelationName(rel->getQualifiedName()), getIncDeltaTupleDeleteRelationName(rel->getQualifiedName())))
+;        } else {
             appendStmt(preamble, generateMergeRelations(rel, deltaInsRelation, deltaTupleInsRelation));
         }
     }

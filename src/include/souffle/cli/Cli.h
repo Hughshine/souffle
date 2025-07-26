@@ -389,6 +389,7 @@ public:
                         auto* origRel = program->getRelation(op.relationName);
                         auto* rel = program->getRelation(getIncDeltaTupleDeleteRelationName(op.relationName));
                         auto insRel = program->getRelation(getIncDeltaTupleInsertRelationName(op.relationName));
+                        // TODO: filter out pending deletions
                         if (rel == nullptr) {
                             std::cout << "Relation not found, omitted: " << op.relationName << std::endl;
                             op.valid = false;
@@ -413,6 +414,11 @@ public:
 //                        }
                         if (!origRel->contains(origTuple)) {
                             std::cout << "Relation does not contains the tuple to delete, omitted: " << origTuple.toString() << std::endl;
+                            op.valid = false;
+                            continue;
+                        }
+                        if (rel->contains(relTuple)) {
+                            std::cout << "Already deleted the tuple, omitted: " << relTuple.toString() << std::endl;
                             op.valid = false;
                             continue;
                         }

@@ -1298,6 +1298,13 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
         }
     }
 
+    std::cout << "Dumping " << getNodes().size() << " nodes, "
+              << getEdges().size() << " edges, "
+              << getDeltaInsertNodes().size() << " inserted nodes, "
+              << getDeltaInsertEdges().size() << " inserted edges, "
+              << getDeltaDeleteNodes().size() << " deleted nodes, "
+              << getDeltaDeleteEdges().size() << " deleted edges." << std::endl;
+
     // 插入的节点 - 绿色填充
     out << "\n  // Inserted nodes\n";
     out << "  node [shape=box, style=filled, fillcolor=lightgreen];\n";
