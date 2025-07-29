@@ -287,16 +287,16 @@ public:
         out << "  Number of delta delete nodes: " << getDeltaDeleteNodes().size() << std::endl;
         out << "  Number of delta delete edges: " << getDeltaDeleteEdges().size() << std::endl;
         for (const auto& [deletedFact, impactedFact]: getNodeImpactedByDeltaDelete()) {
-            out << "  Node " << deletedFact->getId() << " impacted by delta delete: ";
+            out << "  Deleted fact " << deletedFact->getTuple().toString() << " impacts visible nodes: ";
             for (const auto& fact : impactedFact) {
                 out << fact->toString() << " ";
             }
             out << std::endl;
         }
         for (const auto& [deletedEdge, impactedEdge]: getEdgeImpactedByDeltaDelete()) {
-            out << "  Edge " << deletedEdge->getId() << " impacted by delta delete: ";
+            out << "  Deleted fact " << deletedEdge->getTuple().toString() << " impacts visible edges: ";
             for (const auto& edge : impactedEdge) {
-                out << edge->getId() << " ";
+                out << edge->toString() << " ";
             }
             out << std::endl;
         }
@@ -1481,7 +1481,16 @@ void dumpProbabilities(
         outputDir + "/" + fileName + ".prob"
     );
     outputFile << std::setprecision(8);
-    for (auto& [node, prob] : nodeProbabilities) {
+    std::vector<NodePtr> sortedNodes;
+    for (const auto& [node, prob] : nodeProbabilities) {
+        sortedNodes.push_back(node);
+    }
+    std::sort(sortedNodes.begin(), sortedNodes.end(),
+              [](const NodePtr& a, const NodePtr& b) {
+                  return a->getTuple().toString() < b->getTuple().toString();
+              });
+    for (auto& node: sortedNodes) {
+        auto prob = nodeProbabilities[node];
         if (node->needOutput) {
             outputFile << node->getTuple().toString() << " : " << prob << std::endl;
         }

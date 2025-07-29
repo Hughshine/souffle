@@ -55,8 +55,8 @@ void buildFormulas(
         // Create a variable using the node's unique ID
         if (node->isFact) {
             if (node->getProbability() == 1.0) {
-                nodeFormulas[node] = formulaManager.getTrue();
-//                nodeFormulas[node] = formulaManager.createVar(mapNodeId(node->getId()), *node);
+//                nodeFormulas[node] = formulaManager.getTrue();
+                nodeFormulas[node] = formulaManager.createVar(mapNodeId(node->getId()), *node);
             } else {
                 nodeFormulas[node] = formulaManager.createVar(mapNodeId(node->getId()), *node);
             }
@@ -232,7 +232,8 @@ void buildFormulasCyclewise(
     for (const auto& node : view.getNodes()) {
         if (node->isFact) {
             FormulaNodeRef var = (node->getProbability() == 1.0)
-                ? formulaManager.getTrue()
+//                ? formulaManager.getTrue()
+                ? formulaManager.createVar(mapNodeId(node->getId()), *node)
                 : formulaManager.createVar(mapNodeId(node->getId()), *node);
             formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1 - node->getProbability());
             nodeFormulas[node] = var;
@@ -512,7 +513,8 @@ void buildFormulasInc(
     for (auto node : deltaInsertedNodes) {
         if (node->isFact) {
             nodeFormulas[node] = (node->getProbability() == 1.0)
-                ? formulaManager.getTrue()
+//                ? formulaManager.getTrue()
+                ? formulaManager.createVar(mapNodeId(node->getId()), *node)
                 : formulaManager.createVar(mapNodeId(node->getId()), *node);
             if (node->getProbability() != 1.0)
                 formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1 - node->getProbability());
