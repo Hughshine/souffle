@@ -141,7 +141,7 @@ public:
     BddNodeRef makeCondition(const BddNodeRef& f,
         const std::vector<int>& trueIndexes, const std::vector<int>& falseIndexes) override;
     bool isSame(const BddNodeRef& a, const BddNodeRef& b) override;
-
+    void postprocessUselessVariables(const std::set<int>& condVars);
     BddNodeRef getTrue() override {
         return BddNodeRef(manager, Cudd_ReadOne(manager.get()));
     }
@@ -456,6 +456,49 @@ BddNodeRef WeightedBDDManager::makeCondition(const BddNodeRef& f,
         cube = makeAnd(cube, makeNot(x));
     }
     return BddNodeRef(manager, Cudd_bddRestrict(manager.get(), f.get(), cube.get()));
+}
+
+void WeightedBDDManager::postprocessUselessVariables(const std::set<int>& condVars) {
+    DdManager* dd = manager.get();
+    int n = Cudd_ReadSize(dd);  // 当前BDD变量个数
+    assert(n > 0);
+
+    // 获取当前的变量顺序（每一层对应的变量索引）
+    std::vector<int> currentOrder(n);
+    for (int level = 0; level < n; ++level) {
+        int var = Cudd_ReadInvPerm(dd, level);
+        // 检查是否越界或非法
+        assert(var >= 0 && var < n);
+        currentOrder[level] = var;
+    }
+
+    // 构造新的排列：将condVars中的变量移到前面，其他变量顺序不变
+    std::vector<int> newOrder;
+    newOrder.reserve(n);
+
+    // 先添加需前置的变量（按它们在当前顺序中的出现顺序）
+    for (int var : currentOrder) {
+        if (condVars.count(var)) {
+            assert(var >= 0 && var < n);
+            newOrder.push_back(var);
+        }
+    }
+    // 再添加其余变量
+    for (int var : currentOrder) {
+        if (!condVars.count(var)) {
+            assert(var >= 0 && var < n);
+            newOrder.push_back(var);
+        }
+    }
+
+    // 最终长度必须等于n
+    assert(static_cast<int>(newOrder.size()) == n);
+
+    // 调用CUDD函数调整变量顺序
+    int result = Cudd_ShuffleHeap(dd, newOrder.data());
+    if (result != 1) {
+        throw std::runtime_error("Cudd_ShuffleHeap failed to reorder variables");
+    }
 }
 
 bool WeightedBDDManager::isSame(const BddNodeRef& a, const BddNodeRef& b) {

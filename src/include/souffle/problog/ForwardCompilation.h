@@ -603,7 +603,7 @@ void buildFormulasIncCyclewise(
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
 ) {
-    formulaManager.stopDynamicOptimization();
+//    formulaManager.stopDynamicOptimization();
 //    FunctionTimer timer("forward compilation, incremental update (cyclewise)");
 //    auto* stage = debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
     CycleDependencyGraph depGraph(view);  // 包括 computeSCCs, computeDependencies, computeDepths
@@ -717,6 +717,18 @@ void buildFormulasIncCyclewise(
         // update deleted edges formulas
         for (auto edge: deltaDeletedEdges) {
             edgeFormulas.erase(edge);
+        }
+        std::set<int> deletedFactsIndex;
+        for (auto node: deletedFacts) {
+            auto index = mapNodeId(node->getId());
+            deletedFactsIndex.insert(index);
+        }
+
+
+        formulaManager.dumpProfilingStatistics();
+        if (!deletedFactsIndex.empty()) {
+            formulaManager.postprocessUselessVariables(deletedFactsIndex);
+            formulaManager.dumpProfilingStatistics();
         }
     }
 
