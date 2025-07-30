@@ -732,10 +732,9 @@ void buildFormulasIncCyclewise(
     for (auto node : deltaInsertedNodes) {
         if (node->isFact) {
             nodeFormulas[node] = node->getProbability() == 1.0
-                ? formulaManager.getTrue()
+                ? formulaManager.createVar(mapNodeId(node->getId()), *node)//; formulaManager.getTrue()
                 : formulaManager.createVar(mapNodeId(node->getId()), *node);
-            if (node->getProbability() != 1.0)
-                formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1 - node->getProbability());
+            formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1 - node->getProbability());
         } else {
             nodeFormulas[node] = formulaManager.getFalse();
         }
@@ -764,6 +763,7 @@ void buildFormulasIncCyclewise(
         size_t cid = ready.front(); ready.pop();
         scheduled[cid] = true;
         auto& worklist = cycleWorklists[cid];
+        // note that this worklist only contains impacted nodes; however,
 //        std::cout << "[CYCLE " << cid << "] Begin Insertion Phase, worklist size: " << worklist.size() << std::endl;
         int round = 0;
         while (!worklist.empty()) {

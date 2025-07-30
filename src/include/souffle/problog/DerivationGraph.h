@@ -851,7 +851,7 @@ void IncrementalDerivationGraph::applyDeltaInserts(
                 deltaDeleteNodes.erase(outputNode);
             } else {
                 // 否则，将其添加到插入集合中（如果尚未添加）
-                if (!outputNode->isFact)
+                if (!outputNode->isFact && findNode(outputNode->getTuple()) == nullptr)
                     deltaInsertNodes.insert(outputNode);
             }
         }
