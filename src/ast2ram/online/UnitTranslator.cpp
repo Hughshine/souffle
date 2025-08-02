@@ -2060,6 +2060,12 @@ Own<ram::Statement> UnitTranslator::generateIncTableUpdate(const std::vector<std
             auto dervOverdeleteName = getIncDervOverDeleteRelationName(rel->getQualifiedName());
             appendStmt(res, mk<ram::ExactClear>(overdeleteName));
             appendStmt(res, mk<ram::ExactClear>(dervOverdeleteName));
+            // also copy getIncDeltaTupleDeleteRelationName to DeltaDervDelete
+            appendStmt(res,
+                generateMergeRelations(rel,
+                    getIncDeltaTupleDeleteRelationName(rel->getQualifiedName()),
+                    getIncDeltaDervDeleteRelationName(rel->getQualifiedName()))  // TODO: do we need also add this to overdelete relation
+                );
         }
     }
     return mk<ram::Sequence>(std::move(res));

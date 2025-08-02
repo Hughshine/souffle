@@ -189,6 +189,11 @@ std::vector<NodePtr> DerivationGraphViewInterface::getInputs(EdgePtr edge) const
 
 NodePtr DerivationGraphViewInterface::getOutput(EdgePtr edge) const {
     NodePtr out = edge->getOutput();
+    assert (out != nullptr);
+    if (getNodes().count(out) == 0) {
+        std::cout << "Node not in view: " << out->toString() << std::endl;
+        assert (getNodes().count(out) != 0);
+    }
     return getNodes().count(out) ? out : nullptr;
 }
 
@@ -727,24 +732,6 @@ public:
         const std::unordered_map<UntypedTuple, double>& fact_prob = {},
         const std::vector<UntypedTuple>& deletedFacts = {}
     ) {
-        {
-//            std::ofstream os("./delta.txt");
-//            os << "Applying delta inserts ..." << std::endl;
-//            for (const auto& app : deltaInsertRuleApps) {
-//                os << app.first.toString() << std::endl;
-//                for (const auto& ruleApp : *(app.second)) {
-//                    os << RuleApplication::toString(ruleApp) << std::endl;
-//                }
-//            }
-//            os << "Applying delta deletes ..." << std::endl;
-//            for (const auto& app : deltaDeleteRuleApps) {
-//                os << app.first.toString() << std::endl;
-//                for (const auto& ruleApp : *(app.second)) {
-//                    os << RuleApplication::toString(ruleApp) << std::endl;
-//                }
-//            }
-        }
-
         this->deltaInsertNodes.clear();
         this->deltaInsertEdges.clear();
         this->deltaDeleteNodes.clear();
@@ -754,6 +741,19 @@ public:
         this->deletedFactImpactedEdges.clear();
         this->insertedFactImpactedNodes.clear();
         this->insertedFactImpactedEdges.clear();
+
+        for (auto& insertedRuleApp : deltaInsertRuleApps) {
+            std::cout << "For tuple: " << insertedRuleApp.first.toString() << std::endl;
+            for (const auto& ruleApp : *(insertedRuleApp.second)) {
+                std::cout << "  Inserted Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
+            }
+        }
+        for (auto& deletedRuleApp : deltaDeleteRuleApps) {
+            std::cout << "For tuple: " << deletedRuleApp.first.toString() << std::endl;
+            for (const auto& ruleApp : *(deletedRuleApp.second)) {
+                std::cout << "  Deleted Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
+            }
+        }
         // 先应用删除，再应用插入
         applyDeltaDeletes(deltaDeleteRuleApps, ruleManager, deletedFacts);
         applyDeltaInserts(deltaInsertRuleApps, ruleManager, fact_prob);
@@ -851,7 +851,9 @@ void IncrementalDerivationGraph::applyDeltaInserts(
                 deltaDeleteNodes.erase(outputNode);
             } else {
                 // 否则，将其添加到插入集合中（如果尚未添加）
-                if (!outputNode->isFact && findNode(outputNode->getTuple()) == nullptr)
+//                std::cout << "Inserting new node: " << outputNode->toString() << std::endl;
+//                std::cout << "Incoming edge count: " << outputNode->getIncomingEdges().size() << std::endl;
+                if (!outputNode->isFact && (outputNode->pruned || outputNode->getIncomingEdges().size() == 1))
                     deltaInsertNodes.insert(outputNode);
             }
         }
@@ -911,7 +913,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
         return;
     }
     FunctionTimer timer("applying delta deletes");
-
+    std::set<UntypedTuple> deletedFactsSet(deletedFacts.begin(), deletedFacts.end());
     {
         // update impact information
         for (auto deletedFact : deletedFacts) {
@@ -997,7 +999,10 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             edgeKeyToEdgeMap.erase(edgeKey);
 
             // 检查输出节点是否还有其他导出路径
-            if (!outputNode->isFact && outputNode->getIncomingEdges().empty()) {
+            // check whether the output node is a deleted fact
+            std::cout << "Trying to delete output node: " << outputNode->toString() << std::endl;
+            if ((!outputNode->isFact || deletedFactsSet.count(outputNode->getTuple())) && outputNode->getIncomingEdges().empty()) {
+                std::cout << "Removing output node with no incoming edges: " << outputNode->toString() << std::endl;
                 // 对于派生节点，如果没有入边，应该从图中删除
                 // 如果这是一个新插入的节点被删除
                 if (deltaInsertNodes.find(outputNode) != deltaInsertNodes.end()) {
@@ -1006,11 +1011,10 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
                 } else {
                     // 添加到删除集合中
                     deltaDeleteNodes.insert(outputNode);
+                    nodesToRemove.push_back(outputNode);
                 }
-
-                // 将节点添加到待删除列表
-                nodesToRemove.push_back(outputNode);
             }
+
         }
     }
 
@@ -1026,17 +1030,31 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
 
     for (const auto& tuple : deletedFacts) {
         auto node = this->findNode(tuple);
+        // it's possible that a deleted fact has deleted derivation...
         if (node != nullptr) {
             // 从映射中移除
+
+            node->isFact = false;
             tupleToNodeMap.erase(node->getTuple());
             deltaDeleteNodes.insert(node);
+            if (!node->getIncomingEdges().empty()) {
+                node->pruned = true; // pretend to be pruned
+                deltaInsertNodes.insert(node); // but still keep it in the graph
+                for (auto edge: node->getIncomingEdges()) {
+                    if (deltaDeleteEdges.find(edge) == deltaDeleteEdges.end()) {
+                        deltaInsertEdges.insert(edge);
+                    }
+                }
+            } else {
+                nodes.erase(node);
+                nodesToRemove.push_back(node);
+            }
             // 从节点列表中移除
-//            nodes.erase(std::remove(nodes.begin(), nodes.end(), node), nodes.end());
-            nodes.erase(node);
-            nodesToRemove.push_back(node);
+
         } else {
+            // It's possible that the deleted fact has been removed from the graph; but it has to be with deleted derivations
             std::cout << "deleted fact not found: " << tuple.toString() << std::endl;
-            assert (false && "deleted fact not found");
+            // assert (false && "deleted fact not found");
         }
     }
 
@@ -1310,6 +1328,7 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
     out << "  node [shape=box, style=filled, fillcolor=lightgreen];\n";
 
     for (const auto& node : getDeltaInsertNodes()) {
+        std::cout << "DumpDotInc Inserting node: " << node->getTuple().toString() << std::endl;
         out << "  node" << node->getId() << " [label=\""
             << node->getTuple().toString();
 
@@ -1358,7 +1377,6 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
 
                 edgeLabel += "]";
             }
-
             out << "  edge" << edge->getId() << edgeLabel << ";\n";
 
             // 输入节点到边的连接
@@ -1401,7 +1419,6 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
         } else {
             edgeLabel = " [color=green]";
         }
-
         out << "  edge" << edge->getId() << edgeLabel << ";\n";
 
         // 输入节点到边的连接 - 绿色

@@ -348,7 +348,7 @@ void buildFormulasCyclewise(
             }
         }
     }
-
+    formulaManager.dumpProfilingStatistics();
 //    std::cout << "✅ buildFormulasCyclewiseNew completed using global depth info.\n";
 }
 
@@ -854,6 +854,7 @@ void buildFormulasIncCyclewise(
         debugger.endIteration();
     }
 //    debugger.endStage();
+    formulaManager.dumpProfilingStatistics();
 }
 
 #endif //FORWARDCOMPILATION_H

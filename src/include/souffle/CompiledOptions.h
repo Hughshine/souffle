@@ -66,15 +66,15 @@ protected:
      * number of threads
      */
     std::size_t num_jobs;
-
+    std::string log_file_name = "log.txt";  // default log file name
     /**
     * knowledge representation
     */
     std::string knowledge_representation;  // bdd, sdd are supported
 public:
     // all argument constructor
-    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj)
-            : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj) {}
+    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt")
+            : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn) {}
 
     /**
      * get source code name
@@ -96,7 +96,9 @@ public:
     const std::string& getOutputFileDir() const {
         return output_dir;
     }
-
+    const std::string& getLogFileName() const {
+        return log_file_name;
+    }
     /**
      * is profiling switched on
      */
@@ -140,7 +142,7 @@ public:
         // long options
         option longOptions[] = {{"facts", true, nullptr, 'F'}, {"output", true, nullptr, 'D'},
                 {"profile", true, nullptr, 'p'}, {"jobs", true, nullptr, 'j'}, {"index", true, nullptr, 'i'},
-                {"knowledge", true, nullptr, 'k'},
+                {"knowledge", true, nullptr, 'k'}, {"logfile", true, nullptr, 'l'},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -199,6 +201,13 @@ public:
                     } else {
                         std::cerr << "Invalid knowledge representation: " << optarg << ", defaultly change to bdd\n";
                         knowledge_representation = "bdd";
+                    }
+                    break;
+                case 'l':
+                    if (*optarg)
+                        log_file_name = optarg;
+                    else {
+                        log_file_name = "log";
                     }
                     break;
                 default: printHelpPage(exec_name); return false;

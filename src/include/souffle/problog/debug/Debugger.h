@@ -260,6 +260,76 @@ public:
         }
     }
 
+
+
+
+    void printReportJson(std::ostream& os) {
+        using namespace json11;
+
+        Json::array json_turns;
+
+        for (const auto& turn : turns_) {
+            Json::object jturn;
+            jturn["index"] = Json(static_cast<int>(turn.turnIndex));
+            jturn["mode"] = Json(turn.algMode);
+            jturn["time_seconds"] = Json(turn.getDurationSeconds());
+            jturn["peak_mem_kb"] = Json(static_cast<long long>(turn.getMemPeak()));
+
+            // Turn-level info map
+            Json::object info_map;
+            for (const auto& [key, value] : turn.getInfoMap()) {
+                info_map[key] = Json(value);
+            }
+            jturn["info"] = info_map;
+
+            // Turn-level logs
+            Json::object logs_obj;
+            for (const auto& [lvl, msgs] : turn.getLogs()) {
+                Json::array log_array;
+                for (const auto& msg : msgs) {
+                    log_array.push_back(Json(msg));
+                }
+                logs_obj[levelToString(lvl)] = log_array;
+            }
+            jturn["logs"] = logs_obj;
+
+            // Stages
+            Json::array stages_array;
+            for (const auto& stage : turn.stages) {
+                Json::object jstage;
+                jstage["name"] = Json(stageKindToString(stage.kind));
+                jstage["time_seconds"] = Json(stage.getDurationSeconds());
+                jstage["peak_mem_kb"] = Json(static_cast<long long>(stage.getMemPeak()));
+
+                // Stage-level info
+                Json::object stage_info;
+                for (const auto& [key, value] : stage.getInfoMap()) {
+                    stage_info[key] = Json(value);
+                }
+                jstage["info"] = stage_info;
+
+                // Stage-level logs
+                Json::object stage_logs;
+                for (const auto& [lvl, msgs] : stage.getLogs()) {
+                    Json::array log_array;
+                    for (const auto& msg : msgs) {
+                        log_array.push_back(Json(msg));
+                    }
+                    stage_logs[levelToString(lvl)] = log_array;
+                }
+                jstage["logs"] = stage_logs;
+
+                stages_array.push_back(jstage);
+            }
+
+            jturn["stages"] = stages_array;
+            json_turns.push_back(jturn);
+        }
+
+        Json report_json = Json::object{{"turns", json_turns}};
+        os << report_json.dump() << std::endl;
+    }
+
 private:
     Debugger() : turnCount_(0), currentTurn_(nullptr), currentStage_(nullptr), currentIteration_(nullptr) {}
 

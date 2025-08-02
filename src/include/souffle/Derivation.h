@@ -19,8 +19,9 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include "souffle/SouffleInterface.h"
 
-inline std::string generateFilename(const std::string& prefix = "log") {
+inline std::string generateFilename(const std::string& prefix = "log", const std::string& suffix = ".txt") {
     std::time_t now = std::time(nullptr);
     std::tm* local = std::localtime(&now);
 
@@ -32,7 +33,7 @@ inline std::string generateFilename(const std::string& prefix = "log") {
         << local->tm_hour
         << local->tm_min
         << local->tm_sec
-        << ".txt";
+        << suffix;
 
     return oss.str();
 }
@@ -177,6 +178,16 @@ struct UntypedTuple {
     // for nullary
     static UntypedTuple fromTypedTuple(const std::string& relationName, const int* const&) {
         return UntypedTuple{relationName, {}};
+    }
+
+    static UntypedTuple fromSouffleTuple(const souffle::tuple& tuple) {
+        UntypedTuple result;
+        result.relation_name = tuple.getRelation().getName();
+        result.fields.reserve(tuple.getRelation().getArity());
+        for (size_t i = 0; i < tuple.getRelation().getArity(); i++) {
+            result.fields.push_back(tuple[i]);
+        }
+        return result;
     }
 };
 

@@ -4139,10 +4139,10 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     emitProblogPipeline(hook);
 
     hook << "Debugger& debugger = Debugger::getInstance();\n";
-    hook << "std::string reportFile = generateFilename();\n";
+    hook << "std::string reportFile = generateFilename(opt.getLogFileName(), \".json\");\n";
     hook << "std::ofstream ofs = std::ofstream(reportFile);\n";
-    hook << "debugger.printReport(ofs);\n";
-    hook << "debugger.printReport(std::cout);\n";
+    hook << "debugger.printReportJson(ofs);\n";
+    hook << "// debugger.printReport(std::cout);\n";
     // add online incremental&interactive computation
 
 

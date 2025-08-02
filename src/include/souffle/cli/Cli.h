@@ -350,6 +350,10 @@ public:
 
     size_t iteration = 1;
     void commit() {
+        DerivationManager::untypedTuple2DeltaInsertRuleApplications.clear();
+        DerivationManager::untypedTuple2DeltaDeleteRuleApplications.clear();
+        DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();
+        DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();
         static size_t commitCount = 0;
         // TODO: should clean all delta relations after each commit
         if (program) {
@@ -423,14 +427,27 @@ public:
                             continue;
                         }
                         rel->insert(relTuple);
+                        // should also delete all its derivations...
+                        // input fact is possibly derivable
+                        auto& deletedFactRuleAppSet = DerivationManager::untypedTuple2RuleApplications[UntypedTuple::fromSouffleTuple(origTuple)];
+                        if (deletedFactRuleAppSet != nullptr && !deletedFactRuleAppSet->empty()) {
+                            std::cout << "Deleted tuple: " << origTuple.toString() << std::endl;
+                            auto& deltaDeletedFactRuleAppSet =
+                                DerivationManager::untypedTuple2DeltaDeleteRuleApplications[UntypedTuple::fromSouffleTuple(origTuple)];
+                            if (deltaDeletedFactRuleAppSet == nullptr) {
+                                deltaDeletedFactRuleAppSet = new std::unordered_set<RuleApplication>();
+                            }
+                            for (auto& ruleApp: *deletedFactRuleAppSet) {
+                                std::cout << "Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
+                                deltaDeletedFactRuleAppSet->insert(ruleApp);
+                            }
+                            deletedFactRuleAppSet->clear();
+                            DerivationManager::untypedTuple2RuleApplications.erase(UntypedTuple::fromSouffleTuple(origTuple));
+                        }
                     }
                 }
             }
             {
-                DerivationManager::untypedTuple2DeltaInsertRuleApplications.clear();
-                DerivationManager::untypedTuple2DeltaDeleteRuleApplications.clear();
-                DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();
-                DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();
                 debugger.startTurn();
                 debugger.startStage(StageKind::SEMINAIVE_INC);
                 program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);
