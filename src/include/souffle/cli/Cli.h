@@ -145,6 +145,7 @@ private:
 //    std::map<NodePtr, BddNodeRef>* nodeFormulas;
     std::map<NodePtr, NodeRef>* nodeFormulas;
     std::map<EdgePtr, NodeRef>* edgeFormulas;
+    std::set<NodePtr> changedNodes;
     DDManager<NodeRef>* ddManager = nullptr;
 
 public:
@@ -155,7 +156,7 @@ public:
             std::map<NodePtr, NodeRef>* nodeFormulas = {},
             std::map<EdgePtr, NodeRef>* edgeFormulas = {}
             )
-            : program(prog), graph(graph), ruleManager(rm), ddManager(ddManager), nodeFormulas(nodeFormulas), edgeFormulas(edgeFormulas) {
+            : program(prog), graph(graph), ruleManager(rm), ddManager(ddManager), nodeFormulas(nodeFormulas), edgeFormulas(edgeFormulas), changedNodes() {
         // Initialize readline
         using_history();
     }
@@ -431,14 +432,14 @@ public:
                         // input fact is possibly derivable
                         auto& deletedFactRuleAppSet = DerivationManager::untypedTuple2RuleApplications[UntypedTuple::fromSouffleTuple(origTuple)];
                         if (deletedFactRuleAppSet != nullptr && !deletedFactRuleAppSet->empty()) {
-                            std::cout << "Deleted tuple: " << origTuple.toString() << std::endl;
+//                            std::cout << "Deleted tuple: " << origTuple.toString() << std::endl;
                             auto& deltaDeletedFactRuleAppSet =
                                 DerivationManager::untypedTuple2DeltaDeleteRuleApplications[UntypedTuple::fromSouffleTuple(origTuple)];
                             if (deltaDeletedFactRuleAppSet == nullptr) {
                                 deltaDeletedFactRuleAppSet = new std::unordered_set<RuleApplication>();
                             }
                             for (auto& ruleApp: *deletedFactRuleAppSet) {
-                                std::cout << "Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
+//                                std::cout << "Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
                                 deltaDeletedFactRuleAppSet->insert(ruleApp);
                             }
                             deletedFactRuleAppSet->clear();
@@ -465,38 +466,30 @@ public:
             auto view = graph->prune(program->getOutputRelations());
             debugger.endStage();
             view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration++) + ".dot");
+            changedNodes.clear();
             debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
-            buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
+            buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
             debugger.endStage();
-            probResult.clear();
+
             {
                 debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
-                FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(nodeFormulas->size()));
-//                std::ofstream formulaFile("./formula.txt");
-                for (const auto& [node, dd] : *nodeFormulas) {
-                    if (view.getNodes().find(node) == view.getNodes().end()) {
-//                        std::cout << "isNullptr: " << (node == nullptr) << std::endl;
-                        std::cout << "Node " << node->toString() << " not in view, skipped." << std::endl;
-                        continue;
+                FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(changedNodes.size()));
+                std::unordered_map<NodePtr, double> newProbResult;
+                for (const auto& node: view.getValidNodes()) {
+                    std::cout << "Computing probability for node: " << node->toString() << std::endl;
+                    if (changedNodes.find(node) == changedNodes.end()) {
+                        newProbResult[node] = probResult[node];
+                    } else {
+                        newProbResult[node] = ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
                     }
-//                    formulaFile << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
-//                    formulaFile << bddManager->toString(bdd) << "\t";
-                    auto prob = ddManager->computeWeightedModelCount(dd);
-//                    formulaFile << "Probability: " << prob << std::endl;
-//                    auto prob = bddManager->computeWeightedModelCount(bdd);
-                    probResult[node] = prob;
                 }
+                probResult.clear();
+                probResult = newProbResult;
                 debugger.endStage();
             }
+
             debugger.endTurn();
             dumpProbabilities(probResult,"./output/","fact-inc");
-//            for (const auto& [edge, bdd] : *edgeFormulas) {
-//                std::cout << edge->toString() << " : ";
-//                std::cout << bddManager->toString(bdd) << "\t";
-//                auto prob = bddManager->computeWeightedModelCount(bdd);
-//                std::cout << "Probability: " << prob << std::endl;
-//            }
-//            std::cout << "Done" << std::endl;
         } else {
             std::cout << "No program loaded." << std::endl;
         }

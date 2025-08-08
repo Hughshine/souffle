@@ -601,7 +601,8 @@ void buildFormulasIncCyclewise(
     const IncrementalDerivationGraphViewInterface& view,
     FormulaManager<FormulaNodeRef>& formulaManager,
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
-    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
+    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
+    std::set<NodePtr>& changedNodes
 ) {
 //    formulaManager.stopDynamicOptimization();
 //    FunctionTimer timer("forward compilation, incremental update (cyclewise)");
@@ -634,6 +635,7 @@ void buildFormulasIncCyclewise(
 //                deletedFactsFormulas.emplace_back(nodeFormulas[node]);
                 formulaManager.setVariableWeight(mapNodeId(node->getId()), 0.0, 1.0);  // set weight to 0
             }
+            changedNodes.insert(node);
         }
         // The impact information is not complete...
         // TODO: update via reachability information
@@ -645,7 +647,11 @@ void buildFormulasIncCyclewise(
                 if (nodeFormulas.count(node) == 0 || formulaManager.isSame(nodeFormulas[node], formulaManager.getFalse())) {
                     continue;  // no need to update
                 }
-                nodeFormulas[node] = formulaManager.makeCondition(nodeFormulas[node], {}, {mapNodeId(deletedFact->getId())});
+                auto newNodeFormula = formulaManager.makeCondition(nodeFormulas[node], {}, {mapNodeId(deletedFact->getId())});
+                if (!formulaManager.isSame(nodeFormulas[node], newNodeFormula)) {
+                    nodeFormulas[node] = newNodeFormula;
+                    changedNodes.insert(node);
+                }
             }
         }
         for (const auto& [deletedFact, impactedEdges]: view.getEdgeImpactedByDeltaDelete()) {
@@ -656,60 +662,6 @@ void buildFormulasIncCyclewise(
                 edgeFormulas[edge] = formulaManager.makeCondition(edgeFormulas[edge], {}, {mapNodeId(deletedFact->getId())});
             }
         }
-//        for (auto node: view.getNodes()) {
-//            if (deltaDeletedNodes.count(node)) {
-//                continue;
-//            }
-////            auto formula = ;
-//            for (auto deletedFact: deletedFacts) {
-//                if (formulaManager.isSame(nodeFormulas[node], formulaManager.getFalse())) {
-//                    continue;  // no need to update
-//                }
-//                auto deletedFactIndex = mapNodeId(deletedFact->getId());
-//                nodeFormulas[node] = formulaManager.makeCondition(nodeFormulas[node], {}, {deletedFactIndex});
-//            }
-//        }
-//        for (auto edge: view.getEdges()) {
-//            if (deltaDeletedEdges.count(edge)) {
-//                continue;
-//            }
-//            for (auto deletedFact: deletedFacts) {
-//                if (formulaManager.isSame(edgeFormulas[edge], formulaManager.getFalse())) {
-//                    assert (false && "Edge formula should not be False at this point");
-//                }
-//                // apply negation to the formula
-//                edgeFormulas[edge] = formulaManager.makeCondition(edgeFormulas[edge], {}, {mapNodeId(deletedFact->getId())});
-//            }
-//        }
-//            auto formula = nodeFormulas[node];
-//            std::set<NodePtr> impactedNodes, visitedNodes;
-//            std::cout << "Processing deleted fact: " << node->getId() << " " << node->toString() << std::endl;
-//            std::cout << formulaManager.toString(formula) << std::endl;
-//            impactedNodes.insert(node);
-//            visitedNodes.insert(node);
-//            while (!impactedNodes.empty()) {
-//                NodePtr currentNode = *impactedNodes.begin();
-//                impactedNodes.erase(currentNode);
-//                if (!deltaDeletedNodes.count(currentNode)) {
-//                    nodeFormulas[currentNode] = formulaManager.makeAnd(nodeFormulas[currentNode], formulaManager.makeNot(formula));  // TODO: should be make conditioning
-//                    std::cout << "Updating node: " << currentNode->getId() << " " << currentNode->toString() << std::endl;
-//                    std::cout << "New formula: " << formulaManager.toString(nodeFormulas[currentNode]) << std::endl;
-//                }
-//                // for each impacted edge
-//                for (EdgePtr edge : currentNode->getOutgoingEdges()) {  // could not use "view"
-//                    if (!deltaDeletedEdges.count(edge))
-//                        edgeFormulas[edge] = formulaManager.makeAnd(edgeFormulas[edge], formulaManager.makeNot(formula));  // TODO: should be make conditioning
-//                    std::cout << "Updating edge: " << edge->getId() << " " << edge->toString() << std::endl;
-//                    NodePtr outNode = view.getOutput(edge);
-//                    if (outNode && visitedNodes.count(outNode) == 0) {
-//                        std::cout << "Add impacted node: " << outNode->getId() << " " << outNode->toString() << std::endl;
-//                        impactedNodes.insert(outNode);
-//                        visitedNodes.insert(outNode);
-//                    }
-//                }
-//                nodeFormulas.erase(node);
-//                // TODO: update the variable ordering here, by pushing deleted nodes to the very front.
-//            }
         // update deleted derived nodes formulas
         for (auto node: deltaDeletedNodes) {
             nodeFormulas.erase(node);
@@ -718,6 +670,7 @@ void buildFormulasIncCyclewise(
         for (auto edge: deltaDeletedEdges) {
             edgeFormulas.erase(edge);
         }
+        // update the variable ordering for deleted facts
         std::set<int> deletedFactsIndex;
         for (auto node: deletedFacts) {
             auto index = mapNodeId(node->getId());
@@ -750,6 +703,7 @@ void buildFormulasIncCyclewise(
         } else {
             nodeFormulas[node] = formulaManager.getFalse();
         }
+        changedNodes.insert(node);
     }
 
     for (auto edge : deltaInsertedEdges) {
@@ -838,6 +792,7 @@ void buildFormulasIncCyclewise(
             if (!formulaManager.isSame(nodeFormulas[output], newNode)) {
 //                std::cout << "    [UPDATE] Node formula changed: " << output->toString() << std::endl;
                 nodeFormulas[output] = newNode;
+                changedNodes.insert(output);
                 for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
                     assert (depGraph.edgeToCycleIndex.count(outEdge));
                     size_t outCid = depGraph.edgeToCycleIndex.at(outEdge);

@@ -353,6 +353,19 @@ public:
     const std::set<NodePtr>& getDeltaDeleteNodes() const override {return deltaDeleteNodes_; };
     const std::set<EdgePtr>& getDeltaDeleteEdges() const override {return deltaDeleteEdges_; };
 
+    // Nodes - Deleted Nodes
+    const std::set<NodePtr>& getValidNodes() {
+        if (validNodes_.size() > 0) {
+            return validNodes_;
+        }
+        for (const auto& node : getNodes()) {
+            if (getDeltaDeleteNodes().count(node) == 0 && node->pruned == false) {
+                validNodes_.insert(node);
+            }
+        }
+        return validNodes_;
+     }
+
     const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaDelete() const override {
         return nodeImpactedByDeltaDelete_;
     }
@@ -372,6 +385,7 @@ protected:
     std::set<EdgePtr> deltaInsertEdges_;
     std::set<NodePtr> deltaDeleteNodes_;
     std::set<EdgePtr> deltaDeleteEdges_;
+    std::set<NodePtr> validNodes_;
     std::unordered_map<NodePtr, std::set<NodePtr>> nodeImpactedByDeltaDelete_;
     std::unordered_map<NodePtr, std::set<EdgePtr>> edgeImpactedByDeltaDelete_;
     std::unordered_map<NodePtr, std::set<NodePtr>> nodeImpactedByDeltaInsert_;
