@@ -511,7 +511,7 @@ public:
         std::unordered_set<std::string> outputRelationNames;
         for (const auto* rel : outputRelations) {
             outputRelationNames.insert(rel->getName());
-            std::cout << "Output relation: " << rel->getName() << std::endl;
+//            std::cout << "Output relation: " << rel->getName() << std::endl;
         }
 
         // 标记可达的节点和边
@@ -522,7 +522,7 @@ public:
         // 初始化：从所有输出 relation 的节点出发
         for (const auto& node : nodes) {
             if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
-                std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
+//                std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
                 reachableNodes.insert(node);
                 workQueue.push(node);
                 node->needOutput = true;
@@ -756,18 +756,18 @@ public:
         this->insertedFactImpactedNodes.clear();
         this->insertedFactImpactedEdges.clear();
 
-        for (auto& insertedRuleApp : deltaInsertRuleApps) {
-            std::cout << "For tuple: " << insertedRuleApp.first.toString() << std::endl;
-            for (const auto& ruleApp : *(insertedRuleApp.second)) {
-                std::cout << "  Inserted Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
-            }
-        }
-        for (auto& deletedRuleApp : deltaDeleteRuleApps) {
-            std::cout << "For tuple: " << deletedRuleApp.first.toString() << std::endl;
-            for (const auto& ruleApp : *(deletedRuleApp.second)) {
-                std::cout << "  Deleted Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
-            }
-        }
+//        for (auto& insertedRuleApp : deltaInsertRuleApps) {
+//            std::cout << "For tuple: " << insertedRuleApp.first.toString() << std::endl;
+//            for (const auto& ruleApp : *(insertedRuleApp.second)) {
+//                std::cout << "  Inserted Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
+//            }
+//        }
+//        for (auto& deletedRuleApp : deltaDeleteRuleApps) {
+//            std::cout << "For tuple: " << deletedRuleApp.first.toString() << std::endl;
+//            for (const auto& ruleApp : *(deletedRuleApp.second)) {
+//                std::cout << "  Deleted Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
+//            }
+//        }
         // 先应用删除，再应用插入
         applyDeltaDeletes(deltaDeleteRuleApps, ruleManager, deletedFacts);
         applyDeltaInserts(deltaInsertRuleApps, ruleManager, fact_prob);
@@ -833,7 +833,7 @@ void IncrementalDerivationGraph::applyDeltaInserts(
         if (node == nullptr) {
             node = createNode(tuple);
             deltaInsertNodes.insert(node);
-            std::cout << "new fact inserted: " << node->toString() << std::endl;
+//            std::cout << "new fact inserted: " << node->toString() << std::endl;
         }
         node->setProbability(prob);
         node->isFact = true;
@@ -976,7 +976,6 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             const std::vector<std::string>& vars = rule->getVars();
             EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, vars);
             if (existingEdge == nullptr) {
-                // TODO: possibly linked to input facts.
                 std::cout << "Did not find the edge to delete: "
                           << createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure) << std::endl;
 //                continue;
@@ -1014,9 +1013,9 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
 
             // 检查输出节点是否还有其他导出路径
             // check whether the output node is a deleted fact
-            std::cout << "Trying to delete output node: " << outputNode->toString() << std::endl;
+//            std::cout << "Trying to delete output node: " << outputNode->toString() << std::endl;
             if ((!outputNode->isFact || deletedFactsSet.count(outputNode->getTuple())) && outputNode->getIncomingEdges().empty()) {
-                std::cout << "Removing output node with no incoming edges: " << outputNode->toString() << std::endl;
+//                std::cout << "Removing output node with no incoming edges: " << outputNode->toString() << std::endl;
                 // 对于派生节点，如果没有入边，应该从图中删除
                 // 如果这是一个新插入的节点被删除
                 if (deltaInsertNodes.find(outputNode) != deltaInsertNodes.end()) {

@@ -476,7 +476,6 @@ public:
                 FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(changedNodes.size()));
                 std::unordered_map<NodePtr, double> newProbResult;
                 for (const auto& node: view.getValidNodes()) {
-                    std::cout << "Computing probability for node: " << node->toString() << std::endl;
                     if (changedNodes.find(node) == changedNodes.end()) {
                         newProbResult[node] = probResult[node];
                     } else {
