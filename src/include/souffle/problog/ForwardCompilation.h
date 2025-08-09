@@ -627,19 +627,28 @@ void buildFormulasIncCyclewise(
     debugger.logMessage(Level::INFO, "Performing deletion");
     {
         // for each deleted node, apply its neg to all its reachable edges and nodes
+        // however, since we still want the optimizations for deterministic facts, we sperate them
         std::set<NodePtr> deletedFacts;
-//        std::vector<FormulaNodeRef> deletedFactsFormulas;
+//        std::set<NodePtr> deletedDeterminsticFacts;
         for (auto node : deltaDeletedNodes) {
+//            std::cout << "Processing deleted node: " << node->toString() << std::endl;
             if (node->isFact) {
                 deletedFacts.insert(node);
-//                deletedFactsFormulas.emplace_back(nodeFormulas[node]);
+//                std::cout << "Deleted fact: " << node->toString() << " have probability " << node->getProbability() << std::endl;
+//                if (node->getProbability() == 1.0) {
+//                    deletedDeterminsticFacts.insert(node);
+//                }
                 formulaManager.setVariableWeight(mapNodeId(node->getId()), 0.0, 1.0);  // set weight to 0
             }
             changedNodes.insert(node);
         }
-        // The impact information is not complete...
+//        std::cout << "Deleted facts size: " << deletedFacts.size() << std::endl;
+//        std::cout << "Determinstic deleted facts size: " << deletedDeterminsticFacts.size() << std::endl;
+
+        auto& nodeImpactedByDeltaDelete = view.getNodeImpactedByDeltaDelete();
+        auto& edgeImpactedByDeltaDelete = view.getEdgeImpactedByDeltaDelete();
         // TODO: update via reachability information
-        for (const auto& [deletedFact, impactedNodes]: view.getNodeImpactedByDeltaDelete()) {
+        for (const auto& [deletedFact, impactedNodes]: nodeImpactedByDeltaDelete) {
             for (auto node: impactedNodes) {
                 if (deltaDeletedNodes.count(node)) {
                     continue;  // skip deleted nodes
@@ -654,7 +663,7 @@ void buildFormulasIncCyclewise(
                 }
             }
         }
-        for (const auto& [deletedFact, impactedEdges]: view.getEdgeImpactedByDeltaDelete()) {
+        for (const auto& [deletedFact, impactedEdges]: edgeImpactedByDeltaDelete) {
             for (auto edge: impactedEdges) {
                 if (deltaDeletedEdges.count(edge)) {
                     continue;  // skip deleted edges

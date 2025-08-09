@@ -279,11 +279,53 @@ public:
     virtual const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const = 0;
     virtual const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaInsert() const = 0;
     virtual const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const = 0;
+    const std::set<NodePtr>& getValidNodes() {
+        if (validNodes_.size() > 0) {
+            return validNodes_;
+        }
+        for (const auto& node : getNodes()) {
+            if (getDeltaDeleteNodes().count(node) == 0 && node->pruned == false) {
+                validNodes_.insert(node);
+            }
+        }
+        return validNodes_;
+     }
+    const std::set<NodePtr>& getDeletedFacts() {
+        if (deletedFacts_.size() > 0) {
+            return deletedFacts_;
+        }
+        for (const auto& kv : getNodeImpactedByDeltaDelete()) {
+            deletedFacts_.insert(kv.first);
+        }
+        return deletedFacts_;
+    }
+    const std::set<NodePtr>& getDeletedDeterminsticFacts() {
+        if (deletedDeterminsticFacts_.size() > 0) {
+            return deletedDeterminsticFacts_;
+        }
+        for (const auto& deletedFact: getDeletedFacts()) {
+            if (deletedFact->getProbability() == 1.0) {
+                deletedDeterminsticFacts_.insert(deletedFact);
+            }
+        }
+        return deletedDeterminsticFacts_;
+    }
+    const std::set<NodePtr>& getDeletedNonDeterministicFacts() {
+        if (deletedNonDeterministicFacts_.size() > 0) {
+            return deletedNonDeterministicFacts_;
+        }
+        for (const auto& deletedFact: getDeletedFacts()) {
+            if (deletedFact->getProbability() < 1.0) {
+                deletedNonDeterministicFacts_.insert(deletedFact);
+            }
+        }
+        return deletedNonDeterministicFacts_;
+    }
     // deletion impacted
     // insertion impacted
 
     void dumpDotInc(const std::string& filename) const;
-    void dumpStatisticsInc(std::ostream& out) const {
+    void dumpStatisticsInc(std::ostream& out) {
         out << "IncrementalDerivationGraph Statistics:" << std::endl;
         out << "  Number of nodes: " << getNodes().size() << std::endl;
         out << "  Number of edges: " << getEdges().size() << std::endl;
@@ -319,7 +361,24 @@ public:
             }
             out << std::endl;
         }
+        for (const auto& node : getValidNodes()) {
+            out << "  Valid node: " << node->toString() << std::endl;
+        }
+        for (const auto& node : getDeletedFacts()) {
+            out << "  Deleted fact: " << node->toString() << std::endl;
+        }
+        for (const auto& node : getDeletedDeterminsticFacts()) {
+            out << "  Deleted deterministic fact: " << node->toString() << std::endl;
+        }
+        for (const auto& node : getDeletedNonDeterministicFacts()) {
+            out << "  Deleted non-deterministic fact: " << node->toString() << std::endl;
+        }
     }
+protected:
+    std::set<NodePtr> validNodes_;
+    std::set<NodePtr> deletedFacts_;
+    std::set<NodePtr> deletedDeterminsticFacts_;
+    std::set<NodePtr> deletedNonDeterministicFacts_;
 };
 
 class IncSubgraphView : public SubgraphView, public virtual IncrementalDerivationGraphViewInterface {
@@ -353,18 +412,6 @@ public:
     const std::set<NodePtr>& getDeltaDeleteNodes() const override {return deltaDeleteNodes_; };
     const std::set<EdgePtr>& getDeltaDeleteEdges() const override {return deltaDeleteEdges_; };
 
-    // Nodes - Deleted Nodes
-    const std::set<NodePtr>& getValidNodes() {
-        if (validNodes_.size() > 0) {
-            return validNodes_;
-        }
-        for (const auto& node : getNodes()) {
-            if (getDeltaDeleteNodes().count(node) == 0 && node->pruned == false) {
-                validNodes_.insert(node);
-            }
-        }
-        return validNodes_;
-     }
 
     const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaDelete() const override {
         return nodeImpactedByDeltaDelete_;
@@ -378,6 +425,8 @@ public:
     const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const override {
         return edgeImpactedByDeltaInsert_;
     }
+
+
     // 可选：dumpDot for incremental view
 
 protected:
@@ -385,7 +434,6 @@ protected:
     std::set<EdgePtr> deltaInsertEdges_;
     std::set<NodePtr> deltaDeleteNodes_;
     std::set<EdgePtr> deltaDeleteEdges_;
-    std::set<NodePtr> validNodes_;
     std::unordered_map<NodePtr, std::set<NodePtr>> nodeImpactedByDeltaDelete_;
     std::unordered_map<NodePtr, std::set<EdgePtr>> edgeImpactedByDeltaDelete_;
     std::unordered_map<NodePtr, std::set<NodePtr>> nodeImpactedByDeltaInsert_;
@@ -711,7 +759,7 @@ public:
             node->isFact = true;
         }
         for (const auto& [tuple, ruleAppSet] : ruleApps) {
-            auto node = graph->createNode(tuple);
+            auto node = graph->createNode(tuple, 0.0);
 //            if (node->isFact) {
 //                std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
 //                continue;  // skip fact nodes currently
@@ -815,6 +863,26 @@ public:
     const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const {
         return insertedFactImpactedEdges;
     }
+
+//    std::set<NodePtr> validNodes_;
+//    std::set<NodePtr> deletedFacts_;
+//    std::set<NodePtr> deletedDeterminsticFacts_;
+//    std::set<NodePtr> deletedNonDeterministicFacts_;
+//    const std::set<NodePtr>& getValidNodes() {
+//        if (validNodes_.size() > 0) {
+//            return validNodes_;
+//        }
+//        for (const auto& node : getNodes()) {
+//            if (getDeltaDeleteNodes().count(node) == 0 && node->pruned == false) {
+//                validNodes_.insert(node);
+//            }
+//        }
+//        return validNodes_;
+//    }
+//
+//    const std::set<NodePtr>& getDeletedFacts() = 0; // nodes - deleted nodes
+//    const std::set<NodePtr>& getDeletedDeterminsticFacts() = 0; // nodes - deleted nodes
+//    const std::set<NodePtr>& getDeletedNonDeterminsticFacts() = 0; // nodes - deleted nodes
 };
 
 void IncrementalDerivationGraph::applyDeltaInserts(
@@ -1047,10 +1115,12 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
         if (node != nullptr) {
             // 从映射中移除
 
-            node->isFact = false;
+//            node->isFact = false;
             tupleToNodeMap.erase(node->getTuple());
             deltaDeleteNodes.insert(node);
             if (!node->getIncomingEdges().empty()) {
+                // the node changes from an input fact to a derived node
+                node->isFact = false;
                 node->pruned = true; // pretend to be pruned
                 deltaInsertNodes.insert(node); // but still keep it in the graph
                 for (auto edge: node->getIncomingEdges()) {
