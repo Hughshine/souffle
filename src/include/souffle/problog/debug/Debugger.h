@@ -273,7 +273,7 @@ public:
             jturn["index"] = Json(static_cast<int>(turn.turnIndex));
             jturn["mode"] = Json(turn.algMode);
             jturn["time_seconds"] = Json(turn.getDurationSeconds());
-            jturn["peak_mem_kb"] = Json(static_cast<long long>(turn.getMemPeak()));
+            // jturn["peak_mem_kb"] = Json(static_cast<long long>(turn.getMemPeak()));
 
             // Turn-level info map
             Json::object info_map;

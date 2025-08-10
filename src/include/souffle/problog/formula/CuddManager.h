@@ -15,6 +15,7 @@ extern "C" {
 #include <cudd.h>
 }
 
+double getCacheHitRate(DdManager* manager);
 // Cudd Version. Should rename.
 class BddNodeRef {
 friend class WeightedBDDManager;
@@ -164,6 +165,22 @@ public:
             std::cout << "Current live nodes: " << Cudd_ReadNodeCount(manager.get()) << std::endl;
             std::cout << "Memory usage: " << Cudd_ReadMemoryInUse(manager.get()) / (1024.0 * 1024) << " MB" << std::endl;
     };
+    std::map<std::string, std::string> getProfilingStatistics() override {
+        std::map<std::string, std::string> stats;
+        stats["live_nodes"] = std::to_string(Cudd_ReadNodeCount(manager.get()));
+        stats["memory_usage_mb"] = std::to_string(Cudd_ReadMemoryInUse(manager.get()) / (1024.0 * 1024));
+        stats["cache_hits"] = std::to_string(Cudd_ReadCacheHits(manager.get()));
+        stats["cache_lookups"] = std::to_string(Cudd_ReadCacheLookUps(manager.get()));
+        stats["cache_hit_rate"] = std::to_string(getCacheHitRate(manager.get()) * 100.0) + "%";
+
+        static long last_reordering_time = 0;
+        long current_reordering_time = Cudd_ReadReorderingTime(manager.get());
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.3f", (current_reordering_time - last_reordering_time) / 1000.0);
+        stats["reordering_runtime"] = std::string(buf);
+        last_reordering_time = current_reordering_time;
+        return stats;
+    }
 
 
 private:
