@@ -232,8 +232,8 @@ void buildFormulasCyclewise(
     for (const auto& node : view.getNodes()) {
         if (node->isFact) {
             FormulaNodeRef var = (node->getProbability() == 1.0)
-//                ? formulaManager.getTrue()
-                ? formulaManager.createVar(mapNodeId(node->getId()), *node)
+                ? formulaManager.getTrue()
+//                ? formulaManager.createVar(mapNodeId(node->getId()), *node)
                 : formulaManager.createVar(mapNodeId(node->getId()), *node);
             formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1 - node->getProbability());
             nodeFormulas[node] = var;
@@ -513,8 +513,8 @@ void buildFormulasInc(
     for (auto node : deltaInsertedNodes) {
         if (node->isFact) {
             nodeFormulas[node] = (node->getProbability() == 1.0)
-//                ? formulaManager.getTrue()
-                ? formulaManager.createVar(mapNodeId(node->getId()), *node)
+                ? formulaManager.getTrue()
+//                ? formulaManager.createVar(mapNodeId(node->getId()), *node)
                 : formulaManager.createVar(mapNodeId(node->getId()), *node);
             if (node->getProbability() != 1.0)
                 formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1 - node->getProbability());
@@ -598,7 +598,7 @@ void buildFormulasInc(
 // TODO: 目前每个worklist内没有按照depth排序
 template<typename FormulaNodeRef>
 void buildFormulasIncCyclewise(
-    const IncrementalDerivationGraphViewInterface& view,
+    IncrementalDerivationGraphViewInterface& view,
     FormulaManager<FormulaNodeRef>& formulaManager,
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
@@ -628,27 +628,33 @@ void buildFormulasIncCyclewise(
     {
         // for each deleted node, apply its neg to all its reachable edges and nodes
         // however, since we still want the optimizations for deterministic facts, we sperate them
-        std::set<NodePtr> deletedFacts;
-//        std::set<NodePtr> deletedDeterminsticFacts;
+        std::set<NodePtr> deletedFacts = view.getDeletedFacts();
+        std::set<NodePtr> deletedDeterminsticFacts = view.getDeletedDeterminsticFacts();
+        std::set<NodePtr> deletedNonDeterminsticFacts = view.getDeletedNonDeterministicFacts();
+        for (auto deletedFact: deletedFacts) {
+            formulaManager.setVariableWeight(mapNodeId(deletedFact->getId()), 0.0, 1.0);
+        }
         for (auto node : deltaDeletedNodes) {
-//            std::cout << "Processing deleted node: " << node->toString() << std::endl;
-            if (node->isFact) {
-                deletedFacts.insert(node);
-//                std::cout << "Deleted fact: " << node->toString() << " have probability " << node->getProbability() << std::endl;
-//                if (node->getProbability() == 1.0) {
-//                    deletedDeterminsticFacts.insert(node);
-//                }
-                formulaManager.setVariableWeight(mapNodeId(node->getId()), 0.0, 1.0);  // set weight to 0
-            }
+            nodeFormulas.erase(node);
             changedNodes.insert(node);
         }
-//        std::cout << "Deleted facts size: " << deletedFacts.size() << std::endl;
-//        std::cout << "Determinstic deleted facts size: " << deletedDeterminsticFacts.size() << std::endl;
+
+        for (auto edge: deltaDeletedEdges) {
+            edgeFormulas.erase(edge);
+        }
 
         auto& nodeImpactedByDeltaDelete = view.getNodeImpactedByDeltaDelete();
         auto& edgeImpactedByDeltaDelete = view.getEdgeImpactedByDeltaDelete();
-        // TODO: update via reachability information
-        for (const auto& [deletedFact, impactedNodes]: nodeImpactedByDeltaDelete) {
+        /** deal with deleted determinstic facts first */
+        for (auto& deletedNonDeterminsticFact: deletedNonDeterminsticFacts) {
+//            std::cout << "Processing deleted non-deterministic fact: " << deletedNonDeterminsticFact->toString() << std::endl;
+            if (nodeImpactedByDeltaDelete.find(deletedNonDeterminsticFact) == nodeImpactedByDeltaDelete.end()) {
+                continue;
+            }
+            if (edgeImpactedByDeltaDelete.find(deletedNonDeterminsticFact) == edgeImpactedByDeltaDelete.end()) {
+                continue;
+            }
+            auto& impactedNodes = nodeImpactedByDeltaDelete.at(deletedNonDeterminsticFact);
             for (auto node: impactedNodes) {
                 if (deltaDeletedNodes.count(node)) {
                     continue;  // skip deleted nodes
@@ -656,41 +662,180 @@ void buildFormulasIncCyclewise(
                 if (nodeFormulas.count(node) == 0 || formulaManager.isSame(nodeFormulas[node], formulaManager.getFalse())) {
                     continue;  // no need to update
                 }
-                auto newNodeFormula = formulaManager.makeCondition(nodeFormulas[node], {}, {mapNodeId(deletedFact->getId())});
+                if (node->isFact) { continue; }
+                auto newNodeFormula = formulaManager.makeCondition(nodeFormulas[node], {}, {mapNodeId(deletedNonDeterminsticFact->getId())});
                 if (!formulaManager.isSame(nodeFormulas[node], newNodeFormula)) {
                     nodeFormulas[node] = newNodeFormula;
                     changedNodes.insert(node);
                 }
             }
-        }
-        for (const auto& [deletedFact, impactedEdges]: edgeImpactedByDeltaDelete) {
+
+            auto& impactedEdges = edgeImpactedByDeltaDelete.at(deletedNonDeterminsticFact);
             for (auto edge: impactedEdges) {
                 if (deltaDeletedEdges.count(edge)) {
                     continue;  // skip deleted edges
                 }
-                edgeFormulas[edge] = formulaManager.makeCondition(edgeFormulas[edge], {}, {mapNodeId(deletedFact->getId())});
+                edgeFormulas[edge] = formulaManager.makeCondition(edgeFormulas[edge], {}, {mapNodeId(deletedNonDeterminsticFact->getId())});
             }
         }
-        // update deleted derived nodes formulas
-        for (auto node: deltaDeletedNodes) {
-            nodeFormulas.erase(node);
-        }
-        // update deleted edges formulas
-        for (auto edge: deltaDeletedEdges) {
-            edgeFormulas.erase(edge);
-        }
-        // update the variable ordering for deleted facts
+
+        // update the variable ordering for deleted non-deterministic facts
         std::set<int> deletedFactsIndex;
-        for (auto node: deletedFacts) {
+        for (auto node: deletedNonDeterminsticFacts) {
             auto index = mapNodeId(node->getId());
             deletedFactsIndex.insert(index);
         }
 
-
         formulaManager.dumpProfilingStatistics();
+
         if (!deletedFactsIndex.empty()) {
             formulaManager.postprocessUselessVariables(deletedFactsIndex);
             formulaManager.dumpProfilingStatistics();
+        }
+
+
+        // since we've optimized deterministic facts (which will reduce the size of formulas by a large constant factor) during full compilation,
+        // we cannot simply conditioning formulas on the deleted deterministic facts since they are not in the formulas
+        // we have to over-delete the formulas to False and then re-derive them
+        // how to: change all impacted nodes' formulas to False first, put them into worklists, then rederive their formulas using the worklist algorithm
+        for (auto& deletedDeterminsticFact: deletedDeterminsticFacts) {
+            // update nodes
+            if (nodeImpactedByDeltaDelete.find(deletedDeterminsticFact) == nodeImpactedByDeltaDelete.end()) {
+                continue;
+            }
+            if (edgeImpactedByDeltaDelete.find(deletedDeterminsticFact) == edgeImpactedByDeltaDelete.end()) {
+                continue;
+            }
+            auto& impactedNodes = nodeImpactedByDeltaDelete.at(deletedDeterminsticFact);
+            for (auto node: impactedNodes) {
+                if (deltaDeletedNodes.count(node)) {
+                    continue;  // skip deleted nodes
+                }
+                if (nodeFormulas.count(node) == 0 || formulaManager.isSame(nodeFormulas[node], formulaManager.getFalse())) {
+                    continue;  // no need to update
+                }
+                if (node->isFact) {
+                    continue;
+                }
+                nodeFormulas[node] = formulaManager.getFalse();
+                changedNodes.insert(node);
+            }
+            auto& impactedEdges = edgeImpactedByDeltaDelete.at(deletedDeterminsticFact);
+            for (auto edge: impactedEdges) {
+                if (deltaDeletedEdges.count(edge)) {
+                    continue;  // skip deleted edges
+                }
+                if (view.getOutput(edge)->isFact) {
+                    continue;
+                }
+                edgeFormulas[edge] = formulaManager.getFalse();
+                auto& worklist = cycleWorklists[depGraph.edgeToCycleIndex.at(edge)];
+                if (std::find(worklist.begin(), worklist.end(), edge) != worklist.end()) {
+                    continue;
+                }
+                worklist.push_back(edge);
+            }
+        }
+
+        // update the impacted nodes' formula to the newest
+        for (auto& impactedNode: changedNodes) {
+            std::vector<FormulaNodeRef> incoming;
+            for (EdgePtr e : view.getIncomingEdges(impactedNode)) {
+                if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
+                    incoming.push_back(edgeFormulas[e]);
+                }
+            }
+            FormulaNodeRef newNode = formulaManager.makeOr(incoming);
+            if (!formulaManager.isSame(nodeFormulas[impactedNode], newNode)) {
+                nodeFormulas[impactedNode] = newNode;
+            } else {
+            }
+        }
+
+        // try to rederive the formulas
+        std::queue<size_t> ready;  // cycles with in-degree 0
+        std::vector<bool> scheduled(depGraph.nodeCycles.size(), false);  // whether the cycle has been scheduled for insertion phase
+        std::vector<size_t> inDegree = depGraph.inDegrees;
+        for (size_t cid = 0; cid < depGraph.nodeCycles.size(); ++cid)
+            if (inDegree[cid] == 0) {ready.push(cid); scheduled[cid] = true;}  // schedule cycles with in-degree 0
+
+        while (!ready.empty()) {
+            size_t cid = ready.front(); ready.pop();
+            scheduled[cid] = true;
+            auto& worklist = cycleWorklists[cid];
+            int round = 0;
+            while (!worklist.empty()) {
+                auto* iteration = debugger.startIteration();
+                EdgePtr edge = worklist.front(); worklist.pop_front();
+                round++;
+                FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
+                    ? formulaManager.getTrue()
+                    : formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
+                std::vector<FormulaNodeRef> inputFormulas{baseFormula};
+
+                const auto& inputs = view.getInputs(edge);
+                const auto& negs = view.getBodyNegations(edge);
+                bool allAvailable = true;
+                for (size_t i = 0; i < inputs.size(); ++i) {
+                    auto it = nodeFormulas.find(inputs[i]);
+                    if (it == nodeFormulas.end()) {
+    //                    std::cout << "    [WAIT] Missing input: " << inputs[i]->toString() << std::endl;
+                        allAvailable = false;
+                        break;
+                    }
+                    inputFormulas.push_back(negs[i] ? formulaManager.makeNot(it->second) : it->second);
+                }
+
+                if (!allAvailable) {
+                    worklist.push_back(edge);
+                    debugger.endIteration();
+                    continue;
+                }
+
+                FormulaNodeRef newEdge = formulaManager.makeAnd(inputFormulas);
+                if (formulaManager.isSame(edgeFormulas[edge], newEdge)) {
+//                    std::cout << "    [SKIP] No change\n";
+                    debugger.endIteration();
+                    continue;
+                }
+
+//                std::cout << "    [CHANGE] Edge formula changed\n";
+                edgeFormulas[edge] = newEdge;
+
+                NodePtr output = view.getOutput(edge);
+                if (!output || output->isFact) {
+//                    std::cout << "    [SKIP] Output is null or a fact\n";
+                    debugger.endIteration();
+                    continue;
+                }
+
+                std::vector<FormulaNodeRef> incoming;
+                for (EdgePtr e : view.getIncomingEdges(output)) {
+                    if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
+                        incoming.push_back(edgeFormulas[e]);
+                    }
+                }
+
+                FormulaNodeRef newNode = formulaManager.makeOr(incoming);
+                if (!formulaManager.isSame(nodeFormulas[output], newNode)) {
+                    std::cout << "    [UPDATE] Node formula changed: " << output->toString() << std::endl;
+                    nodeFormulas[output] = newNode;
+                    changedNodes.insert(output);
+                    for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
+                        assert (depGraph.edgeToCycleIndex.count(outEdge));
+                        size_t outCid = depGraph.edgeToCycleIndex.at(outEdge);
+                        cycleWorklists[outCid].push_back(outEdge);
+                    }
+                }
+                std::cout << "    [DONE] Edge processed\n";
+                debugger.endIteration();
+            }
+
+            for (size_t succ : depGraph.reverseDependencies[cid]) {
+                if (--inDegree[succ] == 0 && !scheduled[succ]) {
+                    ready.push(succ);
+                }
+            }
         }
     }
 
@@ -706,7 +851,7 @@ void buildFormulasIncCyclewise(
     for (auto node : deltaInsertedNodes) {
         if (node->isFact) {
             nodeFormulas[node] = node->getProbability() == 1.0
-                ? formulaManager.createVar(mapNodeId(node->getId()), *node)//; formulaManager.getTrue()
+                ? formulaManager.getTrue()
                 : formulaManager.createVar(mapNodeId(node->getId()), *node);
             formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1 - node->getProbability());
         } else {
@@ -744,6 +889,7 @@ void buildFormulasIncCyclewise(
         while (!worklist.empty()) {
             auto* iteration = debugger.startIteration();
             EdgePtr edge = worklist.front(); worklist.pop_front();
+
 //            formulaManager.dumpProfilingStatistics();
             round++;
 //            std::cout << "  [INSERTION ROUND " << round << "] Cycle " << cid

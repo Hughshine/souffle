@@ -1391,7 +1391,7 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
                 << node->getTuple().toString();
 
             // 如果有概率信息，添加到标签中
-            if (node->getProbability() < 1.0) {
+            if (node->isFact) {
                 out << "\\nP=" << node->getProbability();
             }
 
