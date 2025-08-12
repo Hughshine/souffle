@@ -164,6 +164,7 @@ public:
     void dumpProfilingStatistics() override {
             std::cout << "Current live nodes: " << Cudd_ReadNodeCount(manager.get()) << std::endl;
             std::cout << "Memory usage: " << Cudd_ReadMemoryInUse(manager.get()) / (1024.0 * 1024) << " MB" << std::endl;
+//            Cudd_PrintInfo(manager.get(), stdout);
     };
     std::map<std::string, std::string> getProfilingStatistics() override {
         std::map<std::string, std::string> stats;
@@ -286,10 +287,12 @@ WeightedBDDManager::WeightedBDDManager() {
     // could make this static, TODO
 //    DdManager* m = Cudd_Init(0, 0, 4096 * 2, 2048 * 2024, 32UL * 1024 * 1024 * 1024);
     // 这些参数对性能的影响很复杂。memory设置太大会减少gc=>reordering，reordering不频繁不好，太频繁也不好.
+//    DdManager* m = Cudd_Init(0, 0, 4096, 1 << 24, 32UL * 1024 * 1024 * 1024);
+//    Cudd_SetMaxCacheHard(m, 10000000);
     DdManager* m = Cudd_Init(0, 0, 4096, 1 << 24, 32UL * 1024 * 1024 * 1024);
-    Cudd_SetMaxCacheHard(m, 10000000);
 
-    Cudd_EnableGarbageCollection(m);
+//    Cudd_EnableGarbageCollection(m);
+    Cudd_DisableGarbageCollection(m);
 //    Cudd_AutodynEnable(m, CUDD_REORDER_GROUP_SIFT);
     currentReorderingType = CUDD_REORDER_SIFT_CONVERGE;
     Cudd_AutodynEnable(m, currentReorderingType);
@@ -479,7 +482,6 @@ void WeightedBDDManager::postprocessUselessVariables(const std::set<int>& condVa
     DdManager* dd = manager.get();
     int n = Cudd_ReadSize(dd);  // 当前BDD变量个数
     assert(n > 0);
-
     // 获取当前的变量顺序（每一层对应的变量索引）
     std::vector<int> currentOrder(n);
     for (int level = 0; level < n; ++level) {
@@ -516,6 +518,7 @@ void WeightedBDDManager::postprocessUselessVariables(const std::set<int>& condVa
     if (result != 1) {
         throw std::runtime_error("Cudd_ShuffleHeap failed to reorder variables");
     }
+    std::cout << "6" << std::endl;
 }
 
 bool WeightedBDDManager::isSame(const BddNodeRef& a, const BddNodeRef& b) {

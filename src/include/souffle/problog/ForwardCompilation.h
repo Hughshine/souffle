@@ -282,8 +282,8 @@ void buildFormulasCyclewise(
         while (!worklist.empty()) {
             iteration++;
 //            std::cout << "Iteration: " << iteration << std::endl;
-//            std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
-//            formulaManager.dumpProfilingStatistics();
+            std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
+            formulaManager.dumpProfilingStatistics();
             EdgePtr edge = worklist.top().edge;
             size_t depth = worklist.top().priority;
             worklist.pop();
@@ -627,6 +627,7 @@ void buildFormulasIncCyclewise(
 
     /// just realize that we do not need to do over-deletion
     /// we just need to apply neg to all impacted nodes and edges
+    std::cout << "Performing deletion phase" << std::endl;
     debugger.logMessage(Level::INFO, "Performing deletion");
     {
         // for each deleted node, apply its neg to all its reachable edges and nodes
@@ -644,6 +645,22 @@ void buildFormulasIncCyclewise(
 
         for (auto edge: deltaDeletedEdges) {
             edgeFormulas.erase(edge);
+        }
+
+        for (auto it = nodeFormulas.begin(); it != nodeFormulas.end(); ) {
+            if (view.getValidNodes().find(it->first) == view.getValidNodes().end()) {
+                it = nodeFormulas.erase(it);  // remove invalid nodes
+            } else {
+                ++it;  // move to the next element
+            }
+        }
+
+        for (auto it = edgeFormulas.begin(); it != edgeFormulas.end(); ) {
+            if (view.getValidEdges().find(it->first) == view.getValidEdges().end()) {
+                it = edgeFormulas.erase(it);  // remove invalid edges
+            } else {
+                ++it;  // move to the next element
+            }
         }
 
         auto& nodeImpactedByDeltaDelete = view.getNodeImpactedByDeltaDelete();
@@ -751,10 +768,8 @@ void buildFormulasIncCyclewise(
             FormulaNodeRef newNode = formulaManager.makeOr(incoming);
             if (!formulaManager.isSame(nodeFormulas[impactedNode], newNode)) {
                 nodeFormulas[impactedNode] = newNode;
-            } else {
             }
         }
-
         // try to rederive the formulas
         std::queue<size_t> ready;  // cycles with in-degree 0
         std::vector<bool> scheduled(depGraph.nodeCycles.size(), false);  // whether the cycle has been scheduled for insertion phase
@@ -893,7 +908,6 @@ void buildFormulasIncCyclewise(
             auto* iteration = debugger.startIteration();
             EdgePtr edge = worklist.front(); worklist.pop_front();
 
-//            formulaManager.dumpProfilingStatistics();
             round++;
 //            std::cout << "  [INSERTION ROUND " << round << "] Cycle " << cid
 //                      << ", Worklist size: " << worklist.size() << std::endl;

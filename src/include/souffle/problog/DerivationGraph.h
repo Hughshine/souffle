@@ -290,6 +290,17 @@ public:
         }
         return validNodes_;
      }
+    const std::set<EdgePtr>& getValidEdges() {
+        if (validEdges_.size() > 0) {
+            return validEdges_;
+        }
+        for (const auto& edge : getEdges()) {
+            if (getDeltaDeleteEdges().count(edge) == 0 && edge->pruned == false) {
+                validEdges_.insert(edge);
+            }
+        }
+        return validEdges_;
+     }
     const std::set<NodePtr>& getDeletedFacts() {
         if (deletedFacts_.size() > 0) {
             return deletedFacts_;
@@ -376,6 +387,7 @@ public:
     }
 protected:
     std::set<NodePtr> validNodes_;
+    std::set<EdgePtr> validEdges_;
     std::set<NodePtr> deletedFacts_;
     std::set<NodePtr> deletedDeterminsticFacts_;
     std::set<NodePtr> deletedNonDeterministicFacts_;
@@ -1416,7 +1428,7 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
             << node->getTuple().toString();
 
         // 如果有概率信息，添加到标签中
-        if (node->getProbability() < 1.0) {
+        if (node->isFact) {
             out << "\\nP=" << node->getProbability();
         }
 
@@ -1432,7 +1444,7 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
             << node->getTuple().toString();
 
         // 如果有概率信息，添加到标签中
-        if (node->getProbability() < 1.0) {
+        if (node->isFact) {
             out << "\\nP=" << node->getProbability();
         }
 
