@@ -284,8 +284,10 @@ void buildFormulasCyclewise(
 //            std::cout << "Iteration: " << iteration << std::endl;
             std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
             formulaManager.dumpProfilingStatistics();
+
             EdgePtr edge = worklist.top().edge;
             size_t depth = worklist.top().priority;
+//            std::cout << edge->toString() << " with depth " << depth << std::endl;
             worklist.pop();
             inWorklist.erase(edge);
 //            std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
@@ -665,6 +667,7 @@ void buildFormulasIncCyclewise(
 
         auto& nodeImpactedByDeltaDelete = view.getNodeImpactedByDeltaDelete();
         auto& edgeImpactedByDeltaDelete = view.getEdgeImpactedByDeltaDelete();
+
         /** deal with deleted determinstic facts first */
         for (auto& deletedNonDeterminsticFact: deletedNonDeterminsticFacts) {
 //            std::cout << "Processing deleted non-deterministic fact: " << deletedNonDeterminsticFact->toString() << std::endl;
@@ -700,16 +703,21 @@ void buildFormulasIncCyclewise(
         }
 
         // update the variable ordering for deleted non-deterministic facts
-        std::set<int> deletedFactsIndex;
+        std::set<int> deletedVarsIndex;
         for (auto node: deletedNonDeterminsticFacts) {
             auto index = mapNodeId(node->getId());
-            deletedFactsIndex.insert(index);
+            deletedVarsIndex.insert(index);
+        }
+        for (auto edge: deltaDeletedEdges) {
+            if (edge->getRule()->isDeterminstic()) continue;
+            auto index = mapEdgeId(edge->getId());
+            deletedVarsIndex.insert(index);
         }
 
         formulaManager.dumpProfilingStatistics();
 
-        if (!deletedFactsIndex.empty()) {
-            formulaManager.postprocessUselessVariables(deletedFactsIndex);
+        if (!deletedVarsIndex.empty()) {
+            formulaManager.postprocessUselessVariables(deletedVarsIndex);
             formulaManager.dumpProfilingStatistics();
         }
 
@@ -770,6 +778,8 @@ void buildFormulasIncCyclewise(
                 nodeFormulas[impactedNode] = newNode;
             }
         }
+
+
         // try to rederive the formulas
         std::queue<size_t> ready;  // cycles with in-degree 0
         std::vector<bool> scheduled(depGraph.nodeCycles.size(), false);  // whether the cycle has been scheduled for insertion phase
@@ -861,6 +871,7 @@ void buildFormulasIncCyclewise(
     std::vector<size_t> inDegree = depGraph.inDegrees;
     std::queue<size_t> ready;  // cycles with in-degree 0
     std::vector<bool> scheduled(depGraph.nodeCycles.size(), false);  // whether the cycle has been scheduled for insertion phase
+    size_t insertion_impacted_node_count = 0;
 
     // === 插入阶段 ===
     std::cout << "Processing inserted edges" << std::endl;
@@ -985,6 +996,7 @@ void buildFormulasIncCyclewise(
     for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
         debugger.addInfo(key, value);
     }
+    debugger.addInfo("changed_node_count", std::to_string(changedNodes.size()));
 }
 
 #endif //FORWARDCOMPILATION_H
