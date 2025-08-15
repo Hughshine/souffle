@@ -244,7 +244,6 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
     out << "  \"facts\": [\n";
     bool first = true;
     for (const auto& node : getNodes()) {
-        std::cout << node->getTuple().toString() << " is fact?" << node->isFact << std::endl;
         if (node->isFact) {
             if (!first) {
                 out << ",\n";
