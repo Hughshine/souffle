@@ -414,10 +414,13 @@ public:
         out << "  Number of delta insert edges: " << getDeltaInsertEdges().size() << std::endl;
         out << "  Number of delta delete nodes: " << getDeltaDeleteNodes().size() << std::endl;
         out << "  Number of delta delete edges: " << getDeltaDeleteEdges().size() << std::endl;
+        std::set<NodePtr> impactedNodes;
+        std::set<EdgePtr> impactedEdges;
         for (const auto& [deletedFact, impactedFact]: getNodeImpactedByDeltaDelete()) {
             out << "  Deleted fact " << deletedFact->getTuple().toString() << " impacts visible nodes: ";
             for (const auto& fact : impactedFact) {
                 out << fact->toString() << " ";
+                impactedNodes.insert(fact);
             }
             out << std::endl;
         }
@@ -425,6 +428,7 @@ public:
             out << "  Deleted fact " << deletedEdge->getTuple().toString() << " impacts visible edges: ";
             for (const auto& edge : impactedEdge) {
                 out << edge->toString() << " ";
+                impactedEdges.insert(edge);
             }
             out << std::endl;
         }
@@ -432,6 +436,7 @@ public:
             out << "  Node " << insertedFact->getId() << " impacted by delta insert: ";
             for (const auto& fact : impactedFact) {
                 out << fact->toString() << " ";
+                impactedNodes.insert(fact);
             }
             out << std::endl;
         }
@@ -439,6 +444,7 @@ public:
             out << "  Edge " << insertedEdge->getId() << " impacted by delta insert: ";
             for (const auto& edge : impactedEdge) {
                 out << edge->getId() << " ";
+                impactedEdges.insert(edge);
             }
             out << std::endl;
         }
@@ -454,6 +460,21 @@ public:
         for (const auto& node : getDeletedNonDeterministicFacts()) {
             out << "  Deleted non-deterministic fact: " << node->toString() << std::endl;
         }
+        std::set<NodePtr> uselessValidNodes;
+        for (const auto& node : getValidNodes()) {
+            if (impactedNodes.count(node) == 0) {
+                bool used = false;
+                for (const auto& edge : getOutgoingEdges(node)) {
+                    if (impactedEdges.count(edge) > 0) {
+                        used = true;
+                        break;
+                    }
+                }
+                if (!used)
+                    uselessValidNodes.insert(node);
+            }
+        }
+        out << " percentage of useless valid nodes: " << (double)uselessValidNodes.size() / (double)getValidNodes().size() << std::endl;
     }
 protected:
     std::set<NodePtr> validNodes_;
@@ -1250,7 +1271,6 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
         // 更新影响节点集合
         impactedNodes = newImpactedNodes;
     }
-
 //    for (const auto& [deletedFact, impactedNodes] : deletedFactImpactedNodes) {
 //        std::cout << "Deleted fact: " << deletedFact->toString() << " impacts nodes: ";
 //        for (const auto& impactedNode : impactedNodes) {

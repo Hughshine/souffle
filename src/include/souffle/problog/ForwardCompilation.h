@@ -282,7 +282,7 @@ void buildFormulasCyclewise(
         while (!worklist.empty()) {
             iteration++;
 //            std::cout << "Iteration: " << iteration << std::endl;
-            std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
+//            std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
             formulaManager.dumpProfilingStatistics();
 
             EdgePtr edge = worklist.top().edge;

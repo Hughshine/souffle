@@ -4018,16 +4018,16 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // parse arguments
     hook << "souffle::CmdOptions opt(";
     hook << "R\"(" << glb.config().get("") << ")\",\n";
-    // if (glb.config().has("fact-dir")) {
-    //     hook << "R\"(" << glb.config().get("fact-dir") << ")\",\n";
-    // } else {
+    if (glb.config().has("fact-dir")) {
+        hook << "R\"(" << glb.config().get("fact-dir") << ")\",\n";
+    } else {
         hook << "R\"()\",\n";
-    // }
-    // if (glb.config().has("output-dir")) {
-    //     hook << "R\"(" << glb.config().get("output-dir") << ")\",\n";
-    // } else {
+    }
+    if (glb.config().has("output-dir")) {
+        hook << "R\"(" << glb.config().get("output-dir") << ")\",\n";
+    } else {
         hook << "R\"()\",\n";
-    // }
+    }
     if (glb.config().has("profile")) {
         hook << "true,\n";
         hook << "R\"(" << glb.config().get("profile") << ")\",\n";
@@ -4105,6 +4105,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         auto rel = input->getRelation();
         hook << "{\n";
         hook << "std::string rel = \"" << rel << "\";\n";
+        hook << "std::cout << \"reading: \" << opt.getInputFileDir() << \"/\" << rel << \".facts and \" << opt.getInputFileDir() << \"/\" << rel << \".prob\" << std::endl;\n";
         hook << "std::ifstream factFile(opt.getInputFileDir() + \"/\" + rel + \".facts\");";
         hook << "std::ifstream probFile(opt.getInputFileDir() + \"/\" + rel + \".prob\");";
         hook << "std::string factLine, probLine;";

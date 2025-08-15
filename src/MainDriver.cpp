@@ -457,6 +457,7 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
     // TODO: should check the transformer sequence; keep the useful ones; modify the others to fit the prob setting
     // clang-format off
     // Equivalence pipeline
+    // TODO: move 0.0 prob clauses transformer
     auto equivalencePipeline =
             mk<ast::transform::PipelineTransformer>(mk<ast::transform::NameUnnamedVariablesTransformer>(),
                     mk<ast::transform::FixpointTransformer>(mk<ast::transform::MinimiseProgramTransformer>()),
@@ -975,17 +976,7 @@ int main(Global& glb, const char* souffle_executable) {
         // no other show options specified -> bail, we're done.
         if (glb.config().getMany("show").size() == 1) return 0;
     }
-    // auto* initAstProgramPtrRaw = dynamic_cast<ast::Program*>(astTranslationUnit->getProgram().cloneImpl().release());
-    //
-    // // Make sure the cast succeeded
-    // if (!initAstProgramPtrRaw) {
-    //     throw std::runtime_error("Failed to clone Program");
-    // }
-    //
-    // // Create a new Own<Program> from the raw pointer
-    // auto initAstProgramPtr = Own<ast::Program>(initAstProgramPtrRaw);
 
-    // astTranslationUnit->getProgram()->
     /* construct the transformation pipeline */
     auto pipeline = astTransformationPipeline(glb);
 
@@ -1034,6 +1025,8 @@ int main(Global& glb, const char* souffle_executable) {
     if (hasShowOpt("transformed-ast", "transformed-datalog")) {
         std::cout << astTranslationUnit->getProgram() << std::endl;
     }
+    // TODO: if all grounded, then directly converted to derivation graph, skip semi-naive evaluation
+
     auto& newAstProgram = astTranslationUnit->getProgram();
 
     // Output the precedence graph in graphviz dot format
