@@ -17,6 +17,26 @@
 #include "souffle/RamTypes.h"
 #include "souffle/SouffleInterface.h"
 
+int nextFormulaNodeId = 0;
+std::unordered_map<size_t, int> nodeIdMap;
+std::unordered_map<int, size_t> idNodeMap;
+std::unordered_map<size_t, int> edgeIdMap;
+std::unordered_map<int, size_t> idEdgeMap;
+int mapNodeId(size_t id) {
+    if (nodeIdMap.find(id) == nodeIdMap.end()) {
+        nodeIdMap[id] = nextFormulaNodeId++;
+        idNodeMap[nextFormulaNodeId - 1] = id;
+    }
+    return nodeIdMap[id];
+}
+int mapEdgeId(size_t id) {
+    if (edgeIdMap.find(id) == edgeIdMap.end()) {
+        edgeIdMap[id] = nextFormulaNodeId++;
+        idEdgeMap[nextFormulaNodeId - 1] = id;
+    }
+    return edgeIdMap[id];
+}
+
 // example rule application sets
 // rule 1: path(x,y) :- edge(x,y).
 // rule 2: path(x,y) :- path(x,z), edge(z,y).

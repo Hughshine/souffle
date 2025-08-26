@@ -10,6 +10,8 @@
 #include <cmath>
 #include <optional>
 #include "souffle/problog/formula/FormulaManager.h"
+#include "souffle/problog/DerivationGraph.h"
+#include "souffle/problog/formula/GraphHeuristics.h"
 
 extern "C" {
 #include <cudd.h>
@@ -129,6 +131,51 @@ public:
     void stopDynamicOptimization() override {
         Cudd_AutodynDisable(manager.get());
     }
+
+    void preConfig(DerivationGraphViewInterface& view) override {
+        using namespace std::chrono;
+        auto start = high_resolution_clock::now();
+
+        for (const auto& node : view.getNodes()) {
+            if (node->isFact && node->getProbability() < 1.0) {
+                // Create a variable for each fact node if haven't been created yet
+                createVar(mapNodeId(node->getId()), *node);
+            }
+        }
+        for (const auto& edge : view.getEdges()) {
+            if (!edge->getRule()->isDeterminstic()) {
+                // Create a variable for each non-deterministic edge
+                createVar(mapEdgeId(edge->getId()), *edge);
+            }
+        }
+        auto end = high_resolution_clock::now();
+        auto duration = duration_cast<milliseconds>(end - start).count();
+        std::cout << "Creating cudd nodes takes " << duration << " ms" << std::endl;
+
+        start = high_resolution_clock::now();
+        BDDSpanHeuristics heuristics(view);
+        std::vector<int> order = heuristics.getOrdering();
+        end = high_resolution_clock::now();
+        duration = duration_cast<milliseconds>(end - start).count();
+        std::cout << "Heuristic ordering computed in " << duration << " ms" << std::endl;
+        start = high_resolution_clock::now();
+        // for each variable, if it is not in the heuristic order, then put it at the beginning
+        std::vector<int> newOrder;
+        for (int i = 0; i < Cudd_ReadSize(manager.get()); ++i) {
+            int index = Cudd_ReadPerm(manager.get(), i);
+            auto it = std::find(order.begin(), order.end(), index);
+            if (it == order.end()) {
+                newOrder.push_back(index);
+            }
+        }
+        // append order to newOrder
+        newOrder.insert(newOrder.end(), order.begin(), order.end());
+        Cudd_ShuffleHeap(manager.get(), newOrder.data());
+        end = high_resolution_clock::now();
+        duration = duration_cast<milliseconds>(end - start).count();
+        std::cout << "CUDD heap shuffled in " << duration << " ms" << std::endl;
+    }
+
     // Basic BDD operations
     BddNodeRef createVar(int index) override;
     BddNodeRef createVar(int index, const Node& node) override;
@@ -164,6 +211,13 @@ public:
     void dumpProfilingStatistics() override {
             std::cout << "Current live nodes: " << Cudd_ReadNodeCount(manager.get()) << std::endl;
             std::cout << "Memory usage: " << Cudd_ReadMemoryInUse(manager.get()) / (1024.0 * 1024) << " MB" << std::endl;
+            // current variable ordering
+            std::cout << "Current variable ordering: ";
+            for (int i = 0; i < Cudd_ReadSize(manager.get()); ++i) {
+                int index = Cudd_ReadPerm(manager.get(), i);
+                std::cout << getVariableName(index) << " ";
+            }
+            std::cout << std::endl;
 //            Cudd_PrintInfo(manager.get(), stdout);
     };
     std::map<std::string, std::string> getProfilingStatistics() override {
@@ -215,6 +269,46 @@ double getCacheHitRate(DdManager* manager) {
 
 using Clock = std::chrono::steady_clock;
 using Duration = std::chrono::duration<double>;
+Cudd_ReorderingType currentReorderingType = CUDD_REORDER_SAME;
+void adaptiveReorder(DdManager* manager) {
+    size_t node_count = Cudd_ReadNodeCount(manager);
+    Cudd_ReorderingType next = CUDD_REORDER_NONE;
+
+    if (node_count < 10000) {next = CUDD_REORDER_SIFT_CONVERGE; }
+//    else if (node_count < 30000) next = CUDD_REORDER_SIFT;
+    else if (node_count < 50000) {next = CUDD_REORDER_SIFT; }
+    else if (node_count < 100000) {next = CUDD_REORDER_WINDOW4_CONV; }
+    else if (node_count < 300000) {next = CUDD_REORDER_WINDOW4;}
+    else if (node_count < 1000000) {next = CUDD_REORDER_WINDOW2;}
+    else if (node_count < 3000000) {next = CUDD_REORDER_WINDOW2;}
+    else {next = CUDD_REORDER_NONE; Cudd_AutodynDisable(manager);}
+
+    if (next != currentReorderingType) {
+        Cudd_AutodynEnable(manager, next);
+        currentReorderingType = next;
+        std::cout << "Switched reordering to " << next << " at node count " << node_count << std::endl;
+    }
+}
+
+void adaptiveReorder2(DdManager* manager) {
+    size_t node_count = Cudd_ReadNodeCount(manager);
+    Cudd_ReorderingType next = CUDD_REORDER_NONE;
+
+    if (node_count < 50000) {next = CUDD_REORDER_NONE; }
+    else if (node_count < 300000) {next = CUDD_REORDER_WINDOW4_CONV;}
+    else if (node_count < 1000000) {next = CUDD_REORDER_WINDOW4;}
+    else if (node_count < 3000000) {next = CUDD_REORDER_WINDOW2;}
+    else {next = CUDD_REORDER_NONE; Cudd_AutodynDisable(manager);}
+
+
+    if (next != currentReorderingType) {
+        Cudd_AutodynEnable(manager, next);
+        currentReorderingType = next;
+        std::cout << "Switched reordering to " << next << " at node count " << node_count << std::endl;
+    }
+}
+
+
 std::chrono::time_point<Clock> _cudd_gc_start_time;
 std::chrono::time_point<Clock> _cudd_gc_end_time;
 int _cudd_gc_count = 0;
@@ -234,34 +328,16 @@ int myGCFunc(DdManager* dd, const char* str, void* data) {
         Duration duration = _cudd_gc_end_time - _cudd_gc_start_time;
         std::cout << "[GC] Time taken: " << duration.count() << " seconds" << std::endl;
         gc_begin = true;
+//        if (Cudd_ReadNodeCount(dd) >= 50000) {
+//            adaptiveReorder2(dd);
+//        } else {
+//            Cudd_AutodynDisable(dd);
+//            std::cout << "[GC] Disabled reordering due to low node count." << std::endl;
+//        }
     }
     return 1;
 }
 
-Cudd_ReorderingType currentReorderingType = CUDD_REORDER_SAME;
-void adaptiveReorder(DdManager* manager) {
-    size_t node_count = Cudd_ReadNodeCount(manager);
-    Cudd_ReorderingType next = CUDD_REORDER_SAME;
-
-    if (node_count < 10000) {next = CUDD_REORDER_SIFT_CONVERGE; }
-//    else if (node_count < 30000) next = CUDD_REORDER_SIFT;
-    else if (node_count < 50000) {next = CUDD_REORDER_SIFT; }
-    else if (node_count < 100000) {next = CUDD_REORDER_WINDOW4_CONV; }
-    else if (node_count < 300000) {next = CUDD_REORDER_WINDOW4;}
-    else if (node_count < 1000000) {next = CUDD_REORDER_WINDOW2;}
-    else if (node_count < 3000000) {next = CUDD_REORDER_WINDOW2;}
-    else next = CUDD_REORDER_SAME;
-
-    if (next == CUDD_REORDER_SAME) {
-        Cudd_AutodynDisable(manager);
-        return;
-    }
-    if (next != currentReorderingType) {
-        Cudd_AutodynEnable(manager, next);
-        currentReorderingType = next;
-        std::cout << "Switched reordering to " << next << " at node count " << node_count << std::endl;
-    }
-}
 
 int _cudd_reordering_count = 0;
 std::chrono::time_point<Clock> _cudd_reordering_start_time;
@@ -292,10 +368,12 @@ WeightedBDDManager::WeightedBDDManager() {
     DdManager* m = Cudd_Init(0, 0, 4096, 1 << 24, 32UL * 1024 * 1024 * 1024);
 
 //    Cudd_EnableGarbageCollection(m);
-    Cudd_DisableGarbageCollection(m);
+//    Cudd_DisableGarbageCollection(m);
 //    Cudd_AutodynEnable(m, CUDD_REORDER_GROUP_SIFT);
-    currentReorderingType = CUDD_REORDER_SIFT_CONVERGE;
-    Cudd_AutodynEnable(m, currentReorderingType);
+//    currentReorderingType = CUDD_REORDER_WINDOW4;
+//    currentReorderingType = CUDD_REORDER_NONE;
+//    Cudd_AutodynEnable(m, currentReorderingType);
+    Cudd_AutodynDisable(m);
 //    Cudd_SetLooseUpTo(m, 4);  // Set loose up to 4
 //    Cudd_SetNextReordering(m, 4);
 //    Cudd_SetMaxCacheHard(m, 1 << 28);
@@ -444,17 +522,18 @@ BddNodeRef WeightedBDDManager::makeOrBalanced(const std::vector<BddNodeRef>& nod
     if (begin >= end) {
         return BddNodeRef(manager, Cudd_ReadZero(manager.get()));
     }
-    if (end - begin == 1) {
+    else if (end - begin == 1) {
         return nodes[begin];
     }
-
     size_t mid = begin + (end - begin) / 2;
     BddNodeRef left = makeOrBalanced(nodes, begin, mid);
     BddNodeRef right = makeOrBalanced(nodes, mid, end);
-
+//    assert (left.get() != nullptr && "makeOrBalanced received null left node");
+//    assert (right.get() != nullptr && "makeOrBalanced received null right node");
     DdNode* or_node = Cudd_bddOr(manager.get(), left.get(), right.get());
     if (or_node == nullptr) {
-        throw std::runtime_error("makeOrBalanced failed");
+        std::cout << "error code: " << Cudd_ReadErrorCode(manager.get()) << std::endl;
+        assert (false && "makeOrBalanced failed");
     }
     return BddNodeRef(manager, or_node);
 }

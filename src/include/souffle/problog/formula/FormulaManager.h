@@ -25,7 +25,7 @@ public:
     virtual NodeRef getTrue() = 0;
     virtual NodeRef getFalse() = 0;
     virtual std::string toString(const NodeRef& node) = 0;
-
+    virtual void preConfig(DerivationGraphViewInterface& view) {};
     virtual void setVariableWeight(int varIndex, double posWeight, double negWeight) = 0;
     virtual double computeWeightedModelCount(const NodeRef& node) = 0;
 

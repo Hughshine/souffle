@@ -432,7 +432,9 @@ void Synthesiser::emitRules (std::ostream& out) {
 
 void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "std::cout << std::fixed << std::setprecision(10);\n";
+    out << "debugger.startStage(StageKind::CREATE_GRAPH_FULL);\n";
     out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
+    out << "debugger.endStage();\n";
     out << "// graph->dumpStatistics(std::cout);\n";
     out << "graph->dumpDot(\"before_prune.dot\");\n" << std::endl;
     out << "debugger.startStage(StageKind::PRUNING_FULL);\n";
@@ -449,6 +451,9 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
     out << "WeightedBDDManager bddManager;\n";
+    out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
+    out << "bddManager.preConfig(view);\n";
+    out << "debugger.endStage();\n";
     out << "{\n" << std::endl;
     // out << "FunctionTimer timer(\" building formulas \");\n";
     out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
@@ -457,13 +462,6 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "}" << std::endl;
     out << "{" << std::endl;
     out << "debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);\n";
-
-    // out << "FunctionTimer timer(\" wmc and output probability \");\n";
-    // print result to cout; TODO print to files
-    // out << "std::cout << \"nodeFormulas size: \" << nodeFormulas.size() << std::flush;\n";
-    // out << "std::cout << \"edgeFormulas size: \" << edgeFormulas.size() << std::flush;\n";
-    // out << "size_t count = 0;\n";
-    // out << "std::unordered_map<NodePtr, double> nodeProbabilities;\n";
     out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
     out << "//    std::cout << \"Node\" << node->getId() ;\n";
     out << "//    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
@@ -473,7 +471,9 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
     out << "}\n";
     out << "debugger.endStage();\n";
+    out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
     out << "dumpProbabilities(probResult, \"" << glb.config().get("output-dir") << "\");\n";
+    out << "debugger.endStage();\n";
     out << "debugger.endTurn();\n";
 
     if (glb.config().has("online")) {
@@ -508,7 +508,11 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
     out << "}\n";
     out << "debugger.endStage();\n";
+    out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
     out << "dumpProbabilities(probResult, \"" << glb.config().get("output-dir") << "\");\n";
+    out << "debugger.endStage();\n";
+    out << "debugger.endTurn();\n";
+
     if (glb.config().has("online")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &sddManager, &nodeFormulas, &edgeFormulas);\n";
         out << "cli.run();\n";
@@ -979,7 +983,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             out << "FunctionTimer timer(\"" <<  call.getName() << "\");\n";
             out << " std::vector<RamDomain> args, ret;\n";
             out << synthesiser.convertStratumIdent(call.getName()) << ".run(args, ret);\n";
-            out << "debugger.endStage();\n";
+            // out << "debugger.endStage();\n";
             out << "}\n";
             PRINT_END_COMMENT(out);
         }
@@ -4097,7 +4101,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     //     // assert (false && "incremental problog calculation not implemented yet");
     // } else {
     hook << "try {\n";
-
+    hook << "debugger.startStage(StageKind::IO_LOAD_FULL);\n";
     hook << "std::unordered_map<UntypedTuple, double> fact_prob;\n";
     hook << "{\n";
     hook << "FunctionTimer timer(\"Reading fact probability from \" + opt.getInputFileDir());\n";
@@ -4123,6 +4127,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << "}\n";
     }
     hook << "}\n";
+    hook << "debugger.endStage();\n";
     db.addGlobalInclude("\"souffle/problog/Atom.h\"");
     db.addGlobalInclude("\"souffle/problog/Rule.h\"");
     db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
@@ -4135,7 +4140,10 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     }
 
     // synthesize rules
+    // TODO: should make this pure static?
+    hook << "debugger.startStage(StageKind::CONSTRUCT_RULE_FULL);\n";
     emitRules(hook);
+    hook << "debugger.endStage();\n";
     // synthesize forward compilation
 
     emitProblogPipeline(hook);

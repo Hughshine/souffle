@@ -25,24 +25,38 @@ inline std::string levelToString(Level level) {
 }
 
 enum class StageKind {
+    IO_LOAD_FULL,
+    CONSTRUCT_RULE_FULL,
     SEMINAIVE_FULL,
+    CREATE_GRAPH_FULL,
     PRUNING_FULL,
+    PRECONFIG_FULL,
     FORWARD_COMPILATION_FULL,
     WEIGHTED_MODEL_COUNTING_FULL,
+    IO_DUMP_FULL,
     SEMINAIVE_INC,
+    CREATE_GRAPH_INC,
     PRUNING_INC,
+    PRECONFIG_INC,
     FORWARD_COMPILATION_INC,
     WEIGHTED_MODEL_COUNTING_INC
 };
 
 inline std::string stageKindToString(const StageKind kind) {
     switch (kind) {
+        case StageKind::IO_LOAD_FULL: return "IO_LOAD_FULL";
+        case StageKind::CONSTRUCT_RULE_FULL: return "CONSTRUCT_RULE_FULL";
         case StageKind::SEMINAIVE_FULL: return "SEMINAIVE_FULL";
+        case StageKind::CREATE_GRAPH_FULL: return "CREATE_GRAPH_FULL";
         case StageKind::PRUNING_FULL: return "PRUNING_FULL";
+        case StageKind::PRECONFIG_FULL: return "PRECONFIG_FULL";
         case StageKind::FORWARD_COMPILATION_FULL: return "FORWARD_COMPILATION_FULL";
         case StageKind::WEIGHTED_MODEL_COUNTING_FULL: return "WEIGHTED_MODEL_COUNTING_FULL";
+        case StageKind::IO_DUMP_FULL: return "IO_DUMP_FULL";
         case StageKind::SEMINAIVE_INC: return "SEMINAIVE_INC";
+        case StageKind::CREATE_GRAPH_INC: return "CREATE_GRAPH_INC";
         case StageKind::PRUNING_INC: return "PRUNING_INC";
+        case StageKind::PRECONFIG_INC: return "PRECONFIG_INC";
         case StageKind::FORWARD_COMPILATION_INC: return "FORWARD_COMPILATION_INC";
         case StageKind::WEIGHTED_MODEL_COUNTING_INC: return "WEIGHTED_MODEL_COUNTING_INC";
         default: return "UNKNOWN";
@@ -157,6 +171,8 @@ public:
         currentTurn_->setMemEnd(getCurrentMemoryUsage());
         currentTurn_->setMemPeak(getPeakMemoryUsage());
         currentTurn_->markEndTime();
+        // std::cout << "Turn " << turnCount_ << " completed: "
+        //           << currentTurn_->getDurationSeconds() << "s, PeakMem=" << currentTurn_->getMemPeak() << "KB\n";
         currentTurn_ = nullptr;
     }
 

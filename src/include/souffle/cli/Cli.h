@@ -467,6 +467,9 @@ public:
             debugger.endStage();
             view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration++) + ".dot");
             changedNodes.clear();
+//            debugger.startStage(StageKind::PRECONFIG_INC);
+//            ddManager->preConfig(view);
+//            debugger.endStage();
             debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
             buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
             debugger.endStage();
