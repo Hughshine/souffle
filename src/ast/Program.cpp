@@ -347,4 +347,80 @@ bool Program::equal(const Node& node) const {
            equal_targets(getDirectives(), other.getDirectives());
 }
 
+GroundnessInfo Program::isGround() const {
+    GroundnessInfo result;
+    result.allGroundRules = true;
+    result.hasInputRelations = false;
+
+    // 1. Identify input relations and collect their names
+    for (const auto* rel : getRelations()) {
+        // Check for INPUT qualifier on the relation
+        auto derivatives = this->getDirectives(rel->getQualifiedName());
+        for (const auto* dir : derivatives) {
+            if (dir->getType() == DirectiveType::input) {
+                result.hasInputRelations = true;
+                result.inputRelationNames.push_back(rel->getQualifiedName());
+                break;  // No need to check further directives for this relation
+            }
+        }
+    }
+
+    // 2. Check each clause for being fully ground
+    for (const auto* clause : getClauses()) {
+        bool clauseIsGround = true;
+
+        // Check head atom's arguments (if the clause has a head)
+        if (const Atom* headAtom = clause->getHead()) {
+            for (const Argument* arg : headAtom->getArguments()) {
+                NodeKind kind = arg->getKind();
+                // If argument is not a constant node, clause is not ground
+                if (kind != NK_Constant && kind != NK_NilConstant &&
+                    kind != NK_StringConstant && kind != NK_NumericConstant) {
+                    clauseIsGround = false;
+                    break;
+                }
+            }
+        }
+
+        // Check all body literals that are atoms (including negated atoms)
+        if (clauseIsGround) {  // only continue if head was ground so far
+            for (const Literal* lit : clause->getBodyLiterals()) {
+                const Atom* bodyAtom = nullptr;
+                if (auto* atomPtr = dynamic_cast<const Atom*>(lit)) {
+                    bodyAtom = atomPtr;
+                } else if (auto* negPtr = dynamic_cast<const Negation*>(lit)) {
+                    bodyAtom = negPtr->getAtom();
+                }
+
+                if (bodyAtom != nullptr) {
+                    // Check arguments of the (possibly negated) atom
+                    for (const Argument* arg : bodyAtom->getArguments()) {
+                        NodeKind kind = arg->getKind();
+                        if (kind != NK_Constant && kind != NK_NilConstant &&
+                            kind != NK_StringConstant && kind != NK_NumericConstant) {
+                            clauseIsGround = false;
+                            break;
+                        }
+                    }
+                } else {
+                    // If the literal is not an Atom (e.g., an aggregator or constraint),
+                    // and it involves any non-constant terms, the clause is not fully ground.
+                    clauseIsGround = false;
+                }
+
+                if (!clauseIsGround) break;  // break out of body literal loop
+            }
+        }
+
+        // If this clause is not fully ground, record it
+        if (!clauseIsGround) {
+            result.nonGroundClauses.push_back(const_cast<Clause*>(clause));
+            result.allGroundRules = false;
+        }
+    }
+
+    return result;
+}
+
+
 }  // namespace souffle::ast

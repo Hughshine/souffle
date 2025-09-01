@@ -1028,6 +1028,7 @@ int main(Global& glb, const char* souffle_executable) {
     // TODO: if all grounded, then directly converted to derivation graph, skip semi-naive evaluation
 
     auto& newAstProgram = astTranslationUnit->getProgram();
+    std::cout << newAstProgram.isGround();
 
     // Output the precedence graph in graphviz dot format
     if (hasShowOpt("precedence-graph")) {

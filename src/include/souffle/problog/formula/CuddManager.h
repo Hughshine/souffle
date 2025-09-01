@@ -12,10 +12,11 @@
 #include "souffle/problog/formula/FormulaManager.h"
 #include "souffle/problog/DerivationGraph.h"
 #include "souffle/problog/formula/GraphHeuristics.h"
-
+#include "souffle/problog/debug/Debugger.h"
 extern "C" {
 #include <cudd.h>
 }
+
 
 double getCacheHitRate(DdManager* manager);
 // Cudd Version. Should rename.
@@ -132,10 +133,18 @@ public:
         Cudd_AutodynDisable(manager.get());
     }
 
+    BDDForceHeuristics heuristics;
+    Debugger& debugger = Debugger::getInstance();
     void preConfig(DerivationGraphViewInterface& view) override {
+        static size_t iteration = 0;
         using namespace std::chrono;
         auto start = high_resolution_clock::now();
+        auto end = high_resolution_clock::now();
+        auto duration = duration_cast<milliseconds>(end - start).count();
 
+        auto oldCuddVarSize = Cudd_ReadSize(manager.get());
+
+        start = high_resolution_clock::now();
         for (const auto& node : view.getNodes()) {
             if (node->isFact && node->getProbability() < 1.0) {
                 // Create a variable for each fact node if haven't been created yet
@@ -148,18 +157,21 @@ public:
                 createVar(mapEdgeId(edge->getId()), *edge);
             }
         }
-        auto end = high_resolution_clock::now();
-        auto duration = duration_cast<milliseconds>(end - start).count();
-        std::cout << "Creating cudd nodes takes " << duration << " ms" << std::endl;
-
-        start = high_resolution_clock::now();
-        BDDSpanHeuristics heuristics(view);
-        std::vector<int> order = heuristics.getOrdering();
         end = high_resolution_clock::now();
         duration = duration_cast<milliseconds>(end - start).count();
-        std::cout << "Heuristic ordering computed in " << duration << " ms" << std::endl;
+        debugger.logMessage(Level::INFO, "CUDD nodes created in " + std::to_string(duration) + " ms");
+
+        start = high_resolution_clock::now();
+        heuristics.compute(view);
+        std::vector<int> order = heuristics.getOrder();
+        heuristics.setAnchorOrder(order);
+        end = high_resolution_clock::now();
+        duration = duration_cast<milliseconds>(end - start).count();
+        debugger.logMessage(Level::INFO, "Heuristic ordering computed in " + std::to_string(duration) + " ms");
+
         start = high_resolution_clock::now();
         // for each variable, if it is not in the heuristic order, then put it at the beginning
+        // since it must be deleted
         std::vector<int> newOrder;
         for (int i = 0; i < Cudd_ReadSize(manager.get()); ++i) {
             int index = Cudd_ReadPerm(manager.get(), i);
@@ -173,7 +185,7 @@ public:
         Cudd_ShuffleHeap(manager.get(), newOrder.data());
         end = high_resolution_clock::now();
         duration = duration_cast<milliseconds>(end - start).count();
-        std::cout << "CUDD heap shuffled in " << duration << " ms" << std::endl;
+        debugger.logMessage(Level::INFO, "CUDD heap shuffled in " + std::to_string(duration) + " ms");
     }
 
     // Basic BDD operations

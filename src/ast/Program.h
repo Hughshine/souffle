@@ -56,6 +56,29 @@ void visit(ast::Program const&, F&&);
 
 namespace souffle::ast {
 
+struct GroundnessInfo {
+    bool allGroundRules;
+    bool hasInputRelations;
+    std::vector<Clause*> nonGroundClauses;
+    std::vector<QualifiedName> inputRelationNames;
+    // stdout
+    friend std::ostream& operator<<(std::ostream& out, const GroundnessInfo& info) {
+        out << "allGroundRules: " << info.allGroundRules << "\n";
+        out << "hasInputRelations: " << info.hasInputRelations << "\n";
+        out << "nonGroundClauses: ";
+        for (auto* clause : info.nonGroundClauses) {
+            out << clause->toString() << "; ";
+        }
+        out << "\n";
+        out << "inputRelationNames: ";
+        for (auto& name : info.inputRelationNames) {
+            out << name.toString() << "; ";
+        }
+        out << "\n";
+        return out;
+    }
+};
+
 /**
  * @class Program
  * @brief The program class consists of relations, clauses and types.
@@ -211,6 +234,8 @@ public:
      * @return true IFF the directive was found and removed
      */
     void removeDirective(const Directive&);
+
+    GroundnessInfo isGround() const;
 
     /** Return components */
     std::vector<Component*> getComponents() const override;

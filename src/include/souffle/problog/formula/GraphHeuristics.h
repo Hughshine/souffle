@@ -13,6 +13,572 @@
 #include <climits>
 #include "souffle/problog/DerivationGraph.h"
 
+class BDDForceHeuristics {
+public:
+    struct Params {
+        // Frontier folding for derived facts appearing in rule bodies (for AND/BRIDGE construction)
+        int  frontier_depth;                // 0 = no folding (default); >0 = expand through derived facts up to this depth
+        int  and_size_budget;               // cap the total variables collected while folding (guards explosion)
+
+        // Event weights
+        double w_and;                       // weight for AND-events
+        double w_or;                        // weight for OR-events
+        double w_bridge;                    // weight for BRIDGE-events
+
+        // Optional bridge variant: shared input fact across multiple rules (default off)
+        bool enable_bridge_shared_input;
+
+        // FORCE parameters
+        int  force_iters;                   // max iterations
+
+        // Debugging
+        bool verbose;                       // print debug info
+
+        Params()
+        : frontier_depth(4),  // how to set this parameter for different domain is an art. TODO
+          and_size_budget(12),
+          w_and(1.0),
+          w_or(0.30),
+          w_bridge(0.15),
+          enable_bridge_shared_input(true),
+          force_iters(20),
+          verbose(true) {}
+    };
+
+    explicit BDDForceHeuristics(Params p = Params())
+    : P_(p), view_(nullptr) {}
+
+    // Supply a prior (remembered) variable order as "anchor".
+    // On the next compute(), variables present in anchor are kept in the same relative order.
+    // New variables (not present in anchor) are re-ordered and inserted between/around anchors.
+    void setAnchorOrder(const std::vector<int>& prev_order) {
+        pending_anchor_ = prev_order;       // filtered later after we know current universe
+    }
+
+    void clearAnchor() {
+        pending_anchor_.clear();
+        anchor_order_.clear();
+        anchor_rank_.clear();
+    }
+
+    // Run the full pipeline up to FORCE (no clustering/refinement in this version)
+    void compute(const DerivationGraphViewInterface& view) {
+        view_ = &view;
+
+        buildVariables();       // universe: only probabilistic input facts & probabilistic rules (p<1, not pruned)
+        installAnchor();        // filter anchor to current universe, build anchor ranks
+        buildEvents();          // AND/OR/BRIDGE events (respecting frontier_depth / budgets)
+        if (!anchor_order_.empty()) forceAnchored();
+        else                        forceFree();
+
+        // Final order is the FORCE output (no clustering stages in this version)
+        final_order_ = order_;
+
+        if (P_.verbose) {
+            std::cout << "[Final] order size = " << final_order_.size() << "\n";
+        }
+    }
+
+    const std::vector<int>& getOrder() const { return final_order_; }
+
+private:
+    // ---------- Types ----------
+    struct Var {
+        int  var_id;     // formula variable id (from mapNodeId/mapEdgeId)
+        enum Kind { FACT, RULE } kind;
+    };
+    struct Event {
+        std::vector<int> var_ids;  // participating variables (IDs)
+        double weight;             // event weight
+    };
+
+    // ---------- Data ----------
+    Params P_;
+    const DerivationGraphViewInterface* view_;
+
+    std::vector<Var> vars_;                        // all variables in this round (universe)
+    std::unordered_map<int,int> idx_of_;           // var_id -> index (0..vars_.size()-1)
+
+    std::vector<Event> events_;                    // hyperedges/events
+
+    // Anchor support
+    std::vector<int> pending_anchor_;              // external prior order (to be filtered)
+    std::vector<int> anchor_order_;                // filtered anchors (present in current universe)
+    std::unordered_map<int,int> anchor_rank_;      // var_id -> rank in anchor_order_
+
+    // Orders
+    std::vector<int> order_;                       // FORCE result
+    std::vector<int> final_order_;                 // equals order_ in this version
+
+    // ---------- Small utilities ----------
+
+    static inline bool isNearlyEqual(double a, double b, double eps = 1e-12) {
+        return std::fabs(a - b) < eps;
+    }
+
+    void dprintln(const std::string& s) const {
+        if (P_.verbose) std::cout << s << "\n";
+    }
+
+    // ---------- Universe construction ----------
+    void buildVariables() {
+        vars_.clear();
+        idx_of_.clear();
+
+        // Input facts (isFact == true), probability < 1.0, not pruned
+        for (const NodePtr& n : view_->getNodes()) {
+            if (!n) continue;
+            if (!n->isFact) continue;                  // exclude derived facts
+            if (n->pruned) continue;                   // excluded by caller
+            const double p = n->getProbability();
+            if (!(p < 1.0)) {                          // drop p==1
+                if (P_.verbose) {
+                    std::cout << "Drop FACT node#" << n->getId() << " p=" << p << "\n";
+                }
+                continue;
+            }
+            const int vid = mapNodeId(n->getId());
+            if (!idx_of_.count(vid)) {
+                idx_of_[vid] = (int)vars_.size();
+                vars_.push_back(Var{vid, Var::FACT});
+                if (P_.verbose) {
+                    std::cout << "Keep var FACT var_id=" << vid << " (node#" << n->getId() << ")\n";
+                }
+            }
+        }
+
+        // Rules (edges), probability < 1.0, not pruned
+        for (const EdgePtr& e : view_->getEdges()) {
+            if (!e) continue;
+            if (e->pruned) continue;
+            const double p = e->getProbability();
+            if (!(p < 1.0)) {                          // drop p==1
+                if (P_.verbose) {
+                    std::cout << "Drop RULE edge#" << e->getId() << " p=" << p << "\n";
+                }
+                continue;
+            }
+            const int vid = mapEdgeId(e->getId());
+            if (!idx_of_.count(vid)) {
+                idx_of_[vid] = (int)vars_.size();
+                vars_.push_back(Var{vid, Var::RULE});
+                if (P_.verbose) {
+                    std::cout << "Keep var RULE var_id=" << vid << " (edge#" << e->getId() << ")\n";
+                }
+            }
+        }
+
+        // sanity: var_id unique
+        {
+            std::unordered_set<int> seen;
+            seen.reserve(vars_.size());
+            for (const auto& v : vars_) {
+                assert(!seen.count(v.var_id) && "duplicate var_id in vars_");
+                seen.insert(v.var_id);
+            }
+        }
+        if (P_.verbose) {
+            std::cout << "[Universe] |vars|=" << vars_.size() << "\n";
+        }
+    }
+
+    void installAnchor() {
+        anchor_order_.clear();
+        anchor_rank_.clear();
+        if (pending_anchor_.empty()) return;
+
+        std::unordered_set<int> uni;
+        uni.reserve(idx_of_.size());
+        for (const auto& kv : idx_of_) uni.insert(kv.first);
+
+        std::unordered_set<int> used;
+        used.reserve(pending_anchor_.size());
+        for (int v : pending_anchor_) {
+            if (uni.count(v) && !used.count(v)) {
+                anchor_rank_[v] = (int)anchor_order_.size();
+                anchor_order_.push_back(v);
+                used.insert(v);
+            }
+        }
+        if (P_.verbose) {
+            std::cout << "[Anchor] kept " << anchor_order_.size()
+                      << " of " << pending_anchor_.size() << " variables\n";
+        }
+    }
+
+    // ---------- Frontier folding ----------
+    // Collect probabilistic frontier starting from a (possibly derived) fact,
+    // limited by depth and a size budget. Avoid cycles via seen_nodes.
+    void frontierCollect(const NodePtr& fact,
+                         int depth_left,
+                         int budget_left,
+                         std::unordered_set<int>& out_vars,
+                         std::unordered_set<size_t>& seen_nodes) {
+        if (!fact || depth_left < 0 || budget_left <= 0) return;
+
+        if (fact->isFact) {
+            if (!fact->pruned && fact->getProbability() < 1.0) {
+                const int vid = mapNodeId(fact->getId());
+                if (idx_of_.count(vid)) out_vars.insert(vid);
+            }
+            return;
+        }
+
+        // derived fact
+        if (!seen_nodes.insert(fact->getId()).second) return; // already visited
+
+        // For each incoming edge: include its (probabilistic) rule variable; and, if depth_left>0, expand into its inputs.
+        const auto inE = view_->getIncomingEdges(fact);
+        for (const EdgePtr& e : inE) {
+            if (!e || e->pruned) continue;
+            if (e->getProbability() < 1.0) {
+                const int rvid = mapEdgeId(e->getId());
+                if (idx_of_.count(rvid)) out_vars.insert(rvid);
+            }
+            if (depth_left <= 0) continue;
+
+            const auto inputs = view_->getInputs(e);
+            const auto negs   = view_->getBodyNegations(e);
+            for (size_t i=0; i<inputs.size(); ++i) {
+                if (budget_left <= 0) return;
+                const NodePtr b = inputs[i];
+                const bool neg  = (i < negs.size()) ? negs[i] : false;
+                if (!b || neg) continue;
+                frontierCollect(b, depth_left - 1, budget_left - 1, out_vars, seen_nodes);
+                if ((int)out_vars.size() >= P_.and_size_budget) return;
+            }
+        }
+    }
+
+    // ---------- Event construction ----------
+    void buildEvents() {
+        events_.clear();
+        events_.reserve(view_->getEdges().size() * 2 + view_->getNodes().size());
+
+        auto push_event = [&](std::vector<int>& s, double w) {
+            // filter to current universe, unique, need >=2
+            std::vector<int> t;
+            t.reserve(s.size());
+            for (int v : s) if (idx_of_.count(v)) t.push_back(v);
+            std::sort(t.begin(), t.end());
+            t.erase(std::unique(t.begin(), t.end()), t.end());
+            if (t.size() >= 2) events_.push_back(Event{std::move(t), w});
+        };
+
+        // OR-events: for each derived head, collect flips of incoming rules with p<1
+        {
+            std::unordered_map<size_t, std::vector<int>> head_to_flips; // head nodeId -> rule var_ids
+            head_to_flips.reserve(view_->getEdges().size());
+            for (const EdgePtr& e : view_->getEdges()) {
+                if (!e || e->pruned) continue;
+                if (e->getProbability() < 1.0) {
+                    const NodePtr h = view_->getOutput(e);
+                    if (h) {
+                        const int rvid = mapEdgeId(e->getId());
+                        if (idx_of_.count(rvid)) head_to_flips[h->getId()].push_back(rvid);
+                    }
+                }
+            }
+            for (auto& kv : head_to_flips) {
+                auto& flips = kv.second;
+                if (flips.size() >= 2) {
+                    if (P_.verbose) std::cout << "OR-event head#" << kv.first
+                                              << " size=" << flips.size() << "\n";
+                    push_event(flips, P_.w_or);
+                }
+            }
+        }
+
+        // AND-events: for each rule, include its flip (if p<1) + body's probabilistic frontier (subject to frontier_depth)
+        for (const EdgePtr& e : view_->getEdges()) {
+            if (!e || e->pruned) continue;
+
+            std::vector<int> vars;
+            if (e->getProbability() < 1.0) {
+                const int rvid = mapEdgeId(e->getId());
+                if (idx_of_.count(rvid)) vars.push_back(rvid);
+            }
+
+            const auto inputs = view_->getInputs(e);
+            const auto negs   = view_->getBodyNegations(e);
+            for (size_t i=0; i<inputs.size(); ++i) {
+                const NodePtr b = inputs[i];
+                const bool neg  = (i < negs.size()) ? negs[i] : false;
+                if (!b || neg) continue;
+                if (b->isFact) {
+                    if (!b->pruned && b->getProbability() < 1.0) {
+                        const int vid = mapNodeId(b->getId());
+                        if (idx_of_.count(vid)) vars.push_back(vid);
+                    }
+                } else if (P_.frontier_depth > 0) {
+                    std::unordered_set<int> out;
+                    std::unordered_set<size_t> seen;
+                    frontierCollect(b, P_.frontier_depth, P_.and_size_budget, out, seen);
+                    vars.insert(vars.end(), out.begin(), out.end());
+                }
+            }
+            if (vars.size() >= 2) push_event(vars, P_.w_and);
+        }
+
+        // BRIDGE (type 1): body contains a derived fact B that has multiple alternative incoming rule flips.
+        for (const EdgePtr& e : view_->getEdges()) {
+            if (!e || e->pruned) continue;
+
+            int myFlip = -1;
+            if (e->getProbability() < 1.0) {
+                const int rvid = mapEdgeId(e->getId());
+                if (idx_of_.count(rvid)) myFlip = rvid;
+            }
+
+            const auto inputs = view_->getInputs(e);
+            const auto negs   = view_->getBodyNegations(e);
+            for (size_t i=0; i<inputs.size(); ++i) {
+                const NodePtr b = inputs[i];
+                const bool neg  = (i < negs.size()) ? negs[i] : false;
+                if (!b || neg || b->isFact) continue; // derived only
+                std::vector<int> bridge;
+                if (myFlip >= 0) bridge.push_back(myFlip);
+                const auto inE = view_->getIncomingEdges(b);
+                for (const EdgePtr& pe : inE) {
+                    if (!pe || pe->pruned) continue;
+                    if (pe->getProbability() < 1.0) {
+                        const int pvid = mapEdgeId(pe->getId());
+                        if (idx_of_.count(pvid)) bridge.push_back(pvid);
+                    }
+                }
+                if (bridge.size() >= 2) push_event(bridge, P_.w_bridge);
+            }
+        }
+
+        // BRIDGE (type 2, optional): shared probabilistic input fact across multiple rules
+        if (P_.enable_bridge_shared_input) {
+            std::unordered_map<size_t, std::vector<int>> fact_to_ruleflips; // input fact id -> flips
+            for (const EdgePtr& e : view_->getEdges()) {
+                if (!e || e->pruned) continue;
+                int rvid = -1;
+                if (e->getProbability() < 1.0) {
+                    const int t = mapEdgeId(e->getId());
+                    if (idx_of_.count(t)) rvid = t;
+                }
+                const auto inputs = view_->getInputs(e);
+                const auto negs   = view_->getBodyNegations(e);
+                for (size_t i=0; i<inputs.size(); ++i) {
+                    const NodePtr b = inputs[i];
+                    const bool neg  = (i < negs.size()) ? negs[i] : false;
+                    if (!b || neg || !b->isFact) continue;
+                    if (!b->pruned && b->getProbability() < 1.0 && rvid >= 0) {
+                        fact_to_ruleflips[b->getId()].push_back(rvid);
+                    }
+                }
+            }
+            for (auto& kv : fact_to_ruleflips) {
+                auto& flips = kv.second;
+                if (flips.size() >= 2) {
+                    std::vector<int> bridge;
+                    const int avid = mapNodeId(kv.first);
+                    if (idx_of_.count(avid)) bridge.push_back(avid);
+                    bridge.insert(bridge.end(), flips.begin(), flips.end());
+                    if (bridge.size() >= 2) push_event(bridge, P_.w_bridge);
+                }
+            }
+        }
+
+        if (P_.verbose) {
+            std::cout << "[Events] total=" << events_.size() << "\n";
+        }
+    }
+
+    // ---------- Objective: total weighted span ----------
+    double totalSpan(const std::vector<int>& order) const {
+        if (events_.empty() || order.empty()) return 0.0;
+        std::unordered_map<int,int> pos;
+        pos.reserve(order.size());
+        for (int i = 0; i < (int)order.size(); ++i) pos[order[i]] = i;
+
+        double S = 0.0;
+        for (const auto& e : events_) {
+            int mn = std::numeric_limits<int>::max();
+            int mx = std::numeric_limits<int>::min();
+            for (int v : e.var_ids) {
+                auto it = pos.find(v);
+                if (it == pos.end()) continue; // shouldn't happen
+                mn = std::min(mn, it->second);
+                mx = std::max(mx, it->second);
+            }
+            if (mx >= mn) S += (mx - mn) * e.weight;
+        }
+        return S;
+    }
+
+    // ---------- FORCE without anchor ----------
+    void forceFree() {
+        order_.clear(); order_.reserve(vars_.size());
+        for (const auto& v : vars_) order_.push_back(v.var_id);
+        if (events_.empty() || order_.size() <= 1) return;
+
+        for (int it = 0; it < P_.force_iters; ++it) {
+            // current positions
+            std::unordered_map<int,int> pos;
+            pos.reserve(order_.size());
+            for (int i = 0; i < (int)order_.size(); ++i) pos[order_[i]] = i;
+
+            // event centers
+            std::vector<double> center(events_.size(), 0.0);
+            for (size_t ei = 0; ei < events_.size(); ++ei) {
+                double s = 0.0; int c = 0;
+                for (int v : events_[ei].var_ids) {
+                    auto itp = pos.find(v);
+                    if (itp != pos.end()) { s += itp->second; ++c; }
+                }
+                center[ei] = (c > 0 ? s / (double)c : 0.0);
+            }
+
+            // variable targets (weighted avg of centers)
+            std::unordered_map<int,double> sumW, sumWC;
+            sumW.reserve(order_.size()); sumWC.reserve(order_.size());
+            for (size_t ei = 0; ei < events_.size(); ++ei) {
+                const auto& ev = events_[ei];
+                for (int v : ev.var_ids) {
+                    sumW[v]  += ev.weight;
+                    sumWC[v] += ev.weight * center[ei];
+                }
+            }
+            std::vector<std::pair<int,double>> tgt;
+            tgt.reserve(order_.size());
+            for (int v : order_) {
+                double t = (sumW[v] > 0 ? sumWC[v] / sumW[v] : (double)pos[v]);
+                tgt.emplace_back(v, t);
+            }
+
+            // stable sort by target
+            std::stable_sort(order_.begin(), order_.end(),
+                [&](int a, int b) {
+                    double ta = sumW[a] > 0 ? sumWC[a]/sumW[a] : pos[a];
+                    double tb = sumW[b] > 0 ? sumWC[b]/sumW[b] : pos[b];
+                    if (isNearlyEqual(ta, tb)) return a < b;
+                    return ta < tb;
+                });
+
+            if (P_.verbose) {
+                std::cout << "[FORCE] iter " << (it+1)
+                          << " span = " << totalSpan(order_) << "\n";
+            }
+        }
+    }
+
+    // ---------- anchored merge: insert new variables around/between anchors by their (continuous) targets ----------
+    static std::vector<int> anchoredMerge(const std::vector<std::pair<int,double>>& new_vars,
+                                          const std::vector<int>& anchor_order) {
+        const int k = (int)anchor_order.size();
+        std::vector<std::pair<int,double>> nv = new_vars;
+        std::stable_sort(nv.begin(), nv.end(),
+            [](const auto& a, const auto& b){
+                if (std::fabs(a.second - b.second) < 1e-12) return a.first < b.first;
+                return a.second < b.second;
+            });
+
+        std::vector<int> out; out.reserve(k + nv.size());
+        size_t p = 0;
+
+        // (<0) at front
+        while (p < nv.size() && nv[p].second < 0.0) { out.push_back(nv[p].first); ++p; }
+
+        // between anchors i and i+1 on integer lattice [i, i+1)
+        for (int i = 0; i < k; ++i) {
+            out.push_back(anchor_order[i]); // place anchor i
+            while (p < nv.size() && nv[p].second >= i && nv[p].second < (i+1)) {
+                out.push_back(nv[p].first); ++p;
+            }
+        }
+        // (>=k) at tail
+        while (p < nv.size()) { out.push_back(nv[p].first); ++p; }
+
+        return out;
+    }
+
+    // ---------- FORCE with anchor (anchors fixed; only new variables move) ----------
+    void forceAnchored() {
+        // split universe into anchors vs free
+        std::unordered_set<int> A(anchor_order_.begin(), anchor_order_.end());
+        std::vector<int> free_vars; free_vars.reserve(vars_.size());
+        for (const auto& v : vars_) if (!A.count(v.var_id)) free_vars.push_back(v.var_id);
+
+        if (free_vars.empty()) { order_ = anchor_order_; return; }
+        if (anchor_order_.empty()) { forceFree(); return; }
+
+        // Start with an initial merge based on anchor-only centers
+        std::unordered_map<int,int> anchor_pos;
+        for (int i = 0; i < (int)anchor_order_.size(); ++i) anchor_pos[anchor_order_[i]] = i;
+
+        auto compute_targets_given_pos =
+            [&](const std::unordered_map<int,int>& pos_map,
+                const std::vector<int>& movable) -> std::vector<std::pair<int,double>> {
+                std::vector<double> center(events_.size(), 0.0);
+                for (size_t ei = 0; ei < events_.size(); ++ei) {
+                    double s = 0.0; int c = 0;
+                    for (int v : events_[ei].var_ids) {
+                        auto itp = pos_map.find(v);
+                        if (itp != pos_map.end()) { s += itp->second; ++c; }
+                    }
+                    center[ei] = (c>0 ? s/(double)c : 0.0);
+                }
+                std::unordered_map<int,double> sumW, sumWC;
+                sumW.reserve(movable.size()); sumWC.reserve(movable.size());
+                for (size_t ei = 0; ei < events_.size(); ++ei) {
+                    const auto& ev = events_[ei];
+                    for (int v : ev.var_ids) {
+                        // only accumulate for movable vars
+                        // (anchors' targets are irrelevant—they don't move)
+                        if (!A.count(v)) {
+                            sumW[v]  += ev.weight;
+                            sumWC[v] += ev.weight * center[ei];
+                        }
+                    }
+                }
+                std::vector<std::pair<int,double>> tgt;
+                tgt.reserve(movable.size());
+                for (int v : movable) {
+                    double t = (sumW[v] > 0 ? sumWC[v]/sumW[v] : 0.0);
+                    tgt.emplace_back(v, t);
+                }
+                return tgt;
+            };
+
+        // Initial merge using anchor positions only
+        std::vector<std::pair<int,double>> init_targets = compute_targets_given_pos(anchor_pos, free_vars);
+        order_ = anchoredMerge(init_targets, anchor_order_);
+
+        double best = totalSpan(order_);
+        if (P_.verbose) {
+            std::cout << "[FORCE-anchored] init span = " << best << "\n";
+        }
+
+        // Iteratively refine: use last merged order to compute positions; anchors never change relative order
+        for (int it = 0; it < P_.force_iters; ++it) {
+            // build pos from current order_
+            std::unordered_map<int,int> pos;
+            pos.reserve(order_.size());
+            for (int i = 0; i < (int)order_.size(); ++i) pos[order_[i]] = i;
+
+            // targets for free vars
+            std::vector<std::pair<int,double>> targets = compute_targets_given_pos(pos, free_vars);
+            std::vector<int> merged = anchoredMerge(targets, anchor_order_);
+            double s = totalSpan(merged);
+            if (P_.verbose) {
+                std::cout << "[FORCE-anchored] iter " << (it+1) << " span = " << s << "\n";
+            }
+            if (s + 1e-12 < best) {
+                best = s;
+                order_.swap(merged);
+            } else {
+                break; // no improvement
+            }
+        }
+    }
+};
+
+
+
 // ================================================================
 // BDDSpanHeuristics (header-only, C++17)
 //  - Consumes a DerivationGraphViewInterface

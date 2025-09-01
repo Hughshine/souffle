@@ -451,9 +451,8 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
     out << "WeightedBDDManager bddManager;\n";
-    out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
-    out << "bddManager.preConfig(view);\n";
-    out << "debugger.endStage();\n";
+    // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
+    // out << "debugger.endStage();\n";
     out << "{\n" << std::endl;
     // out << "FunctionTimer timer(\" building formulas \");\n";
     out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";

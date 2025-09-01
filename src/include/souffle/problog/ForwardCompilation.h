@@ -200,20 +200,26 @@ struct PrioritizedEdge {
 
 template<typename FormulaNodeRef>
 void buildFormulasCyclewise(
-    const SubgraphView& view,
+    SubgraphView& view,
     FormulaManager<FormulaNodeRef>& formulaManager,
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
 ) {
      FunctionTimer timer("Build Formulas Cyclewise using DAG + Depth");
+     auto start = std::chrono::high_resolution_clock::now();
+     formulaManager.preConfig(view);
+     auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    debugger.logMessage(Level::INFO, "Variable ordering takes " + std::to_string(duration) + " ms");
 
     CycleDependencyGraph depGraph(view);
 //    depGraph.dumpCycles(std::cout);
     depGraph.dumpDot("scc.dot");
 
+    start = std::chrono::high_resolution_clock::now();
     std::map<NodePtr, FormulaNodeRef> baseNodeFormulas;
     std::map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
-
+    size_t round = 0;
     // 1. 初始化公式
     for (const auto& node : view.getNodes()) {
         if (node->isFact) {
@@ -246,7 +252,6 @@ void buildFormulasCyclewise(
             ready.push(i);
     }
 
-    int iteration = 0;
     while (!ready.empty()) {
         size_t cid = ready.front(); ready.pop();
         if (visited[cid]) continue;
@@ -266,14 +271,16 @@ void buildFormulasCyclewise(
         }
 
         while (!worklist.empty()) {
-            iteration++;
-//            std::cout << "Iteration: " << iteration << std::endl;
-//            std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
+            round++;
+            std::cout << "Round: " << round << std::endl;
+            std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
+
 //            formulaManager.dumpProfilingStatistics();
 
             EdgePtr edge = worklist.top().edge;
             size_t depth = worklist.top().priority;
-//            std::cout << edge->toString() << " with depth " << depth << std::endl;
+
+            std::cout << edge->toString() << " with depth " << depth << std::endl;
             worklist.pop();
             inWorklist.erase(edge);
 //            std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
@@ -336,10 +343,15 @@ void buildFormulasCyclewise(
             }
         }
     }
+    end = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     formulaManager.dumpProfilingStatistics();
     for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
         debugger.addInfo(key, value);
     }
+    debugger.logMessage(Level::INFO, "Total rounds: " + std::to_string(round));
+    debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration) + " ms");
+
 //    std::cout << "✅ buildFormulasCyclewiseNew completed using global depth info.\n";
 }
 
@@ -599,9 +611,11 @@ void buildFormulasIncCyclewise(
 //    FunctionTimer timer("forward compilation, incremental update (cyclewise)");
 //    auto* stage = debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
     using namespace std::chrono;
-
+    static int turn = 1;
     auto start = high_resolution_clock::now();
     CycleDependencyGraph depGraph(view);  // 包括 computeSCCs, computeDependencies, computeDepths
+    depGraph.dumpDot("scc" + std::to_string(turn++) + ".dot");
+
 
     const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
     const auto& deltaDeletedEdges = view.getDeltaDeleteEdges();
@@ -617,7 +631,8 @@ void buildFormulasIncCyclewise(
     debugger.logMessage(Level::INFO, "Starting incremental update for deleted edges");
 
     start = high_resolution_clock::now();
-    std::map<size_t, std::deque<EdgePtr>> cycleWorklists;
+    std::map<size_t, std::priority_queue<PrioritizedEdge> > cycleWorklists;
+    std::map<size_t, std::set<EdgePtr> > cycleInWorklists; // initial worklist
 //    std::set<EdgePtr> inWorklist;
 
     debugger.logMessage(Level::INFO, "Performing deletion");
@@ -696,10 +711,12 @@ void buildFormulasIncCyclewise(
                 }
                 edgeFormulas[edge] = formulaManager.getFalse();
                 auto& worklist = cycleWorklists[depGraph.edgeToCycleIndex.at(edge)];
-                if (std::find(worklist.begin(), worklist.end(), edge) != worklist.end()) {
+                auto& inWorklist = cycleInWorklists[depGraph.edgeToCycleIndex.at(edge)];
+                if (inWorklist.count(edge)) {
                     continue;
                 }
-                worklist.push_back(edge);
+                worklist.push({edge, depGraph.edgeDepthsGlobal[edge], (int)depGraph.edgeDepthsGlobal[edge]});  // use depth as priority
+                inWorklist.insert(edge);
             }
         }
 
@@ -796,9 +813,11 @@ void buildFormulasIncCyclewise(
             scheduled[cid] = true;
             auto& worklist = cycleWorklists[cid];
             int round = 0;
+            int _seqId = 0;
             while (!worklist.empty()) {
                 auto* iteration = debugger.startIteration();
-                EdgePtr edge = worklist.front(); worklist.pop_front();
+                EdgePtr edge = worklist.top().edge; worklist.pop();
+                cycleInWorklists[cid].erase(edge);
                 round++;
                 FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
                     ? formulaManager.getTrue()
@@ -819,7 +838,8 @@ void buildFormulasIncCyclewise(
                 }
 
                 if (!allAvailable) {
-                    worklist.push_back(edge);
+                    worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+                    cycleInWorklists[cid].insert(edge);
                     debugger.endIteration();
                     continue;
                 }
@@ -856,7 +876,8 @@ void buildFormulasIncCyclewise(
                     for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
                         assert (depGraph.edgeToCycleIndex.count(outEdge));
                         size_t outCid = depGraph.edgeToCycleIndex.at(outEdge);
-                        cycleWorklists[outCid].push_back(outEdge);
+                        cycleWorklists[outCid].push({outEdge, depGraph.edgeDepthsGlobal[outEdge], _seqId++});
+                        cycleInWorklists[outCid].insert(outEdge);
                     }
                 }
                 std::cout << "    [DONE] Edge processed\n";
@@ -874,6 +895,8 @@ void buildFormulasIncCyclewise(
     debugger.logMessage(Level::INFO, "rederive time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
     // should reset variable ordering like information after deletion
     // should change to a light weight version?
+
+    size_t round = 0;
     if (deltaInsertedNodes.empty() && deltaInsertedEdges.empty()) {
         start = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "No inserted edges, skipping insertion phase");
@@ -881,7 +904,7 @@ void buildFormulasIncCyclewise(
         start = high_resolution_clock::now();
         formulaManager.preConfig(view);
         end = high_resolution_clock::now();
-        debugger.logMessage(Level::INFO, "Pre-configuration time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+        debugger.logMessage(Level::INFO, "Variable reordering takes: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
         start = high_resolution_clock::now();
         std::vector<size_t> inDegree = depGraph.inDegrees;
         std::queue<size_t> ready;  // cycles with in-degree 0
@@ -903,6 +926,10 @@ void buildFormulasIncCyclewise(
             }
             changedNodes.insert(node);
         }
+        // TODO
+        end = high_resolution_clock::now();
+        debugger.logMessage(Level::INFO, "Initialize inserted node formulas. Time: " +
+            std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
 
         for (auto edge : deltaInsertedEdges) {
             edgeFormulas[edge] = formulaManager.getFalse();
@@ -912,9 +939,13 @@ void buildFormulasIncCyclewise(
             }
             assert (depGraph.edgeToCycleIndex.count(edge));
             size_t cid = depGraph.edgeToCycleIndex.at(edge);
-            cycleWorklists[cid].push_back(edge);
+            cycleWorklists[cid].push({edge, depGraph.edgeDepthsGlobal[edge], 0});
+            cycleInWorklists[cid].insert(edge);
         }
-
+        // TODO
+        end = high_resolution_clock::now();
+        debugger.logMessage(Level::INFO, "Initialize inserted edge formulas and worklists. Time: " +
+            std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
         inDegree = depGraph.inDegrees;
         std::fill(scheduled.begin(), scheduled.end(), false);
 
@@ -922,22 +953,28 @@ void buildFormulasIncCyclewise(
 
         for (size_t cid = 0; cid < depGraph.nodeCycles.size(); ++cid)
             if (inDegree[cid] == 0) {ready.push(cid); scheduled[cid] = true;}  // schedule cycles with in-degree 0
-
+        end = high_resolution_clock::now();
+        debugger.logMessage(Level::INFO, "Preparation for insertion phase. Time: " +
+            std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
         while (!ready.empty()) {
             size_t cid = ready.front(); ready.pop();
             scheduled[cid] = true;
             auto& worklist = cycleWorklists[cid];
+            auto& inWorklist = cycleInWorklists[cid];
             // note that this worklist only contains impacted nodes; however,
     //        std::cout << "[CYCLE " << cid << "] Begin Insertion Phase, worklist size: " << worklist.size() << std::endl;
-            int round = 0;
+            int _seqId = 1;
+//            auto start_cycle = high_resolution_clock::now();
             while (!worklist.empty()) {
-                auto* iteration = debugger.startIteration();
-                EdgePtr edge = worklist.front(); worklist.pop_front();
-
+//                auto* iteration = debugger.startIteration();
+                EdgePtr edge = worklist.top().edge;
+                size_t depth = worklist.top().priority;
+                worklist.pop();
+                inWorklist.erase(edge);
                 round++;
-    //            std::cout << "  [INSERTION ROUND " << round << "] Cycle " << cid
-    //                      << ", Worklist size: " << worklist.size() << std::endl;
-    //            std::cout << "  [EVAL] Edge " << edge->getId() << ": " << edge->toString() << std::endl;
+                std::cout << "  [INSERTION ROUND " << round << "] Cycle " << cid
+                          << ", Worklist size: " << worklist.size() << std::endl;
+                std::cout << edge->toString() << " with depth " << depth << std::endl;
 
                 FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
                     ? formulaManager.getTrue()
@@ -958,15 +995,16 @@ void buildFormulasIncCyclewise(
                 }
 
                 if (!allAvailable) {
-                    worklist.push_back(edge);
-                    debugger.endIteration();
+                    worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+                    inWorklist.insert(edge);
+//                    debugger.endIteration();
                     continue;
                 }
 
                 FormulaNodeRef newEdge = formulaManager.makeAnd(inputFormulas);
                 if (formulaManager.isSame(edgeFormulas[edge], newEdge)) {
     //                std::cout << "    [SKIP] No change\n";
-                    debugger.endIteration();
+//                    debugger.endIteration();
                     continue;
                 }
 
@@ -975,7 +1013,7 @@ void buildFormulasIncCyclewise(
 
                 NodePtr output = view.getOutput(edge);
                 if (!output || output->isFact) {
-                    debugger.endIteration();
+//                    debugger.endIteration();
                     continue;
                 }
 
@@ -994,7 +1032,8 @@ void buildFormulasIncCyclewise(
                     for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
                         assert (depGraph.edgeToCycleIndex.count(outEdge));
                         size_t outCid = depGraph.edgeToCycleIndex.at(outEdge);
-                        cycleWorklists[outCid].push_back(outEdge);
+                        cycleWorklists[outCid].push({outEdge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+                        cycleInWorklists[outCid].insert(outEdge);
                     }
                 }
             }
@@ -1004,17 +1043,19 @@ void buildFormulasIncCyclewise(
                     ready.push(succ);
                 }
             }
-            debugger.endIteration();
+//            auto end_cycle = high_resolution_clock::now();
+//            debugger.logMessage(Level::INFO, "[CYCLE " + std::to_string(cid) + "] Insertion phase completed. Time: " +
+//                std::to_string(duration_cast<microseconds>(end_cycle - start_cycle).count()) + " microseconds");
         }
     }
-//    debugger.endStage();
+    end = high_resolution_clock::now();
+    debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+    debugger.logMessage(Level::INFO, "Iteration rounds: " + std::to_string(round));
     formulaManager.dumpProfilingStatistics();
     for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
         debugger.addInfo(key, value);
     }
     debugger.addInfo("changed_node_count", std::to_string(changedNodes.size()));
-    end = high_resolution_clock::now();
-    debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
 
 
 }
