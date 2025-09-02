@@ -131,7 +131,7 @@ private:
         : inputs(inputs), output(output), id(edgeId), rule(nullptr), ruleApp(ruleApp) {
         assert (false);
     }
-    Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, const Rule* rule, std::vector<bool>& bodyNegations, RuleApplication ruleApp)
+    Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, const Rule* rule, const std::vector<bool>& bodyNegations, RuleApplication ruleApp)
         : inputs(inputs), output(output), id(edgeId), rule(rule), ruleApp(ruleApp) {
         if (rule) {
             probability = rule->getProbability();
@@ -783,7 +783,7 @@ public:
     }
 
     // this one does not check if the edge already exists
-    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, const Rule* rule, std::vector<bool>& bodyNegations, RuleApplication ruleApp = naiveRuleApplication) {
+    EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, const Rule* rule, const std::vector<bool>& bodyNegations, RuleApplication ruleApp = naiveRuleApplication) {
         auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, rule, bodyNegations, ruleApp));
 
         for (const auto& input : inputs) {

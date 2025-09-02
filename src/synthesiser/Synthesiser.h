@@ -208,4 +208,5 @@ public:
     /** Generate code */
     void generateCode(GenDb& db, const std::string& id, bool& withSharedLibrary);
 };
+
 }  // namespace souffle::synthesiser

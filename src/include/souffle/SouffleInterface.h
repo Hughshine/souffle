@@ -767,6 +767,8 @@ protected:
      */
 
     Knowledge knowledge = BDD;
+
+    bool isGround = false;
     /**
      * Add the relation to relationMap (with its name) and allRelations,
      * depends on the properties of the relation, if the relation is an input relation, it will be added to
