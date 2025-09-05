@@ -875,9 +875,11 @@ void buildFormulasIncCyclewise(
                     changedNodes.insert(output);
                     for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
                         assert (depGraph.edgeToCycleIndex.count(outEdge));
-                        size_t outCid = depGraph.edgeToCycleIndex.at(outEdge);
-                        cycleWorklists[outCid].push({outEdge, depGraph.edgeDepthsGlobal[outEdge], _seqId++});
-                        cycleInWorklists[outCid].insert(outEdge);
+                        auto it = depGraph.edgeToCycleIndex.find(outEdge);
+                        if (it->second == cid && !cycleInWorklists[cid].count(outEdge)) {
+                            cycleWorklists[cid].push({outEdge, depGraph.edgeDepthsGlobal[outEdge], _seqId++});
+                            cycleInWorklists[cid].insert(outEdge);
+                        }
                     }
                 }
                 std::cout << "    [DONE] Edge processed\n";
@@ -1030,10 +1032,13 @@ void buildFormulasIncCyclewise(
                     nodeFormulas[output] = newNode;
                     changedNodes.insert(output);
                     for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
+                        auto it = depGraph.edgeToCycleIndex.find(outEdge);
                         assert (depGraph.edgeToCycleIndex.count(outEdge));
-                        size_t outCid = depGraph.edgeToCycleIndex.at(outEdge);
-                        cycleWorklists[outCid].push({outEdge, depGraph.edgeDepthsGlobal[edge], _seqId++});
-                        cycleInWorklists[outCid].insert(outEdge);
+                        auto outCid = it->second;
+                        if (!cycleInWorklists[outCid].count(outEdge)) {
+                            cycleWorklists[outCid].push({outEdge, depGraph.edgeDepthsGlobal[outEdge], _seqId++});
+                            cycleInWorklists[outCid].insert(outEdge);
+                        }
                     }
                 }
             }

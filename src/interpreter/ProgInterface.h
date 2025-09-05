@@ -263,6 +263,8 @@ public:
     /** Load input data: not implemented */
     void loadAll(std::string) override {}
 
+    void loadAllExcept(std::string inputDirectory) override {};
+
     /** Print output data: not implemented */
     void printAll(std::string) override {}
 

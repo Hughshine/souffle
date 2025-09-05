@@ -130,6 +130,7 @@
 #include <ast/StringConstant.h>
 #include <ast/Term.h>
 #include <ast/UnnamedVariable.h>
+#include <ast2ram/utility/Utils.h>
 #include <souffle/SouffleInterface.h>
 
 namespace souffle::synthesiser {
@@ -477,6 +478,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
 
     if (glb.config().has("online")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
+        out << "cli.setCmdOptions(opt);\n";
         out << "cli.run();\n";
     }
     out << "}\n" << std::endl;
@@ -514,6 +516,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
 
     if (glb.config().has("online")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &sddManager, &nodeFormulas, &edgeFormulas);\n";
+        out << "cli.setCmdOptions(opt);\n";
         out << "cli.run();\n";
     }
     out << "}\n" << std::endl;
@@ -3886,6 +3889,32 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
                           "'\\n';\nexit(1);\n}\n";
     }
 
+
+    // issue loadAllExcept method
+    GenFunction& loadAllExcept = mainClass.addFunction("loadAllExcept", Visibility::Public);
+    loadAllExcept.setOverride();
+    loadAllExcept.setRetType("void");
+    loadAllExcept.setNextArg("[[maybe_unused]] std::string", "inputDirectoryArg", std::make_optional("\"\""));
+
+    for (auto load : loadIOs) {
+        loadAllExcept.body() << "try {";
+        loadAllExcept.body() << "std::map<std::string, std::string> directiveMap(";
+        printDirectives(loadAllExcept.body(), load->getDirectives());
+        loadAllExcept.body() << ");\n";
+        // for IDB in inc, we should always use outputDirArg... that makes more sense TODO
+        loadAllExcept.body() << R"_(if (!inputDirectoryArg.empty()) {)_";
+        loadAllExcept.body() << R"_(directiveMap["fact-dir"] = inputDirectoryArg;)_";
+        loadAllExcept.body() << "}\n";
+        loadAllExcept.body() << "IOSystem::getInstance().getReader(";
+        loadAllExcept.body() << "directiveMap, symTable, recordTable";
+        loadAllExcept.body() << ")->readAllExcept(*" << getRelationName(lookup(load->getRelation())) << ", *";
+        loadAllExcept.body() << getRelationName(lookup("$inc_delta_tuple_delete_" + load->getRelation()));
+        loadAllExcept.body() << ");\n";
+        loadAllExcept.body() << "} catch (std::exception& e) {std::cerr << \"Error loading with filter" << load->getRelation()
+                       << " data: \" << e.what() << "
+                          "'\\n';\nexit(1);\n}\n";
+    }
+
     // issue dump methods
     auto dumpRelation = [&](std::ostream& os, const ram::Relation& ramRelation) {
         const auto& relName = getRelationName(ramRelation);
@@ -4101,7 +4130,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // } else {
     hook << "try {\n";
     hook << "debugger.startStage(StageKind::IO_LOAD_FULL);\n";
-    hook << "std::unordered_map<UntypedTuple, double> fact_prob;\n";
+    // hook << "std::unordered_map<UntypedTuple, double> fact_prob;\n";
     hook << "{\n";
     hook << "FunctionTimer timer(\"Reading fact probability from \" + opt.getInputFileDir());\n";
     for (auto input : loadIOs) {

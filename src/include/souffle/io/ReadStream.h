@@ -48,6 +48,20 @@ public:
         }
     }
 
+    template <typename Rel, typename DelRel>
+    void readAllExcept(Rel& relation, DelRel& delRelation) {
+        while (const auto next = readNextTuple()) {
+            const RamDomain* ramDomain = next.get();
+            std::array<RamDomain, Rel::Arity> arr;
+            std::copy(ramDomain, ramDomain + Rel::Arity, arr.begin());
+            if (delRelation.contains(arr)) {
+                continue;
+            }
+            relation.insert(ramDomain);
+        }
+    }
+
+
 protected:
     /**
      * Read a record from a string.

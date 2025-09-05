@@ -76,6 +76,7 @@ public:
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt")
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn) {}
 
+    CmdOptions() {}
     /**
      * get source code name
      */

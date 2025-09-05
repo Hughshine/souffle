@@ -689,6 +689,11 @@ public:
         assert(tupleList.size() == relation->getArity() && "tuple arity does not match relation arity");
     }
 
+    tuple(const Relation* relation, const RamDomain* dataPtr)
+    : relation(*relation), array(dataPtr, dataPtr + relation->getArity()),
+      pos(relation->getArity()), data(array.data()) {}
+
+
     std::vector<RamDomain> getArray() {
         return array;
     }
@@ -841,7 +846,7 @@ public:
      * @param inputDirectory If non-empty, specifies the input directory
      */
     virtual void loadAll(std::string inputDirectory = "") = 0;
-
+    virtual void loadAllExcept(std::string inputDirectory = "") = 0;
     /**
      * Store all output relations.
      *

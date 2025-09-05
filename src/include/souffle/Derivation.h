@@ -542,4 +542,6 @@ void dumpInputFacts(std::ostream& os = std::cout) {
         os << UntypedTuple::toString(tuple) << '\n';
     }
 }
+
+static std::unordered_map<UntypedTuple, double> fact_prob;
 #endif //DERIVATION_H
