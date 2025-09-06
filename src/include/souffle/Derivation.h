@@ -544,4 +544,26 @@ void dumpInputFacts(std::ostream& os = std::cout) {
 }
 
 static std::unordered_map<UntypedTuple, double> fact_prob;
+
+static std::map<std::string, std::set<UntypedTuple>> initialInputRelations;
+void dumpInitialInputRelations(std::string filename = "") {
+    std::ostream* os;
+    std::ofstream ofs;
+    if (!filename.empty()) {
+        ofs.open(filename);
+        os = &ofs;
+    } else {
+        os = &std::cout;
+    }
+    for (const auto& [rel, tuples] : initialInputRelations) {
+        if (tuples.empty()) continue;
+        *os << "Relation: " << rel << '\n';
+        for (const auto& tuple : tuples) {
+            *os << "  " << tuple.toString() << '\n';
+        }
+    }
+    if (ofs.is_open()) {
+        ofs.close();
+    }
+}
 #endif //DERIVATION_H

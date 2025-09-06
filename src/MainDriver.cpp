@@ -737,6 +737,8 @@ std::vector<MainOption> getMainOptions() {
           "Enable provenance instrumentation and interaction."},
       {"inc", 'i', "", "", false,
           "Enable incremental computation pipeline"}, // TODO
+      {"setmode", 0, "[ full | inc | elastic ]", "inc", false,
+          "Set the incremental mode (default: inc)."},
    {"full-with-delta", 'f', "", "", false,
             "Enable full compilation that considering delta (incremental fact update)"}, // TODO
     {"online", 'O', "", "", false,

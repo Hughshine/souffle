@@ -472,13 +472,25 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "}\n";
     out << "debugger.endStage();\n";
     out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
-    out << "dumpProbabilities(probResult, \"" << glb.config().get("output-dir") << "\");\n";
+    out << "dumpProbabilities(probResult, \"" << "opt.getOutputFileDir()" << "\");\n";
     out << "debugger.endStage();\n";
     out << "debugger.endTurn();\n";
+
+    // TODO
+    out << "dumpInitialInputRelations(opt.getOutputFileDir() + \"/initial-input-relations-iter0.txt\");\n";
 
     if (glb.config().has("online")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
         out << "cli.setCmdOptions(opt);\n";
+        if (glb.config().get("setmode") == "full") {
+            out << "cli.setIncMode(IncMode::FULL);\n";
+        } else if (glb.config().get("setmode") == "inc") {
+            out << "cli.setIncMode(IncMode::INC);\n";
+        } else if (glb.config().get("setmode") == "elastic") {
+            out << "cli.setIncMode(IncMode::ELASTIC);\n";
+        } else {
+            out << "cli.setIncMode(IncMode::INC);\n"; // default
+        }
         out << "cli.run();\n";
     }
     out << "}\n" << std::endl;
@@ -510,7 +522,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "}\n";
     out << "debugger.endStage();\n";
     out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
-    out << "dumpProbabilities(probResult, \"" << glb.config().get("output-dir") << "\");\n";
+    out << "dumpProbabilities(probResult, \"" << "opt.getOutputFileDir()" << "\");\n";
     out << "debugger.endStage();\n";
     out << "debugger.endTurn();\n";
 
@@ -690,6 +702,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                             << ") {" << std::endl;
                             out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << getBaseRelationName(io.getRelation()) << "\",tuple);\n";
                             out << "inputFactSet.insert(untypedTuple);\n";
+                            out << "initialInputRelations[\"" << getBaseRelationName(io.getRelation()) <<"\"].insert(untypedTuple);\n";
                         out << "}" << std::endl;
                         // out << "dumpInputFacts();\n";
                     }
