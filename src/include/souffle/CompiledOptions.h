@@ -155,7 +155,7 @@ public:
         option longOptions[] = {{"facts", true, nullptr, 'F'}, {"output", true, nullptr, 'D'},
                 {"profile", true, nullptr, 'p'}, {"jobs", true, nullptr, 'j'}, {"index", true, nullptr, 'i'},
                 {"knowledge", true, nullptr, 'k'}, {"logfile", true, nullptr, 'l'},
-                {"derv-only", false, nullptr, 'd'}, {"setmode", true, nullptr, 'm'},
+                {"derv-only", true, nullptr, 'd'}, {"setmode", true, nullptr, 'm'},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -224,7 +224,14 @@ public:
                     }
                     break;
                 case 'd':
-                    derivation_only = true;
+                    if (std::string(optarg) == "true") {
+                        derivation_only = true;
+                    } else if (std::string(optarg) == "false") {
+                        derivation_only = false;
+                    } else {
+                        std::cerr << "Invalid value for derv-only [-d]: " << optarg << "\n";
+                        ok = false;
+                    }
                     break;
                 case 'm':
                     if (std::string(optarg) == "inc" || std::string(optarg) == "incremental" || std::string(optarg) == "incr" ||

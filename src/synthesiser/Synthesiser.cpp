@@ -453,7 +453,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
     out << "WeightedBDDManager bddManager;\n";
-
+    out << "if (!opt.isDerivationOnly()) {\n";
     // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
     // out << "debugger.endStage();\n";
     out << "{\n" << std::endl;
@@ -474,33 +474,26 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "}\n";
     out << "debugger.endStage();\n";
     out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
-    out << "dumpProbabilities(probResult, \"" << "opt.getOutputFileDir()" << "\");\n";
+    out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
     out << "debugger.endStage();\n";
     out << "debugger.endTurn();\n";
 
     // TODO
     out << "dumpInitialInputRelations(opt.getOutputFileDir() + \"/initial-input-relations-iter0.txt\");\n";
-
+    out << "}\n";
+    out << "}\n" << std::endl;
     if (glb.config().has("online")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
         out << "cli.setCmdOptions(opt);\n";
-        if (glb.config().get("setmode") == "full") {
-            out << "cli.setIncMode(IncMode::FULL);\n";
-        } else if (glb.config().get("setmode") == "inc") {
-            out << "cli.setIncMode(IncMode::INC);\n";
-        } else if (glb.config().get("setmode") == "elastic") {
-            out << "cli.setIncMode(IncMode::ELASTIC);\n";
-        } else {
-            out << "cli.setIncMode(IncMode::INC);\n"; // default
-        }
         out << "cli.run();\n";
     }
-    out << "}\n" << std::endl;
     out << "}\n" << std::endl;
     out << "else if (obj.getKnowledge() == souffle::Knowledge::SDD) {\n";
     out << "std::map<NodePtr, SddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, SddNodeRef> edgeFormulas;";
     out << "SddFormulaManager sddManager(view.getNodes().size() + view.getEdges().size());\n";
+    out << "if (!opt.isDerivationOnly()) {\n";
+
     out << "{\n" << std::endl;
     // out << "FunctionTimer timer(\" building formulas \");\n";
     out << "buildFormulasCyclewise(view, sddManager, nodeFormulas, edgeFormulas);\n";
@@ -524,16 +517,17 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "}\n";
     out << "debugger.endStage();\n";
     out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
-    out << "dumpProbabilities(probResult, \"" << "opt.getOutputFileDir()" << "\");\n";
+    out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
     out << "debugger.endStage();\n";
     out << "debugger.endTurn();\n";
+    out << "}\n" << std::endl;
+    out << "}\n" << std::endl;
 
     if (glb.config().has("online")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &sddManager, &nodeFormulas, &edgeFormulas);\n";
         out << "cli.setCmdOptions(opt);\n";
         out << "cli.run();\n";
     }
-    out << "}\n" << std::endl;
     out << "}\n";
     // dump the node probabilities
 
@@ -4085,6 +4079,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << std::stoi(glb.config().get("jobs"));
     hook << ", \"log.txt\"";
     hook << ", " << (glb.config().has("derv-only") ? "true" : "false");
+    hook << ",\"" << glb.config().get("setmode") << "\"";
     hook << ");\n";
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";
