@@ -739,6 +739,7 @@ std::vector<MainOption> getMainOptions() {
           "Enable incremental computation pipeline"}, // TODO
       {"setmode", 0, "[ full | inc | elastic ]", "inc", false,
           "Set the incremental mode (default: inc)."},
+      {"derv-only", 'd', "", "", false, "Only compute the derivation graph."}, // TODO
    {"full-with-delta", 'f', "", "", false,
             "Enable full compilation that considering delta (incremental fact update)"}, // TODO
     {"online", 'O', "", "", false,

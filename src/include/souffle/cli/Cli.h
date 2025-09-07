@@ -157,6 +157,7 @@ private:
 
 
     IncMode incMode = IncMode::INC;
+    bool derivationOnly = false;
 public:
     IncrementalCLI(souffle::SouffleProgram* prog = nullptr,
             IncrementalDerivationGraph* graph = nullptr,
@@ -178,11 +179,25 @@ public:
     souffle::CmdOptions opt;
     void setCmdOptions(const souffle::CmdOptions& options) {
         opt = options;
+        setDerivationOnly(options.isDerivationOnly());
+        auto& mode = options.getIncMode();
+        if (mode == "full") {
+            setIncMode(IncMode::FULL);
+        } else if (mode == "inc" || mode == "incremental" || mode == "incr" ) {
+            setIncMode(IncMode::INC);
+        } else if (mode == "elastic") {
+            setIncMode(IncMode::ELASTIC);
+        } else {
+            std::cerr << "Unknown incremental mode: " << mode << ", defaulting to INCREMENTAL." << std::endl;
+            setIncMode(IncMode::INC);
+        }
     }
     void setIncMode(IncMode mode) {
         incMode = mode;
     }
-
+    void setDerivationOnly(bool val) {
+        derivationOnly = val;
+    }
     bool processCommand(const std::string& command) {
         // Skip empty commands
         if (command.empty()) {
@@ -313,7 +328,13 @@ public:
             } else if (mode == "elastic") {
                 incMode = IncMode::ELASTIC;
                 std::cout << "Set incremental mode to ELASTIC" << std::endl;
-            } else {
+            }
+//            else if (mode == "compute-all") {
+//                derivationOnly = false;
+//            } else if (mode == "compute-derv-only") {
+//                derivationOnly = true;
+//            }
+            else {
                 std::cout << "Unknown mode: " << mode << std::endl;
                 std::cout << "Available modes: incremental (incr), full, elastic" << std::endl;
                 std::cout << "Current mode unchanged." << std::endl;
@@ -533,6 +554,12 @@ public:
                 debugger.endStage();
                 view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
                 changedNodes.clear();
+                if (derivationOnly) {
+                    debugger.endTurn();
+                    iteration++;
+                    pendingOperations.clear();
+                    return;
+                }
                 debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
                 buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
                 debugger.endStage();
@@ -572,7 +599,12 @@ public:
                 auto view = graph->prune(program->getOutputRelations());
                 debugger.endStage();
                 view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
-
+                if (derivationOnly) {
+                    debugger.endTurn();
+                    iteration++;
+                    pendingOperations.clear();
+                    return;
+                }
                 // clear formula, build formula
                 debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
                 nodeFormulas->clear(), edgeFormulas->clear();

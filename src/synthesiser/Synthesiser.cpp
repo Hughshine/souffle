@@ -443,6 +443,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "debugger.endStage();\n";
     out << "view.dumpDot(\"after_prune.dot\");\n" << std::endl;
     out << "view.dumpJson(\"derivation.json\");\n";
+
     // out << "view.dumpStatistics(std::cout);\n";
     // out << "view.dumpStatisticsInc(std::cout);\n";
     // if (glb.config().has("verbose")) {
@@ -452,6 +453,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
     out << "WeightedBDDManager bddManager;\n";
+
     // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
     // out << "debugger.endStage();\n";
     out << "{\n" << std::endl;
@@ -4081,6 +4083,8 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << "R\"()\",\n";
     }
     hook << std::stoi(glb.config().get("jobs"));
+    hook << ", \"log.txt\"";
+    hook << ", " << (glb.config().has("derv-only") ? "true" : "false");
     hook << ");\n";
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";

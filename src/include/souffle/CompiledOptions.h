@@ -67,14 +67,16 @@ protected:
      */
     std::size_t num_jobs;
     std::string log_file_name = "log.txt";  // default log file name
+    bool derivation_only = false; // default derivation graph generation flag
     /**
     * knowledge representation
     */
     std::string knowledge_representation;  // bdd, sdd are supported
 public:
     // all argument constructor
-    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt")
-            : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn) {}
+    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc")
+            : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
+    , incMode(mode) {}
 
     CmdOptions() {}
     /**
@@ -100,11 +102,20 @@ public:
     const std::string& getLogFileName() const {
         return log_file_name;
     }
+
+    std::string incMode;
+    const std::string& getIncMode() const {
+        return incMode;
+    }
     /**
      * is profiling switched on
      */
     bool isProfiling() const {
         return profiling;
+    }
+
+    bool isDerivationOnly() const {
+        return derivation_only;
     }
 
     /**
@@ -144,6 +155,7 @@ public:
         option longOptions[] = {{"facts", true, nullptr, 'F'}, {"output", true, nullptr, 'D'},
                 {"profile", true, nullptr, 'p'}, {"jobs", true, nullptr, 'j'}, {"index", true, nullptr, 'i'},
                 {"knowledge", true, nullptr, 'k'}, {"logfile", true, nullptr, 'l'},
+                {"derv-only", false, nullptr, 'd'}, {"setmode", true, nullptr, 'm'},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -211,6 +223,18 @@ public:
                         log_file_name = "log";
                     }
                     break;
+                case 'd':
+                    derivation_only = true;
+                    break;
+                case 'm':
+                    if (std::string(optarg) == "inc" || std::string(optarg) == "incremental" || std::string(optarg) == "incr" ||
+                            std::string(optarg) == "full" || std::string(optarg) == "elastic") {
+                        incMode = optarg;
+                    } else {
+                        std::cerr << "Invalid incremental mode [-m]: " << optarg << "\n";
+                        ok = false;
+                    }
+                    break;
                 default: printHelpPage(exec_name); return false;
             }
         }
@@ -241,6 +265,9 @@ private:
             std::cerr << "    -p <file>, --profile=<file>  -- Specify filename for profiling\n";
             std::cerr << "                                    (default: " << profile_name << ")\n";
         }
+        std::cerr << "    -k <KR>, --knowledge=<KR>    -- Specify knowledge representation (bdd or sdd)\n";
+        std::cerr << "                                    (default: " << knowledge_representation << ")\n";
+        std::cerr << "    -d, --derv-only              -- Only compute the derivation graph\n";
 #ifdef _OPENMP
         std::cerr << "    -j <NUM>, --jobs=<NUM>       -- Specify number of threads\n";
         if (num_jobs > 0) {
