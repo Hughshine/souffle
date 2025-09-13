@@ -60,7 +60,10 @@ struct GroundnessInfo {
     bool allGroundRules;
     bool hasInputRelations;
     std::vector<Clause*> nonGroundClauses;
+    std::vector<Clause*> groundClauses;
+    std::vector<Clause*> facts;
     std::vector<QualifiedName> inputRelationNames;
+
     // stdout
     friend std::ostream& operator<<(std::ostream& out, const GroundnessInfo& info) {
         out << "allGroundRules: " << info.allGroundRules << "\n";
@@ -70,9 +73,18 @@ struct GroundnessInfo {
             out << clause->toString() << "; ";
         }
         out << "\n";
+        for (auto* clause : info.groundClauses) {
+            out << clause->toString() << "; ";
+        }
+        out << "\n";
         out << "inputRelationNames: ";
         for (auto& name : info.inputRelationNames) {
             out << name.toString() << "; ";
+        }
+        out << "\n";
+        out << "facts: ";
+        for (auto* clause : info.facts) {
+            out << clause->toString() << "; ";
         }
         out << "\n";
         return out;
@@ -236,6 +248,8 @@ public:
     void removeDirective(const Directive&);
 
     GroundnessInfo isGround() const;
+    GroundnessInfo ground_info;
+    GroundnessInfo& getGroundnessInfo();
 
     /** Return components */
     std::vector<Component*> getComponents() const override;

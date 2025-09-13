@@ -1031,8 +1031,8 @@ int main(Global& glb, const char* souffle_executable) {
     // TODO: if all grounded, then directly converted to derivation graph, skip semi-naive evaluation
 
     auto& newAstProgram = astTranslationUnit->getProgram();
-    std::cout << newAstProgram.isGround();
-
+    auto& groundness = newAstProgram.getGroundnessInfo();
+    std::cout << groundness;
     // Output the precedence graph in graphviz dot format
     if (hasShowOpt("precedence-graph")) {
         astTranslationUnit->getAnalysis<ast::analysis::PrecedenceGraphAnalysis>().printHTML(std::cout);
@@ -1066,162 +1066,260 @@ int main(Global& glb, const char* souffle_executable) {
     // bail if we've nothing else left to show
     if (glb.config().has("show") && !hasShowOpt("initial-ram", "transformed-ram")) return 0;
 
-    // ------- execution -------------
-    /* translate AST to RAM */
-    debugReport.startSection();
-    auto unitTranslator = getUnitTranslator(glb);
-    auto ramTranslationUnit = unitTranslator->translateUnit(*astTranslationUnit);
-    debugReport.endSection("ast-to-ram", "Translate AST to RAM");
+    if (groundness.allGroundRules) {
+        auto synthesiser = mk<synthesiser::GroundSynthesiser>(*astTranslationUnit);
+        const bool execute_mode = glb.config().has("compile") || glb.config().has("compile-many");
+        const bool compile_mode = glb.config().has("dl-program");
+        const bool generate_mode = glb.config().has("generate");
+        const bool generate_many_mode = glb.config().has("generate-many");
 
-    if (hasShowOpt("initial-ram")) {
-        std::cout << ramTranslationUnit->getProgram();
-        // bail if we've nothing else left to show
-        if (!hasShowOpt("transformed-ram")) return 0;
-    }
+        const bool must_interpret = !execute_mode && !compile_mode && !generate_mode && !generate_many_mode &&
+                                    !glb.config().has("swig");
+        const bool must_execute = execute_mode;
+        const bool must_compile = must_execute || compile_mode || glb.config().has("swig");
+        std::string baseFilename;
+        if (compile_mode) {
+            baseFilename = glb.config().get("dl-program");
+        } else if (generate_mode) {
+            baseFilename = glb.config().get("generate");
 
-    // Apply RAM transforms
-    {
-        auto ramTransform = ramTransformerSequence(glb);
-        ramTransform->apply(*ramTranslationUnit);
-    }
-
-    if (ramTranslationUnit->getErrorReport().getNumIssues() != 0) {
-        std::cerr << ramTranslationUnit->getErrorReport();
-    }
-
-    // Output the transformed RAM program and return
-    if (hasShowOpt("transformed-ram")) {
-        std::cout << ramTranslationUnit->getProgram();
-        return 0;
-    }
-
-    const bool execute_mode = glb.config().has("compile") || glb.config().has("compile-many");
-    const bool compile_mode = glb.config().has("dl-program");
-    const bool generate_mode = glb.config().has("generate");
-    const bool generate_many_mode = glb.config().has("generate-many");
-
-    const bool must_interpret = !execute_mode && !compile_mode && !generate_mode && !generate_many_mode &&
-                                !glb.config().has("swig");
-    const bool must_execute = execute_mode;
-    const bool must_compile = must_execute || compile_mode || glb.config().has("swig");
-
-    try {
-        if (must_interpret) {
-            // ------- interpreter -------------
-            const bool success = interpretTranslationUnit(glb, *ramTranslationUnit);
-            if (!success) {
-                std::exit(EXIT_FAILURE);
+            // trim .cpp extension if it exists
+            if (baseFilename.size() >= 4 && baseFilename.substr(baseFilename.size() - 4) == ".cpp") {
+                baseFilename = baseFilename.substr(0, baseFilename.size() - 4);
             }
+        } else if (generate_many_mode) {
+            baseFilename = glb.config().get("generate-many");
         } else {
-            // ------- compiler -------------
-            auto synthesiser = mk<synthesiser::Synthesiser>(*ramTranslationUnit);
-            // synthesiser->setInitProgram(*initAstProgramPtr);
-            synthesiser->setNewProgram(newAstProgram);
-            // Find the base filename for code generation and execution
-            std::string baseFilename;
-            if (compile_mode) {
-                baseFilename = glb.config().get("dl-program");
-            } else if (generate_mode) {
-                baseFilename = glb.config().get("generate");
+            baseFilename = tempFile();
+        }
 
-                // trim .cpp extension if it exists
-                if (baseFilename.size() >= 4 && baseFilename.substr(baseFilename.size() - 4) == ".cpp") {
-                    baseFilename = baseFilename.substr(0, baseFilename.size() - 4);
-                }
-            } else if (generate_many_mode) {
-                baseFilename = glb.config().get("generate-many");
-            } else {
-                baseFilename = tempFile();
-            }
+        if (baseName(baseFilename) == "/" || baseName(baseFilename) == ".") {
+            baseFilename = tempFile();
+        }
 
-            if (baseName(baseFilename) == "/" || baseName(baseFilename) == ".") {
-                baseFilename = tempFile();
-            }
+        std::string baseIdentifier = identifier(simpleName(baseFilename));
 
-            std::string baseIdentifier = identifier(simpleName(baseFilename));
+        std::string binaryFilename = baseFilename;
 
-            std::string binaryFilename = baseFilename;
+        auto synthesisStart = std::chrono::high_resolution_clock::now();
+        const bool emitToStdOut = glb.config().has("generate", "-");
+        const bool emitMultipleFiles =
+                glb.config().has("generate-many") || glb.config().has("compile-many");
 
-            bool withSharedLibrary;
-            auto synthesisStart = std::chrono::high_resolution_clock::now();
-            const bool emitToStdOut = glb.config().has("generate", "-");
-            const bool emitMultipleFiles =
-                    glb.config().has("generate-many") || glb.config().has("compile-many");
+        synthesiser::GenDb db;
+        synthesiser->generateCode(db, baseIdentifier);
+        std::vector<fs::path> srcFiles;
 
-            synthesiser::GenDb db;
-            synthesiser->generateCode(db, baseIdentifier, withSharedLibrary);
-            std::vector<fs::path> srcFiles;
-
-            if (emitToStdOut) {
-                db.emitSingleFile(std::cout);
-            } else if (emitMultipleFiles) {
-                fs::path directory = glb.config().has("generate-many")
-                                             ? fs::path(glb.config().get("generate-many"))
-                                             : fs::temp_directory_path() / baseIdentifier;
-                std::string mainClass = db.emitMultipleFilesInDir(directory, srcFiles);
-                binaryFilename = (directory / fs::path(mainClass)).string();
-            } else {
-                {
-                    std::string sourceFilename = baseFilename + ".cpp";
-                    std::ofstream os{sourceFilename};
-                    db.emitSingleFile(os);
-                    os.close();
-                    srcFiles.push_back(fs::path(sourceFilename));
-                }
-                {
-                    // TODO emit TranslationContext.clauseNums here
-                    std::string clauseMapFilename = baseFilename + "-clauses.txt";
-                    std::ofstream os{clauseMapFilename};
-                    unitTranslator->context->dumpClauseNums(os);
-                    os.close();
-                }
-            }
-
-
-            // Output relationId to relationStr mapping
-
-            if (glb.config().has("verbose")) {
-                auto synthesisEnd = std::chrono::high_resolution_clock::now();
-                std::cout << "Synthesis time: "
-                          << std::chrono::duration<double>(synthesisEnd - synthesisStart).count() << "sec\n";
-            }
-
-            if (withSharedLibrary) {
-                if (!glb.config().has("libraries")) {
-                    glb.config().set("libraries", "functors");
-                }
-                if (!glb.config().has("library-dir")) {
-                    glb.config().set("library-dir", ".");
-                }
-            }
-
-            if (must_compile) {
-                /* Fail if a souffle-compile executable is not found */
-                const auto souffle_compile = findTool("souffle-compile.py", souffleExecutable, ".");
-                if (!souffle_compile) throw std::runtime_error("failed to locate souffle-compile.py");
-
-                auto t_bgn = std::chrono::high_resolution_clock::now();
-                fs::path output(binaryFilename);
-                compileToBinary(glb, *souffle_compile, srcFiles, output);
-                auto t_end = std::chrono::high_resolution_clock::now();
-
-                if (glb.config().has("verbose")) {
-                    std::cout << "Compilation time: " << std::chrono::duration<double>(t_end - t_bgn).count()
-                              << "sec\n";
-                }
-            }
-
-            // run compiled C++ program if requested.
-            if (must_execute) {
-#if defined(_MSC_VER)
-                binaryFilename += ".exe";
-#endif
-                executeBinaryAndExit(glb, binaryFilename);
+        if (emitToStdOut) {
+            db.emitSingleFile(std::cout);
+        } else if (emitMultipleFiles) {
+            fs::path directory = glb.config().has("generate-many")
+                                         ? fs::path(glb.config().get("generate-many"))
+                                         : fs::temp_directory_path() / baseIdentifier;
+            std::string mainClass = db.emitMultipleFilesInDir(directory, srcFiles);
+            binaryFilename = (directory / fs::path(mainClass)).string();
+        } else {
+            {
+                std::string sourceFilename = baseFilename + ".cpp";
+                std::ofstream os{sourceFilename};
+                db.emitSingleFile(os);
+                os.close();
+                srcFiles.push_back(fs::path(sourceFilename));
             }
         }
-    } catch (std::exception& e) {
-        std::cerr << e.what() << std::endl;
-        std::exit(EXIT_FAILURE);
+
+
+        // Output relationId to relationStr mapping
+
+        if (glb.config().has("verbose")) {
+            auto synthesisEnd = std::chrono::high_resolution_clock::now();
+            std::cout << "Synthesis time: "
+                      << std::chrono::duration<double>(synthesisEnd - synthesisStart).count() << "sec\n";
+        }
+
+
+        if (must_compile) {
+            /* Fail if a souffle-compile executable is not found */
+            const auto souffle_compile = findTool("souffle-compile.py", souffleExecutable, ".");
+            if (!souffle_compile) throw std::runtime_error("failed to locate souffle-compile.py");
+
+            auto t_bgn = std::chrono::high_resolution_clock::now();
+            fs::path output(binaryFilename);
+            compileToBinary(glb, *souffle_compile, srcFiles, output);
+            auto t_end = std::chrono::high_resolution_clock::now();
+
+            if (glb.config().has("verbose")) {
+                std::cout << "Compilation time: " << std::chrono::duration<double>(t_end - t_bgn).count()
+                          << "sec\n";
+            }
+        }
+
+        // run compiled C++ program if requested.
+        if (must_execute) {
+#if defined(_MSC_VER)
+            binaryFilename += ".exe";
+#endif
+            executeBinaryAndExit(glb, binaryFilename);
+        }
+    }
+    else {
+        // ------- execution -------------
+        /* translate AST to RAM */
+        debugReport.startSection();
+        auto unitTranslator = getUnitTranslator(glb);
+        auto ramTranslationUnit = unitTranslator->translateUnit(*astTranslationUnit);
+        debugReport.endSection("ast-to-ram", "Translate AST to RAM");
+
+        if (hasShowOpt("initial-ram")) {
+            std::cout << ramTranslationUnit->getProgram();
+            // bail if we've nothing else left to show
+            if (!hasShowOpt("transformed-ram")) return 0;
+        }
+
+        // Apply RAM transforms
+        {
+            auto ramTransform = ramTransformerSequence(glb);
+            ramTransform->apply(*ramTranslationUnit);
+        }
+
+        if (ramTranslationUnit->getErrorReport().getNumIssues() != 0) {
+            std::cerr << ramTranslationUnit->getErrorReport();
+        }
+
+        // Output the transformed RAM program and return
+        if (hasShowOpt("transformed-ram")) {
+            std::cout << ramTranslationUnit->getProgram();
+            return 0;
+        }
+
+        const bool execute_mode = glb.config().has("compile") || glb.config().has("compile-many");
+        const bool compile_mode = glb.config().has("dl-program");
+        const bool generate_mode = glb.config().has("generate");
+        const bool generate_many_mode = glb.config().has("generate-many");
+
+        const bool must_interpret = !execute_mode && !compile_mode && !generate_mode && !generate_many_mode &&
+                                    !glb.config().has("swig");
+        const bool must_execute = execute_mode;
+        const bool must_compile = must_execute || compile_mode || glb.config().has("swig");
+
+        try {
+            if (must_interpret) {
+                // ------- interpreter -------------
+                const bool success = interpretTranslationUnit(glb, *ramTranslationUnit);
+                if (!success) {
+                    std::exit(EXIT_FAILURE);
+                }
+            } else {
+                // ------- compiler -------------
+                auto synthesiser = mk<synthesiser::Synthesiser>(*ramTranslationUnit);
+                // synthesiser->setInitProgram(*initAstProgramPtr);
+                synthesiser->setNewProgram(newAstProgram);
+                // Find the base filename for code generation and execution
+                std::string baseFilename;
+                if (compile_mode) {
+                    baseFilename = glb.config().get("dl-program");
+                } else if (generate_mode) {
+                    baseFilename = glb.config().get("generate");
+
+                    // trim .cpp extension if it exists
+                    if (baseFilename.size() >= 4 && baseFilename.substr(baseFilename.size() - 4) == ".cpp") {
+                        baseFilename = baseFilename.substr(0, baseFilename.size() - 4);
+                    }
+                } else if (generate_many_mode) {
+                    baseFilename = glb.config().get("generate-many");
+                } else {
+                    baseFilename = tempFile();
+                }
+
+                if (baseName(baseFilename) == "/" || baseName(baseFilename) == ".") {
+                    baseFilename = tempFile();
+                }
+
+                std::string baseIdentifier = identifier(simpleName(baseFilename));
+
+                std::string binaryFilename = baseFilename;
+
+                bool withSharedLibrary;
+                auto synthesisStart = std::chrono::high_resolution_clock::now();
+                const bool emitToStdOut = glb.config().has("generate", "-");
+                const bool emitMultipleFiles =
+                        glb.config().has("generate-many") || glb.config().has("compile-many");
+
+                synthesiser::GenDb db;
+                synthesiser->generateCode(db, baseIdentifier, withSharedLibrary);
+                std::vector<fs::path> srcFiles;
+
+                if (emitToStdOut) {
+                    db.emitSingleFile(std::cout);
+                } else if (emitMultipleFiles) {
+                    fs::path directory = glb.config().has("generate-many")
+                                                 ? fs::path(glb.config().get("generate-many"))
+                                                 : fs::temp_directory_path() / baseIdentifier;
+                    std::string mainClass = db.emitMultipleFilesInDir(directory, srcFiles);
+                    binaryFilename = (directory / fs::path(mainClass)).string();
+                } else {
+                    {
+                        std::string sourceFilename = baseFilename + ".cpp";
+                        std::ofstream os{sourceFilename};
+                        db.emitSingleFile(os);
+                        os.close();
+                        srcFiles.push_back(fs::path(sourceFilename));
+                    }
+                    {
+                        // TODO emit TranslationContext.clauseNums here
+                        std::string clauseMapFilename = baseFilename + "-clauses.txt";
+                        std::ofstream os{clauseMapFilename};
+                        unitTranslator->context->dumpClauseNums(os);
+                        os.close();
+                    }
+                }
+
+
+                // Output relationId to relationStr mapping
+
+                if (glb.config().has("verbose")) {
+                    auto synthesisEnd = std::chrono::high_resolution_clock::now();
+                    std::cout << "Synthesis time: "
+                              << std::chrono::duration<double>(synthesisEnd - synthesisStart).count() << "sec\n";
+                }
+
+                if (withSharedLibrary) {
+                    if (!glb.config().has("libraries")) {
+                        glb.config().set("libraries", "functors");
+                    }
+                    if (!glb.config().has("library-dir")) {
+                        glb.config().set("library-dir", ".");
+                    }
+                }
+
+                if (must_compile) {
+                    /* Fail if a souffle-compile executable is not found */
+                    const auto souffle_compile = findTool("souffle-compile.py", souffleExecutable, ".");
+                    if (!souffle_compile) throw std::runtime_error("failed to locate souffle-compile.py");
+
+                    auto t_bgn = std::chrono::high_resolution_clock::now();
+                    fs::path output(binaryFilename);
+                    compileToBinary(glb, *souffle_compile, srcFiles, output);
+                    auto t_end = std::chrono::high_resolution_clock::now();
+
+                    if (glb.config().has("verbose")) {
+                        std::cout << "Compilation time: " << std::chrono::duration<double>(t_end - t_bgn).count()
+                                  << "sec\n";
+                    }
+                }
+
+                // run compiled C++ program if requested.
+                if (must_execute) {
+#if defined(_MSC_VER)
+                    binaryFilename += ".exe";
+#endif
+                    executeBinaryAndExit(glb, binaryFilename);
+                }
+            }
+        } catch (std::exception& e) {
+            std::cerr << e.what() << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
     }
 
     /* Report overall run-time in verbose mode */

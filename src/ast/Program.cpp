@@ -368,7 +368,6 @@ GroundnessInfo Program::isGround() const {
     // 2. Check each clause for being fully ground
     for (const auto* clause : getClauses()) {
         bool clauseIsGround = true;
-
         // Check head atom's arguments (if the clause has a head)
         if (const Atom* headAtom = clause->getHead()) {
             for (const Argument* arg : headAtom->getArguments()) {
@@ -412,15 +411,31 @@ GroundnessInfo Program::isGround() const {
             }
         }
 
+        if (!clauseIsGround && isFact(*clause)) {
+            assert (false && "A fact cannot contain variables.");
+        }
+        if (isFact(*clause)) {
+            result.facts.push_back(const_cast<Clause*>(clause));
+        }
         // If this clause is not fully ground, record it
         if (!clauseIsGround) {
             result.nonGroundClauses.push_back(const_cast<Clause*>(clause));
             result.allGroundRules = false;
+        } else {
+            result.groundClauses.push_back(const_cast<Clause*>(clause));
         }
     }
-
     return result;
 }
 
+
+GroundnessInfo& Program::getGroundnessInfo() {
+    static bool computed = false;
+    if (!computed) {
+        ground_info = isGround();
+        computed = true;
+    }
+    return ground_info;
+}
 
 }  // namespace souffle::ast

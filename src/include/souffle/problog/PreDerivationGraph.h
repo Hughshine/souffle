@@ -219,8 +219,7 @@ public:
     DerivationGraphView view() const { return DerivationGraphView(this, &present_, &edge_alive_); }
 
     // —— 导出 DOT（present 节点/满足体的边 = 实线；否则虚线） —— //
-    void toDot(std::ostream& os, const DerivationGraphView& V) const {
-        (void)V; // 当前实现直接使用内部 present_/edge_alive_
+    void toDot(std::ostream& os) const {
         os << "digraph G{\n";
         for (NodeId u = 0; u < nodes_.size(); ++u) {
             bool present = (u < present_.size() ? present_[u] : 0);
@@ -240,8 +239,7 @@ public:
         os << "}\n";
     }
 
-    void toDot(std::string& filename, const DerivationGraphView& V) const {
-        (void)V; // 当前实现直接使用内部 present_/edge_alive_
+    void toDot(const std::string& filename) const {
         std::ofstream os(filename);
         os << "digraph G{\n";
         for (NodeId u = 0; u < nodes_.size(); ++u) {

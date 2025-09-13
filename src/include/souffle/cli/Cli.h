@@ -158,6 +158,7 @@ private:
 
     IncMode incMode = IncMode::INC;
     bool derivationOnly = false;
+    bool isGround = false;
 public:
     IncrementalCLI(souffle::SouffleProgram* prog = nullptr,
             IncrementalDerivationGraph* graph = nullptr,
@@ -166,10 +167,12 @@ public:
             std::map<NodePtr, NodeRef>* nodeFormulas = {},
             std::map<EdgePtr, NodeRef>* edgeFormulas = {}
             )
-            : program(prog), graph(graph), ruleManager(rm), ddManager(ddManager), nodeFormulas(nodeFormulas), edgeFormulas(edgeFormulas), changedNodes() {
+            : program(prog), graph(graph), ruleManager(rm), ddManager(ddManager), nodeFormulas(nodeFormulas), edgeFormulas(edgeFormulas), changedNodes(), isGround(false) {
         // Initialize readline
         using_history();
     }
+
+//    IncrementalCLI(): {}
 
     ~IncrementalCLI() {
         // Clean up readline history

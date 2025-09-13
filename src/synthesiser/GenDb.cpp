@@ -249,10 +249,15 @@ void GenDb::emitSingleFile(std::ostream& o) {
         cl->declaration(this, o);
         cl->definition(this, o);
     }
-    classes.front()->declaration(this, o);
-    classes.front()->definition(this, o);
-    classes.back()->declaration(this, o);
-    classes.back()->definition(this, o);
+    if (classes.size() > 1) {
+        classes.front()->declaration(this, o);
+        classes.front()->definition(this, o);
+        classes.back()->declaration(this, o);
+        classes.back()->definition(this, o);
+    } else if (classes.size() == 1) {
+        classes.front()->declaration(this, o);
+        classes.front()->definition(this, o);
+    }
 }
 
 std::string GenDb::emitMultipleFilesInDir(fs::path dir, std::vector<fs::path>& toCompile) {

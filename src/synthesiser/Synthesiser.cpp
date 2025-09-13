@@ -4127,22 +4127,8 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "debugger.startStage(StageKind::SEMINAIVE_FULL);\n";
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
     hook << "debugger.endStage();\n";
-    // hook << "{\n";
-    // hook << "FunctionTimer timer(\"dumping derivations\");\n";
-    // hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "", DerivationManager::untypedTuple2RuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // Should be complete, take into new deltas into account
-    // hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "insert", DerivationManager::untypedTuple2DeltaInsertRuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // TODO: Delta insert
-    // hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "delete", DerivationManager::untypedTuple2DeltaDeleteRuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // TODO: Delta delete
-    // // TODO: for debug; remove this later
-    // hook << R"(DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") << "\":opt.getOutputFileDir());\n";
-    // hook << "}\n";
-
-    // problog calculation
-    // if (glb.config().has("inc")) {
-    //     // assert (false && "incremental problog calculation not implemented yet");
-    // } else {
     hook << "try {\n";
     hook << "debugger.startStage(StageKind::IO_LOAD_FULL);\n";
-    // hook << "std::unordered_map<UntypedTuple, double> fact_prob;\n";
     hook << "{\n";
     hook << "FunctionTimer timer(\"Reading fact probability from \" + opt.getInputFileDir());\n";
     for (auto input : loadIOs) {
