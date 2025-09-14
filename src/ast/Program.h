@@ -63,7 +63,9 @@ struct GroundnessInfo {
     std::vector<Clause*> groundClauses;
     std::vector<Clause*> facts;
     std::vector<QualifiedName> inputRelationNames;
-
+    std::vector<QualifiedName> outputRelationNames;
+    // std::vector<> queried terms;
+    // std::vector<> evidences;
     // stdout
     friend std::ostream& operator<<(std::ostream& out, const GroundnessInfo& info) {
         out << "allGroundRules: " << info.allGroundRules << "\n";
@@ -79,6 +81,11 @@ struct GroundnessInfo {
         out << "\n";
         out << "inputRelationNames: ";
         for (auto& name : info.inputRelationNames) {
+            out << name.toString() << "; ";
+        }
+        out << "\n";
+        out << "outputRelationNames: ";
+        for (auto& name : info.outputRelationNames) {
             out << name.toString() << "; ";
         }
         out << "\n";

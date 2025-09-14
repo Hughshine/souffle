@@ -152,7 +152,7 @@ public:
             }
         }
         for (const auto& edge : view.getEdges()) {
-            if (!edge->getRule()->isDeterminstic()) {
+            if (!edge->isDeterministic()) {
                 // Create a variable for each non-deterministic edge
                 createVar(mapEdgeId(edge->getId()), *edge);
             }

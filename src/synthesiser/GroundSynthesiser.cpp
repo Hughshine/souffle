@@ -100,7 +100,7 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     ctor.body() << "\n// ---- Statically build the PreDerivationGraph ----\n";
     ctor.body() << "std::unordered_map<AtomKey, NodeId, AtomKeyHash> atomToNodeId;\n";
 
-    auto getOrAddNodeInCtor = [&](const ast::Atom* atom) -> std::string {
+    auto getOrAddNodeInCtor = [&](const ast::Atom* atom, const double prob = 1.0) -> std::string {
         AtomKey key;
         key.rel = atom->getQualifiedName().toString();
         for (const auto* arg : atom->getArguments()) {
@@ -115,7 +115,7 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
         keyString += "}}";
 
         ctor.body() << "if (atomToNodeId.find(" << keyString << ") == atomToNodeId.end()) {\n";
-        ctor.body() << "    NodeId nodeId = preDG.addNode(" << keyString << ");\n";
+        ctor.body() << "    NodeId nodeId = preDG.addNode(" << keyString << "," << prob << ");\n";
         ctor.body() << "    atomToNodeId[" << keyString << "] = nodeId;\n";
         ctor.body() << "}\n";
 
@@ -126,7 +126,7 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     // TODO: feel like I should unite AtomKey and UntypedTuple
     for (const auto* fact : groundInfo.facts) {
         const auto* head = fact->getHead();
-        std::string headNodeIdStr = getOrAddNodeInCtor(head);
+        std::string headNodeIdStr = getOrAddNodeInCtor(head, fact->getProbability());
         ctor.body() << "preDG.seedFacts({" << headNodeIdStr << "}, PreDerivationGraph::SeedMode::Accumulate);\n";
         ctor.body() << "factProbabilities[" << headNodeIdStr << "] = " << fact->getProbability() << ";\n";
         // TODO: use fact_prob uniformly
@@ -160,6 +160,8 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
         }
         ctor.body() << "}, " << headNodeIdStr
         << ", "
+        // prob
+        << rule->getProbability() << ", "
         // negations
         << "{";
         for (size_t i = 0; i < negs.size(); ++i) {
@@ -313,35 +315,40 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     hook << "Debugger::getInstance().startStage(StageKind::CREATE_GRAPH_FULL);\n";
     hook << "preDG.materialize(dg);\n";
     hook << "Debugger::getInstance().endStage();\n\n";
-    hook << "dg.dumpDot(\"dg_after_materialize.dot\");\n\n";
-
+    hook << "dg.dumpDot(\"dg_before_prune.dot\");\n\n";
     hook << "std::cout << \"Trying to prune ... \\n\";\n";
+    hook << "Debugger::getInstance().startStage(StageKind::PRUNING_FULL);\n";
+        hook << "auto view = dg.prune({";
+        for (size_t i = 0; i < groundInfo.outputRelationNames.size(); ++i) {
+            hook << "\"" << groundInfo.outputRelationNames[i].toString() << "\"";
+            if (i != groundInfo.outputRelationNames.size() - 1) {
+                hook << ", ";
+            }
+        }
+        hook << "});\n";
+    hook << "dg.dumpDot(\"dg_after_prune.dot\");\n";
+    hook << "Debugger::getInstance().endStage();\n\n";
     hook << "Debugger::getInstance().startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
     hook << "std::cout << \"Trying to construct formulas\\n\";\n";
+
+    // TODO: derv-only, knowledge representation
+    hook << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
+    hook << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
+    hook << "WeightedBDDManager bddManager;\n";
+    hook << "buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);\n";
     hook << "Debugger::getInstance().endStage();\n";
 
     hook << "Debugger::getInstance().startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);\n";
-    // runFunc.body() << "auto result = problogEngine.getProbabilities();\n";
-    // runFunc.body() << "std::cout << \"Query probabilities: \" << std::endl;\n";
-    // runFunc.body() << "for (auto const& [key, val] : result) {\n";
-    // runFunc.body() << "    auto* node = dg.getNode(key);\n";
-    // runFunc.body() << "    if (node) {\n";
-    // runFunc.body() << "         std::cout << node->getTuple().relation << \"(\";\n";
-    // runFunc.body() << "         bool first = true;\n";
-    // runFunc.body() << "         for (auto GVal : node->getTuple().data) {\n";
-    // runFunc.body() << "             if (!first) std::cout << \",\";\n";
-    // runFunc.body() << "             std::cout << GVal;\n";
-    // runFunc.body() << "             first = false;\n";
-    // runFunc.body() << "         }\n";
-    // runFunc.body() << "         std::cout << \") = \" << val << std::endl;\n";
-    // runFunc.body() << "    }\n";
-    // runFunc.body() << "}\n";
     hook << "std::cout << \"Trying to calculate probability\\n\";\n";
+    hook << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+    hook << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
+    hook << "    probResult[node] = prob;\n";
+    hook << "}\n";
     hook << "Debugger::getInstance().endStage();\n";
 
-    // runFunc.body() << "Debugger::getInstance().startStage(StageKind::IO_DUMP_FULL);\n";
-    // runFunc.body() << "dumpOutputs();\n";
-    // runFunc.body() << "Debugger::getInstance().endStage();\n\n";
+    hook << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
+    hook << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
+    hook << "debugger.endStage();\n";
 
     hook << "Debugger::getInstance().endTurn();\n";
 

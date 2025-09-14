@@ -101,7 +101,16 @@ public:
     const Rule* getRule() const { return rule; }
     const std::vector<bool>& getBodyNegations() const { return bodyNegations; }
 
+    void setProbability(double probability) {
+        if (rule) {
+            this->probability = rule->getProbability();
+        } else {
+            this->probability = probability;
+        }
+    }
+
     double getProbability() const { return probability; }
+    bool isDeterministic() const {return probability == 1.0;}
 
     std::string toString() const {
 //        if (rule == nullptr) {
@@ -678,11 +687,15 @@ public:
     }
 
     SubgraphView prune(const std::vector<souffle::Relation*>& outputRelations) {
-        std::unordered_set<std::string> outputRelationNames;
+        std::vector<std::string> outputRelationNames;
         for (const auto* rel : outputRelations) {
-            outputRelationNames.insert(rel->getName());
-//            std::cout << "Output relation: " << rel->getName() << std::endl;
+            outputRelationNames.push_back(rel->getName());
         }
+        return prune(outputRelationNames);
+    }
+
+    SubgraphView prune(const std::vector<std::string>& outputRelations) {
+        std::unordered_set<std::string> outputRelationNames(outputRelations.begin(), outputRelations.end());
 
         // 标记可达的节点和边
         std::unordered_set<NodePtr> reachableNodes;
@@ -868,7 +881,6 @@ public:
     // 构造函数
     IncrementalDerivationGraph() : DerivationGraph() {}
     IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
-
     IncSubgraphView prune(const std::vector<souffle::Relation*>& outputRelations);
 
     static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {})  {

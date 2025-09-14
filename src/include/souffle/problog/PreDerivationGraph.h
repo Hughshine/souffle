@@ -74,6 +74,7 @@ public:
         NodeId output{};
         bool enabled{true};
         std::vector<bool> bodyNegations;
+        double probability{1.0};
     };
 
     /** —— 剪枝视图：只读包装 —— */
@@ -117,7 +118,7 @@ public:
 
 public:
     // —— 节点 —— //
-    NodeId addNode(const AtomKey& k) {
+    NodeId addNode(const AtomKey& k, double probability = 1.0) {
         auto it = nodeIdByKey_.find(k);
         if (it != nodeIdByKey_.end()) return it->second;
         NodeId id = nodes_.size();
@@ -127,9 +128,12 @@ public:
         present_base_.push_back(0);
         present_.push_back(0);
         outEdges_.emplace_back();
+        node_probabilities_[id] = probability;
         return id;
     }
-    NodeId getOrAddNode(const AtomKey& k) { return addNode(k); }
+
+    std::unordered_map<NodeId, double> node_probabilities_;
+    NodeId getOrAddNode(const AtomKey& k, const double prob = 1.0) { return addNode(k, prob); }
     bool   hasNode(const AtomKey& k) const { return nodeIdByKey_.count(k) > 0; }
     NodeId nodeId(const AtomKey& k) const {
         auto it = nodeIdByKey_.find(k);
@@ -139,13 +143,13 @@ public:
     const AtomKey& key(NodeId id) const { return nodes_.at(id); }
 
     // —— 超边 —— //
-    EdgeId addEdge(const std::vector<NodeId>& inputs, NodeId output, const std::vector<bool>& negs = {}) {
+    EdgeId addEdge(const std::vector<NodeId>& inputs, NodeId output, double prob = 1.0, const std::vector<bool>& negs = {}) {
         EdgeId id = edges_.size();
         if (negs.size() > 0) {
             assert(negs.size() == inputs.size());
-            edges_.push_back(Edge{inputs, output, true, negs});
+            edges_.push_back(Edge{inputs, output, true, negs, prob});
         } else {
-            edges_.push_back(Edge{inputs, output, true, std::vector<bool>(inputs.size(), false)});
+            edges_.push_back(Edge{inputs, output, true, std::vector<bool>(inputs.size(), false), prob});
         }
         edge_need_.push_back(static_cast<uint32_t>(inputs.size()));
         edge_have_.push_back(0);
@@ -275,11 +279,15 @@ public:
             UntypedTuple tup{k.rel, k.args};        // 与示例一致：UntypedTuple{"rel",{args}} :contentReference[oaicite:4]{index=4}
             auto np = out.createNode(tup);                   // 使用现成 API 创建/查找节点 :contentReference[oaicite:5]{index=5}
             if (present_base_[u]) { np->isFact = true; }     // 标注 fact，方便下游区分（dumpJson 会用到） :contentReference[oaicite:6]{index=6}
+            // probability TODO
+            np->setProbability(node_probabilities_.at(u));
             id2node[u] = np;
         }
 
         // 2) 为所有可见边创建超边
         for (EdgeId e = 0; e < edges_.size(); ++e) {
+            // negation
+            // probability
             if (!edge_alive_[e]) continue;
             const auto& E = edges_[e];
             std::vector<NodePtr> inputs;
@@ -296,7 +304,9 @@ public:
 
             // 使用不带 Rule 的便捷重载创建超边（够用） :contentReference[oaicite:7]{index=7}
             // TODO: should unify id type
-            out.createHyperedge(inputs, outNode, nullptr, E.bodyNegations, {static_cast<souffle::RamDomain>(e), {}});
+            auto edge = out.createHyperedge(inputs, outNode, nullptr, E.bodyNegations, {static_cast<souffle::RamDomain>(e), {}});
+            // TODO
+            edge->setProbability(E.probability);
         }
     }
 

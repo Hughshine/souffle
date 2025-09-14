@@ -361,6 +361,9 @@ GroundnessInfo Program::isGround() const {
                 result.hasInputRelations = true;
                 result.inputRelationNames.push_back(rel->getQualifiedName());
                 break;  // No need to check further directives for this relation
+            } else if (dir->getType() == DirectiveType::output) {
+                result.outputRelationNames.push_back(rel->getQualifiedName());
+                break;
             }
         }
     }

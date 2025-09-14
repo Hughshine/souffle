@@ -54,12 +54,12 @@ void buildFormulas(
     // Initialize formulas for rule instantiations (hyperedges)
     for (const auto& edge : view.getEdges()) {
         // Create a variable using the edge's unique ID; need to plus the size of graph.getNodes() to avoid conflict with node's id
-        if (edge->getRule()->isDeterminstic()) {
+        if (edge->isDeterministic()) {
             auto baseEdgeFormula = formulaManager.getTrue();
             baseEdgeFormulas.insert({edge, baseEdgeFormula});
         } else {
             auto baseEdgeFormula = formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
-            formulaManager.setVariableWeight(mapEdgeId(edge->getId()), edge->getRule()->getProbability(), 1-edge->getRule()->getProbability());
+            formulaManager.setVariableWeight(mapEdgeId(edge->getId()), edge->getProbability(), 1-edge->getProbability());
             baseEdgeFormulas.insert({edge, baseEdgeFormula});
         }
     }
@@ -234,10 +234,10 @@ void buildFormulasCyclewise(
     }
 
     for (const auto& edge : view.getEdges()) {
-        FormulaNodeRef f = edge->getRule()->isDeterminstic()
+        FormulaNodeRef f = edge->isDeterministic()
             ? formulaManager.getTrue()
             : formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
-        if (!edge->getRule()->isDeterminstic()) {
+        if (!edge->isDeterministic()) {
             formulaManager.setVariableWeight(mapEdgeId(edge->getId()), edge->getProbability(), 1 - edge->getProbability());
         }
         baseEdgeFormulas[edge] = f;
@@ -444,7 +444,7 @@ void buildFormulasInc(
             // now the edge should have its old formula (not deleted)
             FormulaNodeRef oldEdgeFormula = edgeFormulas[edge];
             // calculate the new formula
-            FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
+            FormulaNodeRef baseFormula = edge->isDeterministic()
                 ? formulaManager.getTrue()
                 : formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
             std::vector<FormulaNodeRef> inputFormulas = {baseFormula};
@@ -526,12 +526,12 @@ void buildFormulasInc(
         }
     }
     for (auto edge : deltaInsertedEdges) {
-        if (edge->getRule()->isDeterminstic()) {
+        if (edge->isDeterministic()) {
             edgeFormulas[edge] = formulaManager.getFalse();
         } else {
             edgeFormulas[edge] = formulaManager.getFalse();
             formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
-            formulaManager.setVariableWeight(mapEdgeId(edge->getId()), edge->getRule()->getProbability(), 1 - edge->getRule()->getProbability());
+            formulaManager.setVariableWeight(mapEdgeId(edge->getId()), edge->getProbability(), 1 - edge->getProbability());
         }
     }
 
@@ -547,7 +547,7 @@ void buildFormulasInc(
         worklist.pop_front();
         FormulaNodeRef oldEdge = edgeFormulas[edge];
         // calculate the new formula
-        FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
+        FormulaNodeRef baseFormula = edge->isDeterministic()
             ? formulaManager.getTrue()
             : formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
         std::vector<FormulaNodeRef> inputFormulas = {baseFormula};
@@ -783,7 +783,7 @@ void buildFormulasIncCyclewise(
 //            deletedVarsIndex.insert(index);
 //        }
 //        for (auto edge: deltaDeletedEdges) {
-//            if (edge->getRule()->isDeterminstic()) continue;
+//            if (edge->isDeterministic()) continue;
 //            auto index = mapEdgeId(edge->getId());
 //            deletedVarsIndex.insert(index);
 //        }
@@ -819,7 +819,7 @@ void buildFormulasIncCyclewise(
                 EdgePtr edge = worklist.top().edge; worklist.pop();
                 cycleInWorklists[cid].erase(edge);
                 round++;
-                FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
+                FormulaNodeRef baseFormula = edge->isDeterministic()
                     ? formulaManager.getTrue()
                     : formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
                 std::vector<FormulaNodeRef> inputFormulas{baseFormula};
@@ -935,9 +935,9 @@ void buildFormulasIncCyclewise(
 
         for (auto edge : deltaInsertedEdges) {
             edgeFormulas[edge] = formulaManager.getFalse();
-            if (!edge->getRule()->isDeterminstic()) {
+            if (!edge->isDeterministic()) {
                 formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
-                formulaManager.setVariableWeight(mapEdgeId(edge->getId()), edge->getRule()->getProbability(), 1 - edge->getRule()->getProbability());
+                formulaManager.setVariableWeight(mapEdgeId(edge->getId()), edge->getProbability(), 1 - edge->getProbability());
             }
             assert (depGraph.edgeToCycleIndex.count(edge));
             size_t cid = depGraph.edgeToCycleIndex.at(edge);
@@ -978,7 +978,7 @@ void buildFormulasIncCyclewise(
                           << ", Worklist size: " << worklist.size() << std::endl;
                 std::cout << edge->toString() << " with depth " << depth << std::endl;
 
-                FormulaNodeRef baseFormula = edge->getRule()->isDeterminstic()
+                FormulaNodeRef baseFormula = edge->isDeterministic()
                     ? formulaManager.getTrue()
                     : formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
                 std::vector<FormulaNodeRef> inputFormulas{baseFormula};
