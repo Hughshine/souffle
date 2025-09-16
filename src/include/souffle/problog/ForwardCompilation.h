@@ -1065,4 +1065,208 @@ void buildFormulasIncCyclewise(
 
 }
 
+
+template<typename FormulaNodeRef>
+void buildFormulasCyclewiseOnDemand(
+    SubgraphView& view,
+    FormulaManager<FormulaNodeRef>& formulaManager,
+    std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
+    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
+) {
+     FunctionTimer timer("Build Formulas Cyclewise using DAG + Depth");
+     auto start = std::chrono::high_resolution_clock::now();
+     formulaManager.preConfig(view);
+     auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    debugger.logMessage(Level::INFO, "Variable ordering takes " + std::to_string(duration) + " ms");
+
+    for (auto node : view.getNodes()) {
+        node->tmpRefCount = node->currentRefCount;
+    }
+    for (auto edge : view.getEdges()) {
+        edge->tmpRefCount = edge->currentRefCount;
+    }
+
+    CycleDependencyGraph depGraph(view);
+//    depGraph.dumpCycles(std::cout);
+    depGraph.dumpDot("scc.dot");
+
+    start = std::chrono::high_resolution_clock::now();
+    std::map<NodePtr, FormulaNodeRef> baseNodeFormulas;
+    std::map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
+    size_t round = 0;
+    // 1. 初始化公式
+    for (const auto& node : view.getNodes()) {
+        if (node->isFact) {
+            FormulaNodeRef var = (node->getProbability() == 1.0)
+                ? formulaManager.getTrue()
+//                ? formulaManager.createVar(mapNodeId(node->getId()), *node)
+                : formulaManager.createVar(mapNodeId(node->getId()), *node);
+            formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1 - node->getProbability());
+            nodeFormulas[node] = var;
+            baseNodeFormulas[node] = var;
+        }
+    }
+
+    for (const auto& edge : view.getEdges()) {
+        FormulaNodeRef f = edge->isDeterministic()
+            ? formulaManager.getTrue()
+            : formulaManager.createVar(mapEdgeId(edge->getId()), *edge);
+        if (!edge->isDeterministic()) {
+            formulaManager.setVariableWeight(mapEdgeId(edge->getId()), edge->getProbability(), 1 - edge->getProbability());
+        }
+        baseEdgeFormulas[edge] = f;
+    }
+
+    // 2. 调度 SCC
+    std::vector<size_t> remainingInDegrees = depGraph.inDegrees;
+    std::vector<bool> visited(depGraph.nodeCycles.size(), false);
+    std::queue<size_t> ready;
+    for (size_t i = 0; i < remainingInDegrees.size(); ++i) {
+        if (remainingInDegrees[i] == 0)
+            ready.push(i);
+    }
+
+    while (!ready.empty()) {
+        size_t cid = ready.front(); ready.pop();
+        if (visited[cid]) continue;
+        visited[cid] = true;
+
+        const auto& cycleEdges = depGraph.edgeCycles[cid];
+        std::priority_queue<PrioritizedEdge> worklist;
+        std::set<EdgePtr> inWorklist;
+//        std::cout << "Processing cycle " << cid << ", edges: ";
+
+        int _seqId = 0;
+        for (auto edge : cycleEdges) {
+            worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+//            std::cout << "Adding edge " << edge->getId() << " " << edge->toString()
+//                      << " with depth " << depGraph.edgeDepthsGlobal[edge] << " to worklist.\n";
+            inWorklist.insert(edge);
+        }
+
+        while (!worklist.empty()) {
+            round++;
+//            std::cout << "Round: " << round << std::endl;
+//            std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
+
+//            formulaManager.dumpProfilingStatistics();
+
+            EdgePtr edge = worklist.top().edge;
+            size_t depth = worklist.top().priority;
+
+//            std::cout << edge->toString() << " with depth " << depth << std::endl;
+            worklist.pop();
+            inWorklist.erase(edge);
+//            std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
+//            std::cout << "Edge depth: " << depth << std::endl;
+            std::vector<FormulaNodeRef> inputs = { baseEdgeFormulas[edge] };
+            bool allAvailable = true;
+
+            for (size_t i = 0; i < view.getInputs(edge).size(); ++i) {
+                NodePtr input = view.getInputs(edge)[i];
+                if (!nodeFormulas.count(input)) {
+//                    std::cout << "Input node formula not available: " << input->getId() << " " << input->toString() << std::endl;
+                    allAvailable = false;
+                    break;
+                }
+                inputs.push_back(view.getBodyNegations(edge)[i]
+                    ? formulaManager.makeNot(nodeFormulas[input])
+                    : nodeFormulas[input]);
+            }
+
+            if (!allAvailable) {
+//                std::cout << "Not all inputs available for edge " << edge->getId() << ", re-adding to worklist.\n";
+                worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+                inWorklist.insert(edge);
+                continue;
+            }
+
+            FormulaNodeRef newEdgeF = (inputs.size() == 1) ? inputs[0] : formulaManager.makeAnd(inputs);
+            if (!formulaManager.isSame(edgeFormulas[edge], newEdgeF)) {
+                edgeFormulas[edge] = newEdgeF;
+                NodePtr out = view.getOutput(edge);
+
+                std::vector<FormulaNodeRef> inFs;
+                for (auto& inEdge : view.getIncomingEdges(out)) {
+                    auto it = edgeFormulas.find(inEdge);
+                    if (it != edgeFormulas.end() && it->second.get()) {
+                        inFs.push_back(it->second);
+                    }
+                }
+
+                if (!inFs.empty()) {
+                    FormulaNodeRef newNodeF = (inFs.size() == 1) ? inFs[0] : formulaManager.makeOr(inFs);
+                    if (!nodeFormulas.count(out) || !formulaManager.isSame(nodeFormulas[out], newNodeF)) {
+                        nodeFormulas[out] = newNodeF;
+
+                        for (auto& outEdge : view.getOutgoingEdges(out)) {
+                            auto it = depGraph.edgeToCycleIndex.find(outEdge);
+                            if (it != depGraph.edgeToCycleIndex.end() && it->second == cid && !inWorklist.count(outEdge)) {
+                                worklist.push({outEdge, depGraph.edgeDepthsGlobal[outEdge], _seqId++});
+                                inWorklist.insert(outEdge);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // reduce reference counts for every output node of the cycle
+        // reduce useless formulas
+        std::set<NodePtr> outputNodes;
+        for (auto node : depGraph.nodeCycles[cid]) {
+            if (node->needOutput) {
+                outputNodes.insert(node);
+            }
+        }
+        for (auto node : outputNodes) {
+            std::queue<NodePtr> q;
+            std::unordered_set<NodePtr> visited;
+            auto prob = formulaManager.computeWeightedModelCount(nodeFormulas[node]);
+            probResult[node] = prob;
+            q.push(node);
+            while (!q.empty()) {
+                auto qnode = q.front(); q.pop(); visited.insert(qnode);
+                if (qnode->isFact) continue;
+                qnode->tmpRefCount -= 1;
+                if (qnode->tmpRefCount <= 0) {
+                    nodeFormulas.erase(qnode);
+//                    std::cout << "Reduced node formula for node " << qnode->toString() << std::endl;
+                }
+                for (auto inEdge : view.getIncomingEdges(qnode)) {
+                    inEdge->tmpRefCount -= 1;
+                    if (inEdge->tmpRefCount <= 0) {
+                        edgeFormulas.erase(inEdge);
+                    }
+//                    std::cout << "Reduced edge formula for edge " << inEdge->toString() << std::endl;
+                    for (auto inNode: view.getInputs(inEdge)) {
+                        if (visited.count(inNode) == 0 && qnode->tmpRefCount > 0) {
+                            q.push(inNode);
+                        }
+                    }
+                }
+            }
+        }
+        formulaManager.tryGarbageCollection();
+
+        for (auto succ : depGraph.reverseDependencies[cid]) {
+            if (--remainingInDegrees[succ] == 0) {
+                ready.push(succ);
+            }
+        }
+    }
+    end = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    formulaManager.dumpProfilingStatistics();
+    for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
+        debugger.addInfo(key, value);
+    }
+    debugger.logMessage(Level::INFO, "Total rounds: " + std::to_string(round));
+    debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration) + " ms");
+
+//    for (const auto& [node, bdd] : nodeFormulas) {
+//        auto prob = formulaManager.computeWeightedModelCount(bdd);
+//        probResult[node] = prob;
+//    }
+}
 #endif //FORWARDCOMPILATION_H

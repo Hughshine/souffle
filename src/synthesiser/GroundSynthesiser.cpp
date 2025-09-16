@@ -49,7 +49,7 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     // --- Class Setup ---
     std::string className = "Sf_" + id;
     GenClass& mainClass = db.getClass(className, fs::path(className + ".h"));
-    // mainClass.inherits("public SouffleProgram");
+    // mainClass.inherits("public SouffleProgramGround");
     mainClass.addInclude("\"souffle/CompiledSouffle.h\"");
     mainClass.addInclude("\"souffle/io/IOSystem.h\"");
     mainClass.addInclude("\"souffle/problog/PreDerivationGraph.h\"");
@@ -77,6 +77,14 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     mainClass.addField("PreDerivationGraph", "preDG", Visibility::Public);
     mainClass.addField("std::map<EdgeId, double>", "edgeProbabilities", Visibility::Public);
     mainClass.addField("std::map<NodeId, double>", "factProbabilities", Visibility::Public);
+
+    auto& getSymbTable = mainClass.addFunction("getSymbolTable", Visibility::Public);
+    getSymbTable.setRetType("SymbolTable&");
+    getSymbTable.body() << "return symTable;\n";
+
+    auto& getRecordTable = mainClass.addFunction("getRecordTable", Visibility::Public);
+    getRecordTable.setRetType("RecordTable&");
+    getRecordTable.body() << "return recordTable;\n";
 
     // --- Constructor ---
     GenFunction& ctor = mainClass.addConstructor(Visibility::Public);
@@ -301,6 +309,7 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     db.addGlobalInclude("\"souffle/problog/formula/SddManager.h\"");
     db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
     db.addGlobalInclude("\"souffle/problog/debug/Debugger.h\"");
+    db.addGlobalInclude("\"souffle/problog/Pipeline.h\"");
     if (glb.config().has("online")) {
         db.addGlobalInclude("\"souffle/cli/Cli.h\"");
     }
@@ -311,45 +320,19 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     hook << "preDG.recompute();\n";
     hook << "Debugger::getInstance().endStage();\n\n";
     hook << "preDG.toDot(\"preDG_after_recompute.dot\");\n\n";
-    hook << "DerivationGraph dg;\n";
+    hook << "IncrementalDerivationGraph dg;\n";
     hook << "Debugger::getInstance().startStage(StageKind::CREATE_GRAPH_FULL);\n";
     hook << "preDG.materialize(dg);\n";
     hook << "Debugger::getInstance().endStage();\n\n";
-    hook << "dg.dumpDot(\"dg_before_prune.dot\");\n\n";
-    hook << "std::cout << \"Trying to prune ... \\n\";\n";
-    hook << "Debugger::getInstance().startStage(StageKind::PRUNING_FULL);\n";
-        hook << "auto view = dg.prune({";
-        for (size_t i = 0; i < groundInfo.outputRelationNames.size(); ++i) {
-            hook << "\"" << groundInfo.outputRelationNames[i].toString() << "\"";
-            if (i != groundInfo.outputRelationNames.size() - 1) {
-                hook << ", ";
-            }
+    // hook << "fullComp(dg, opt, {";
+    hook << "fullCompOnDemand(dg, opt, {";
+    for (size_t i = 0; i < groundInfo.outputRelationNames.size(); ++i) {
+        hook << "\"" << groundInfo.outputRelationNames[i].toString() << "\"";
+        if (i != groundInfo.outputRelationNames.size() - 1) {
+            hook << ", ";
         }
-        hook << "});\n";
-    hook << "dg.dumpDot(\"dg_after_prune.dot\");\n";
-    hook << "Debugger::getInstance().endStage();\n\n";
-    hook << "Debugger::getInstance().startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
-    hook << "std::cout << \"Trying to construct formulas\\n\";\n";
-
-    // TODO: derv-only, knowledge representation
-    hook << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
-    hook << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
-    hook << "WeightedBDDManager bddManager;\n";
-    hook << "buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);\n";
-    hook << "Debugger::getInstance().endStage();\n";
-
-    hook << "Debugger::getInstance().startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);\n";
-    hook << "std::cout << \"Trying to calculate probability\\n\";\n";
-    hook << "for (const auto& [node, bdd] : nodeFormulas) {\n";
-    hook << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
-    hook << "    probResult[node] = prob;\n";
-    hook << "}\n";
-    hook << "Debugger::getInstance().endStage();\n";
-
-    hook << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
-    hook << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
-    hook << "debugger.endStage();\n";
-
+    }
+    hook << "});\n";
     hook << "Debugger::getInstance().endTurn();\n";
 
     hook  << "\n// ---- Print Report ----\n";

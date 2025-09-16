@@ -441,7 +441,7 @@ public:
         DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();
         static size_t commitCount = 0;
         // TODO: should clean all delta relations after each commit
-        if (program) {
+        if (program) {  // for non-ground program for now ...
             {
                 purgeAllIncDeltaRelations();
                 // insert delta into relations for real
@@ -635,6 +635,11 @@ public:
                 assert (false);
             }
         } else {
+            // TODO: for ground program for now
+            // preDG -> preDG updating (by delta relations) -> inc-dg
+            // -> inc-dg pruning -> inc formula construction -> inc wmc
+            // TODO: react to derv-only
+            // TODO: react to inc mode
             std::cout << "No program loaded." << std::endl;
         }
         pendingOperations.clear();

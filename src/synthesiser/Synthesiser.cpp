@@ -450,42 +450,57 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     //     out << "view->dumpDot(\"derivation_graph.dot\");\n";
     // }
     out << "if (obj.getKnowledge() == souffle::Knowledge::BDD) {\n";
+
+    out << "if (!opt.isDerivationOnly()) {\n";
+    // out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
+    // out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
+    // out << "WeightedBDDManager bddManager;\n";    // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
+    // out << "{\n" << std::endl;
+    // out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
+    // out << "buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);\n";
+    // out << "debugger.endStage();\n";
+    // out << "}" << std::endl;
+    // out << "{" << std::endl;
+    // out << "debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);\n";
+    // out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+    // out << "//    std::cout << \"Node\" << node->getId() ;\n";
+    // out << "//    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
+    // out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
+    // out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
+    // out << "    probResult[node] = prob;\n";
+    // out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
+    // out << "}\n";
+    // out << "debugger.endStage();\n";
+    // out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
+    // out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
+    // out << "debugger.endStage();\n";
+    // out << "debugger.endTurn();\n";
+
+    // TODO:
     out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
-    out << "WeightedBDDManager bddManager;\n";
-    out << "if (!opt.isDerivationOnly()) {\n";
-    // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
-    // out << "debugger.endStage();\n";
+    out << "WeightedBDDManager bddManager;\n";    // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
     out << "{\n" << std::endl;
     // out << "FunctionTimer timer(\" building formulas \");\n";
     out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
-    out << "buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);\n";
+    out << "buildFormulasCyclewiseOnDemand(view, bddManager, nodeFormulas, edgeFormulas);\n";
     out << "debugger.endStage();\n";
     out << "}" << std::endl;
     out << "{" << std::endl;
-    out << "debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);\n";
-    out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
-    out << "//    std::cout << \"Node\" << node->getId() ;\n";
-    out << "//    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
-    out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
-    out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
-    out << "    probResult[node] = prob;\n";
-    out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
-    out << "}\n";
-    out << "debugger.endStage();\n";
     out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
     out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
     out << "debugger.endStage();\n";
     out << "debugger.endTurn();\n";
+
 
     // TODO
     out << "dumpInitialInputRelations(opt.getOutputFileDir() + \"/initial-input-relations-iter0.txt\");\n";
     out << "}\n";
     out << "}\n" << std::endl;
     if (glb.config().has("online")) {
-        out << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
-        out << "cli.setCmdOptions(opt);\n";
-        out << "cli.run();\n";
+        // out << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
+        // out << "cli.setCmdOptions(opt);\n";
+        // out << "cli.run();\n";
     }
     out << "}\n" << std::endl;
     out << "else if (obj.getKnowledge() == souffle::Knowledge::SDD) {\n";

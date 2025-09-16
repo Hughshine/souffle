@@ -69,6 +69,8 @@ struct AtomKeyHash {
  */
 class PreDerivationGraph {
 public:
+    size_t currentTurn_ = 0;
+
     struct Edge {
         std::vector<NodeId> inputs;
         NodeId output{};
@@ -182,6 +184,25 @@ public:
         seedFacts(ids, mode);
     }
     void clearFacts() { std::fill(present_base_.begin(), present_base_.end(), 0); }
+    void retractFacts(const std::vector<NodeId>& factIdsToRemove) {
+        for (NodeId u : factIdsToRemove) {
+            if (u < present_base_.size()) {
+                present_base_[u] = 0;
+            }
+        }
+    }
+
+    void retractFactsByKey(const std::vector<AtomKey>& factsToRemove) {
+        std::vector<NodeId> ids;
+        ids.reserve(factsToRemove.size());
+        for (const auto& k : factsToRemove) {
+            auto it = nodeIdByKey_.find(k);
+            if (it != nodeIdByKey_.end()) {
+                ids.push_back(it->second);
+            }
+        }
+        retractFacts(ids);
+    }
 
     // —— 传播 & 剪枝 —— //
     void recompute() {
@@ -270,45 +291,132 @@ public:
      * - edge_alive_[e]==1 的边 -> createHyperedge(inputs, output)
      * - 对于 present_base_[u]==1 的节点，额外设置 node->isFact = true
      */
-    void materialize(DerivationGraph& out) const {
-        // 1) 为所有可见节点创建/复用 DG 节点
+    // void materialize(IncrementalDerivationGraph& out) const {
+    //     // 1) 为所有可见节点创建/复用 DG 节点
+    //     std::vector<NodePtr> id2node(nodes_.size(), nullptr);
+    //     for (NodeId u = 0; u < nodes_.size(); ++u) {
+    //         if (!present_[u]) continue;
+    //         const AtomKey& k = nodes_[u];
+    //         UntypedTuple tup{k.rel, k.args};        // 与示例一致：UntypedTuple{"rel",{args}} :contentReference[oaicite:4]{index=4}
+    //         auto np = out.createNode(tup);                   // 使用现成 API 创建/查找节点 :contentReference[oaicite:5]{index=5}
+    //         if (present_base_[u]) { np->isFact = true; }     // 标注 fact，方便下游区分（dumpJson 会用到） :contentReference[oaicite:6]{index=6}
+    //         // probability TODO
+    //         np->setProbability(node_probabilities_.at(u));
+    //         id2node[u] = np;
+    //     }
+    //
+    //     // 2) 为所有可见边创建超边
+    //     for (EdgeId e = 0; e < edges_.size(); ++e) {
+    //         // negation
+    //         // probability
+    //         if (!edge_alive_[e]) continue;
+    //         const auto& E = edges_[e];
+    //         std::vector<NodePtr> inputs;
+    //         inputs.reserve(E.inputs.size());
+    //         for (NodeId u : E.inputs) {
+    //             auto np = id2node[u];
+    //             // 若输入未 present（理论上不会发生），跳过该边
+    //             if (!np) { inputs.clear(); break; }
+    //             inputs.push_back(np);
+    //         }
+    //         if (inputs.empty()) continue;
+    //         auto outNode = id2node[E.output];
+    //         if (!outNode) continue;
+    //
+    //         // 使用不带 Rule 的便捷重载创建超边（够用） :contentReference[oaicite:7]{index=7}
+    //         // TODO: should unify id type
+    //         auto edge = out.createHyperedge(inputs, outNode, nullptr, E.bodyNegations, {static_cast<souffle::RamDomain>(e), {}});
+    //         // TODO
+    //         edge->setProbability(E.probability);
+    //     }
+    // }
+
+    void materialize(IncrementalDerivationGraph& out) const {
+        // --- 准备阶段：清空上一轮的增量信息，并记录旧状态 ---
+        out.deltaInsertNodes.clear();
+        out.deltaInsertEdges.clear();
+        out.deltaDeleteNodes.clear();
+        out.deltaDeleteEdges.clear();
+
+        std::unordered_set<NodePtr> oldNodes = out.nodes; // 直接访问
+        std::unordered_set<EdgePtr> oldEdges = out.edges; // 直接访问
+
+        // --- 第一步：处理节点（增、删、改） ---
         std::vector<NodePtr> id2node(nodes_.size(), nullptr);
         for (NodeId u = 0; u < nodes_.size(); ++u) {
             if (!present_[u]) continue;
             const AtomKey& k = nodes_[u];
-            UntypedTuple tup{k.rel, k.args};        // 与示例一致：UntypedTuple{"rel",{args}} :contentReference[oaicite:4]{index=4}
-            auto np = out.createNode(tup);                   // 使用现成 API 创建/查找节点 :contentReference[oaicite:5]{index=5}
-            if (present_base_[u]) { np->isFact = true; }     // 标注 fact，方便下游区分（dumpJson 会用到） :contentReference[oaicite:6]{index=6}
-            // probability TODO
+            UntypedTuple tup{k.rel, k.args};
+            NodePtr np = out.findNode(tup);
+            if (np == nullptr) {
+                np = out.createNode(tup);
+                out.deltaInsertNodes.insert(np);
+            } else {
+                oldNodes.erase(np);
+            }
+            np->isFact = present_base_[u];
             np->setProbability(node_probabilities_.at(u));
             id2node[u] = np;
         }
+        out.deltaDeleteNodes.insert(oldNodes.begin(), oldNodes.end());
 
-        // 2) 为所有可见边创建超边
+        // --- 第二步：处理边（增、删、改） ---
         for (EdgeId e = 0; e < edges_.size(); ++e) {
-            // negation
-            // probability
             if (!edge_alive_[e]) continue;
             const auto& E = edges_[e];
             std::vector<NodePtr> inputs;
             inputs.reserve(E.inputs.size());
+            bool inputs_valid = true;
             for (NodeId u : E.inputs) {
-                auto np = id2node[u];
-                // 若输入未 present（理论上不会发生），跳过该边
-                if (!np) { inputs.clear(); break; }
-                inputs.push_back(np);
+                if (!(id2node[u])) { inputs_valid = false; break; }
+                inputs.push_back(id2node[u]);
             }
-            if (inputs.empty()) continue;
-            auto outNode = id2node[E.output];
-            if (!outNode) continue;
+            if (!inputs_valid || !id2node[E.output]) continue;
 
-            // 使用不带 Rule 的便捷重载创建超边（够用） :contentReference[oaicite:7]{index=7}
-            // TODO: should unify id type
-            auto edge = out.createHyperedge(inputs, outNode, nullptr, E.bodyNegations, {static_cast<souffle::RamDomain>(e), {}});
-            // TODO
-            edge->setProbability(E.probability);
+            auto outNode = id2node[E.output];
+            assert (outNode != nullptr);
+            EdgePtr ep = nullptr;
+            for (const auto& candidate_edge : outNode->getIncomingEdges()) {
+                if (oldEdges.count(candidate_edge) && candidate_edge->getInputs().size() == inputs.size()) {
+                    std::unordered_set<NodePtr> current_inputs(candidate_edge->getInputs().begin(), candidate_edge->getInputs().end());
+                    std::unordered_set<NodePtr> target_inputs(inputs.begin(), inputs.end());
+                    if (current_inputs == target_inputs) { ep = candidate_edge; break; }
+                }
+            }
+
+            if (ep == nullptr) {
+                ep = out.createHyperedge(inputs, outNode, nullptr, E.bodyNegations, {static_cast<souffle::RamDomain>(e), {}});
+                out.deltaInsertEdges.insert(ep);
+            } else {
+                oldEdges.erase(ep);
+            }
+            ep->setProbability(E.probability);
+        }
+        out.deltaDeleteEdges.insert(oldEdges.begin(), oldEdges.end());
+
+        // --- 第三步：执行实际的删除操作，使图结构一致 ---
+        // 1. 删除边
+        for (const auto& edgeToDelete : out.deltaDeleteEdges) {
+            edgeToDelete->getOutput()->getIncomingEdges().erase(
+                std::remove(edgeToDelete->getOutput()->getIncomingEdges().begin(), edgeToDelete->getOutput()->getIncomingEdges().end(), edgeToDelete),
+                edgeToDelete->getOutput()->getIncomingEdges().end());
+
+            for (const auto& inputNode : edgeToDelete->getInputs()) {
+                inputNode->getOutgoingEdges().erase(
+                    std::remove(inputNode->getOutgoingEdges().begin(), inputNode->getOutgoingEdges().end(), edgeToDelete),
+                    inputNode->getOutgoingEdges().end());
+            }
+            out.edges.erase(edgeToDelete); // 直接访问 out.edges
+            // 注意：仍然无法清理 edgeKeyToEdgeMap，因为它需要 Rule 信息来重建 key
+        }
+
+        // 2. 删除节点
+        for (const auto& nodeToDelete : out.deltaDeleteNodes) {
+            out.tupleToNodeMap.erase(nodeToDelete->getTuple()); // 直接访问
+            out.nodes.erase(nodeToDelete); // 直接访问
         }
     }
+
 
     // —— 统计/访问器 —— //
     std::size_t numNodes() const { return nodes_.size(); }

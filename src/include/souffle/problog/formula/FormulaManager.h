@@ -35,6 +35,7 @@ public:
     virtual std::map<std::string, std::string> getProfilingStatistics() {
         return {};
     }
+    virtual void tryGarbageCollection() {};
 };
 
 template<typename NodeRef>

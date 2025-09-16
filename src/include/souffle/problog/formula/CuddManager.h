@@ -143,24 +143,29 @@ public:
         auto duration = duration_cast<milliseconds>(end - start).count();
 
         auto oldCuddVarSize = Cudd_ReadSize(manager.get());
-
+        size_t numVarsToAdd = 0;
         start = high_resolution_clock::now();
         for (const auto& node : view.getNodes()) {
             if (node->isFact && node->getProbability() < 1.0) {
                 // Create a variable for each fact node if haven't been created yet
                 createVar(mapNodeId(node->getId()), *node);
+                numVarsToAdd ++;
             }
         }
         for (const auto& edge : view.getEdges()) {
             if (!edge->isDeterministic()) {
                 // Create a variable for each non-deterministic edge
                 createVar(mapEdgeId(edge->getId()), *edge);
+                numVarsToAdd ++;
             }
         }
         end = high_resolution_clock::now();
         duration = duration_cast<milliseconds>(end - start).count();
         debugger.logMessage(Level::INFO, "CUDD nodes created in " + std::to_string(duration) + " ms");
-
+        if (numVarsToAdd < 20) {
+            debugger.logMessage(Level::INFO, "Number of variables to add is small (" + std::to_string(numVarsToAdd) + "), skip static ordering");
+            return;
+        }
         start = high_resolution_clock::now();
         heuristics.compute(view);
         std::vector<int> order = heuristics.getOrder();

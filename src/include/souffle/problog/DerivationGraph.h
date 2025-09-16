@@ -69,13 +69,13 @@ public:
     double getProbability() const { return probability; }
     std::string toString() const {
         return tuple.toString();
-//        std::stringstream ss;
-//        ss << "Node(" << tuple.toString() << ")";
-//        return ss.str();
     }
     bool isFact = false;
     bool pruned = false;
     bool needOutput = false;
+
+    size_t currentRefCount = 0;  // references by output nodes; set during pruning
+    size_t tmpRefCount = 0;      // set during
 
 private:
     explicit Node(const UntypedTuple& t, size_t nodeId, double prob = 1.0)
@@ -122,7 +122,7 @@ public:
     // inputs to outputs
         std::stringstream ss;
         ss << "Hyperedge(" << id << ")[";
-        ss << "rule" << ((rule)?rule->getRuleId():-1) << ",";
+        ss << "rule" << ((rule)?std::to_string(rule->getRuleId()):" nil") << ",";
         for (size_t i = 0; i < bodyNegations.size(); ++i) {
             ss << (bodyNegations[i] ? "!" : "") << inputs[i]->getTuple().toString();
             if (i != bodyNegations.size() - 1) {
@@ -135,6 +135,8 @@ public:
     }
     RuleApplication getRuleApp() const { return ruleApp; }
     bool pruned = false;
+    size_t currentRefCount = 0;  // references by output nodes; set during pruning
+    size_t tmpRefCount = 0;      // set during
 private:
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, RuleApplication ruleApp)
         : inputs(inputs), output(output), id(edgeId), rule(nullptr), ruleApp(ruleApp) {
@@ -146,9 +148,10 @@ private:
             probability = rule->getProbability();
         }
         if (bodyNegations.size() > 0) {
+            assert (bodyNegations.size() == inputs.size());
             this->bodyNegations = bodyNegations;
         } else {
-            this->bodyNegations = std::vector<bool>(rule->getBodyAtoms().size(), false);
+            this->bodyNegations = std::vector<bool>(inputs.size(), false);
         }
 //        for (size_t i = 0; i < inputs.size(); ++i) {
 //            std::cout << "input: " << inputs[i]->toString() << std::endl;
@@ -702,6 +705,7 @@ public:
         std::unordered_set<EdgePtr> reachableEdges;
         std::queue<NodePtr> workQueue;
 
+        std::unordered_set<NodePtr> outputNodes;
         // 初始化：从所有输出 relation 的节点出发
         for (const auto& node : nodes) {
             if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
@@ -709,6 +713,32 @@ public:
                 reachableNodes.insert(node);
                 workQueue.push(node);
                 node->needOutput = true;
+                outputNodes.insert(node);
+            }
+            node->currentRefCount = 0;
+        }
+
+        for (const auto& edge : edges) {
+            edge->currentRefCount = 0;
+        }
+
+        // register reference count
+        for (const auto& node : outputNodes) {
+            std::queue<NodePtr> q;
+            std::unordered_set<NodePtr> visited;
+            q.push(node);
+            while (!q.empty()) {
+                NodePtr n = q.front(); q.pop();
+                visited.insert(n);
+                n->currentRefCount += 1;
+                for (const auto& edge : n->getIncomingEdges()) {
+                    edge->currentRefCount += 1;
+                    for (const auto& inputNode : edge->getInputs()) {
+                        if (visited.count(inputNode) == 0) {
+                            q.push(inputNode);
+                        }
+                    }
+                }
             }
         }
 
@@ -797,14 +827,21 @@ public:
 
     // this one does not check if the edge already exists
     EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, const Rule* rule, const std::vector<bool>& bodyNegations, RuleApplication ruleApp = naiveRuleApplication) {
+        std::cout << 0 << std::endl;
         auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, rule, bodyNegations, ruleApp));
-
+        std::cout << 111 << std::endl;
         for (const auto& input : inputs) {
+            assert (input != nullptr);
             input->addOutgoingEdge(edge);
         }
+        std::cout << 222 << std::endl;
+        assert (output != nullptr);
         output->addIncomingEdge(edge);
+        std::cout << 333 << std::endl;
 
         edges.insert(edge);
+        std::cout << 444 << std::endl;
+
         return edge;
     }
 
@@ -878,10 +915,13 @@ void Node::addOutgoingEdge(EdgePtr edge) {
 
 class IncrementalDerivationGraph : public DerivationGraph, virtual public IncrementalDerivationGraphViewInterface {
 public:
+    friend class PreDerivationGraph;
+
     // 构造函数
     IncrementalDerivationGraph() : DerivationGraph() {}
     IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
     IncSubgraphView prune(const std::vector<souffle::Relation*>& outputRelations);
+    IncSubgraphView prune(const std::vector<std::string>& outputRelations);
 
     static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {})  {
         FunctionTimer timer(" creating derivation graph ");
@@ -1312,16 +1352,23 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
 }
 
 IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Relation*>& outputRelations) {
-    std::unordered_set<std::string> outputRelationNames;
+    std::vector<std::string> outputRelationNames;
     for (const auto* rel : outputRelations) {
-        outputRelationNames.insert(rel->getName());
-        std::cout << "Output relation: " << rel->getName() << std::endl;
+        outputRelationNames.push_back(rel->getName());
     }
+    return prune(outputRelationNames);
+}
+
+// pruning is not incremental for now
+IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>& outputRelations) {
+    std::unordered_set outputRelationNames(outputRelations.begin(), outputRelations.end());
 
     // 标记可达的节点和边
     std::unordered_set<NodePtr> reachableNodes;
     std::unordered_set<EdgePtr> reachableEdges;
     std::queue<NodePtr> workQueue;
+
+    std::unordered_set<NodePtr> outputNodes;
 
     // 初始化：从所有输出 relation 的节点出发
     for (const auto& node : nodes) {
@@ -1330,6 +1377,32 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
             reachableNodes.insert(node);
             workQueue.push(node);
             node->needOutput = true;
+            outputNodes.insert(node);
+        }
+        node->currentRefCount = 0;
+    }
+
+    for (const auto& edge : edges) {
+        edge->currentRefCount = 0;
+    }
+
+    // register reference count
+    for (const auto& node : outputNodes) {
+        std::queue<NodePtr> q;
+        std::unordered_set<NodePtr> visited;
+        q.push(node);
+        while (!q.empty()) {
+            NodePtr n = q.front(); q.pop();
+            visited.insert(n);
+            n->currentRefCount += 1;
+            for (const auto& edge : n->getIncomingEdges()) {
+                edge->currentRefCount += 1;
+                for (const auto& inputNode : edge->getInputs()) {
+                    if (visited.count(inputNode) == 0) {
+                        q.push(inputNode);
+                    }
+                }
+            }
         }
     }
 
