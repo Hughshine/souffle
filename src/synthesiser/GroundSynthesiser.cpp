@@ -145,7 +145,12 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     for (const auto* rule : groundInfo.groundClauses) {
         const auto* head = rule->getHead();
         std::string headNodeIdStr = getOrAddNodeInCtor(head);
-
+        if (rule->getBodyLiterals().empty()) {
+            // a fact
+            ctor.body() << "preDG.seedFacts({" << headNodeIdStr << "}, PreDerivationGraph::SeedMode::Accumulate);\n";
+            ctor.body() << "factProbabilities[" << headNodeIdStr << "] = " << rule->getProbability() << ";\n";
+            continue;
+        }
         std::vector<std::string> bodyNodeIdStrs;
         std::vector<bool> negs;
         for (const auto* literal : rule->getBodyLiterals()) {
@@ -186,39 +191,43 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
 
     runFunc.body() << "Debugger::getInstance().startTurn(\"FULL\");\n\n";
 
-    runFunc.body() << "Debugger::getInstance().startStage(StageKind::IO_LOAD_FULL);\n";
+    if (!groundInfo.inputRelationNames.empty()) {
+        runFunc.body() << "Debugger::getInstance().startStage(StageKind::IO_LOAD_FULL);\n";
 
 
-    for (const auto& relName : groundInfo.inputRelationNames) {
-        // change to manually read from .fact and .prob files
-        // first get the outputFileFolder
-        // runFunc.body() << "if (auto* rel = getRelation(\"" << relName.toString() << "\")) {\n";
-        // runFunc.body() << "    std::vector<double> probs;\n";
-        // runFunc.body() << "    std::string probFilePath = Global::config().get(\"fact-dir\") + \"/" << relName.toString() << ".prob\";\n";
-        // runFunc.body() << "    std::ifstream probFile(probFilePath);\n";
-        // runFunc.body() << "    if (probFile.is_open()) {\n";
-        // runFunc.body() << "        double p;\n";
-        // runFunc.body() << "        while (probFile >> p) { probs.push_back(p); }\n";
-        // runFunc.body() << "    }\n\n";
-        //
-        // runFunc.body() << "    size_t factIndex = 0;\n";
-        // runFunc.body() << "    for (const auto& tuple : *rel) {\n";
-        // runFunc.body() << "        AtomKey key; \n";
-        // runFunc.body() << "        key.rel = \"" << relName.toString() << "\";\n";
-        // runFunc.body() << "        for (size_t i = 0; i < rel->getArity(); ++i) {\n";
-        // runFunc.body() << "            key.args.push_back(tuple[i]);\n";
-        // runFunc.body() << "        }\n";
-        // runFunc.body() << "        NodeId nodeId = preDG.getOrAddNode(key);\n";
-        // runFunc.body() << "        preDG.seedFacts({nodeId}, PreDerivationGraph::SeedMode::Accumulate);\n";
-        // runFunc.body() << "        if (factIndex < probs.size()) {\n";
-        // runFunc.body() << "            factProbabilities[nodeId] = probs[factIndex];\n";
-        // runFunc.body() << "        }\n";
-        // runFunc.body() << "        factIndex++;\n";
-        // runFunc.body() << "    }\n";
-        // runFunc.body() << "}\n";
-        runFunc.body() << "reading input relation " << relName.toString() << "...\n";
+        for (const auto& relName : groundInfo.inputRelationNames) {
+            // change to manually read from .fact and .prob files
+            // first get the outputFileFolder
+            runFunc.body() << "assert(false && \"not supported yet\");\n";
+            // runFunc.body() << "if (auto* rel = getRelation(\"" << relName.toString() << "\")) {\n";
+            // runFunc.body() << "    std::vector<double> probs;\n";
+            // runFunc.body() << "    std::string probFilePath = Global::config().get(\"fact-dir\") + \"/" << relName.toString() << ".prob\";\n";
+            // runFunc.body() << "    std::ifstream probFile(probFilePath);\n";
+            // runFunc.body() << "    if (probFile.is_open()) {\n";
+            // runFunc.body() << "        double p;\n";
+            // runFunc.body() << "        while (probFile >> p) { probs.push_back(p); }\n";
+            // runFunc.body() << "    }\n\n";
+            //
+            // runFunc.body() << "    size_t factIndex = 0;\n";
+            // runFunc.body() << "    for (const auto& tuple : *rel) {\n";
+            // runFunc.body() << "        AtomKey key; \n";
+            // runFunc.body() << "        key.rel = \"" << relName.toString() << "\";\n";
+            // runFunc.body() << "        for (size_t i = 0; i < rel->getArity(); ++i) {\n";
+            // runFunc.body() << "            key.args.push_back(tuple[i]);\n";
+            // runFunc.body() << "        }\n";
+            // runFunc.body() << "        NodeId nodeId = preDG.getOrAddNode(key);\n";
+            // runFunc.body() << "        preDG.seedFacts({nodeId}, PreDerivationGraph::SeedMode::Accumulate);\n";
+            // runFunc.body() << "        if (factIndex < probs.size()) {\n";
+            // runFunc.body() << "            factProbabilities[nodeId] = probs[factIndex];\n";
+            // runFunc.body() << "        }\n";
+            // runFunc.body() << "        factIndex++;\n";
+            // runFunc.body() << "    }\n";
+            // runFunc.body() << "}\n";
+            runFunc.body() << "reading input relation " << relName.toString() << "...\n";
+        }
+        runFunc.body() << "Debugger::getInstance().endStage();\n\n";
     }
-    runFunc.body() << "Debugger::getInstance().endStage();\n\n";
+
 
 
     // --- Standard Public Methods ---
@@ -296,7 +305,7 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
         hook << "while (fs >> field) {fields.push_back(field);}\n";
         hook << "UntypedTuple tuple{rel, fields};\n";
         hook << "fact_prob[tuple] = prob;\n";
-        hook << "initialInputRelations[" << rel << "].insert(tuple);";
+        hook << "initialInputRelations[\"" << rel << "\"].insert(tuple);";
         hook << "}\n";
         hook << "}\n";
     }
@@ -316,16 +325,8 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
 
     // synthesize rules
     // TODO: should make this pure static?
-    hook << "Debugger::getInstance().startStage(StageKind::SEMINAIVE_FULL);\n";
-    hook << "preDG.recompute();\n";
-    hook << "Debugger::getInstance().endStage();\n\n";
-    hook << "preDG.toDot(\"preDG_after_recompute.dot\");\n\n";
-    hook << "IncrementalDerivationGraph dg;\n";
-    hook << "Debugger::getInstance().startStage(StageKind::CREATE_GRAPH_FULL);\n";
-    hook << "preDG.materialize(dg);\n";
-    hook << "Debugger::getInstance().endStage();\n\n";
     // hook << "fullComp(dg, opt, {";
-    hook << "fullCompOnDemand(dg, opt, {";
+    hook << "fullCompPlusIncForGround(preDG, opt, {";
     for (size_t i = 0; i < groundInfo.outputRelationNames.size(); ++i) {
         hook << "\"" << groundInfo.outputRelationNames[i].toString() << "\"";
         if (i != groundInfo.outputRelationNames.size() - 1) {
@@ -333,15 +334,15 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
         }
     }
     hook << "});\n";
-    hook << "Debugger::getInstance().endTurn();\n";
-
-    hook  << "\n// ---- Print Report ----\n";
-    hook  << "std::string reportFile = generateFilename(opt.getLogFileName(), \".json\");\n";
-    hook  << "std::ofstream ofs = std::ofstream(reportFile);\n";
-    hook << "debugger.printReportJson(ofs);\n";
 
 
-    // TODO: add online incremental&interactive computation
+
+    // // TODO: add online incremental&interactive computation
+    // if (glb.config().has("online")) {
+    //     hook << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas, true, &preDG);\n";
+    //     hook << "cli.setCmdOptions(opt);\n";
+    //     hook << "cli.run();\n";
+    // }
 
     hook << "return 0;\n";
     hook << "} catch (std::exception& e) {std::cerr << \"Problog calc failed\" << e.what() << std::endl;}\n";

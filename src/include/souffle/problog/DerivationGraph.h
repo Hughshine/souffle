@@ -827,20 +827,19 @@ public:
 
     // this one does not check if the edge already exists
     EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, const Rule* rule, const std::vector<bool>& bodyNegations, RuleApplication ruleApp = naiveRuleApplication) {
-        std::cout << 0 << std::endl;
+        if (inputs.empty() || (rule != nullptr && rule->isFact())) {
+            // we do not create edges with no inputs or edges for fact rules
+            return nullptr;
+        }
         auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, rule, bodyNegations, ruleApp));
-        std::cout << 111 << std::endl;
         for (const auto& input : inputs) {
             assert (input != nullptr);
             input->addOutgoingEdge(edge);
         }
-        std::cout << 222 << std::endl;
         assert (output != nullptr);
         output->addIncomingEdge(edge);
-        std::cout << 333 << std::endl;
 
         edges.insert(edge);
-        std::cout << 444 << std::endl;
 
         return edge;
     }

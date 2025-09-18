@@ -15,6 +15,7 @@
 #include "souffle/problog/formula/CuddManager.h"
 #include "souffle/problog/ForwardCompilation.h"
 #include "souffle/CompiledOptions.h"
+#include "souffle/problog/PreDerivationGraph.h"
 
 std::string getConcreteRelationName(const std::string& name, const std::string prefix) {
     return prefix + name;
@@ -150,10 +151,10 @@ private:
     IncrementalDerivationGraph* graph;
     RuleManager* ruleManager;
 //    std::map<NodePtr, BddNodeRef>* nodeFormulas;
+    DDManager<NodeRef>* ddManager = nullptr;
     std::map<NodePtr, NodeRef>* nodeFormulas;
     std::map<EdgePtr, NodeRef>* edgeFormulas;
     std::set<NodePtr> changedNodes;
-    DDManager<NodeRef>* ddManager = nullptr;
 
 
     IncMode incMode = IncMode::INC;
@@ -165,9 +166,11 @@ public:
             RuleManager* rm = nullptr,
             DDManager<NodeRef>* ddManager = nullptr,
             std::map<NodePtr, NodeRef>* nodeFormulas = {},
-            std::map<EdgePtr, NodeRef>* edgeFormulas = {}
+            std::map<EdgePtr, NodeRef>* edgeFormulas = {},
+            bool isGround = false,
+            PreDerivationGraph* preDG = nullptr
             )
-            : program(prog), graph(graph), ruleManager(rm), ddManager(ddManager), nodeFormulas(nodeFormulas), edgeFormulas(edgeFormulas), changedNodes(), isGround(false) {
+            : program(prog), graph(graph), ruleManager(rm), ddManager(ddManager), nodeFormulas(nodeFormulas), edgeFormulas(edgeFormulas), changedNodes(), isGround(isGround), preDG(preDG) {
         // Initialize readline
         using_history();
     }
@@ -352,10 +355,17 @@ public:
             pendingOperations.clear();
 
         } else if (cmd == "dump") {
-            for (auto rel: this->program->getAllRelations()) {
-                std::cout << rel->getName() << std::endl;
-                for (auto ele: *rel) {
-                    std::cout << ele.toString() << std::endl;
+            if (isGround) {
+                std::cout << "Dumping PreDG to 'preDG_dump.dot'" << std::endl;
+                preDG->toDot("preDG_dump.dot");
+            }
+            else {
+                assert (this->program != nullptr);
+                for (auto rel: this->program->getAllRelations()) {
+                    std::cout << rel->getName() << std::endl;
+                    for (auto ele: *rel) {
+                        std::cout << ele.toString() << std::endl;
+                    }
                 }
             }
         } else if (cmd == "exit" || cmd == "quit" || cmd == "q") {
@@ -376,6 +386,15 @@ public:
             tuple.fields.push_back(std::stoi(value));
         }
         return tuple;
+    }
+
+    AtomKey getAtomKey(const Operation& op) {
+        AtomKey key;
+        key.rel = op.relationName;
+        for (const auto& value : op.values) {
+            key.args.push_back(std::stoi(value));
+        }
+        return key;
     }
 
     std::unordered_map<UntypedTuple, double> getFactProbInc() {
@@ -433,7 +452,14 @@ public:
         }
     }
 
+
+    std::vector<std::string> outputRelations;
+    void setOutputRelations(const std::vector<std::string> outputRelationNames) {
+        this->outputRelations = outputRelationNames;
+    }
+
     size_t iteration = 1;
+    PreDerivationGraph* preDG;
     void commit() {
         DerivationManager::untypedTuple2DeltaInsertRuleApplications.clear();
         DerivationManager::untypedTuple2DeltaDeleteRuleApplications.clear();
@@ -441,7 +467,97 @@ public:
         DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();
         static size_t commitCount = 0;
         // TODO: should clean all delta relations after each commit
-        if (program) {  // for non-ground program for now ...
+        if (isGround) {
+            // for ground program ...
+            // get the incremental derivation graph -> build formulas -> compute probabilities
+//             1.
+            for (auto& op : pendingOperations) {
+                if (op.type == Operation::INSERT) {
+                    auto tuple = getAtomKey(op);
+                    if (preDG->hasNode(tuple)) {
+                        std::cout << "PreDG already contains the tuple to insert, omitted: " << tuple.toString() << std::endl;
+                        op.valid = false;
+                        continue;
+                    }
+                    preDG->seedFactsByKey({tuple});
+                } else if (op.type == Operation::DELETE) {
+                    auto tuple = getAtomKey(op);
+                    if (!preDG->hasNode(tuple)) {
+                        std::cout << "PreDG does not contains the tuple to delete, omitted: " << tuple.toString() << std::endl;
+                        op.valid = false;
+                        continue;
+                    }
+                    preDG->retractFactsByKey({tuple});
+                }
+            }
+            preDG->recompute();
+            preDG->materialize(*graph);
+            // TODO should maintain initialInputRelations and fact_prob
+            dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter" + std::to_string(iteration) + ".txt");
+            if (incMode == IncMode::INC) {
+                debugger.startStage(StageKind::PRUNING_INC);
+                graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
+                auto view = graph->prune(this->outputRelations);
+                debugger.endStage();
+                view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                debugger.endStage();
+                changedNodes.clear();
+
+                // derv-only
+                // knowledge representation
+                debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
+                buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
+                debugger.endStage();
+
+                {
+                    debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
+                    FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(changedNodes.size()));
+                    std::unordered_map<NodePtr, double> newProbResult;
+                    for (const auto& node: view.getValidNodes()) {
+                        if (changedNodes.find(node) == changedNodes.end()) {
+                            newProbResult[node] = probResult[node];
+                        } else {
+                            newProbResult[node] = ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                        }
+                    }
+                    probResult.clear();
+                    probResult = newProbResult;
+                    debugger.endStage();
+                }
+
+                debugger.endTurn();
+                dumpProbabilities(probResult,"./output/","fact-iter" + std::to_string(iteration) + "-inc");
+                iteration++;
+            } else if (incMode == IncMode::FULL) {
+                debugger.startStage(StageKind::PRUNING_INC);
+                graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
+                auto view = graph->prune(this->outputRelations);
+                debugger.endStage();
+                view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                debugger.endStage();
+
+                debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+                nodeFormulas->clear(), edgeFormulas->clear();
+                buildFormulasCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas);
+                debugger.endStage();
+
+                debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
+                probResult.clear();
+                for (auto& [node, formula]: *nodeFormulas) {
+                    probResult[node] = ddManager->computeWeightedModelCount(formula);
+                }
+                debugger.endStage();
+                debugger.startStage(StageKind::IO_DUMP_FULL);
+                dumpProbabilities(probResult,"./output/","fact-iter" + std::to_string(iteration) + "-full");
+                debugger.endStage();
+                debugger.endTurn();
+                iteration++;
+            } else if (incMode == IncMode::ELASTIC) {
+                // TODO
+                assert (false);
+            }
+        }
+        else if (!isGround && program) {  // for non-ground program ...
             {
                 purgeAllIncDeltaRelations();
                 // insert delta into relations for real
@@ -499,10 +615,6 @@ public:
                             origTuple << std::stoi(op.values[i]);
                             insTuple << std::stoi(op.values[i]);
                         }
-//                        std::cout << origRel->getName() << std::endl;
-//                        for (auto t: *origRel) {
-//                            std::cout << "original tuple: " << t.toString() << std::endl;
-//                        }
                         if (!origRel->contains(origTuple)) {
                             std::cout << "Relation does not contains the tuple to delete, omitted: " << origTuple.toString() << std::endl;
                             op.valid = false;
@@ -635,12 +747,11 @@ public:
                 assert (false);
             }
         } else {
-            // TODO: for ground program for now
             // preDG -> preDG updating (by delta relations) -> inc-dg
             // -> inc-dg pruning -> inc formula construction -> inc wmc
             // TODO: react to derv-only
             // TODO: react to inc mode
-            std::cout << "No program loaded." << std::endl;
+            assert (false && "No program loaded for non-ground program.");
         }
         pendingOperations.clear();
     }

@@ -46,6 +46,53 @@ void fullComp(IncrementalDerivationGraph& dg, souffle::CmdOptions& opt, std::vec
 }
 
 
+void fullCompPlusIncForGround(PreDerivationGraph& pdg, souffle::CmdOptions& opt, std::vector<std::string> outputRelations = {}) {
+    Debugger::getInstance().startStage(StageKind::SEMINAIVE_FULL);
+    pdg.recompute();
+    Debugger::getInstance().endStage();
+    pdg.toDot("preDG_after_recompute.dot");
+    IncrementalDerivationGraph dg;
+    Debugger::getInstance().startStage(StageKind::CREATE_GRAPH_FULL);
+    pdg.materialize(dg);
+    Debugger::getInstance().endStage();
+
+    dg.dumpDot("dg_before_prune-0.dot");
+    Debugger::getInstance().startStage(StageKind::PRUNING_FULL);
+    auto view = dg.prune(outputRelations);
+    Debugger::getInstance().endStage();
+    dg.dumpDot("dg_after_prune-0.dot");
+
+    Debugger::getInstance().startStage(StageKind::FORWARD_COMPILATION_FULL);
+    std::cout << "Trying to construct formulas\n";
+    std::map<NodePtr, BddNodeRef> nodeFormulas;std::map<EdgePtr, BddNodeRef> edgeFormulas;WeightedBDDManager bddManager;
+    buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);
+    Debugger::getInstance().endStage();
+
+    Debugger::getInstance().startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
+    std::cout << "Trying to calculate probability\n";
+    for (const auto& [node, bdd] : nodeFormulas) {
+        auto prob = bddManager.computeWeightedModelCount(bdd);
+        probResult[node] = prob;
+    }
+    Debugger::getInstance().endStage();
+
+    debugger.startStage(StageKind::IO_DUMP_FULL);
+    dumpProbabilities(probResult, opt.getOutputFileDir());
+    debugger.endStage();
+    Debugger::getInstance().endTurn();
+
+    std::string reportFile = generateFilename(opt.getLogFileName(), ".json");
+    std::ofstream ofs = std::ofstream(reportFile);
+    debugger.printReportJson(ofs);
+
+    IncrementalCLI cli(nullptr, &dg, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas, true, &pdg);
+    cli.setCmdOptions(opt);
+    cli.setOutputRelations(outputRelations);
+    cli.run();
+}
+
+
+
 void fullCompOnDemand(IncrementalDerivationGraph& dg, souffle::CmdOptions& opt, std::vector<std::string> outputRelations = {}) {
     dg.dumpDot("dg_before_prune-0.dot");
     Debugger::getInstance().startStage(StageKind::PRUNING_FULL);

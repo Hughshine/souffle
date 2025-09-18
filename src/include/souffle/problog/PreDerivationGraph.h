@@ -385,6 +385,9 @@ public:
             }
 
             if (ep == nullptr) {
+                if (inputs.empty()) {
+                    assert (false);  // fact rules should be omitted already
+                }
                 ep = out.createHyperedge(inputs, outNode, nullptr, E.bodyNegations, {static_cast<souffle::RamDomain>(e), {}});
                 out.deltaInsertEdges.insert(ep);
             } else {
