@@ -169,10 +169,16 @@ public:
         start = high_resolution_clock::now();
         heuristics.compute(view);
         std::vector<int> order = heuristics.getOrder();
-        heuristics.setAnchorOrder(order);
+//        heuristics.setAnchorOrder(order);
         end = high_resolution_clock::now();
         duration = duration_cast<milliseconds>(end - start).count();
         debugger.logMessage(Level::INFO, "Heuristic ordering computed in " + std::to_string(duration) + " ms");
+
+        std::cout << "Pure variable ordering: ";
+        for (int i = 0; i < order.size(); ++i) {
+            std::cout << getVariableName(order[i]) << " ";
+        }
+        std::cout << std::endl;
 
         start = high_resolution_clock::now();
         // for each variable, if it is not in the heuristic order, then put it at the beginning
@@ -696,10 +702,17 @@ std::string WeightedBDDManager::getVariableName(int varIndex) {
         const BddNodeRef& ref = it->second;
         // Direct access to private members thanks to friendship
         if (ref.node.has_value()) {
+            if (ref.node.value()->pruned) {
+                return "pruned_" + std::to_string(varIndex);
+            }
             return ref.node.value()->toString();
         } else if (ref.edge.has_value()) {
+            if (ref.edge.value()->pruned) {
+                return "pruned_" + std::to_string(varIndex);
+            }
             return ref.edge.value()->toString();
         }
+        assert (false && "Variable has no associated Node or Edge");
     }
     // Fallback to default naming
     return "x" + std::to_string(varIndex);

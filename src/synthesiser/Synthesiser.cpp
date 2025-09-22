@@ -432,7 +432,7 @@ void Synthesiser::emitRules (std::ostream& out) {
 }
 
 void Synthesiser::emitProblogPipeline(std::ostream& out) {
-    out << "std::cout << std::fixed << std::setprecision(10);\n";
+    out << "std::cout << std::fixed << std::setprecision(8);\n";
     out << "debugger.startStage(StageKind::CREATE_GRAPH_FULL);\n";
     out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
     out << "debugger.endStage();\n";
@@ -450,11 +450,11 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     //     out << "view->dumpDot(\"derivation_graph.dot\");\n";
     // }
     out << "if (obj.getKnowledge() == souffle::Knowledge::BDD) {\n";
-
+    out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
+    out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
+    out << "WeightedBDDManager bddManager;\n";    // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
     out << "if (!opt.isDerivationOnly()) {\n";
-        out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
-        out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
-        out << "WeightedBDDManager bddManager;\n";    // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
+
         out << "{\n" << std::endl;
         out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
         out << "buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);\n";
@@ -496,12 +496,13 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     // TODO
     out << "dumpInitialInputRelations(opt.getOutputFileDir() + \"/initial-input-relations-iter0.txt\");\n";
     out << "}\n";
-    out << "}\n" << std::endl;
     if (glb.config().has("online")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas, false);\n";
         out << "cli.setCmdOptions(opt);\n";
         out << "cli.run();\n";
     }
+    out << "}\n" << std::endl;
+
     out << "}\n" << std::endl;
     out << "else if (obj.getKnowledge() == souffle::Knowledge::SDD) {\n";
     out << "std::map<NodePtr, SddNodeRef> nodeFormulas;";

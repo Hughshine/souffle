@@ -16,6 +16,7 @@
 #include "souffle/problog/ForwardCompilation.h"
 #include "souffle/CompiledOptions.h"
 #include "souffle/problog/PreDerivationGraph.h"
+#include <unistd.h> // Required for isatty()
 
 std::string getConcreteRelationName(const std::string& name, const std::string prefix) {
     return prefix + name;
@@ -468,13 +469,14 @@ public:
         static size_t commitCount = 0;
         // TODO: should clean all delta relations after each commit
         if (isGround) {
+            debugger.startTurn();
             // for ground program ...
             // get the incremental derivation graph -> build formulas -> compute probabilities
 //             1.
             for (auto& op : pendingOperations) {
                 if (op.type == Operation::INSERT) {
                     auto tuple = getAtomKey(op);
-                    if (preDG->hasNode(tuple)) {
+                    if (preDG->hasFact(tuple)) {
                         std::cout << "PreDG already contains the tuple to insert, omitted: " << tuple.toString() << std::endl;
                         op.valid = false;
                         continue;
@@ -482,7 +484,7 @@ public:
                     preDG->seedFactsByKey({tuple});
                 } else if (op.type == Operation::DELETE) {
                     auto tuple = getAtomKey(op);
-                    if (!preDG->hasNode(tuple)) {
+                    if (!preDG->hasFact(tuple)) {
                         std::cout << "PreDG does not contains the tuple to delete, omitted: " << tuple.toString() << std::endl;
                         op.valid = false;
                         continue;
@@ -490,8 +492,10 @@ public:
                     preDG->retractFactsByKey({tuple});
                 }
             }
+            debugger.startStage(StageKind::SEMINAIVE_INC);
             preDG->recompute();
             preDG->materialize(*graph);
+            debugger.endStage();
             // TODO should maintain initialInputRelations and fact_prob
             dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter" + std::to_string(iteration) + ".txt");
             if (incMode == IncMode::INC) {
@@ -500,10 +504,13 @@ public:
                 auto view = graph->prune(this->outputRelations);
                 debugger.endStage();
                 view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
-                debugger.endStage();
                 changedNodes.clear();
 
-                // derv-only
+                // TODO: derv-only
+                std::cout << view.getDeltaInsertNodes().size() << " nodes with inserted derivations.\n";
+                std::cout << view.getDeltaDeleteNodes().size() << " nodes with deleted derivations.\n";
+                std::cout << view.getDeltaInsertEdges().size() << " edges with inserted derivations.\n";
+                std::cout << view.getDeltaDeleteEdges().size() << " edges with deleted derivations.\n";
                 // knowledge representation
                 debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
                 buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
@@ -529,11 +536,11 @@ public:
                 dumpProbabilities(probResult,"./output/","fact-iter" + std::to_string(iteration) + "-inc");
                 iteration++;
             } else if (incMode == IncMode::FULL) {
-                debugger.startStage(StageKind::PRUNING_INC);
-                graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
+                debugger.startStage(StageKind::PRUNING_FULL);
+                graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
                 auto view = graph->prune(this->outputRelations);
                 debugger.endStage();
-                view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
                 debugger.endStage();
 
                 debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
@@ -756,37 +763,71 @@ public:
         pendingOperations.clear();
     }
 
+    static IncrementalCLI* instance;
+    bool running;
+    static void line_handler(char* line) {
+        if (!line) {
+            instance->running = false;
+            std::cout << std::endl;
+            return;
+        }
+
+        // 将原始的、可能包含多行的输入添加到历史记录（只加一次）
+        add_history(line);
+
+        // 将 C 字符串转换为 C++ 字符串流，以便按行分割
+        std::stringstream ss(line);
+        free(line); // 转换后立刻释放内存
+
+        std::string single_command;
+        // 使用 std::getline 循环分割字符串
+        while (instance->running && std::getline(ss, single_command)) {
+            // 有时行尾会带有\r字符，这里做个简单的清理
+            if (!single_command.empty() && single_command.back() == '\r') {
+                single_command.pop_back();
+            }
+
+            if (!single_command.empty()) {
+                // 逐行处理分割出来的命令
+                instance->running = instance->processCommand(single_command);
+            }
+        }
+    }
+
+
     void run() {
-        bool running = true;
-
-        std::cout << "Incremental Souffle CLI (with command history)" << std::endl;
+        std::cout << "Incremental Souffle CLI (Callback Version)" << std::endl;
         std::cout << "Type 'help' for a list of available commands" << std::endl;
+        IncrementalCLI::instance = this;
+        // 1. 安装回调处理器
+        //    参数1: 交互式提示符
+        //    参数2: 指向我们上面定义的 line_handler 函数的指针
+        rl_callback_handler_install("> ", line_handler);
 
-        while (running) {
-            // Use readline to get input with history support
-            char* line = readline("> ");
+        // 2. 进入主事件循环
+        while (this->running) {
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(STDIN_FILENO, &fds); // STDIN_FILENO 是标准输入的文件描述符，通常是 0
 
-            // Check for EOF
-            if (!line) {
-                std::cout << std::endl;
+            int result = select(STDIN_FILENO + 1, &fds, NULL, NULL, NULL);
+
+            if (result < 0) { // 如果 select 出错
+                perror("select"); // 打印错误信息
                 break;
             }
 
-            // Skip empty lines
-            if (line[0] != '\0') {
-                // Add to readline history
-                add_history(line);
-
-                // Process the command
-                std::string command(line);
-                running = processCommand(command);
+            if (FD_ISSET(STDIN_FILENO, &fds)) {
+                rl_callback_read_char();
             }
-
-            // Free the memory allocated by readline
-            free(line);
         }
 
-        std::cout << "Exiting CLI" << std::endl;
+        // 5. 程序即将退出，清理并移除回调处理器
+        rl_callback_handler_remove();
     }
+
 };
+
+template <typename T>
+IncrementalCLI<T>* IncrementalCLI<T>::instance = nullptr;
 #endif //CLI_H

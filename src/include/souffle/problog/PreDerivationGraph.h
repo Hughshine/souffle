@@ -137,6 +137,11 @@ public:
     std::unordered_map<NodeId, double> node_probabilities_;
     NodeId getOrAddNode(const AtomKey& k, const double prob = 1.0) { return addNode(k, prob); }
     bool   hasNode(const AtomKey& k) const { return nodeIdByKey_.count(k) > 0; }
+    bool hasFact(const AtomKey& k) const {
+        if (!hasNode(k)) return false;
+        NodeId id = nodeId(k);
+        return present_base_.at(id) > 0;
+    }
     NodeId nodeId(const AtomKey& k) const {
         auto it = nodeIdByKey_.find(k);
         assert(it != nodeIdByKey_.end());

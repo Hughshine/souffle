@@ -62,6 +62,7 @@ public:
     const UntypedTuple& getTuple() const { return tuple; }
     const std::vector<EdgePtr>& getIncomingEdges() const { return incomingEdges; }
     std::vector<EdgePtr>& getIncomingEdges() { return incomingEdges; }
+
     const std::vector<EdgePtr>& getOutgoingEdges() const { return outgoingEdges; }
     std::vector<EdgePtr>& getOutgoingEdges() { return outgoingEdges; }
     size_t getId() const { return id; }
@@ -91,16 +92,54 @@ private:
     void addOutgoingEdge(EdgePtr edge);
 };
 
+using EdgeKey = std::tuple<
+    unsigned long,                                     // Rule ID
+    UntypedTuple,                             // Output Node's Tuple
+    std::vector<std::pair<UntypedTuple, bool>>  // Vector of (Input Node Tuple, isNegated)
+>;
+
 class Hyperedge {
 public:
     friend class DerivationGraph;
 
     const std::vector<NodePtr>& getInputs() const { return inputs; }
+
+    mutable std::optional<std::vector<NodePtr>> cachedSortedInputs;
+    mutable std::optional<std::vector<bool>> cachedSortedBodyNegations;
+
+    const std::vector<NodePtr>& getInputsStable() const {
+        if (cachedSortedInputs.has_value()) {
+            return *cachedSortedInputs;
+        }
+        std::vector<NodePtr> sortedInputs = inputs;
+        std::sort(sortedInputs.begin(), sortedInputs.end(), [](const NodePtr& a, const NodePtr& b) {
+            return a->getTuple() < b->getTuple();
+        });
+        cachedSortedInputs.emplace(sortedInputs.begin(), sortedInputs.end());
+        return *cachedSortedInputs;
+    }
     NodePtr getOutput() const { return output; }
     size_t getId() const { return id; }
     const Rule* getRule() const { return rule; }
     const std::vector<bool>& getBodyNegations() const { return bodyNegations; }
-
+    const std::vector<bool>& getBodyNegationsStable() const {
+        if (cachedSortedBodyNegations.has_value()) {
+            return *cachedSortedBodyNegations;
+        }
+        std::vector<std::pair<NodePtr, bool>> inputNegPairs;
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            inputNegPairs.emplace_back(inputs[i], bodyNegations[i]);
+        }
+        std::sort(inputNegPairs.begin(), inputNegPairs.end(), [](const auto& a, const auto& b) {
+            return a.first->getTuple() < b.first->getTuple();
+        });
+        std::vector<bool> sortedNegations;
+        for (const auto& pair : inputNegPairs) {
+            sortedNegations.push_back(pair.second);
+        }
+        cachedSortedBodyNegations.emplace(sortedNegations.begin(), sortedNegations.end());
+        return *cachedSortedBodyNegations;
+    }
     void setProbability(double probability) {
         if (rule) {
             this->probability = rule->getProbability();
@@ -121,7 +160,8 @@ public:
 //        }
     // inputs to outputs
         std::stringstream ss;
-        ss << "Hyperedge(" << id << ")[";
+        // ss << "Hyperedge(" << id << ")[";
+        ss << "Hyperedge[";
         ss << "rule" << ((rule)?std::to_string(rule->getRuleId()):" nil") << ",";
         for (size_t i = 0; i < bodyNegations.size(); ++i) {
             ss << (bodyNegations[i] ? "!" : "") << inputs[i]->getTuple().toString();
@@ -137,6 +177,43 @@ public:
     bool pruned = false;
     size_t currentRefCount = 0;  // references by output nodes; set during pruning
     size_t tmpRefCount = 0;      // set during
+
+
+
+    mutable std::optional<EdgeKey> cachedEdgeKey;
+
+    /**
+     * @brief Generates a stable, comparable key representing the edge's content.
+     * This key is composed of the rule ID, the output node's content, and an
+     * ordered list of input nodes' content along with their negation status.
+     * @return An EdgeKey tuple that can be used for lexicographical comparison.
+     */
+    EdgeKey getEdgeKey() {
+        if (cachedEdgeKey.has_value()) {
+            return *cachedEdgeKey;
+        }
+        // 1. Get the Rule ID from the RuleApplication.
+        // This is the primary identifier for the rule being applied.
+        size_t rule_id = ruleApp.ruleId;
+
+        // 2. Get the output node's tuple.
+        UntypedTuple output_tuple = output->getTuple();
+
+        // 3. Build a vector of input tuples and their negation status.
+        // The order is critical and is preserved by iterating from 0 to N.
+        std::vector<std::pair<UntypedTuple, bool>> input_data;
+        input_data.reserve(inputs.size());
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            input_data.emplace_back(inputs[i]->getTuple(), bodyNegations[i]);
+        }
+
+        // 4. Combine these stable components into a single, comparable std::tuple.
+        std::sort(input_data.begin(), input_data.end());
+
+        cachedEdgeKey.emplace(std::make_tuple(rule_id, output_tuple, std::move(input_data)));
+        return *cachedEdgeKey;
+    }
+
 private:
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, RuleApplication ruleApp)
         : inputs(inputs), output(output), id(edgeId), rule(nullptr), ruleApp(ruleApp) {
@@ -180,8 +257,14 @@ public:
     std::vector<EdgePtr> getIncomingEdges(NodePtr node) const;
     std::vector<EdgePtr> getOutgoingEdges(NodePtr node) const;
     std::vector<NodePtr> getInputs(EdgePtr edge) const;
+    std::vector<NodePtr> getInputsStable(EdgePtr edge) const;
+
     NodePtr getOutput(EdgePtr edge) const;
     std::vector<bool> getBodyNegations(EdgePtr edge) const;
+    std::vector<bool> getBodyNegationsStable(EdgePtr edge) const;
+
+    mutable std::optional<std::vector<EdgePtr>> cachedSortedIncomingEdges;
+    std::vector<EdgePtr> getIncomingEdgesStable(NodePtr node) const;
 
     virtual ~DerivationGraphViewInterface() = default;
 };
@@ -195,6 +278,19 @@ std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdges(NodePtr node
     }
     return result;
 }
+
+std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdgesStable(NodePtr node) const {
+    if (cachedSortedIncomingEdges.has_value()) {
+        return *cachedSortedIncomingEdges;
+    }
+    std::vector<EdgePtr> sortedEdges = getIncomingEdges(node);
+    std::sort(sortedEdges.begin(), sortedEdges.end(), [](const EdgePtr& a, const EdgePtr& b) {
+        return a->getEdgeKey() < b->getEdgeKey();
+    });
+    cachedSortedIncomingEdges.emplace(sortedEdges.begin(), sortedEdges.end());
+    return *cachedSortedIncomingEdges;
+}
+
 
 std::vector<EdgePtr> DerivationGraphViewInterface::getOutgoingEdges(NodePtr node) const {
     std::vector<EdgePtr> result;
@@ -221,6 +317,13 @@ std::vector<NodePtr> DerivationGraphViewInterface::getInputs(EdgePtr edge) const
 //    return result;
 }
 
+std::vector<NodePtr> DerivationGraphViewInterface::getInputsStable(EdgePtr edge) const {
+    if (getEdges().count(edge) == 0) {
+        return std::vector<NodePtr>();
+    }
+    return edge->getInputsStable();
+}
+
 NodePtr DerivationGraphViewInterface::getOutput(EdgePtr edge) const {
     NodePtr out = edge->getOutput();
     assert (out != nullptr);
@@ -244,6 +347,13 @@ std::vector<bool> DerivationGraphViewInterface::getBodyNegations(EdgePtr edge) c
 //        }
 //    }
 //    return result;
+}
+
+std::vector<bool> DerivationGraphViewInterface::getBodyNegationsStable(EdgePtr edge) const {
+    if (getEdges().count(edge) == 0) {
+        return std::vector<bool>();
+    }
+    return edge->getBodyNegationsStable();
 }
 
 class SubgraphView : public virtual DerivationGraphViewInterface {

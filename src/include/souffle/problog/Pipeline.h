@@ -81,14 +81,14 @@ void fullCompPlusIncForGround(PreDerivationGraph& pdg, souffle::CmdOptions& opt,
     debugger.endStage();
     Debugger::getInstance().endTurn();
 
-    std::string reportFile = generateFilename(opt.getLogFileName(), ".json");
-    std::ofstream ofs = std::ofstream(reportFile);
-    debugger.printReportJson(ofs);
-
     IncrementalCLI cli(nullptr, &dg, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas, true, &pdg);
     cli.setCmdOptions(opt);
     cli.setOutputRelations(outputRelations);
     cli.run();
+
+    std::string reportFile = generateFilename(opt.getLogFileName(), ".json");
+    std::ofstream ofs = std::ofstream(reportFile);
+    debugger.printReportJson(ofs);
 }
 
 
