@@ -470,9 +470,10 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
     out << "// --- Check that all evidences are in the graph ---\n";
     out << "for (const auto& e : evidences) {\n";
-    out << "    NodePtr node = graph->findNode(e.getTuple());\n";
+    out << "    NodePtr node = graph->findNode(e.first);\n";  // 访问 first
     out << "    if (!node) {\n";
-    out << "        std::cerr << \"Error: evidence \" << e.toString() << \" is not found in the graph.\" << std::endl;\n";
+    out << "        std::cerr << \"Error: evidence \" << e.first.toString() "
+           "<< \" is not found in the graph.\" << std::endl;\n";  // 调用 first 的 toString()
     out << "        exit(1);\n";
     out << "    }\n";
     out << "}\n";
@@ -3448,7 +3449,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     //--------------------------------------
     if (!prog.getEvidences().empty()) {
         std::stringstream ss;
-        ss << "std::vector<Evidence> evidences = {\n";
+        ss << "std::vector<std::pair<UntypedTuple,bool>> evidences = {\n";
 
         for (const auto& evi : prog.getEvidences()) {
             const auto& tupleStr = evi->getTupleString();
@@ -3459,8 +3460,8 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
             size_t r = tupleStr.find(")");
             std::string field = tupleStr.substr(l+1, r - l -1);
 
-            ss << "    Evidence(UntypedTuple{\"" << relName << "\", {" << field
-              << "}}, " << (value ? "true" : "false") << "),\n";
+            ss << "    {UntypedTuple{\"" << relName << "\", {" << field
+               << "}}, " << (value ? "true" : "false") << "},\n";
         }
 
         ss << "};\n";

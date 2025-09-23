@@ -235,11 +235,6 @@ void ParserDriver::addDirective(Own<ast::Directive> directive) {
 }
 
 void ParserDriver::addEvidence(Own<ast::Evidence> evidence) {
-    std::cout << "[Debug] ParserDriver::addEvidence called, evidence relation: "
-           << evidence->getAtomName().toString()
-           << ", argument: "
-           << evidence->getArguments()
-           << ", value: " << evidence->getEvidenceValue() << std::endl;
         ast::Program& program = translationUnit->getProgram();
         program.addEvidence(std::move(evidence));
 }
