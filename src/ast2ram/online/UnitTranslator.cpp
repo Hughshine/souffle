@@ -2050,15 +2050,6 @@ Own<ram::Sequence> UnitTranslator::generateProgram(const ast::TranslationUnit& t
 }
 
 Own<ram::Statement> UnitTranslator::translateEvidence(const ast::Evidence& evidence) {
-    const auto& atom = evidence.getAtom();
-    std::string relName = atom.getQualifiedName().toString();
-    std::string tupleStr = toString(atom);
-    bool value = evidence.getEvidenceValue();
-    std::cout << "[Debug] translateEvidence called: relation = " << relName
-             << ", tuple = " << tupleStr
-             << ", value = " << value << std::endl;
-    assert(ramProgram != nullptr && "ramProgram must be initialized!");
-    ramProgram->addEvidence(mk<ram::Evidence>(relName, tupleStr, value));
     return mk<ram::EmptyStatement>();
 }
 
@@ -2151,53 +2142,34 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
         ramInc = generateProgramInc(tu);
     }
     // Create the relevant RAM relations
+    const auto& sccOrdering = tu.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>().order();
 
-
-    const auto& sccOrdering =
-      tu.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>().order();
-
-    auto ramRelations = createRamRelations(sccOrdering);
-    ramProgramHolder = mk<ram::Program>(
-        clone(ramRelations),
-        mk<ram::Sequence>(),
-        std::map<std::string, Own<ram::Statement>>(),
-        mk<ram::Sequence>()
-    );
-    setRamProgram(ramProgramHolder.get());
-    for (const auto& evidence : tu.getProgram().getEvidences()) {
-        translateEvidence(*evidence);
-    }
-
-    VecOwn<ram::Evidence> evidences;
-    for (const auto& ev : ramProgram->getEvidences()) {
-        evidences.push_back(clone(ev));
-    }
-    for (const auto scc : sccOrdering) {
-        for (auto* rel : context->getRelationsInSCC(scc)) {
+    for (const auto scc: sccOrdering) {
+        for (auto* rel: context->getRelationsInSCC(scc)) {
             bool isRecursiveScc = context->isRecursiveSCC(scc);
-            for (auto* clause : context->getProgram()->getClauses(*rel)) {
+            for (auto* clause: context->getProgram()->getClauses(*rel)) {
                 clause->setInRecursiveStratum(isRecursiveScc);
             }
         }
     }
 
-
-    ramProgramHolder = mk<ram::Program>(
-        std::move(ramRelations),
-        std::move(ramMain),
-        std::move(ramSubroutines),
-        std::move(ramInc)
-    );
-    for (auto& ev : evidences) {
-        ramProgramHolder->addEvidence(std::move(ev));
-    }
-    setRamProgram(ramProgramHolder.get());
+    auto ramRelations = createRamRelations(sccOrdering);
 
     // Combine all parts into the final RAM program
-
     ErrorReport& errReport = tu.getErrorReport();
     DebugReport& debugReport = tu.getDebugReport();
-
+    auto ramProgram =
+            mk<ram::Program>(std::move(ramRelations), std::move(ramMain), std::move(ramSubroutines), std::move(ramInc));
+    for (const auto& evidence : tu.getProgram().getEvidences()) {
+        const auto& atom = evidence->getAtom();
+        ramProgram->addEvidence(
+            mk<ram::Evidence>(
+                atom.getQualifiedName().toString(),
+                toString(atom),
+                evidence->getEvidenceValue()
+            )
+        );
+    }
     // Add the translated program to the debug report
     if (glb->config().has("debug-report")) {
         auto ram_end = std::chrono::high_resolution_clock::now();
@@ -2209,7 +2181,7 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
     }
 
     // Wrap the program into a translation unit
-    return mk<ram::TranslationUnit>(tu.global(), std::move(ramProgramHolder), errReport, debugReport);
+    return mk<ram::TranslationUnit>(tu.global(), std::move(ramProgram), errReport, debugReport);
 }
 
 }  // namespace souffle::ast2ram::online
