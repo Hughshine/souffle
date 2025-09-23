@@ -468,7 +468,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "//    std::cout << \"Node\" << node->getId() ;\n";
     out << "//    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
     out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
-    out << "// --- Check that all evidences are in the graph ---\n";
+    out << "// --- Check that all evidences are in the graph and mark them ---\n";
     out << "for (const auto& e : evidences) {\n";
     out << "    NodePtr node = graph->findNode(e.first);\n";  // 访问 first
     out << "    if (!node) {\n";
@@ -476,6 +476,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
            "<< \" is not found in the graph.\" << std::endl;\n";  // 调用 first 的 toString()
     out << "        exit(1);\n";
     out << "    }\n";
+    out << "    node->setEvidence(e.second);\n";  // **标记 evidence**
     out << "}\n";
     out << "debugger.endStage();\n";
     out << "\n";
