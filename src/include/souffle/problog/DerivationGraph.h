@@ -415,7 +415,7 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
     }
 
     out << "{\n";
-    
+
     // Facts section
     out << "  \"facts\": [\n";
     bool first = true;
@@ -430,7 +430,7 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
         }
     }
     out << "\n  ],\n";
-    
+
     // Rules section
     out << "  \"rules\": [\n";
     first = true;
@@ -439,9 +439,9 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
             out << ",\n";
         }
         first = false;
-        
+
         out << "    {\n";
-        
+
         // Head
         NodePtr headNode = this->getOutput(edge);
         out << "      \"head\": \"" << headNode->getTuple().toString() << "\",\n";
@@ -449,27 +449,27 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
         out << "      \"probability\": " << edge->getProbability() << ",\n";
         // Bodies
         out << "      \"bodies\": [\n";
-        
+
         std::vector<NodePtr> inputs = this->getInputs(edge);
         std::vector<bool> negations = this->getBodyNegations(edge);
-        
+
         for (size_t i = 0; i < inputs.size(); ++i) {
             if (i > 0) {
                 out << ",\n";
             }
             out << "        {\n";
-            
+
             // Handle negation - default to false if negations vector is too short
             bool isNegated = (i < negations.size()) ? negations[i] : false;
             out << "          \"negation\": " << (isNegated ? "true" : "false") << ",\n";
             out << "          \"name\": \"" << inputs[i]->getTuple().toString() << "\"\n";
             out << "        }";
         }
-        
+
         out << "\n      ]\n";
         out << "    }";
     }
-    
+
     out << "\n  ]\n";
     out << "}\n";
     out.close();
