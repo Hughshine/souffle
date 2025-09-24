@@ -385,10 +385,12 @@ unit
 	{
 	  driver.addQuery(mk<souffle::ast::Query>(Own<ast::Atom>($4),@$));
 	}
-  /*| unit QUERY qualified_name DOT %prec ZERO_ARITY  // New rule for 0-arity query
+  | unit QUERY qualified_name DOT %prec ZERO_ARITY  // New rule for 0-arity query
 	{
-	  // Parse query without parentheses
-	}*/
+	  souffle::VecOwn<souffle::ast::Argument> args;
+	  auto atom = mk<souffle::ast::Atom>($3, std::move(args), @$);
+	  driver.addQuery(mk<souffle::ast::Query>(std::move(atom), @$));
+	}
   | unit annotations component_decl
     {
       auto component_decl = $component_decl;
