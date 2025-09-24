@@ -14,6 +14,9 @@
 #include "souffle/problog/RuleManager.h"
 #include "souffle/problog/formula/CuddManager.h"
 #include "souffle/problog/ForwardCompilation.h"
+#include "souffle/CompiledOptions.h"
+#include "souffle/problog/PreDerivationGraph.h"
+#include <unistd.h> // Required for isatty()
 
 std::string getConcreteRelationName(const std::string& name, const std::string prefix) {
     return prefix + name;
@@ -26,6 +29,12 @@ std::string getIncDeltaTupleDeleteRelationName(const std::string& name) {
 std::string getIncDeltaTupleInsertRelationName(const std::string& name) {
     return getConcreteRelationName(name, "$inc_delta_tuple_insert_");
 }
+
+enum IncMode {
+  FULL,
+  INC,
+  ELASTIC
+};
 
 template<typename NodeRef>
 class IncrementalCLI {
@@ -143,28 +152,59 @@ private:
     IncrementalDerivationGraph* graph;
     RuleManager* ruleManager;
 //    std::map<NodePtr, BddNodeRef>* nodeFormulas;
+    DDManager<NodeRef>* ddManager = nullptr;
     std::map<NodePtr, NodeRef>* nodeFormulas;
     std::map<EdgePtr, NodeRef>* edgeFormulas;
-    DDManager<NodeRef>* ddManager = nullptr;
+    std::set<NodePtr> changedNodes;
 
+
+    IncMode incMode = IncMode::INC;
+    bool derivationOnly = false;
+    bool isGround = false;
 public:
     IncrementalCLI(souffle::SouffleProgram* prog = nullptr,
             IncrementalDerivationGraph* graph = nullptr,
             RuleManager* rm = nullptr,
             DDManager<NodeRef>* ddManager = nullptr,
             std::map<NodePtr, NodeRef>* nodeFormulas = {},
-            std::map<EdgePtr, NodeRef>* edgeFormulas = {}
+            std::map<EdgePtr, NodeRef>* edgeFormulas = {},
+            bool isGround = false,
+            PreDerivationGraph* preDG = nullptr
             )
-            : program(prog), graph(graph), ruleManager(rm), ddManager(ddManager), nodeFormulas(nodeFormulas), edgeFormulas(edgeFormulas) {
+            : program(prog), graph(graph), ruleManager(rm), ddManager(ddManager), nodeFormulas(nodeFormulas), edgeFormulas(edgeFormulas), changedNodes(), isGround(isGround), preDG(preDG) {
         // Initialize readline
         using_history();
     }
+
+//    IncrementalCLI(): {}
 
     ~IncrementalCLI() {
         // Clean up readline history
         clear_history();
     }
 
+    souffle::CmdOptions opt;
+    void setCmdOptions(const souffle::CmdOptions& options) {
+        opt = options;
+        setDerivationOnly(options.isDerivationOnly());
+        auto& mode = options.getIncMode();
+        if (mode == "full") {
+            setIncMode(IncMode::FULL);
+        } else if (mode == "inc" || mode == "incremental" || mode == "incr" ) {
+            setIncMode(IncMode::INC);
+        } else if (mode == "elastic") {
+            setIncMode(IncMode::ELASTIC);
+        } else {
+            std::cerr << "Unknown incremental mode: " << mode << ", defaulting to INCREMENTAL." << std::endl;
+            setIncMode(IncMode::INC);
+        }
+    }
+    void setIncMode(IncMode mode) {
+        incMode = mode;
+    }
+    void setDerivationOnly(bool val) {
+        derivationOnly = val;
+    }
     bool processCommand(const std::string& command) {
         // Skip empty commands
         if (command.empty()) {
@@ -283,6 +323,29 @@ public:
                     std::cout << i+1 << ". " << op.toString() << std::endl;
                 }
             }
+        } else if (cmd == "setmode") {
+            std::string mode;
+            iss >> mode;
+            if (mode == "incremental" || mode == "incr") {
+                incMode = IncMode::INC;
+                std::cout << "Set incremental mode to INCREMENTAL" << std::endl;
+            } else if (mode == "full") {
+                incMode = IncMode::FULL;
+                std::cout << "Set incremental mode to FULL" << std::endl;
+            } else if (mode == "elastic") {
+                incMode = IncMode::ELASTIC;
+                std::cout << "Set incremental mode to ELASTIC" << std::endl;
+            }
+//            else if (mode == "compute-all") {
+//                derivationOnly = false;
+//            } else if (mode == "compute-derv-only") {
+//                derivationOnly = true;
+//            }
+            else {
+                std::cout << "Unknown mode: " << mode << std::endl;
+                std::cout << "Available modes: incremental (incr), full, elastic" << std::endl;
+                std::cout << "Current mode unchanged." << std::endl;
+            }
         } else if (cmd == "commit") {
             std::cout << "PARSED COMMIT: Would apply " << pendingOperations.size()
                       << " pending changes and run incremental computation" << std::endl;
@@ -293,10 +356,17 @@ public:
             pendingOperations.clear();
 
         } else if (cmd == "dump") {
-            for (auto rel: this->program->getAllRelations()) {
-                std::cout << rel->getName() << std::endl;
-                for (auto ele: *rel) {
-                    std::cout << ele.toString() << std::endl;
+            if (isGround) {
+                std::cout << "Dumping PreDG to 'preDG_dump.dot'" << std::endl;
+                preDG->toDot("preDG_dump.dot");
+            }
+            else {
+                assert (this->program != nullptr);
+                for (auto rel: this->program->getAllRelations()) {
+                    std::cout << rel->getName() << std::endl;
+                    for (auto ele: *rel) {
+                        std::cout << ele.toString() << std::endl;
+                    }
                 }
             }
         } else if (cmd == "exit" || cmd == "quit" || cmd == "q") {
@@ -317,6 +387,15 @@ public:
             tuple.fields.push_back(std::stoi(value));
         }
         return tuple;
+    }
+
+    AtomKey getAtomKey(const Operation& op) {
+        AtomKey key;
+        key.rel = op.relationName;
+        for (const auto& value : op.values) {
+            key.args.push_back(std::stoi(value));
+        }
+        return key;
     }
 
     std::unordered_map<UntypedTuple, double> getFactProbInc() {
@@ -348,11 +427,144 @@ public:
         }
     }
 
+    void purgeAllNonIncDeltaRelations() {
+        for (auto* rel : program->getAllRelations()) {
+             if (rel->getName()[0] != '$') {
+                rel->purge();
+             }
+        }
+    }
+
+    void purgeAllRelations() {
+        for (auto* rel : program->getAllRelations()) {
+            rel->purge();
+        }
+    }
+
+    void loadInitialInputRelations() {
+        for (auto* rel : program->getInputRelations()) {
+            for (auto& tuple: initialInputRelations[rel->getName()]) {
+                souffle::tuple relTuple = souffle::tuple(rel);
+                for (const auto& field : tuple.fields) {
+                    relTuple << field;
+                }
+                rel->insert(relTuple);
+            }
+        }
+    }
+
+
+    std::vector<std::string> outputRelations;
+    void setOutputRelations(const std::vector<std::string> outputRelationNames) {
+        this->outputRelations = outputRelationNames;
+    }
+
     size_t iteration = 1;
+    PreDerivationGraph* preDG;
     void commit() {
+        DerivationManager::untypedTuple2DeltaInsertRuleApplications.clear();
+        DerivationManager::untypedTuple2DeltaDeleteRuleApplications.clear();
+        DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();
+        DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();
         static size_t commitCount = 0;
         // TODO: should clean all delta relations after each commit
-        if (program) {
+        if (isGround) {
+            debugger.startTurn();
+            // for ground program ...
+            // get the incremental derivation graph -> build formulas -> compute probabilities
+//             1.
+            for (auto& op : pendingOperations) {
+                if (op.type == Operation::INSERT) {
+                    auto tuple = getAtomKey(op);
+                    if (preDG->hasFact(tuple)) {
+                        std::cout << "PreDG already contains the tuple to insert, omitted: " << tuple.toString() << std::endl;
+                        op.valid = false;
+                        continue;
+                    }
+                    preDG->seedFactsByKey({tuple});
+                } else if (op.type == Operation::DELETE) {
+                    auto tuple = getAtomKey(op);
+                    if (!preDG->hasFact(tuple)) {
+                        std::cout << "PreDG does not contains the tuple to delete, omitted: " << tuple.toString() << std::endl;
+                        op.valid = false;
+                        continue;
+                    }
+                    preDG->retractFactsByKey({tuple});
+                }
+            }
+            debugger.startStage(StageKind::SEMINAIVE_INC);
+            preDG->recompute();
+            preDG->materialize(*graph);
+            debugger.endStage();
+            // TODO should maintain initialInputRelations and fact_prob
+            dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter" + std::to_string(iteration) + ".txt");
+            if (incMode == IncMode::INC) {
+                debugger.startStage(StageKind::PRUNING_INC);
+                graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
+                auto view = graph->prune(this->outputRelations);
+                debugger.endStage();
+                view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                changedNodes.clear();
+
+                // TODO: derv-only
+                std::cout << view.getDeltaInsertNodes().size() << " nodes with inserted derivations.\n";
+                std::cout << view.getDeltaDeleteNodes().size() << " nodes with deleted derivations.\n";
+                std::cout << view.getDeltaInsertEdges().size() << " edges with inserted derivations.\n";
+                std::cout << view.getDeltaDeleteEdges().size() << " edges with deleted derivations.\n";
+                // knowledge representation
+                debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
+                buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
+                debugger.endStage();
+
+                {
+                    debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
+                    FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(changedNodes.size()));
+                    std::unordered_map<NodePtr, double> newProbResult;
+                    for (const auto& node: view.getValidNodes()) {
+                        if (changedNodes.find(node) == changedNodes.end()) {
+                            newProbResult[node] = probResult[node];
+                        } else {
+                            newProbResult[node] = ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                        }
+                    }
+                    probResult.clear();
+                    probResult = newProbResult;
+                    debugger.endStage();
+                }
+
+                debugger.endTurn();
+                dumpProbabilities(probResult,"./output/","fact-iter" + std::to_string(iteration) + "-inc");
+                iteration++;
+            } else if (incMode == IncMode::FULL) {
+                debugger.startStage(StageKind::PRUNING_FULL);
+                graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
+                auto view = graph->prune(this->outputRelations);
+                debugger.endStage();
+                view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
+                debugger.endStage();
+
+                debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+                nodeFormulas->clear(), edgeFormulas->clear();
+                buildFormulasCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas);
+                debugger.endStage();
+
+                debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
+                probResult.clear();
+                for (auto& [node, formula]: *nodeFormulas) {
+                    probResult[node] = ddManager->computeWeightedModelCount(formula);
+                }
+                debugger.endStage();
+                debugger.startStage(StageKind::IO_DUMP_FULL);
+                dumpProbabilities(probResult,"./output/","fact-iter" + std::to_string(iteration) + "-full");
+                debugger.endStage();
+                debugger.endTurn();
+                iteration++;
+            } else if (incMode == IncMode::ELASTIC) {
+                // TODO
+                assert (false);
+            }
+        }
+        else if (!isGround && program) {  // for non-ground program ...
             {
                 purgeAllIncDeltaRelations();
                 // insert delta into relations for real
@@ -385,10 +597,13 @@ public:
                             std::cout << "Inserting tuple: " << origTuple.toString() << std::endl;
                         }
                         rel->insert(relTuple);
+                        initialInputRelations[op.relationName].insert(UntypedTuple::fromSouffleTuple(origTuple));
+                        fact_prob[UntypedTuple::fromSouffleTuple(origTuple)] = op.probability;
                     } else if (op.type == Operation::DELETE) {
                         auto* origRel = program->getRelation(op.relationName);
                         auto* rel = program->getRelation(getIncDeltaTupleDeleteRelationName(op.relationName));
                         auto insRel = program->getRelation(getIncDeltaTupleInsertRelationName(op.relationName));
+                        // TODO: filter out pending deletions
                         if (rel == nullptr) {
                             std::cout << "Relation not found, omitted: " << op.relationName << std::endl;
                             op.valid = false;
@@ -407,109 +622,212 @@ public:
                             origTuple << std::stoi(op.values[i]);
                             insTuple << std::stoi(op.values[i]);
                         }
-                        std::cout << origRel->getName() << std::endl;
-//                        for (auto t: *origRel) {
-//                            std::cout << "original tuple: " << t.toString() << std::endl;
-//                        }
                         if (!origRel->contains(origTuple)) {
                             std::cout << "Relation does not contains the tuple to delete, omitted: " << origTuple.toString() << std::endl;
                             op.valid = false;
                             continue;
                         }
+                        if (rel->contains(relTuple)) {
+                            std::cout << "Already deleted the tuple, omitted: " << relTuple.toString() << std::endl;
+                            op.valid = false;
+                            continue;
+                        }
                         rel->insert(relTuple);
+                        initialInputRelations[op.relationName].erase(UntypedTuple::fromSouffleTuple(origTuple));
+                        fact_prob.erase(UntypedTuple::fromSouffleTuple(origTuple));
+                        // should also delete all its derivations...
+                        // input fact is possibly derivable
+                        auto& deletedFactRuleAppSet = DerivationManager::untypedTuple2RuleApplications[UntypedTuple::fromSouffleTuple(origTuple)];
+                        if (deletedFactRuleAppSet != nullptr && !deletedFactRuleAppSet->empty()) {
+//                            std::cout << "Deleted tuple: " << origTuple.toString() << std::endl;
+                            auto& deltaDeletedFactRuleAppSet =
+                                DerivationManager::untypedTuple2DeltaDeleteRuleApplications[UntypedTuple::fromSouffleTuple(origTuple)];
+                            if (deltaDeletedFactRuleAppSet == nullptr) {
+                                deltaDeletedFactRuleAppSet = new std::unordered_set<RuleApplication>();
+                            }
+                            for (auto& ruleApp: *deletedFactRuleAppSet) {
+//                                std::cout << "Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
+                                deltaDeletedFactRuleAppSet->insert(ruleApp);
+                            }
+                            deletedFactRuleAppSet->clear();
+                            DerivationManager::untypedTuple2RuleApplications.erase(UntypedTuple::fromSouffleTuple(origTuple));
+                        }
                     }
                 }
             }
-            {
-                DerivationManager::untypedTuple2DeltaInsertRuleApplications.clear();
-                DerivationManager::untypedTuple2DeltaDeleteRuleApplications.clear();
-                DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();
-                DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();
+            dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter" + std::to_string(iteration) + ".txt");
+            if (incMode == IncMode::INC) {
+                {
+                    debugger.startTurn();
+                    debugger.startStage(StageKind::SEMINAIVE_INC);
+                    program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);
+                    debugger.endStage();
+                }
+                debugger.startStage(StageKind::PRUNING_INC);
+                graph->applyDelta(
+                    DerivationManager::untypedTuple2DeltaInsertRuleApplications,
+                    DerivationManager::untypedTuple2DeltaDeleteRuleApplications,
+                    *ruleManager,
+                    getFactProbInc(),// fact_prob_inc; cli should collect this
+                    getDeletedFacts() // deletedFacts; cli should collect this
+                );
+                graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
+                auto view = graph->prune(program->getOutputRelations());
+                debugger.endStage();
+                view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                changedNodes.clear();
+                if (derivationOnly) {
+                    debugger.endTurn();
+                    iteration++;
+                    pendingOperations.clear();
+                    return;
+                }
+                debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
+                buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
+                debugger.endStage();
+                {
+                    debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
+                    FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(changedNodes.size()));
+                    std::unordered_map<NodePtr, double> newProbResult;
+                    for (const auto& node: view.getValidNodes()) {
+                        if (changedNodes.find(node) == changedNodes.end()) {
+                            newProbResult[node] = probResult[node];
+                        } else {
+                            newProbResult[node] = ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                        }
+                    }
+                    probResult.clear();
+                    probResult = newProbResult;
+                    debugger.endStage();
+                }
+                debugger.endTurn();
+                dumpProbabilities(probResult,"./output/","fact-iter" + std::to_string(iteration) + "-inc");
+                iteration++;
+            } else if (incMode == IncMode::FULL) {
                 debugger.startTurn();
-                debugger.startStage(StageKind::SEMINAIVE_INC);
-                program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);
+
+//                purgeAllNonIncDeltaRelations();
+//                program->loadAllExcept(opt.getInputFileDir());  //
+                purgeAllRelations();
+                loadInitialInputRelations();
+                DerivationManager::untypedTuple2RuleApplications.clear();
+                // TODO: write delta inc to original
+                debugger.startStage(StageKind::SEMINAIVE_FULL);
+                program->runAll(opt.getInputFileDir(), opt.getOutputFileDir(), false);
+                graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, *ruleManager, fact_prob);
                 debugger.endStage();
-            }
-            debugger.startStage(StageKind::PRUNING_INC);
-            graph->applyDelta(
-                DerivationManager::untypedTuple2DeltaInsertRuleApplications,
-                DerivationManager::untypedTuple2DeltaDeleteRuleApplications,
-                *ruleManager,
-                getFactProbInc(),// fact_prob_inc; cli should collect this
-                getDeletedFacts() // deletedFacts; cli should collect this
-            );
-            auto view = graph->prune(program->getOutputRelations());
-            debugger.endStage();
-            view.dumpDotInc("derivation-inc" + std::to_string(iteration++) + ".dot");
-            debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
-            buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas);  // TODO: should only update the changed ones.
-            debugger.endStage();
-            probResult.clear();
-            {
-                debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
-                FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(nodeFormulas->size()));
-//                std::ofstream formulaFile("./formula.txt");
-                for (const auto& [node, dd] : *nodeFormulas) {
-                    if (view.getNodes().find(node) == view.getNodes().end()) {
-//                        std::cout << "isNullptr: " << (node == nullptr) << std::endl;
-                        std::cout << "Node " << node->toString() << " not in view, skipped." << std::endl;
-                        continue;
-                    }
-//                    formulaFile << "Node" << node->getId() << " " << node->getTuple().toString() << ": ";
-//                    formulaFile << bddManager->toString(bdd) << "\t";
-                    auto prob = ddManager->computeWeightedModelCount(dd);
-//                    formulaFile << "Probability: " << prob << std::endl;
-//                    auto prob = bddManager->computeWeightedModelCount(bdd);
-                    probResult[node] = prob;
+                graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
+                debugger.startStage(StageKind::PRUNING_FULL);
+                auto view = graph->prune(program->getOutputRelations());
+                debugger.endStage();
+                view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
+                if (derivationOnly) {
+                    debugger.endTurn();
+                    iteration++;
+                    pendingOperations.clear();
+                    return;
+                }
+                // clear formula, build formula
+                debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+                nodeFormulas->clear(), edgeFormulas->clear();
+                buildFormulasCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas);
+                debugger.endStage();
+                // compute probabilities
+                debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
+                probResult.clear();
+                for (auto& [node, formula]: *nodeFormulas) {
+                    probResult[node] = ddManager->computeWeightedModelCount(formula);
                 }
                 debugger.endStage();
+                debugger.startStage(StageKind::IO_DUMP_FULL);
+                dumpProbabilities(probResult,"./output/","fact-iter" + std::to_string(iteration) + "-full");
+                debugger.endStage();
+                debugger.endTurn();
+                iteration++;
+                // wmc
+                // output
+            } else if (incMode == IncMode::ELASTIC) {
+                // try to decide whether to do incremental or full
+                // by approximating the cost of both, etc, TODO
+                assert (false);
+            } else {
+                assert (false);
             }
-            debugger.endTurn();
-            dumpProbabilities(probResult,"./output/","fact-inc");
-//            for (const auto& [edge, bdd] : *edgeFormulas) {
-//                std::cout << edge->toString() << " : ";
-//                std::cout << bddManager->toString(bdd) << "\t";
-//                auto prob = bddManager->computeWeightedModelCount(bdd);
-//                std::cout << "Probability: " << prob << std::endl;
-//            }
-//            std::cout << "Done" << std::endl;
         } else {
-            std::cout << "No program loaded." << std::endl;
+            // preDG -> preDG updating (by delta relations) -> inc-dg
+            // -> inc-dg pruning -> inc formula construction -> inc wmc
+            // TODO: react to derv-only
+            // TODO: react to inc mode
+            assert (false && "No program loaded for non-ground program.");
         }
         pendingOperations.clear();
-
     }
+
+    static IncrementalCLI* instance;
+    bool running;
+    static void line_handler(char* line) {
+        if (!line) {
+            instance->running = false;
+            std::cout << std::endl;
+            return;
+        }
+
+        // 将原始的、可能包含多行的输入添加到历史记录（只加一次）
+        add_history(line);
+
+        // 将 C 字符串转换为 C++ 字符串流，以便按行分割
+        std::stringstream ss(line);
+        free(line); // 转换后立刻释放内存
+
+        std::string single_command;
+        // 使用 std::getline 循环分割字符串
+        while (instance->running && std::getline(ss, single_command)) {
+            // 有时行尾会带有\r字符，这里做个简单的清理
+            if (!single_command.empty() && single_command.back() == '\r') {
+                single_command.pop_back();
+            }
+
+            if (!single_command.empty()) {
+                // 逐行处理分割出来的命令
+                instance->running = instance->processCommand(single_command);
+            }
+        }
+    }
+
+
     void run() {
-        bool running = true;
-
-        std::cout << "Incremental Souffle CLI (with command history)" << std::endl;
+        std::cout << "Incremental Souffle CLI (Callback Version)" << std::endl;
         std::cout << "Type 'help' for a list of available commands" << std::endl;
+        IncrementalCLI::instance = this;
+        // 1. 安装回调处理器
+        //    参数1: 交互式提示符
+        //    参数2: 指向我们上面定义的 line_handler 函数的指针
+        rl_callback_handler_install("> ", line_handler);
 
-        while (running) {
-            // Use readline to get input with history support
-            char* line = readline("> ");
+        // 2. 进入主事件循环
+        while (this->running) {
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(STDIN_FILENO, &fds); // STDIN_FILENO 是标准输入的文件描述符，通常是 0
 
-            // Check for EOF
-            if (!line) {
-                std::cout << std::endl;
+            int result = select(STDIN_FILENO + 1, &fds, NULL, NULL, NULL);
+
+            if (result < 0) { // 如果 select 出错
+                perror("select"); // 打印错误信息
                 break;
             }
 
-            // Skip empty lines
-            if (line[0] != '\0') {
-                // Add to readline history
-                add_history(line);
-
-                // Process the command
-                std::string command(line);
-                running = processCommand(command);
+            if (FD_ISSET(STDIN_FILENO, &fds)) {
+                rl_callback_read_char();
             }
-
-            // Free the memory allocated by readline
-            free(line);
         }
 
-        std::cout << "Exiting CLI" << std::endl;
+        // 5. 程序即将退出，清理并移除回调处理器
+        rl_callback_handler_remove();
     }
+
 };
+
+template <typename T>
+IncrementalCLI<T>* IncrementalCLI<T>::instance = nullptr;
 #endif //CLI_H

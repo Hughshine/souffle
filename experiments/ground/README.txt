@@ -1,0 +1,1 @@
+Test the support for ground program's frontend in souffle.

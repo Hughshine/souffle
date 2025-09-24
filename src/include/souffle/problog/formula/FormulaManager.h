@@ -18,17 +18,24 @@ public:
     virtual NodeRef makeOr(const NodeRef& a, const NodeRef& b) = 0;
     virtual NodeRef makeOr(const std::vector<NodeRef>& nodes) = 0;
     virtual NodeRef makeNot(const NodeRef& a) = 0;
+    virtual NodeRef makeCondition(const NodeRef& f,
+        const std::vector<int>& trueIndexes, const std::vector<int>& falseIndexes);
+    virtual void postprocessUselessVariables(const std::set<int>& condVars) {};
     virtual bool isSame(const NodeRef& a, const NodeRef& b) = 0;
     virtual NodeRef getTrue() = 0;
     virtual NodeRef getFalse() = 0;
     virtual std::string toString(const NodeRef& node) = 0;
-
+    virtual void preConfig(DerivationGraphViewInterface& view) {};
     virtual void setVariableWeight(int varIndex, double posWeight, double negWeight) = 0;
     virtual double computeWeightedModelCount(const NodeRef& node) = 0;
 
     virtual void printInfo(const NodeRef& node, const std::string& name) = 0;
     virtual void dumpProfilingStatistics() = 0;
     virtual void stopDynamicOptimization() {};
+    virtual std::map<std::string, std::string> getProfilingStatistics() {
+        return {};
+    }
+    virtual void tryGarbageCollection() {};
 };
 
 template<typename NodeRef>

@@ -131,6 +131,7 @@
 #include <ast/StringConstant.h>
 #include <ast/Term.h>
 #include <ast/UnnamedVariable.h>
+#include <ast2ram/utility/Utils.h>
 #include <souffle/SouffleInterface.h>
 
 namespace souffle::synthesiser {
@@ -432,14 +433,18 @@ void Synthesiser::emitRules (std::ostream& out) {
 }
 
 void Synthesiser::emitProblogPipeline(std::ostream& out) {
-    out << "std::cout << std::fixed << std::setprecision(10);\n";
+    out << "std::cout << std::fixed << std::setprecision(8);\n";
+    out << "debugger.startStage(StageKind::CREATE_GRAPH_FULL);\n";
     out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob, evidences);\n";
-    out << "graph->dumpStatistics(std::cout);\n";
+    out << "debugger.endStage();\n";
+    out << "// graph->dumpStatistics(std::cout);\n";
     out << "graph->dumpDot(\"before_prune.dot\");\n" << std::endl;
     out << "debugger.startStage(StageKind::PRUNING_FULL);\n";
     out << "auto view = graph->prune(obj.getOutputRelations());\n" << std::endl;
     out << "debugger.endStage();\n";
     out << "view.dumpDot(\"after_prune.dot\");\n" << std::endl;
+    out << "view.dumpJson(\"derivation.json\");\n";
+
     // out << "view.dumpStatistics(std::cout);\n";
     // out << "view.dumpStatisticsInc(std::cout);\n";
     // if (glb.config().has("verbose")) {
@@ -478,7 +483,6 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "    }\n";
     out << "    node->setEvidence(e.second);\n";  // **标记 evidence**
     out << "}\n";
-    out << "debugger.endStage();\n";
     out << "\n";
     out << "// --- Compute W(evidence) ---\n";
     out << "auto evidenceBdd = bddManager.getTrue();\n";
@@ -501,23 +505,74 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "    double prob = (evidenceWeight == 0.0) ? 0.0 : weightedCount / evidenceWeight;\n";
     out << "    probResult[node] = prob;\n";
     out << "}\n";
+    out << "debugger.endStage();\n";
     //out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
     //out << "    probResult[node] = prob;\n";
     //out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
     //out << "}\n";
-    out << "dumpProbabilities(probResult, \"" << glb.config().get("output-dir") << "\");\n";
+    out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
+    out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
+    out << "debugger.endStage();\n";
     out << "debugger.endTurn();\n";
+    out << "dumpInitialInputRelations(opt.getOutputFileDir() + \"/initial-input-relations-iter0.txt\");\n";
+//     out << "WeightedBDDManager bddManager;\n";    // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
+//     out << "if (!opt.isDerivationOnly()) {\n";
 
+//         out << "{\n" << std::endl;
+//         out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
+//         out << "buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);\n";
+//         out << "debugger.endStage();\n";
+//         out << "}" << std::endl;
+//         out << "{" << std::endl;
+//         out << "debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);\n";
+//         out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+//         out << "//    std::cout << \"Node\" << node->getId() ;\n";
+//         out << "//    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
+//         out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
+//         out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
+//         out << "    probResult[node] = prob;\n";
+//         out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
+//         out << "}\n";
+//         out << "debugger.endStage();\n";
+//         out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
+//         out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
+//         out << "debugger.endStage();\n";
+//         out << "debugger.endTurn();\n";
+
+//     // TODO:
+//     // out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
+//     // out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
+//     // out << "WeightedBDDManager bddManager;\n";    // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
+//     // out << "{\n" << std::endl;
+//     // // out << "FunctionTimer timer(\" building formulas \");\n";
+//     // out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
+//     // out << "buildFormulasCyclewiseOnDemand(view, bddManager, nodeFormulas, edgeFormulas);\n";
+//     // out << "debugger.endStage();\n";
+//     // out << "}" << std::endl;
+//     // out << "{" << std::endl;
+//     // out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
+//     // out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
+//     // out << "debugger.endStage();\n";
+//     // out << "debugger.endTurn();\n";
+
+
+//     // TODO
+//     out << "dumpInitialInputRelations(opt.getOutputFileDir() + \"/initial-input-relations-iter0.txt\");\n";
+//     out << "}\n";
     if (glb.config().has("online")) {
-        out << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas);\n";
+        out << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas, false);\n";
+        out << "cli.setCmdOptions(opt);\n";
         out << "cli.run();\n";
     }
     out << "}\n" << std::endl;
+
     out << "}\n" << std::endl;
     out << "else if (obj.getKnowledge() == souffle::Knowledge::SDD) {\n";
     out << "std::map<NodePtr, SddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, SddNodeRef> edgeFormulas;";
     out << "SddFormulaManager sddManager(view.getNodes().size() + view.getEdges().size());\n";
+    out << "if (!opt.isDerivationOnly()) {\n";
+
     out << "{\n" << std::endl;
     // out << "FunctionTimer timer(\" building formulas \");\n";
     out << "buildFormulasCyclewise(view, sddManager, nodeFormulas, edgeFormulas);\n";
@@ -540,12 +595,18 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
     out << "}\n";
     out << "debugger.endStage();\n";
-    out << "dumpProbabilities(probResult, \"" << glb.config().get("output-dir") << "\");\n";
+    out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
+    out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
+    out << "debugger.endStage();\n";
+    out << "debugger.endTurn();\n";
+    out << "}\n" << std::endl;
+    out << "}\n" << std::endl;
+
     if (glb.config().has("online")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &sddManager, &nodeFormulas, &edgeFormulas);\n";
+        out << "cli.setCmdOptions(opt);\n";
         out << "cli.run();\n";
     }
-    out << "}\n" << std::endl;
     out << "}\n";
     // dump the node probabilities
 
@@ -716,6 +777,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                             << ") {" << std::endl;
                             out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << getBaseRelationName(io.getRelation()) << "\",tuple);\n";
                             out << "inputFactSet.insert(untypedTuple);\n";
+                            out << "initialInputRelations[\"" << getBaseRelationName(io.getRelation()) <<"\"].insert(untypedTuple);\n";
                         out << "}" << std::endl;
                         // out << "dumpInputFacts();\n";
                     }
@@ -1013,7 +1075,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             out << "FunctionTimer timer(\"" <<  call.getName() << "\");\n";
             out << " std::vector<RamDomain> args, ret;\n";
             out << synthesiser.convertStratumIdent(call.getName()) << ".run(args, ret);\n";
-            out << "debugger.endStage();\n";
+            // out << "debugger.endStage();\n";
             out << "}\n";
             PRINT_END_COMMENT(out);
         }
@@ -3941,6 +4003,32 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
                           "'\\n';\nexit(1);\n}\n";
     }
 
+
+    // issue loadAllExcept method
+    GenFunction& loadAllExcept = mainClass.addFunction("loadAllExcept", Visibility::Public);
+    loadAllExcept.setOverride();
+    loadAllExcept.setRetType("void");
+    loadAllExcept.setNextArg("[[maybe_unused]] std::string", "inputDirectoryArg", std::make_optional("\"\""));
+
+    for (auto load : loadIOs) {
+        loadAllExcept.body() << "try {";
+        loadAllExcept.body() << "std::map<std::string, std::string> directiveMap(";
+        printDirectives(loadAllExcept.body(), load->getDirectives());
+        loadAllExcept.body() << ");\n";
+        // for IDB in inc, we should always use outputDirArg... that makes more sense TODO
+        loadAllExcept.body() << R"_(if (!inputDirectoryArg.empty()) {)_";
+        loadAllExcept.body() << R"_(directiveMap["fact-dir"] = inputDirectoryArg;)_";
+        loadAllExcept.body() << "}\n";
+        loadAllExcept.body() << "IOSystem::getInstance().getReader(";
+        loadAllExcept.body() << "directiveMap, symTable, recordTable";
+        loadAllExcept.body() << ")->readAllExcept(*" << getRelationName(lookup(load->getRelation())) << ", *";
+        loadAllExcept.body() << getRelationName(lookup("$inc_delta_tuple_delete_" + load->getRelation()));
+        loadAllExcept.body() << ");\n";
+        loadAllExcept.body() << "} catch (std::exception& e) {std::cerr << \"Error loading with filter" << load->getRelation()
+                       << " data: \" << e.what() << "
+                          "'\\n';\nexit(1);\n}\n";
+    }
+
     // issue dump methods
     auto dumpRelation = [&](std::ostream& os, const ram::Relation& ramRelation) {
         const auto& relName = getRelationName(ramRelation);
@@ -4076,16 +4164,16 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // parse arguments
     hook << "souffle::CmdOptions opt(";
     hook << "R\"(" << glb.config().get("") << ")\",\n";
-    // if (glb.config().has("fact-dir")) {
-    //     hook << "R\"(" << glb.config().get("fact-dir") << ")\",\n";
-    // } else {
+    if (glb.config().has("fact-dir")) {
+        hook << "R\"(" << glb.config().get("fact-dir") << ")\",\n";
+    } else {
         hook << "R\"()\",\n";
-    // }
-    // if (glb.config().has("output-dir")) {
-    //     hook << "R\"(" << glb.config().get("output-dir") << ")\",\n";
-    // } else {
+    }
+    if (glb.config().has("output-dir")) {
+        hook << "R\"(" << glb.config().get("output-dir") << ")\",\n";
+    } else {
         hook << "R\"()\",\n";
-    // }
+    }
     if (glb.config().has("profile")) {
         hook << "true,\n";
         hook << "R\"(" << glb.config().get("profile") << ")\",\n";
@@ -4094,6 +4182,9 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << "R\"()\",\n";
     }
     hook << std::stoi(glb.config().get("jobs"));
+    hook << ", \"log.txt\"";
+    hook << ", " << (glb.config().has("derv-only") ? "true" : "false");
+    hook << ",\"" << glb.config().get("setmode") << "\"";
     hook << ");\n";
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";
@@ -4141,30 +4232,17 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "debugger.startStage(StageKind::SEMINAIVE_FULL);\n";
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
     hook << "debugger.endStage();\n";
-    // hook << "{\n";
-    // hook << "FunctionTimer timer(\"dumping derivations\");\n";
-    // hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "", DerivationManager::untypedTuple2RuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // Should be complete, take into new deltas into account
-    // hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "insert", DerivationManager::untypedTuple2DeltaInsertRuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // TODO: Delta insert
-    // hook << R"(DerivationManager::derivationInfo2JsonFile(opt.getSourceFileName(), "delete", DerivationManager::untypedTuple2DeltaDeleteRuleApplications, opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n";  // TODO: Delta delete
-    // // TODO: for debug; remove this later
-    // hook << R"(DerivationManager::dumpDerivationInfo(opt.getSourceFileName(), opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") << "\":opt.getOutputFileDir());\n";
-    // hook << "}\n";
-
-    // problog calculation
-    // if (glb.config().has("inc")) {
-    //     // assert (false && "incremental problog calculation not implemented yet");
-    // } else {
     hook << "try {\n";
-
-    hook << "std::unordered_map<UntypedTuple, double> fact_prob;\n";
+    hook << "debugger.startStage(StageKind::IO_LOAD_FULL);\n";
     hook << "{\n";
-    hook << "FunctionTimer timer(\" reading fact probability \");\n";
+    hook << "FunctionTimer timer(\"Reading fact probability from \" + opt.getInputFileDir());\n";
     for (auto input : loadIOs) {
         auto rel = input->getRelation();
         hook << "{\n";
         hook << "std::string rel = \"" << rel << "\";\n";
-        hook << "std::ifstream factFile(\"input/\" + rel + \".facts\");";
-        hook << "std::ifstream probFile(\"input/\" + rel + \".prob\");";
+        hook << "std::cout << \"reading: \" << opt.getInputFileDir() << \"/\" << rel << \".facts and \" << opt.getInputFileDir() << \"/\" << rel << \".prob\" << std::endl;\n";
+        hook << "std::ifstream factFile(opt.getInputFileDir() + \"/\" + rel + \".facts\");";
+        hook << "std::ifstream probFile(opt.getInputFileDir() + \"/\" + rel + \".prob\");";
         hook << "std::string factLine, probLine;";
         hook << "while (std::getline(factFile, factLine) && std::getline(probFile, probLine)) {";
         hook << "std::istringstream fs(factLine);";
@@ -4180,7 +4258,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << "}\n";
     }
     hook << "}\n";
-
+    hook << "debugger.endStage();\n";
     db.addGlobalInclude("\"souffle/problog/Atom.h\"");
     db.addGlobalInclude("\"souffle/problog/Rule.h\"");
     db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
@@ -4193,16 +4271,19 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     }
 
     // synthesize rules
+    // TODO: should make this pure static?
+    hook << "debugger.startStage(StageKind::CONSTRUCT_RULE_FULL);\n";
     emitRules(hook);
+    hook << "debugger.endStage();\n";
     // synthesize forward compilation
 
     emitProblogPipeline(hook);
 
     hook << "Debugger& debugger = Debugger::getInstance();\n";
-    hook << "std::string reportFile = generateFilename();\n";
+    hook << "std::string reportFile = generateFilename(opt.getLogFileName(), \".json\");\n";
     hook << "std::ofstream ofs = std::ofstream(reportFile);\n";
-    hook << "debugger.printReport(ofs);\n";
-    hook << "debugger.printReport(std::cout);\n";
+    hook << "debugger.printReportJson(ofs);\n";
+    hook << "// debugger.printReport(std::cout);\n";
     // add online incremental&interactive computation
 
 

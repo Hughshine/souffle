@@ -30,6 +30,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+// #include "souffle/Derivation.h"
 
 namespace souffle {
 
@@ -47,6 +48,20 @@ public:
             relation.insert(ramDomain);
         }
     }
+
+    template <typename Rel, typename DelRel>
+    void readAllExcept(Rel& relation, DelRel& delRelation) {
+        while (const auto next = readNextTuple()) {
+            const RamDomain* ramDomain = next.get();
+            std::array<RamDomain, Rel::Arity> arr;
+            std::copy(ramDomain, ramDomain + Rel::Arity, arr.begin());
+            if (delRelation.contains(arr)) {
+                continue;
+            }
+            relation.insert(ramDomain);
+        }
+    }
+
 
 protected:
     /**

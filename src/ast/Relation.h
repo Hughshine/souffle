@@ -116,8 +116,8 @@ public:
 
     static bool classof(const Node*);
 
-protected:
     void print(std::ostream& os) const override;
+protected:
 
     NodeVec getChildren() const override;
 

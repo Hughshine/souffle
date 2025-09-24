@@ -25,24 +25,38 @@ inline std::string levelToString(Level level) {
 }
 
 enum class StageKind {
+    IO_LOAD_FULL,
+    CONSTRUCT_RULE_FULL,
     SEMINAIVE_FULL,
+    CREATE_GRAPH_FULL,
     PRUNING_FULL,
+    PRECONFIG_FULL,
     FORWARD_COMPILATION_FULL,
     WEIGHTED_MODEL_COUNTING_FULL,
+    IO_DUMP_FULL,
     SEMINAIVE_INC,
+    CREATE_GRAPH_INC,
     PRUNING_INC,
+    PRECONFIG_INC,
     FORWARD_COMPILATION_INC,
     WEIGHTED_MODEL_COUNTING_INC
 };
 
 inline std::string stageKindToString(const StageKind kind) {
     switch (kind) {
+        case StageKind::IO_LOAD_FULL: return "IO_LOAD_FULL";
+        case StageKind::CONSTRUCT_RULE_FULL: return "CONSTRUCT_RULE_FULL";
         case StageKind::SEMINAIVE_FULL: return "SEMINAIVE_FULL";
+        case StageKind::CREATE_GRAPH_FULL: return "CREATE_GRAPH_FULL";
         case StageKind::PRUNING_FULL: return "PRUNING_FULL";
+        case StageKind::PRECONFIG_FULL: return "PRECONFIG_FULL";
         case StageKind::FORWARD_COMPILATION_FULL: return "FORWARD_COMPILATION_FULL";
         case StageKind::WEIGHTED_MODEL_COUNTING_FULL: return "WEIGHTED_MODEL_COUNTING_FULL";
+        case StageKind::IO_DUMP_FULL: return "IO_DUMP_FULL";
         case StageKind::SEMINAIVE_INC: return "SEMINAIVE_INC";
+        case StageKind::CREATE_GRAPH_INC: return "CREATE_GRAPH_INC";
         case StageKind::PRUNING_INC: return "PRUNING_INC";
+        case StageKind::PRECONFIG_INC: return "PRECONFIG_INC";
         case StageKind::FORWARD_COMPILATION_INC: return "FORWARD_COMPILATION_INC";
         case StageKind::WEIGHTED_MODEL_COUNTING_INC: return "WEIGHTED_MODEL_COUNTING_INC";
         default: return "UNKNOWN";
@@ -157,6 +171,8 @@ public:
         currentTurn_->setMemEnd(getCurrentMemoryUsage());
         currentTurn_->setMemPeak(getPeakMemoryUsage());
         currentTurn_->markEndTime();
+        // std::cout << "Turn " << turnCount_ << " completed: "
+        //           << currentTurn_->getDurationSeconds() << "s, PeakMem=" << currentTurn_->getMemPeak() << "KB\n";
         currentTurn_ = nullptr;
     }
 
@@ -258,6 +274,76 @@ public:
 
             }
         }
+    }
+
+
+
+
+    void printReportJson(std::ostream& os) {
+        using namespace json11;
+
+        Json::array json_turns;
+
+        for (const auto& turn : turns_) {
+            Json::object jturn;
+            jturn["index"] = Json(static_cast<int>(turn.turnIndex));
+            jturn["mode"] = Json(turn.algMode);
+            jturn["time_seconds"] = Json(turn.getDurationSeconds());
+            // jturn["peak_mem_kb"] = Json(static_cast<long long>(turn.getMemPeak()));
+
+            // Turn-level info map
+            Json::object info_map;
+            for (const auto& [key, value] : turn.getInfoMap()) {
+                info_map[key] = Json(value);
+            }
+            jturn["info"] = info_map;
+
+            // Turn-level logs
+            Json::object logs_obj;
+            for (const auto& [lvl, msgs] : turn.getLogs()) {
+                Json::array log_array;
+                for (const auto& msg : msgs) {
+                    log_array.push_back(Json(msg));
+                }
+                logs_obj[levelToString(lvl)] = log_array;
+            }
+            jturn["logs"] = logs_obj;
+
+            // Stages
+            Json::array stages_array;
+            for (const auto& stage : turn.stages) {
+                Json::object jstage;
+                jstage["name"] = Json(stageKindToString(stage.kind));
+                jstage["time_seconds"] = Json(stage.getDurationSeconds());
+                jstage["peak_mem_kb"] = Json(static_cast<long long>(stage.getMemPeak()));
+
+                // Stage-level info
+                Json::object stage_info;
+                for (const auto& [key, value] : stage.getInfoMap()) {
+                    stage_info[key] = Json(value);
+                }
+                jstage["info"] = stage_info;
+
+                // Stage-level logs
+                Json::object stage_logs;
+                for (const auto& [lvl, msgs] : stage.getLogs()) {
+                    Json::array log_array;
+                    for (const auto& msg : msgs) {
+                        log_array.push_back(Json(msg));
+                    }
+                    stage_logs[levelToString(lvl)] = log_array;
+                }
+                jstage["logs"] = stage_logs;
+
+                stages_array.push_back(jstage);
+            }
+
+            jturn["stages"] = stages_array;
+            json_turns.push_back(jturn);
+        }
+
+        Json report_json = Json::object{{"turns", json_turns}};
+        os << report_json.dump() << std::endl;
     }
 
 private:

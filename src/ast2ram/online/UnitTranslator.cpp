@@ -890,7 +890,9 @@ Own<ram::Statement> UnitTranslator::generateStratumPreambleInc(const ast::Relati
         std::string deltaTupleInsRelation = getIncDeltaTupleInsertRelationName(rel->getQualifiedName());
         if (isDelete) {
             appendStmt(preamble, generateMergeRelations(rel, deltaDelRelation, deltaTupleDelRelation));
-        } else {
+            // recursion treat deletions in over-delete relations
+            appendStmt(preamble, generateMergeRelations(rel, getIncTupleOverDeleteRelationName(rel->getQualifiedName()), getIncDeltaTupleDeleteRelationName(rel->getQualifiedName())))
+;        } else {
             appendStmt(preamble, generateMergeRelations(rel, deltaInsRelation, deltaTupleInsRelation));
         }
     }
@@ -1503,7 +1505,6 @@ Own<ram::Statement> UnitTranslator::generateStratumTableUpdatesIncRederive(const
             mk<ram::DeltaUnion>(mainRelation, "", mainRelation,
                                     getIncNewDervRederiveRelationName(rel->getQualifiedName()), "", getIncDeltaTupleRederiveRelationName(rel->getQualifiedName()), ""),
             // should also update overdelete info: overdelete derv, tuple
-            // TODO: could shrink overdelete derv after each iteration (as an optimization)
             generateEraseTuples(rel, getIncTupleOverDeleteRelationName(rel->getQualifiedName()), getIncDeltaTupleRederiveRelationName(rel->getQualifiedName())),
             // clear the new relation
             mk<ram::Clear>(getIncNewDervRederiveRelationName(rel->getQualifiedName()))
@@ -1552,7 +1553,7 @@ Own<ram::Statement> UnitTranslator::generateStratumPostambleIncRederive(const as
         // swap, get a correct delta delete; but cannot just use swap for it will be reference-based
         appendStmt(postamble,
         mk<ram::Sequence>(
-                mk<ram::Clear>(getIncDeltaTupleDeleteRelationName(rel->getQualifiedName())),
+                mk<ram::ExactClear>(getIncDeltaTupleDeleteRelationName(rel->getQualifiedName())),
                 generateMergeRelations(rel, getIncDeltaTupleDeleteRelationName(rel->getQualifiedName()), getIncTupleOverDeleteRelationName(rel->getQualifiedName()))
             )
         );
@@ -2068,6 +2069,12 @@ Own<ram::Statement> UnitTranslator::generateIncTableUpdate(const std::vector<std
             auto dervOverdeleteName = getIncDervOverDeleteRelationName(rel->getQualifiedName());
             appendStmt(res, mk<ram::ExactClear>(overdeleteName));
             appendStmt(res, mk<ram::ExactClear>(dervOverdeleteName));
+            // also copy getIncDeltaTupleDeleteRelationName to DeltaDervDelete
+            appendStmt(res,
+                generateMergeRelations(rel,
+                    getIncDeltaTupleDeleteRelationName(rel->getQualifiedName()),
+                    getIncDeltaDervDeleteRelationName(rel->getQualifiedName()))  // TODO: do we need also add this to overdelete relation
+                );
         }
     }
     return mk<ram::Sequence>(std::move(res));

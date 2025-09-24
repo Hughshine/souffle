@@ -57,6 +57,48 @@ void visit(ast::Program const&, F&&);
 
 namespace souffle::ast {
 
+struct GroundnessInfo {
+    bool allGroundRules;
+    bool hasInputRelations;
+    std::vector<Clause*> nonGroundClauses;
+    std::vector<Clause*> groundClauses;
+    std::vector<Clause*> facts;
+    std::vector<QualifiedName> inputRelationNames;
+    std::vector<QualifiedName> outputRelationNames;
+    // std::vector<> queried terms;
+    // std::vector<> evidences;
+    // stdout
+    friend std::ostream& operator<<(std::ostream& out, const GroundnessInfo& info) {
+        out << "allGroundRules: " << info.allGroundRules << "\n";
+        out << "hasInputRelations: " << info.hasInputRelations << "\n";
+        out << "nonGroundClauses: ";
+        for (auto* clause : info.nonGroundClauses) {
+            out << clause->toString() << "; ";
+        }
+        out << "\n";
+        for (auto* clause : info.groundClauses) {
+            out << clause->toString() << "; ";
+        }
+        out << "\n";
+        out << "inputRelationNames: ";
+        for (auto& name : info.inputRelationNames) {
+            out << name.toString() << "; ";
+        }
+        out << "\n";
+        out << "outputRelationNames: ";
+        for (auto& name : info.outputRelationNames) {
+            out << name.toString() << "; ";
+        }
+        out << "\n";
+        out << "facts: ";
+        for (auto* clause : info.facts) {
+            out << clause->toString() << "; ";
+        }
+        out << "\n";
+        return out;
+    }
+};
+
 /**
  * @class Program
  * @brief The program class consists of relations, clauses and types.
@@ -225,6 +267,10 @@ public:
      * @return true IFF the directive was found and removed
      */
     void removeDirective(const Directive&);
+
+    GroundnessInfo isGround() const;
+    GroundnessInfo ground_info;
+    GroundnessInfo& getGroundnessInfo();
 
     /** Return components */
     std::vector<Component*> getComponents() const override;
