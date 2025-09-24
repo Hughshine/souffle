@@ -27,7 +27,7 @@
 #include "ast/Lattice.h"
 #include "ast/Pragma.h"
 #include "ast/QualifiedName.h"
-#include "ast/Query.h"
+#include "ast/ProbQuery.h"
 #include "ast/Relation.h"
 #include "ast/SubsetType.h"
 #include "ast/TranslationUnit.h"
@@ -53,7 +53,7 @@ public:
     void addRelation(Own<ast::Relation> r);
     void addFunctorDeclaration(Own<ast::FunctorDeclaration> f);
     void addDirective(Own<ast::Directive> d);
-    void addQuery(Own<ast::Query> query);
+    void addProbQuery(Own<ast::ProbQuery> query);
     void addType(Own<ast::Type> type);
     void addClause(Own<ast::Clause> c);
     void addComponent(Own<ast::Component> c);

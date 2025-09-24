@@ -21,7 +21,7 @@
 #include "ast/Component.h"
 #include "ast/ComponentInit.h"
 #include "ast/Directive.h"
-#include "ast/Query.h"
+#include "ast/ProbQuery.h"
 #include "ast/FunctorDeclaration.h"
 #include "ast/ItemContainer.h"
 #include "ast/Node.h"
@@ -202,13 +202,13 @@ public:
     /** Add relation directive */
     void addDirective(Own<Directive> directive) override;
 
-    VecOwn<Query> queries;
+    VecOwn<ProbQuery> queries;
 
-    void addQuery(Own<Query> qr) {
+    void addProbQuery(Own<ProbQuery> qr) {
         queries.push_back(std::move(qr));
     }
 
-    const VecOwn<Query>& getQueries() const {
+    const VecOwn<ProbQuery>& getQueries() const {
         return queries;
     }
 
