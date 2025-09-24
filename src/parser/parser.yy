@@ -383,9 +383,7 @@ unit
     }
   | unit QUERY LPAREN atom RPAREN DOT
 	{
-	  // Simply parse the query syntax without doing anything with it
-	  // This allows Souffle to accept ProbLog files with queries
-	  // TODO
+	  driver.addQuery(mk<souffle::ast::Query>(Own<ast::Atom>($4),@$));
 	}
   /*| unit QUERY qualified_name DOT %prec ZERO_ARITY  // New rule for 0-arity query
 	{

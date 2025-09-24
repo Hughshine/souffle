@@ -79,6 +79,7 @@ public:
     // clang-format off
     enum NodeKind {
         NK_NONE,
+        NK_Query,
         NK_Condition,
             NK_AbstractExistenceCheck, //Abstract Class
                 NK_ExistenceCheck,
@@ -193,7 +194,6 @@ public:
 
             NK_LogTimer,
             NK_Loop,
-            NK_Query,
             NK_RelationStatement,
                 NK_Clear,
                 NK_ExactClear,

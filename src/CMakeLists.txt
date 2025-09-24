@@ -44,6 +44,7 @@ set(SOUFFLE_SOURCES
     ast/Pragma.cpp
     ast/Program.cpp
     ast/QualifiedName.cpp
+    ast/Query.cpp
     ast/RecordInit.cpp
     ast/RecordType.cpp
     ast/Relation.cpp

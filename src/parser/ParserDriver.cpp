@@ -24,6 +24,7 @@
 #include "ast/Pragma.h"
 #include "ast/Program.h"
 #include "ast/QualifiedName.h"
+#include "ast/Query.h"
 #include "ast/Relation.h"
 #include "ast/SubsetType.h"
 #include "ast/TranslationUnit.h"
@@ -231,6 +232,11 @@ void ParserDriver::addDirective(Own<ast::Directive> directive) {
         }
     }
     program.addDirective(std::move(directive));
+}
+
+void ParserDriver::addQuery(Own<ast::Query> query) {
+    ast::Program& program = translationUnit->getProgram();
+    program.addQuery(std::move(query));
 }
 
 void ParserDriver::addType(Own<ast::Type> type) {
