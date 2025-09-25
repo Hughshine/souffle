@@ -1,26 +1,466 @@
-.decl cancer_False()
-.decl cancer_True()
-.decl dyspnoea_False()
-.decl dyspnoea_True()
-.decl pollution_high()
-.decl pollution_low()
-.decl smoker_False()
-.decl smoker_True()
-.decl xray_negative()
-.decl xray_positive()
-.output cancer_False
-.output cancer_True
-.output dyspnoea_False
-.output dyspnoea_True
-.output xray_negative
-.output xray_positive
-0.9::pollution_low.
-0.1::pollution_high.
-0.3::smoker_True.
-0.7::smoker_False.
-0.05::cancer_True :- pollution_high,smoker_True.
-0.999::cancer_False :- pollution_low,smoker_False.
-0.9::xray_positive :- cancer_True.
-0.8::xray_negative :- cancer_False.
-0.65::dyspnoea_True :- cancer_True.
-0.7::dyspnoea_False :- cancer_False.
+.decl age_age0_30()
+.decl age_age31_50()
+.decl age_age51_65()
+.decl age_age65_100()
+.decl albumin_a29_0()
+.decl albumin_a49_30()
+.decl albumin_a70_50()
+.decl alcohol_absent()
+.decl alcohol_present()
+.decl alcoholism_absent()
+.decl alcoholism_present()
+.decl alt_a199_100()
+.decl alt_a34_0()
+.decl alt_a850_200()
+.decl alt_a99_35()
+.decl ama_absent()
+.decl ama_present()
+.decl amylase_a1400_500()
+.decl amylase_a299_0()
+.decl amylase_a499_300()
+.decl anorexia_absent()
+.decl anorexia_present()
+.decl ascites_absent()
+.decl ascites_present()
+.decl ast_a149_40()
+.decl ast_a399_150()
+.decl ast_a39_0()
+.decl ast_a700_400()
+.decl bilirubin_a19_7()
+.decl bilirubin_a1_0()
+.decl bilirubin_a6_2()
+.decl bilirubin_a88_20()
+.decl bleeding_absent()
+.decl bleeding_present()
+.decl carcinoma_absent()
+.decl carcinoma_present()
+.decl chHepatitis_absent()
+.decl chHepatitis_active()
+.decl chHepatitis_persistent()
+.decl choledocholithotomy_absent()
+.decl choledocholithotomy_present()
+.decl cholesterol_a239_0()
+.decl cholesterol_a349_240()
+.decl cholesterol_a999_350()
+.decl cirrhosis_absent()
+.decl cirrhosis_compensate()
+.decl cirrhosis_decompensate()
+.decl consciousness_absent()
+.decl consciousness_present()
+.decl density_absent()
+.decl density_present()
+.decl diabetes_absent()
+.decl diabetes_present()
+.decl eSR_a14_0()
+.decl eSR_a200_50()
+.decl eSR_a49_15()
+.decl edema_absent()
+.decl edema_present()
+.decl edge_absent()
+.decl edge_present()
+.decl encephalopathy_absent()
+.decl encephalopathy_present()
+.decl fat_absent()
+.decl fat_present()
+.decl fatigue_absent()
+.decl fatigue_present()
+.decl fibrosis_absent()
+.decl fibrosis_present()
+.decl flatulence_absent()
+.decl flatulence_present()
+.decl gallstones_absent()
+.decl gallstones_present()
+.decl ggtp_a29_10()
+.decl ggtp_a640_70()
+.decl ggtp_a69_30()
+.decl ggtp_a9_0()
+.decl hbc_anti_absent()
+.decl hbc_anti_present()
+.decl hbeag_absent()
+.decl hbeag_present()
+.decl hbsag_absent()
+.decl hbsag_anti_absent()
+.decl hbsag_anti_present()
+.decl hbsag_present()
+.decl hcv_anti_absent()
+.decl hcv_anti_present()
+.decl hepatalgia_absent()
+.decl hepatalgia_present()
+.decl hepatomegaly_absent()
+.decl hepatomegaly_present()
+.decl hepatotoxic_absent()
+.decl hepatotoxic_present()
+.decl hospital_absent()
+.decl hospital_present()
+.decl hyperbilirubinemia_absent()
+.decl hyperbilirubinemia_present()
+.decl injections_absent()
+.decl injections_present()
+.decl inr_a109_70()
+.decl inr_a200_110()
+.decl inr_a69_0()
+.decl irregular_liver_absent()
+.decl irregular_liver_present()
+.decl itching_absent()
+.decl itching_present()
+.decl jaundice_absent()
+.decl jaundice_present()
+.decl joints_absent()
+.decl joints_present()
+.decl le_cells_absent()
+.decl le_cells_present()
+.decl nausea_absent()
+.decl nausea_present()
+.decl obesity_absent()
+.decl obesity_present()
+.decl pBC_absent()
+.decl pBC_present()
+.decl pain_absent()
+.decl pain_present()
+.decl pain_ruq_absent()
+.decl pain_ruq_present()
+.decl palms_absent()
+.decl palms_present()
+.decl phosphatase_a239_0()
+.decl phosphatase_a4000_700()
+.decl phosphatase_a699_240()
+.decl platelet_a149_100()
+.decl platelet_a299_150()
+.decl platelet_a597_300()
+.decl platelet_a99_0()
+.decl pressure_ruq_absent()
+.decl pressure_ruq_present()
+.decl proteins_a10_6()
+.decl proteins_a5_2()
+.decl rHepatitis_absent()
+.decl rHepatitis_present()
+.decl sex_female()
+.decl sex_male()
+.decl skin_absent()
+.decl skin_present()
+.decl spiders_absent()
+.decl spiders_present()
+.decl spleen_absent()
+.decl spleen_present()
+.decl steatosis_absent()
+.decl steatosis_present()
+.decl surgery_absent()
+.decl surgery_present()
+.decl tHepatitis_absent()
+.decl tHepatitis_present()
+.decl transfusion_absent()
+.decl transfusion_present()
+.decl triglycerides_a17_4()
+.decl triglycerides_a1_0()
+.decl triglycerides_a3_2()
+.decl upper_pain_absent()
+.decl upper_pain_present()
+.decl urea_a165_50()
+.decl urea_a39_0()
+.decl urea_a49_40()
+.decl vh_amn_absent()
+.decl vh_amn_present()
+.output albumin_a29_0
+.output albumin_a49_30
+.output albumin_a70_50
+.output alcohol_absent
+.output alcohol_present
+.output alt_a199_100
+.output alt_a34_0
+.output alt_a850_200
+.output alt_a99_35
+.output ama_absent
+.output ama_present
+.output amylase_a1400_500
+.output amylase_a299_0
+.output amylase_a499_300
+.output anorexia_absent
+.output anorexia_present
+.output ascites_absent
+.output ascites_present
+.output ast_a149_40
+.output ast_a399_150
+.output ast_a39_0
+.output ast_a700_400
+.output bilirubin_a19_7
+.output bilirubin_a1_0
+.output bilirubin_a6_2
+.output bilirubin_a88_20
+.output bleeding_absent
+.output bleeding_present
+.output carcinoma_absent
+.output carcinoma_present
+.output chHepatitis_absent
+.output chHepatitis_active
+.output chHepatitis_persistent
+.output choledocholithotomy_absent
+.output choledocholithotomy_present
+.output cholesterol_a239_0
+.output cholesterol_a349_240
+.output cholesterol_a999_350
+.output cirrhosis_absent
+.output cirrhosis_compensate
+.output cirrhosis_decompensate
+.output consciousness_absent
+.output consciousness_present
+.output density_absent
+.output density_present
+.output eSR_a14_0
+.output eSR_a200_50
+.output eSR_a49_15
+.output edema_absent
+.output edema_present
+.output edge_absent
+.output edge_present
+.output encephalopathy_absent
+.output encephalopathy_present
+.output fat_absent
+.output fat_present
+.output fatigue_absent
+.output fatigue_present
+.output fibrosis_absent
+.output fibrosis_present
+.output flatulence_absent
+.output flatulence_present
+.output ggtp_a29_10
+.output ggtp_a640_70
+.output ggtp_a69_30
+.output ggtp_a9_0
+.output hbc_anti_absent
+.output hbc_anti_present
+.output hbeag_absent
+.output hbeag_present
+.output hbsag_absent
+.output hbsag_anti_absent
+.output hbsag_anti_present
+.output hbsag_present
+.output hcv_anti_absent
+.output hcv_anti_present
+.output hepatalgia_absent
+.output hepatalgia_present
+.output hepatomegaly_absent
+.output hepatomegaly_present
+.output hyperbilirubinemia_absent
+.output hyperbilirubinemia_present
+.output injections_absent
+.output injections_present
+.output inr_a109_70
+.output inr_a200_110
+.output inr_a69_0
+.output irregular_liver_absent
+.output irregular_liver_present
+.output itching_absent
+.output itching_present
+.output jaundice_absent
+.output jaundice_present
+.output joints_absent
+.output joints_present
+.output le_cells_absent
+.output le_cells_present
+.output nausea_absent
+.output nausea_present
+.output obesity_absent
+.output obesity_present
+.output pBC_absent
+.output pBC_present
+.output pain_absent
+.output pain_present
+.output pain_ruq_absent
+.output pain_ruq_present
+.output palms_absent
+.output palms_present
+.output phosphatase_a239_0
+.output phosphatase_a4000_700
+.output phosphatase_a699_240
+.output platelet_a149_100
+.output platelet_a299_150
+.output platelet_a597_300
+.output platelet_a99_0
+.output pressure_ruq_absent
+.output pressure_ruq_present
+.output proteins_a10_6
+.output proteins_a5_2
+.output rHepatitis_absent
+.output rHepatitis_present
+.output skin_absent
+.output skin_present
+.output spiders_absent
+.output spiders_present
+.output spleen_absent
+.output spleen_present
+.output steatosis_absent
+.output steatosis_present
+.output tHepatitis_absent
+.output tHepatitis_present
+.output transfusion_absent
+.output transfusion_present
+.output triglycerides_a17_4
+.output triglycerides_a1_0
+.output triglycerides_a3_2
+.output upper_pain_absent
+.output upper_pain_present
+.output urea_a165_50
+.output urea_a39_0
+.output urea_a49_40
+0.1359084::alcoholism_present.
+0.8640916::alcoholism_absent.
+0.1731044::vh_amn_present.
+0.8268956::vh_amn_absent.
+0.08154506::hepatotoxic_present.
+0.91845494::hepatotoxic_absent.
+0.5350501::hospital_present.
+0.4649499::hospital_absent.
+0.4234621::surgery_present.
+0.5765379::surgery_absent.
+0.1530758::gallstones_present.
+0.8469242::gallstones_absent.
+0.5979971::sex_female.
+0.4020029::sex_male.
+0.07725322::age_age65_100.
+0.38769671::age_age51_65.
+0.39771102::age_age31_50.
+0.13733906::age_age0_30.
+0.03576538::diabetes_present.
+0.96423462::diabetes_absent.
+0.2::tHepatitis_present :- hepatotoxic_present,alcoholism_present.
+0.99808061::tHepatitis_absent :- hepatotoxic_present,alcoholism_absent.
+0.7102804::choledocholithotomy_present :- gallstones_present.
+0.96283784::choledocholithotomy_absent :- gallstones_absent.
+0.8333333::injections_present :- hospital_present,surgery_absent,choledocholithotomy_present.
+0.98901099::injections_absent :- hospital_absent,surgery_absent,choledocholithotomy_present.
+0.3333333::transfusion_present :- hospital_present,surgery_present,choledocholithotomy_present.
+0.98920863::transfusion_absent :- hospital_absent,surgery_absent,choledocholithotomy_absent.
+0.4615385::chHepatitis_active :- transfusion_present,vh_amn_present,injections_absent.
+0.3076923::chHepatitis_persistent :- transfusion_present,vh_amn_present,injections_absent.
+0.91715976::chHepatitis_absent :- transfusion_absent,vh_amn_absent,injections_present.
+0.700565::pBC_present :- sex_female,age_age51_65.
+0.99843994::pBC_absent :- sex_male,age_age0_30.
+0.3::fibrosis_present :- chHepatitis_active.
+0.999::fibrosis_absent :- chHepatitis_absent.
+0.24::obesity_present :- diabetes_present.
+0.93768546::obesity_absent :- diabetes_absent.
+0.3636364::steatosis_present :- obesity_present,alcoholism_present.
+0.93650794::steatosis_absent :- obesity_absent,alcoholism_absent.
+0.56::cirrhosis_decompensate :- fibrosis_present,steatosis_present.
+0.24::cirrhosis_compensate :- fibrosis_present,steatosis_present.
+0.998::cirrhosis_absent :- fibrosis_absent,steatosis_absent.
+0.453125::hyperbilirubinemia_present :- age_age0_30,sex_male.
+0.997151::hyperbilirubinemia_absent :- age_age65_100,sex_female.
+0.1791045::triglycerides_a17_4 :- steatosis_present.
+0.1641791::triglycerides_a3_2 :- steatosis_present.
+0.94462025::triglycerides_a1_0 :- steatosis_absent.
+0.02492212::rHepatitis_present :- hepatotoxic_absent.
+0.98245614::rHepatitis_absent :- hepatotoxic_present.
+0.7058823::fatigue_present :- chHepatitis_absent,tHepatitis_absent,rHepatitis_present.
+0.4722222::fatigue_absent :- chHepatitis_persistent,tHepatitis_absent,rHepatitis_absent.
+0.08536585::bilirubin_a88_20 :- hyperbilirubinemia_absent,pBC_present,cirrhosis_absent,gallstones_present,chHepatitis_absent.
+0.24390244::bilirubin_a19_7 :- hyperbilirubinemia_absent,pBC_present,cirrhosis_absent,gallstones_present,chHepatitis_absent.
+0.54347827::bilirubin_a6_2 :- hyperbilirubinemia_present,pBC_absent,cirrhosis_absent,gallstones_absent,chHepatitis_absent.
+0.95238094::bilirubin_a1_0 :- hyperbilirubinemia_absent,pBC_absent,cirrhosis_absent,gallstones_present,chHepatitis_absent.
+0.875::itching_present :- bilirubin_a88_20.
+0.6666667::itching_absent :- bilirubin_a1_0.
+0.411215::upper_pain_present :- gallstones_present.
+0.6131757::upper_pain_absent :- gallstones_absent.
+0.2804054::fat_present :- gallstones_absent.
+0.8224299::fat_absent :- gallstones_present.
+0.4776119::pain_ruq_present :- steatosis_present,hyperbilirubinemia_absent.
+0.7142857::pain_ruq_absent :- steatosis_absent,hyperbilirubinemia_present.
+0.4691358::pressure_ruq_present :- gallstones_absent,pBC_absent,chHepatitis_active.
+0.90909091::pressure_ruq_absent :- gallstones_present,pBC_absent,chHepatitis_persistent.
+0.2118451::phosphatase_a4000_700 :- rHepatitis_absent,tHepatitis_absent,cirrhosis_absent,chHepatitis_absent.
+0.48275862::phosphatase_a699_240 :- rHepatitis_absent,tHepatitis_absent,cirrhosis_decompensate,chHepatitis_absent.
+0.79069768::phosphatase_a239_0 :- rHepatitis_present,tHepatitis_present,cirrhosis_absent,chHepatitis_absent.
+0.99378882::skin_present :- bilirubin_a88_20.
+0.8177458::skin_absent :- bilirubin_a1_0.
+0.5678571::ama_present :- pBC_present.
+0.98806683::ama_absent :- pBC_absent.
+0.1214286::le_cells_present :- pBC_present.
+0.95942721::le_cells_absent :- pBC_absent.
+0.1285714::joints_present :- pBC_present.
+0.8997613::joints_absent :- pBC_absent.
+0.8095238::pain_present :- pBC_absent,joints_present.
+0.852459::pain_absent :- pBC_present,joints_absent.
+0.99827883::proteins_a10_6 :- cirrhosis_decompensate.
+0.01967213::proteins_a5_2 :- cirrhosis_absent.
+0.3448276::edema_present :- cirrhosis_decompensate.
+0.93548387::edema_absent :- cirrhosis_compensate.
+0.09393939::platelet_a597_300 :- cirrhosis_absent,pBC_absent.
+0.73636364::platelet_a299_150 :- cirrhosis_absent,pBC_absent.
+0.27586207::platelet_a149_100 :- cirrhosis_decompensate,pBC_absent.
+0.18965517::platelet_a99_0 :- cirrhosis_decompensate,pBC_absent.
+0.08333333::inr_a200_110 :- chHepatitis_persistent,cirrhosis_absent,tHepatitis_absent,hyperbilirubinemia_absent.
+0.92592592::inr_a109_70 :- chHepatitis_absent,cirrhosis_absent,tHepatitis_present,hyperbilirubinemia_absent.
+0.39586919::inr_a69_0 :- chHepatitis_absent,cirrhosis_decompensate,tHepatitis_absent,hyperbilirubinemia_absent.
+0.6666667::bleeding_present :- platelet_a99_0,inr_a69_0.
+0.90909091::bleeding_absent :- platelet_a597_300,inr_a69_0.
+0.4307432::flatulence_present :- gallstones_absent.
+0.6074766::flatulence_absent :- gallstones_present.
+0.2258064::alcohol_present :- cirrhosis_compensate.
+0.8885246::alcohol_absent :- cirrhosis_absent.
+0.05357143::encephalopathy_present :- cirrhosis_absent,pBC_present.
+0.99678457::encephalopathy_absent :- cirrhosis_compensate,pBC_absent.
+0.2173913::urea_a165_50 :- encephalopathy_present.
+0.1304348::urea_a49_40 :- encephalopathy_present.
+0.89940828::urea_a39_0 :- encephalopathy_absent.
+0.5833333::ascites_present :- proteins_a5_2.
+0.8719068::ascites_absent :- proteins_a10_6.
+0.7777778::hepatomegaly_present :- rHepatitis_absent,tHepatitis_present,steatosis_absent,hyperbilirubinemia_absent.
+0.625::hepatomegaly_absent :- rHepatitis_absent,tHepatitis_absent,steatosis_absent,hyperbilirubinemia_present.
+0.3142251::hepatalgia_present :- hepatomegaly_present.
+0.96929825::hepatalgia_absent :- hepatomegaly_absent.
+0.7391304::density_present :- encephalopathy_present.
+0.6227811::density_absent :- encephalopathy_absent.
+0.4321429::eSR_a200_50 :- pBC_present,chHepatitis_absent,steatosis_absent,hyperbilirubinemia_absent.
+0.21978022::eSR_a49_15 :- pBC_absent,chHepatitis_active,steatosis_absent,hyperbilirubinemia_absent.
+0.91071429::eSR_a14_0 :- pBC_absent,chHepatitis_absent,steatosis_absent,hyperbilirubinemia_present.
+0.1208791::alt_a850_200 :- chHepatitis_active,rHepatitis_absent,tHepatitis_absent,steatosis_absent,cirrhosis_absent.
+0.23391813::alt_a199_100 :- chHepatitis_absent,rHepatitis_present,tHepatitis_absent,steatosis_absent,cirrhosis_absent.
+0.51612903::alt_a99_35 :- chHepatitis_absent,rHepatitis_absent,tHepatitis_absent,steatosis_absent,cirrhosis_compensate.
+0.55555555::alt_a34_0 :- chHepatitis_persistent,rHepatitis_absent,tHepatitis_absent,steatosis_absent,cirrhosis_absent.
+0.05494505::ast_a700_400 :- chHepatitis_active,rHepatitis_absent,tHepatitis_absent,steatosis_absent,cirrhosis_absent.
+0.23076923::ast_a399_150 :- chHepatitis_active,rHepatitis_absent,tHepatitis_absent,steatosis_absent,cirrhosis_absent.
+0.67741936::ast_a149_40 :- chHepatitis_absent,rHepatitis_absent,tHepatitis_absent,steatosis_absent,cirrhosis_compensate.
+0.55350553::ast_a39_0 :- chHepatitis_absent,rHepatitis_absent,tHepatitis_present,steatosis_absent,cirrhosis_absent.
+0.01869159::amylase_a1400_500 :- gallstones_present.
+0.04672897::amylase_a499_300 :- gallstones_present.
+0.97297297::amylase_a299_0 :- gallstones_absent.
+0.2392857::ggtp_a640_70 :- pBC_present,tHepatitis_absent,rHepatitis_absent,steatosis_absent,chHepatitis_absent,hyperbilirubinemia_absent.
+0.225::ggtp_a69_30 :- pBC_present,tHepatitis_absent,rHepatitis_absent,steatosis_absent,chHepatitis_absent,hyperbilirubinemia_absent.
+0.19390582::ggtp_a29_10 :- pBC_absent,tHepatitis_absent,rHepatitis_absent,steatosis_absent,chHepatitis_persistent,hyperbilirubinemia_absent.
+0.97864769::ggtp_a9_0 :- pBC_absent,tHepatitis_absent,rHepatitis_absent,steatosis_absent,chHepatitis_absent,hyperbilirubinemia_present.
+0.125::cholesterol_a999_350 :- pBC_present,steatosis_absent,chHepatitis_absent.
+0.3642857::cholesterol_a349_240 :- pBC_present,steatosis_absent,chHepatitis_absent.
+0.96952909::cholesterol_a239_0 :- pBC_absent,steatosis_absent,chHepatitis_persistent.
+0.5::hbsag_present :- vh_amn_present,chHepatitis_active.
+0.95652174::hbsag_absent :- vh_amn_absent,chHepatitis_persistent.
+0.09090909::hbsag_anti_present :- vh_amn_absent,chHepatitis_persistent,hbsag_present.
+0.99804305::hbsag_anti_absent :- vh_amn_absent,chHepatitis_active,hbsag_absent.
+0.280916::anorexia_present :- rHepatitis_absent,tHepatitis_absent.
+0.8823529::anorexia_absent :- rHepatitis_present,tHepatitis_absent.
+0.3703704::nausea_present :- rHepatitis_absent,tHepatitis_present.
+0.7145038::nausea_absent :- rHepatitis_absent,tHepatitis_absent.
+0.4827586::spleen_present :- cirrhosis_decompensate,rHepatitis_absent,tHepatitis_absent.
+0.8992933::spleen_absent :- cirrhosis_absent,rHepatitis_absent,tHepatitis_absent.
+0.3043478::consciousness_present :- encephalopathy_present.
+0.98372781::consciousness_absent :- encephalopathy_absent.
+0.6034483::spiders_present :- cirrhosis_decompensate.
+0.8163934::spiders_absent :- cirrhosis_absent.
+0.75::jaundice_present :- bilirubin_a88_20.
+0.8057554::jaundice_absent :- bilirubin_a1_0.
+0.96463023::albumin_a70_50 :- cirrhosis_compensate.
+0.1426229::albumin_a49_30 :- cirrhosis_absent.
+0.1180328::albumin_a29_0 :- cirrhosis_absent.
+0.7586207::edge_present :- cirrhosis_decompensate.
+0.7655738::edge_absent :- cirrhosis_absent.
+0.6034483::irregular_liver_present :- cirrhosis_decompensate.
+0.8934426::irregular_liver_absent :- cirrhosis_absent.
+0.1304348::hbc_anti_present :- vh_amn_absent,chHepatitis_persistent.
+0.99644128::hbc_anti_absent :- vh_amn_present,chHepatitis_active.
+0.00763359::hcv_anti_present :- vh_amn_present,chHepatitis_persistent.
+0.99875156::hcv_anti_absent :- vh_amn_present,chHepatitis_absent.
+0.5::palms_present :- cirrhosis_decompensate.
+0.8590164::palms_absent :- cirrhosis_absent.
+0.04347826::hbeag_present :- vh_amn_absent,chHepatitis_persistent.
+0.99875156::hbeag_absent :- vh_amn_present,chHepatitis_absent.
+0.3636364::carcinoma_present :- cirrhosis_decompensate,pBC_present.
+0.99::carcinoma_absent :- cirrhosis_absent,pBC_absent.
