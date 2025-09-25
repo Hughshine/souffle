@@ -3510,7 +3510,9 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     //-------------------------------------
     // generate evidences
     //--------------------------------------
-    if (!prog.getEvidences().empty()) {
+    if (prog.getEvidences().empty()) {
+        mainClass.hooks() << "std::vector<std::pair<UntypedTuple,bool>> evidences;\n";
+    } else {
         std::stringstream ss;
         ss << "std::vector<std::pair<UntypedTuple,bool>> evidences = {\n";
 
