@@ -65,3 +65,5 @@ experiments/**/output
 experiments/**/test.cpp
 experiments/**/compute
 experiments/**/compute.cpp
+experiments/**/*.cpp
+experiments/**/*.json
