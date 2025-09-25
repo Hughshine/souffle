@@ -28,6 +28,7 @@
 #include "ast/transform/ComponentInstantiation.h"
 #include "ast/transform/Conditional.h"
 #include "ast/transform/DebugDeltaRelation.h"
+#include "ast/transform/EvidenceChecker.h"
 #include "ast/transform/ExecutionPlanChecker.h"
 #include "ast/transform/ExpandEqrels.h"
 #include "ast/transform/Fixpoint.h"
@@ -490,6 +491,7 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
     //
     // // Main pipeline // TODO: Maybe some passes is unused or invalid or should be changed under prob setting
     auto pipeline = mk<ast::transform::PipelineTransformer>(mk<ast::transform::ComponentChecker>(),
+            mk<ast::transform::EvidenceSemanticChecker>(),
             mk<ast::transform::ComponentInstantiationTransformer>(),
             // mk<ast::transform::LatticeTransformer>(),
             mk<ast::transform::DebugDeltaRelationTransformer>(),

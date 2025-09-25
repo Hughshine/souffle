@@ -21,6 +21,7 @@
 #include "ast/Component.h"
 #include "ast/ComponentInit.h"
 #include "ast/Directive.h"
+#include "ast/Evidence.h"
 #include "ast/FunctorDeclaration.h"
 #include "ast/ItemContainer.h"
 #include "ast/Node.h"
@@ -201,6 +202,18 @@ public:
     /** Add relation directive */
     void addDirective(Own<Directive> directive) override;
 
+    VecOwn<Evidence> evidences;
+
+    // 添加 Evidence
+    void addEvidence(Own<Evidence> ev) {
+        evidences.push_back(std::move(ev));
+    }
+
+    // 获取所有 Evidence
+    const VecOwn<Evidence>& getEvidences() const {
+        return evidences;
+    }
+
     /** Return pragma directives */
     const VecOwn<Pragma>& getPragmaDirectives() const {
         return pragmas;
@@ -214,6 +227,7 @@ public:
      * @return true IFF the relation was found and removed
      */
     bool removeRelation(QualifiedName const&);
+
 
     /**
      * Remove a relation by identity. The relation must be owned by the program.

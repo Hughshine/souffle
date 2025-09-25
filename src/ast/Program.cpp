@@ -7,7 +7,7 @@
  */
 
 #include "ast/Program.h"
-
+#include "ast/Evidence.h"
 #include "ast/Node.h"
 #include "ast/utility/Utils.h"
 #include "souffle/utility/ContainerUtil.h"

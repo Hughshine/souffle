@@ -20,6 +20,7 @@
 #include "ast/Component.h"
 #include "ast/ComponentInit.h"
 #include "ast/Directive.h"
+#include "ast/Evidence.h"
 #include "ast/FunctorDeclaration.h"
 #include "ast/Pragma.h"
 #include "ast/Program.h"
@@ -231,6 +232,11 @@ void ParserDriver::addDirective(Own<ast::Directive> directive) {
         }
     }
     program.addDirective(std::move(directive));
+}
+
+void ParserDriver::addEvidence(Own<ast::Evidence> evidence) {
+        ast::Program& program = translationUnit->getProgram();
+        program.addEvidence(std::move(evidence));
 }
 
 void ParserDriver::addType(Own<ast::Type> type) {

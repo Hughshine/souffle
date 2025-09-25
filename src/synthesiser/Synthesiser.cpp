@@ -35,6 +35,7 @@
 #include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/EmptyStatement.h"
+#include "ram/Evidence.h"
 #include "ram/Erase.h"
 #include "ram/ExistenceCheck.h"
 #include "ram/Exit.h"
@@ -434,7 +435,7 @@ void Synthesiser::emitRules (std::ostream& out) {
 void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "std::cout << std::fixed << std::setprecision(8);\n";
     out << "debugger.startStage(StageKind::CREATE_GRAPH_FULL);\n";
-    out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);\n";
+    out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob, evidences);\n";
     out << "debugger.endStage();\n";
     out << "// graph->dumpStatistics(std::cout);\n";
     out << "graph->dumpDot(\"before_prune.dot\");\n" << std::endl;
@@ -452,50 +453,112 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "if (obj.getKnowledge() == souffle::Knowledge::BDD) {\n";
     out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
     out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
-    out << "WeightedBDDManager bddManager;\n";    // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
-    out << "if (!opt.isDerivationOnly()) {\n";
+    out << "WeightedBDDManager bddManager;\n";
+    out << "{\n" << std::endl;
+    // out << "FunctionTimer timer(\" building formulas \");\n";
+    out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
+    out << "buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);\n";
+    out << "debugger.endStage();\n";
+    out << "}" << std::endl;
+    out << "{" << std::endl;
+    out << "debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);\n";
 
-        out << "{\n" << std::endl;
-        out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
-        out << "buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);\n";
-        out << "debugger.endStage();\n";
-        out << "}" << std::endl;
-        out << "{" << std::endl;
-        out << "debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);\n";
-        out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
-        out << "//    std::cout << \"Node\" << node->getId() ;\n";
-        out << "//    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
-        out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
-        out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
-        out << "    probResult[node] = prob;\n";
-        out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
-        out << "}\n";
-        out << "debugger.endStage();\n";
-        out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
-        out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
-        out << "debugger.endStage();\n";
-        out << "debugger.endTurn();\n";
-
-    // TODO:
-    // out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
-    // out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
-    // out << "WeightedBDDManager bddManager;\n";    // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
-    // out << "{\n" << std::endl;
-    // // out << "FunctionTimer timer(\" building formulas \");\n";
-    // out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
-    // out << "buildFormulasCyclewiseOnDemand(view, bddManager, nodeFormulas, edgeFormulas);\n";
-    // out << "debugger.endStage();\n";
-    // out << "}" << std::endl;
-    // out << "{" << std::endl;
-    // out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
-    // out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
-    // out << "debugger.endStage();\n";
-    // out << "debugger.endTurn();\n";
-
-
-    // TODO
-    out << "dumpInitialInputRelations(opt.getOutputFileDir() + \"/initial-input-relations-iter0.txt\");\n";
+    // out << "FunctionTimer timer(\" wmc and output probability \");\n";
+    // print result to cout; TODO print to files
+    // out << "std::cout << \"nodeFormulas size: \" << nodeFormulas.size() << std::flush;\n";
+    // out << "std::cout << \"edgeFormulas size: \" << edgeFormulas.size() << std::flush;\n";
+    // out << "size_t count = 0;\n";
+    // out << "std::unordered_map<NodePtr, double> nodeProbabilities;\n";
+    //out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+    out << "//    std::cout << \"Node\" << node->getId() ;\n";
+    out << "//    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
+    out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
+    out << "// --- Check that all evidences are in the graph and mark them ---\n";
+    out << "for (const auto& e : evidences) {\n";
+    out << "    NodePtr node = graph->findNode(e.first);\n";  // 访问 first
+    out << "    if (!node) {\n";
+    out << "        std::cerr << \"Error: evidence \" << e.first.toString() "
+           "<< \" is not found in the graph.\" << std::endl;\n";  // 调用 first 的 toString()
+    out << "        exit(1);\n";
+    out << "    }\n";
+    out << "    node->setEvidence(e.second);\n";  // **标记 evidence**
     out << "}\n";
+    out << "\n";
+    out << "// --- Compute W(evidence) ---\n";
+    out << "auto evidenceBdd = bddManager.getTrue();\n";
+    out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+    out << "    if (node->hasEvidence()) {\n";
+    out << "        evidenceBdd = bddManager.makeAnd(evidenceBdd, bdd);\n";
+    out << "    }\n";
+    out << "}\n";
+    out << "double evidenceWeight = bddManager.computeWeightedModelCount(evidenceBdd);\n";
+    out << "std::cout << \"Evidence WMC: \" << evidenceWeight << std::endl;\n\n";
+    out << "// --- Compute conditional probabilities P(node | evidence) ---\n";
+    out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+    out << "    auto conditionedBdd = bdd;\n";
+    out << "    for (const auto& [eNode, ebdd] : nodeFormulas) {\n";
+    out << "        if (eNode->hasEvidence()) {\n";
+    out << "            conditionedBdd = bddManager.makeAnd(conditionedBdd, ebdd);\n";
+    out << "        }\n";
+    out << "    }\n";
+    out << "    double weightedCount = bddManager.computeWeightedModelCount(conditionedBdd);\n";
+    out << "    double prob = (evidenceWeight == 0.0) ? 0.0 : weightedCount / evidenceWeight;\n";
+    out << "    probResult[node] = prob;\n";
+    out << "}\n";
+    out << "debugger.endStage();\n";
+    //out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
+    //out << "    probResult[node] = prob;\n";
+    //out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
+    //out << "}\n";
+    out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
+    out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
+    out << "debugger.endStage();\n";
+    out << "debugger.endTurn();\n";
+    out << "dumpInitialInputRelations(opt.getOutputFileDir() + \"/initial-input-relations-iter0.txt\");\n";
+//     out << "WeightedBDDManager bddManager;\n";    // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
+//     out << "if (!opt.isDerivationOnly()) {\n";
+
+//         out << "{\n" << std::endl;
+//         out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
+//         out << "buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);\n";
+//         out << "debugger.endStage();\n";
+//         out << "}" << std::endl;
+//         out << "{" << std::endl;
+//         out << "debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);\n";
+//         out << "for (const auto& [node, bdd] : nodeFormulas) {\n";
+//         out << "//    std::cout << \"Node\" << node->getId() ;\n";
+//         out << "//    std::cout << \"Node\" << node->getId() << \" \" << node->getTuple().toString() << \": \";\n";
+//         out << "//    std::cout << bddManager.toString(bdd) << \"\\t\";\n";
+//         out << "    auto prob = bddManager.computeWeightedModelCount(bdd);\n";
+//         out << "    probResult[node] = prob;\n";
+//         out << "//    std::cout << \"Probability: \" << prob << std::endl;\n";
+//         out << "}\n";
+//         out << "debugger.endStage();\n";
+//         out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
+//         out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
+//         out << "debugger.endStage();\n";
+//         out << "debugger.endTurn();\n";
+
+//     // TODO:
+//     // out << "std::map<NodePtr, BddNodeRef> nodeFormulas;";
+//     // out << "std::map<EdgePtr, BddNodeRef> edgeFormulas;";
+//     // out << "WeightedBDDManager bddManager;\n";    // out << "debugger.startStage(StageKind::PRECONFIG_FULL);\n";
+//     // out << "{\n" << std::endl;
+//     // // out << "FunctionTimer timer(\" building formulas \");\n";
+//     // out << "debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);\n";
+//     // out << "buildFormulasCyclewiseOnDemand(view, bddManager, nodeFormulas, edgeFormulas);\n";
+//     // out << "debugger.endStage();\n";
+//     // out << "}" << std::endl;
+//     // out << "{" << std::endl;
+//     // out << "debugger.startStage(StageKind::IO_DUMP_FULL);\n";
+//     // out << "dumpProbabilities(probResult, " << "opt.getOutputFileDir()" << ");\n";
+//     // out << "debugger.endStage();\n";
+//     // out << "debugger.endTurn();\n";
+
+
+//     // TODO
+//     out << "dumpInitialInputRelations(opt.getOutputFileDir() + \"/initial-input-relations-iter0.txt\");\n";
+//     out << "}\n";
     if (glb.config().has("online")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas, false);\n";
         out << "cli.setCmdOptions(opt);\n";
@@ -872,6 +935,8 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 
             PRINT_END_COMMENT(out);
         }
+
+
 
         void visit_(type_identity<Clear>, const Clear& clear, std::ostream& out) override {  // TODO: should not purge real relation
             PRINT_BEGIN_COMMENT(out);
@@ -3441,6 +3506,32 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
             assert("wrong I/O operation");
         }
     });
+
+    //-------------------------------------
+    // generate evidences
+    //--------------------------------------
+    if (prog.getEvidences().empty()) {
+        mainClass.hooks() << "std::vector<std::pair<UntypedTuple,bool>> evidences;\n";
+    } else {
+        std::stringstream ss;
+        ss << "std::vector<std::pair<UntypedTuple,bool>> evidences = {\n";
+
+        for (const auto& evi : prog.getEvidences()) {
+            const auto& tupleStr = evi->getTupleString();
+            const auto& relName = evi->getRelation();
+            const auto& value = evi->getValue();
+
+            size_t l = tupleStr.find("(");
+            size_t r = tupleStr.find(")");
+            std::string field = tupleStr.substr(l+1, r - l -1);
+
+            ss << "    {UntypedTuple{\"" << relName << "\", {" << field
+               << "}}, " << (value ? "true" : "false") << "},\n";
+        }
+
+        ss << "};\n";
+        mainClass.hooks() << ss.str();
+    }
 
     // identify relations used by each subroutines
     std::multimap<std::string /* stratum_* */, std::string> subroutineUses;

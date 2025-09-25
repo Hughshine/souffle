@@ -15,8 +15,10 @@
 #include "ast2ram/online/UnitTranslator.h"
 #include "Global.h"
 #include "LogStatement.h"
+#include "MainDriver.h"
 #include "ast/Clause.h"
 #include "ast/Directive.h"
+#include "ast/Evidence.h"
 #include "ast/Relation.h"
 #include "ast/SubsumptiveClause.h"
 #include "ast/TranslationUnit.h"
@@ -38,6 +40,7 @@
 #include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/Erase.h"
+#include "ram/Evidence.h"
 #include "ram/ExistenceCheck.h"
 #include "ram/Exit.h"
 #include "ram/Expression.h"
@@ -98,6 +101,7 @@ namespace souffle::ast2ram::online {
 UnitTranslator::UnitTranslator() : ast2ram::UnitTranslator() {}
 
 UnitTranslator::~UnitTranslator() = default;
+
 
 void UnitTranslator::addRamSubroutine(std::string subroutineID, Own<ram::Statement> subroutine) {
     assert(!contains(ramSubroutines, subroutineID) && "subroutine ID should not already exist");
@@ -2046,6 +2050,11 @@ Own<ram::Sequence> UnitTranslator::generateProgram(const ast::TranslationUnit& t
     return mk<ram::Sequence>(std::move(res));
 }
 
+Own<ram::Statement> UnitTranslator::translateEvidence(const ast::Evidence& evidence) {
+    return mk<ram::EmptyStatement>();
+}
+
+
 Own<ram::Statement> UnitTranslator::generateIncTableUpdate(const std::vector<std::size_t>& sccOrderings) const {
     VecOwn<ram::Statement> res;
     for (std::size_t i = 0; i < sccOrderings.size(); i++) {
@@ -2076,9 +2085,11 @@ Own<ram::Sequence> UnitTranslator::generateProgramInc(const ast::TranslationUnit
     if (context->getNumberOfSCCs() == 0) {
         return mk<ram::Sequence>();
     }
+
+    VecOwn<ram::Statement> incRes;
+
     const auto& sccOrdering =
             translationUnit.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>().order();
-    VecOwn<ram::Statement> incRes;
 
     // incremental computation needs to do table update before its execution
     // which meanly: clear all old results, and copy new to old
@@ -2128,6 +2139,7 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
             clause->setRecursive(false);
         }
     }
+
     /* -- Translation -- */
     // Generate the RAM program code
     auto ramMain = generateProgram(tu);
@@ -2155,7 +2167,16 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
     DebugReport& debugReport = tu.getDebugReport();
     auto ramProgram =
             mk<ram::Program>(std::move(ramRelations), std::move(ramMain), std::move(ramSubroutines), std::move(ramInc));
-
+    for (const auto& evidence : tu.getProgram().getEvidences()) {
+        const auto& atom = evidence->getAtom();
+        ramProgram->addEvidence(
+            mk<ram::Evidence>(
+                atom.getQualifiedName().toString(),
+                toString(atom),
+                evidence->getEvidenceValue()
+            )
+        );
+    }
     // Add the translated program to the debug report
     if (glb->config().has("debug-report")) {
         auto ram_end = std::chrono::high_resolution_clock::now();

@@ -63,3 +63,5 @@ test
 
 experiments/**/output
 experiments/**/test.cpp
+experiments/**/compute
+experiments/**/compute.cpp

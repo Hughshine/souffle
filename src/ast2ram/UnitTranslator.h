@@ -18,6 +18,7 @@
 #pragma once
 
 #include "souffle/utility/ContainerUtil.h"
+#include "ram/Program.h"
 
 namespace souffle::ast {
 class TranslationUnit;
