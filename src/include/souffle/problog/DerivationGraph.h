@@ -119,7 +119,7 @@ private:
     size_t id;
     double probability;
 
-    bool has_evidence;
+    bool has_evidence = false;
     bool evidenceValue;
 
     void addIncomingEdge(EdgePtr edge);
