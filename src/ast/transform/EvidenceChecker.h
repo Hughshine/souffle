@@ -23,7 +23,7 @@ public:
     }
 
 private:
-    bool checkEvidence(const Directive* directive,  TranslationUnit& translationUnit);
+    bool checkEvidence(const Evidence* evidence,  TranslationUnit& translationUnit);
 };
 
 }

@@ -394,14 +394,14 @@ unit
 	  // Parse query without parentheses
 	}*/
 | unit annotations EVIDENCE LPAREN atom COMMA TRUELIT RPAREN DOT
-{
+{   auto& atom = *$5;
     driver.addEvidence(
-        mk<souffle::ast::Evidence>(Own<ast::Atom>($5), true, @$));
+        mk<souffle::ast::Evidence>(Own<ast::Atom>($5), true, atom.getSrcLoc()));
 }
 | unit annotations EVIDENCE LPAREN atom COMMA FALSELIT RPAREN DOT
-{
+{   auto& atom = *$5;
     driver.addEvidence(
-        mk<souffle::ast::Evidence>(Own<ast::Atom>($5), false, @$));
+        mk<souffle::ast::Evidence>(Own<ast::Atom>($5), false, atom.getSrcLoc()));
 }
 
   | unit annotations component_decl
