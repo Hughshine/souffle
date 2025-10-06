@@ -15,7 +15,7 @@
  ***********************************************************************/
 
 #pragma once
-
+#include "ram/ProbQuery.h"
 #include "ram/Node.h"
 #include "ram/Relation.h"
 #include "ram/Statement.h"
@@ -51,6 +51,7 @@ namespace souffle::ram {
 class Program : public Node {
 private:
     Program() : Node(NK_Program){};
+    VecOwn<ProbQuery> probQueries;
 
 public:
     Program(VecOwn<Relation> rels, Own<Statement> main, std::map<std::string, Own<Statement>> subs, Own<Statement> inc = mk<EmptyStatement>())
@@ -115,6 +116,13 @@ public:
         return n->getKind() == NK_Program;
     }
 
+    void addProbQuery(Own<ProbQuery> probQuery) {
+        probQueries.push_back(std::move(probQuery));
+    }
+
+    const VecOwn<ProbQuery>& getProbQueries() const {
+        return probQueries;
+    }
 protected:
     void print(std::ostream& out) const override {
         out << "PROGRAM" << std::endl;

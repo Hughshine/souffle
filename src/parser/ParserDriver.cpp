@@ -236,7 +236,7 @@ void ParserDriver::addDirective(Own<ast::Directive> directive) {
 
 void ParserDriver::addProbQuery(Own<ast::ProbQuery> query) {
     ast::Program& program = translationUnit->getProgram();
-    program.addProbQuery(std::move(query));
+    program.addProbQueries(std::move(query));
 }
 
 void ParserDriver::addType(Own<ast::Type> type) {

@@ -204,11 +204,11 @@ public:
 
     VecOwn<ProbQuery> queries;
 
-    void addProbQuery(Own<ProbQuery> qr) {
+    void addProbQueries(Own<ProbQuery> qr) {
         queries.push_back(std::move(qr));
     }
 
-    const VecOwn<ProbQuery>& getQueries() const {
+    const VecOwn<ProbQuery>& getProbQueries() const {
         return queries;
     }
 

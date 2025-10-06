@@ -6,7 +6,7 @@
 namespace souffle::ast {
 
 ProbQuery::ProbQuery(Own<Atom> atom, SrcLocation loc)
-    : Node(NK_Query, loc),
+    : Node(NK_ProbQuery, loc),
       atom(std::move(atom)) {}
 
 const Atom& ProbQuery::getAtom() const {

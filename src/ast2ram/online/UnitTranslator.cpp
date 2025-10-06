@@ -19,6 +19,7 @@
 #include "ast/Directive.h"
 #include "ast/Relation.h"
 #include "ast/SubsumptiveClause.h"
+#include "ast/ProbQuery.h"
 #include "ast/TranslationUnit.h"
 #include "ast/UserDefinedFunctor.h"
 #include "ast/analysis/TopologicallySortedSCCGraph.h"
@@ -53,6 +54,7 @@
 #include "ram/Negation.h"
 #include "ram/Parallel.h"
 #include "ram/Program.h"
+#include "ram/ProbQuery.h"
 #include "ram/Query.h"
 #include "ram/Relation.h"
 #include "ram/RelationSize.h"
@@ -2046,6 +2048,10 @@ Own<ram::Sequence> UnitTranslator::generateProgram(const ast::TranslationUnit& t
     return mk<ram::Sequence>(std::move(res));
 }
 
+    Own<ram::Statement> UnitTranslator::translateProbQuery(const ast::ProbQuery& probQuery) {
+        return mk<ram::EmptyStatement>();
+    }
+
 Own<ram::Statement> UnitTranslator::generateIncTableUpdate(const std::vector<std::size_t>& sccOrderings) const {
     VecOwn<ram::Statement> res;
     for (std::size_t i = 0; i < sccOrderings.size(); i++) {
@@ -2155,7 +2161,10 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
     DebugReport& debugReport = tu.getDebugReport();
     auto ramProgram =
             mk<ram::Program>(std::move(ramRelations), std::move(ramMain), std::move(ramSubroutines), std::move(ramInc));
-
+    for (const auto& probQuery : tu.getProgram().getProbQueries()) {
+        std::string relName = probQuery->getAtomName().toString();
+        ramProgram -> addProbQuery(mk<ram::ProbQuery>(relName));
+    }
     // Add the translated program to the debug report
     if (glb->config().has("debug-report")) {
         auto ram_end = std::chrono::high_resolution_clock::now();
