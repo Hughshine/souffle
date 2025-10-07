@@ -592,7 +592,7 @@ public:
         std::set<NodePtr> impactedNodes;
         std::set<EdgePtr> impactedEdges;
         for (const auto& [deletedFact, impactedFact]: getNodeImpactedByDeltaDelete()) {
-            out << "  Deleted fact " << deletedFact->getTuple().toString() << " impacts visible nodes: ";
+            out << "  Deleted fact " << deletedFact->getTuple().toString() + "_" + std::to_string(deletedFact->getId()) << " impacts visible nodes: ";
             for (const auto& fact : impactedFact) {
                 out << fact->toString() << " ";
                 impactedNodes.insert(fact);
@@ -600,7 +600,7 @@ public:
             out << std::endl;
         }
         for (const auto& [deletedEdge, impactedEdge]: getEdgeImpactedByDeltaDelete()) {
-            out << "  Deleted fact " << deletedEdge->getTuple().toString() << " impacts visible edges: ";
+            out << "  Deleted fact " << deletedEdge->getTuple().toString() + "_" + std::to_string(deletedEdge->getId()) << " impacts visible edges: ";
             for (const auto& edge : impactedEdge) {
                 out << edge->toString() << " ";
                 impactedEdges.insert(edge);
@@ -624,16 +624,16 @@ public:
             out << std::endl;
         }
         for (const auto& node : getValidNodes()) {
-            out << "  Valid node: " << node->toString() << std::endl;
+            out << "  Valid node: " << node->toString() << "_" << node->getId() << "_" << mapNodeId(node->getId()) << std::endl;
         }
         for (const auto& node : getDeletedFacts()) {
-            out << "  Deleted fact: " << node->toString() << std::endl;
+            out << "  Deleted fact: " << node->toString() << "_" << node->getId() << "_" << mapNodeId(node->getId())  << std::endl;
         }
         for (const auto& node : getDeletedDeterminsticFacts()) {
-            out << "  Deleted deterministic fact: " << node->toString() << std::endl;
+            out << "  Deleted deterministic fact: " << node->toString() << "_" << node->getId() << std::endl;
         }
         for (const auto& node : getDeletedNonDeterministicFacts()) {
-            out << "  Deleted non-deterministic fact: " << node->toString() << std::endl;
+            out << "  Deleted non-deterministic fact: " << node->toString() << "_" << node->getId() << "_" << mapNodeId(node->getId()) << std::endl;
         }
         std::set<NodePtr> uselessValidNodes;
         for (const auto& node : getValidNodes()) {
@@ -1092,7 +1092,6 @@ public:
     IncSubgraphView prune(const std::vector<std::string>& outputRelations);
 
     static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {})  {
-        std::cerr << "[Debug] Entering DerivationGraph::createFrom()" << std::endl;
         //assert(false && "You are now inside createFrom!");
         FunctionTimer timer(" creating derivation graph ");
         auto graph = new IncrementalDerivationGraph(&ruleManager);
@@ -1541,7 +1540,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     // 初始化：从所有输出 relation 的节点出发
     for (const auto& node : nodes) {
         if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
-//            std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
+            std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
             reachableNodes.insert(node);
             workQueue.push(node);
             node->needOutput = true;
@@ -1574,6 +1573,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         }
     }
 
+    // TODO
     for (const auto& node : nodes) {
         if (node->hasEvidence() && reachableNodes.insert(node).second) {
             std::cout << "Found evidence node: " << node->toString()
@@ -1684,6 +1684,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     std::unordered_map<NodePtr, std::set<NodePtr>> newInsertedFactImpactedNodes;
     std::unordered_map<NodePtr, std::set<EdgePtr>> newInsertedFactImpactedEdges;
     for (const auto& [fact, impactedNodes] : insertedFactImpactedNodes) {
+        if (!reachableNodes.count(fact)) {
+            continue;
+        }
         std::set<NodePtr> newImpactedNodes;
         for (const auto& impactedNode : impactedNodes) {
             if (reachableNodes.count(impactedNode)) {
@@ -1693,6 +1696,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         newInsertedFactImpactedNodes[fact] = std::move(newImpactedNodes);
     }
     for (const auto& [fact, impactedEdges] : insertedFactImpactedEdges) {
+        if (!reachableNodes.count(fact)) {
+            continue;
+        }
         std::set<EdgePtr> newImpactedEdges;
         for (const auto& impactedEdge : impactedEdges) {
             if (reachableEdges.count(impactedEdge)) {
@@ -1704,6 +1710,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     std::unordered_map<NodePtr, std::set<NodePtr>> newDeletedFactImpactedNodes;
     std::unordered_map<NodePtr, std::set<EdgePtr>> newDeletedFactImpactedEdges;
     for (const auto& [fact, impactedNodes] : deletedFactImpactedNodes) {
+        if (!reachableNodes.count(fact)) {
+            continue;
+        }
         std::set<NodePtr> newImpactedNodes;
         for (const auto& impactedNode : impactedNodes) {
             if (reachableNodes.count(impactedNode)) {
@@ -1713,6 +1722,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         newDeletedFactImpactedNodes[fact] = std::move(newImpactedNodes);
     }
     for (const auto& [fact, impactedEdges] : deletedFactImpactedEdges) {
+        if (!reachableNodes.count(fact)) {
+            continue;
+        }
         std::set<EdgePtr> newImpactedEdges;
         for (const auto& impactedEdge : impactedEdges) {
             if (reachableEdges.count(impactedEdge)) {

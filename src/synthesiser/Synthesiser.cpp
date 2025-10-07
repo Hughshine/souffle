@@ -501,6 +501,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "            conditionedBdd = bddManager.makeAnd(conditionedBdd, ebdd);\n";
     out << "        }\n";
     out << "    }\n";
+    // out << "    std::cout << bddManager.toString(conditionedBdd) << std::endl; // for debugging\n";
     out << "    double weightedCount = bddManager.computeWeightedModelCount(conditionedBdd);\n";
     out << "    double prob = (evidenceWeight == 0.0) ? 0.0 : weightedCount / evidenceWeight;\n";
     out << "    probResult[node] = prob;\n";
