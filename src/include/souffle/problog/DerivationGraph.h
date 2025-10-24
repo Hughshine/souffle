@@ -1531,7 +1531,6 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
             node->needOutput = true;
             outputNodes.insert(node);
         } else if (node -> isQueryNode()) {
-            std::cout << node << std::endl;
             reachableNodes.insert(node);
             workQueue.push(node);
             node->needOutput = true;
