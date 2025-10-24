@@ -28,12 +28,17 @@ void ProbQuery::print(std::ostream& os) const {
 }
 
 bool ProbQuery::equal(const Node& other) const {
-    const auto& otherEvidence = dynamic_cast<const ProbQuery*>(&other);
-    return otherEvidence != nullptr && value == otherEvidence->value && *atom == *(otherEvidence->atom);
+    const auto& otherQuery = dynamic_cast<const ProbQuery*>(&other);
+    return otherQuery != nullptr &&  *atom == *(otherQuery->atom);
 }
 
 ProbQuery *ProbQuery::cloning() const {
     return new ProbQuery(souffle::clone(atom), getSrcLoc());
 }
 
+std::string ProbQuery::toString() const {
+    std::ostringstream ss;
+    ss << "query(" << *atom << ")";
+    return ss.str();
+}
 };

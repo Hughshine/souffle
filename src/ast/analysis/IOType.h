@@ -17,6 +17,7 @@
 #pragma once
 
 #include "ast/Relation.h"
+#include "ast/ProbQuery.h"
 #include "ast/TranslationUnit.h"
 #include <iosfwd>
 #include <map>

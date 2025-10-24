@@ -329,6 +329,7 @@ Program* Program::cloning() const {
     res->lattices = clone(lattices);
     res->functors = clone(functors);
     res->relations = clone(relations);
+    res->queries = clone(queries);
     return res;
 }
 
@@ -367,7 +368,6 @@ GroundnessInfo Program::isGround() const {
             }
         }
     }
-
     // 2. Check each clause for being fully ground
     for (const auto* clause : getClauses()) {
         bool clauseIsGround = true;

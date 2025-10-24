@@ -2162,8 +2162,8 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
     auto ramProgram =
             mk<ram::Program>(std::move(ramRelations), std::move(ramMain), std::move(ramSubroutines), std::move(ramInc));
     for (const auto& probQuery : tu.getProgram().getProbQueries()) {
-        std::string relName = probQuery->getAtomName().toString();
-        ramProgram -> addProbQuery(mk<ram::ProbQuery>(relName));
+        const auto& atom = probQuery->getAtom();
+        ramProgram -> addProbQuery(mk<ram::ProbQuery>(atom.getQualifiedName().toString(), toString(atom)));
     }
     // Add the translated program to the debug report
     if (glb->config().has("debug-report")) {

@@ -14,13 +14,15 @@ namespace souffle::ram {
 
 class ProbQuery : public Statement {
 public:
-    ProbQuery(std::string rel)
-        : Statement(NK_ProbQuery), relation(std::move(rel)) {}
+    ProbQuery(std::string rel, std::string tuple)
+        : Statement(NK_ProbQuery), relation(std::move(rel)), tupleStr(std::move(tuple)) {}
 
     const std::string& getRelation() const { return relation; }
 
+    const std::string& getTupleString() const {return tupleStr;}
+
     ProbQuery* cloning() const override {
-        return new ProbQuery(relation);
+        return new ProbQuery(relation, tupleStr);
     }
 
     void apply(const NodeMapper&) override {};
@@ -30,11 +32,12 @@ public:
     }
 protected:
     void print(std::ostream& os, int tabpos) const override {
-        os << times(" ", tabpos) << "ProbQuery " << relation << "\n";
+        os << times(" ", tabpos) << "QUERY " << relation << "(" << tupleStr << ")" << "\n";
     }
 
 private:
     std::string relation;
+    std::string tupleStr;
 };
 
 }

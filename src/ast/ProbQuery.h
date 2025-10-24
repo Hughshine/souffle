@@ -21,6 +21,7 @@ public:
     void print(std::ostream& os) const override;
     bool equal(const Node& other) const override;
     ProbQuery* cloning() const override;
+    std::string toString() const;
 
 
 

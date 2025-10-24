@@ -383,7 +383,7 @@ unit
     }
   | unit QUERY LPAREN atom RPAREN DOT
 	{
-	  driver.addProbQuery(mk<souffle::ast::ProbQuery>(Own<ast::Atom>($4), $4->getSrcLoc()));
+	  driver.addProbQuery(mk<souffle::ast::ProbQuery>(Own<ast::Atom>($4), @$));
 	}
   | unit QUERY qualified_name DOT %prec ZERO_ARITY  // New rule for 0-arity query
 	{

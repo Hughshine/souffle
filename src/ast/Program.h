@@ -64,7 +64,7 @@ struct GroundnessInfo {
     std::vector<Clause*> groundClauses;
     std::vector<Clause*> facts;
     std::vector<QualifiedName> inputRelationNames;
-    std::vector<QualifiedName> outputRelationNames;
+    std::vector<QualifiedName>  outputRelationNames;
     // std::vector<> queried terms;
     // std::vector<> evidences;
     // stdout
