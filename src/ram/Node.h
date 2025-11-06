@@ -203,6 +203,7 @@ public:
                 NK_LogSize,
                 NK_DeltaUnion,
             NK_LastRelationStatement,
+        NK_ProbQuery,
         NK_Evidence,
         NK_LastStatement,
     };

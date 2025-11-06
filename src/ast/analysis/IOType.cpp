@@ -50,6 +50,10 @@ void IOTypeAnalysis::run(const TranslationUnit& translationUnit) {
                 break;
         }
     });
+    for (auto& probquery : program.getProbQueries()) {
+        auto* relation = program.getRelation(probquery->getAtom());
+        outputRelations.insert(relation);
+    }
 }
 
 void IOTypeAnalysis::print(std::ostream& os) const {

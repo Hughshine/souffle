@@ -151,6 +151,7 @@ private:
     souffle::SouffleProgram* program;
     IncrementalDerivationGraph* graph;
     RuleManager* ruleManager;
+    QueryManager* queryManager;
 //    std::map<NodePtr, BddNodeRef>* nodeFormulas;
     DDManager<NodeRef>* ddManager = nullptr;
     std::map<NodePtr, NodeRef>* nodeFormulas;
@@ -714,7 +715,7 @@ public:
                 // TODO: write delta inc to original
                 debugger.startStage(StageKind::SEMINAIVE_FULL);
                 program->runAll(opt.getInputFileDir(), opt.getOutputFileDir(), false);
-                graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, *ruleManager, fact_prob);
+                graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, *ruleManager, *queryManager, fact_prob);
                 debugger.endStage();
                 graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
                 debugger.startStage(StageKind::PRUNING_FULL);

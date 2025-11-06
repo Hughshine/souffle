@@ -15,6 +15,7 @@
  ***********************************************************************/
 
 #pragma once
+#include "ram/ProbQuery.h"
 
 #include "ram/Evidence.h"
 #include "ram/EmptyStatement.h"
@@ -53,7 +54,7 @@ class Program : public Node {
     private:
         Program() : Node(NK_Program){};
         VecOwn<Evidence> evidences;
-
+        VecOwn<ProbQuery> probQueries;
     public:
         Program(VecOwn<Relation> rels, Own<Statement> main, std::map<std::string, Own<Statement>> subs, Own<Statement> inc = mk<EmptyStatement>())
                 : Node(NK_Program), relations(std::move(rels)), main(std::move(main)),
@@ -90,38 +91,26 @@ class Program : public Node {
         const Statement& getSubroutine(const std::string& name) const {
             return *subroutines.at(name);
         }
+    }
 
-        Program* cloning() const override {
-            auto* res = new Program();
-            res->main = clone(main);
-            for (auto& rel : relations) {
-                res->relations.push_back(clone(rel));
-            }
-            for (auto& sub : subroutines) {
-                res->subroutines[sub.first] = clone(sub.second);
-            }
-            return res;
-        }
+    static bool classof(const Node* n) {
+        return n->getKind() == NK_Program;
+    }
 
-        void apply(const NodeMapper& map) override {
-            main = map(std::move(main));
-            for (auto& rel : relations) {
-                rel = map(std::move(rel));
-            }
-            for (auto& sub : subroutines) {
-                sub.second = map(std::move(sub.second));
-            }
-        }
+    void addProbQuery(Own<ProbQuery> probQuery) {
+        
+      .push_back(std::move(probQuery));
+    }
 
-        static bool classof(const Node* n) {
-            return n->getKind() == NK_Program;
-        }
+    const VecOwn<ProbQuery>& getProbQueries() const {
+        return probQueries;
+    }
 
-        void addEvidence(Own<Evidence> evidence) {
+    void addEvidence(Own<Evidence> evidence) {
             evidences.push_back(std::move(evidence));
         }
 
-        const VecOwn<Evidence>& getEvidences() const {
+    const VecOwn<Evidence>& getEvidences() const {
             return evidences;
         }
 

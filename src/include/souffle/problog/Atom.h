@@ -207,6 +207,11 @@ struct SymbolicField {
         return result;
     }
 
+    static SymbolicField makeUnnamedVariable() {
+        SymbolicField result{VariableField{"_"}};
+        return result;
+    }
+
     std::string toString() const {
         if (std::holds_alternative<IntegerField>(field)) {
             return std::to_string(std::get<IntegerField>(field).value);

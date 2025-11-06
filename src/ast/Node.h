@@ -80,6 +80,7 @@ public:
     // clang-format off
     enum NodeKind {
         NK_NONE,
+        NK_ProbQuery,
         NK_Evidence,
         NK_Argument,
             NK_Constant,

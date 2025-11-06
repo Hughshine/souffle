@@ -34,6 +34,7 @@
 #include "ast/transform/Fixpoint.h"
 #include "ast/transform/FoldAnonymousRecords.h"
 #include "ast/transform/GroundWitnesses.h"
+#include "ast/transform/ProbQueryChecker.h"
 #include "ast/transform/GroundedTermsChecker.h"
 #include "ast/transform/IOAttributes.h"
 #include "ast/transform/IODefaults.h"
@@ -494,6 +495,7 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
             mk<ast::transform::EvidenceSemanticChecker>(),
             mk<ast::transform::ComponentInstantiationTransformer>(),
             // mk<ast::transform::LatticeTransformer>(),
+            mk<ast::transform::ProbQueryChecker>(),
             mk<ast::transform::DebugDeltaRelationTransformer>(),
             mk<ast::transform::IODefaultsTransformer>(),
             // mk<ast::transform::SimplifyAggregateTargetExpressionTransformer>(),

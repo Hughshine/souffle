@@ -4,18 +4,21 @@
 #include <iostream>
 #pragma once
 
-#include <vector>
-#include <string>
-#include <memory>
-#include <fstream>
-#include <sstream>
-#include <unordered_set>
-#include <queue>
 #include "souffle/Derivation.h"
-#include "souffle/problog/Rule.h"
-#include "souffle/problog/RuleManager.h"
 #include "souffle/RamTypes.h"
 #include "souffle/SouffleInterface.h"
+#include "souffle/problog/Rule.h"
+#include "souffle/problog/RuleManager.h"
+#include "souffle/problog/QueryManager.h"
+#include <fstream>
+#include <memory>
+#include <queue>
+#include <sstream>
+#include <string>
+#include <unordered_set>
+#include <vector>
+
+#include <tuple>
 
 int nextFormulaNodeId = 0;
 std::unordered_map<size_t, int> nodeIdMap;
@@ -95,6 +98,11 @@ public:
         }
         return ss.str();
     }
+    void setQuery() {
+        isQuery = true;
+    }
+    bool isQueryNode() {
+        return isQuery;
     bool hasEvidence() const { return has_evidence; }
     bool getEvidenceValue() const { return evidenceValue; }
     void setEvidence(bool value) {
@@ -105,6 +113,7 @@ public:
     bool isFact = false;
     bool pruned = false;
     bool needOutput = false;
+    bool isQuery = false;
 
     size_t currentRefCount = 0;  // references by output nodes; set during pruning
     size_t tmpRefCount = 0;      // set during
@@ -744,6 +753,37 @@ public:
         return node;
     }
 
+    void createQuery(NodePtr node, const QueryManager& queryManager) {
+        const auto& tuple = node->getTuple();
+        const std::string& relation = tuple.relation_name;
+        const auto& fields = tuple.fields;
+
+        for (const auto& query : queryManager.getAllQuery()) {
+            const std::string& queryRelation = query->getRelationName();
+            const auto& queryVars = query->getBoundVariables();
+
+            if (relation != queryRelation) continue;
+            if (queryVars.size() != fields.size()) {
+                std::cerr << "Length mismatch in relation " << relation
+                          << ": queryVars=" << queryVars.size()
+                          << ", fields=" << fields.size() << std::endl;
+                continue;
+            }
+
+            bool match = true;
+            for (size_t i = 0; i < fields.size(); i++) {
+                if (queryVars[i] == "_") continue;
+                if (std::to_string(fields[i]) != queryVars[i]) {
+                    match = false;
+                    break;
+                }
+            }
+
+            if (match) {
+                node->setQuery();
+            }
+        }
+    }
     void attachEvidence(const std::vector<std::pair<UntypedTuple,bool>>& evidenceList) {
         for (const auto& [tuple, value] : evidenceList) {
             NodePtr node = findNode(tuple);
@@ -969,8 +1009,6 @@ public:
         return SubgraphView(std::move(newNodes), std::move(newEdges));
     }
 
-
-
     static DerivationGraph createExample() {
         DerivationGraph graph;
 
@@ -1090,9 +1128,8 @@ public:
     IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
     IncSubgraphView prune(const std::vector<souffle::Relation*>& outputRelations);
     IncSubgraphView prune(const std::vector<std::string>& outputRelations);
-
-    static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {})  {
-        //assert(false && "You are now inside createFrom!");
+  
+    static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {}) {
         FunctionTimer timer(" creating derivation graph ");
         auto graph = new IncrementalDerivationGraph(&ruleManager);
         for (const auto& [tuple, prob] : fact_prob) {
@@ -1110,6 +1147,11 @@ public:
                 auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
             }
         }
+
+        for (auto& node : graph->getNodes()) {
+            graph->createQuery(node, queryManager);
+        }
+
         return graph;
     }
 
@@ -1529,7 +1571,6 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
 // pruning is not incremental for now
 IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>& outputRelations) {
     std::unordered_set outputRelationNames(outputRelations.begin(), outputRelations.end());
-
     // 标记可达的节点和边
     std::unordered_set<NodePtr> reachableNodes;
     std::unordered_set<EdgePtr> reachableEdges;
@@ -1541,6 +1582,11 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     for (const auto& node : nodes) {
         if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
             std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
+            reachableNodes.insert(node);
+            workQueue.push(node);
+            node->needOutput = true;
+            outputNodes.insert(node);
+        } else if (node -> isQueryNode()) {
             reachableNodes.insert(node);
             workQueue.push(node);
             node->needOutput = true;

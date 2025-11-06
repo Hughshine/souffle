@@ -385,12 +385,14 @@ unit
     }
   | unit QUERY LPAREN atom RPAREN DOT
 	{
-	  // Simply parse the query syntax without doing anything with it
-	  // This allows Souffle to accept ProbLog files with queries
-	  // TODO
+	  driver.addProbQuery(mk<souffle::ast::ProbQuery>(Own<ast::Atom>($4), @$));
 	}
-  /*| unit QUERY qualified_name DOT %prec ZERO_ARITY  // New rule for 0-arity query
+  | unit QUERY qualified_name DOT %prec ZERO_ARITY  // New rule for 0-arity query
 	{
+	  souffle::VecOwn<souffle::ast::Argument> args;
+	  auto atom = mk<souffle::ast::Atom>($3, std::move(args), @$);
+	  driver.addProbQuery(mk<souffle::ast::ProbQuery>(std::move(atom), @$));
+	}
 	  // Parse query without parentheses
 	}*/
 | unit annotations EVIDENCE LPAREN atom COMMA TRUELIT RPAREN DOT

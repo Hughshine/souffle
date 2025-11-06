@@ -430,12 +430,49 @@ void Synthesiser::emitRules (std::ostream& out) {
     out << "ruleManager = RuleManager({" << join(ruleNames, ", ") << "});" << std::endl;
     // out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
         // out << "std::cout << ruleManager.toString();\n";
+    const auto& queries = this->newAstProgram->getProbQueries();
+    std::vector<std::string> queryNames;
+
+    for (const auto& queryPtr : queries) {
+        if (!queryPtr) continue;
+        const auto& query = *queryPtr;
+
+        const auto& atom = query.getAtom();
+        std::vector<std::string> fieldStrs;
+
+        for (auto* arg : atom.getArguments()) {
+            if (isA<ast::Variable>(arg)) {
+                auto var = as<ast::Variable>(arg);
+                fieldStrs.push_back("SymbolicField::makeVariable(\"" + var->getName() + "\")");
+            } else if (isA<ast::UnnamedVariable>(arg)) {
+                fieldStrs.push_back("SymbolicField::makeUnnamedVariable()");
+            } else if (isA<ast::NumericConstant>(arg)) {
+                auto c = as<ast::NumericConstant>(arg);
+                fieldStrs.push_back("SymbolicField{" + c->getConstant() + "}");
+            } else if (isA<ast::StringConstant>(arg)) {
+                auto s = as<ast::StringConstant>(arg);
+                fieldStrs.push_back("SymbolicField{StringField{" + s->getConstant() + "}}");
+            } else if (isA<ast::IntrinsicFunctor>(arg)) {
+                auto f = as<ast::IntrinsicFunctor>(arg);
+                fieldStrs.push_back("SymbolicField(std::shared_ptr<ExprField>(" + f->serialize() + "))");
+            }
+        }
+
+        std::string queryName =
+            "query_" + atom.getQualifiedName().toString() + "_";
+        queryNames.push_back(queryName);
+
+        out << "const Query " << queryName
+            << " = Query(Atom(\"" << atom.getQualifiedName().toString()
+            << "\", {" << join(fieldStrs, ", ") << "}));\n";
+    }
+    out << "QueryManager queryManager = QueryManager({" << join(queryNames, ", ") << "});" << std::endl;
 }
 
 void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "std::cout << std::fixed << std::setprecision(8);\n";
     out << "debugger.startStage(StageKind::CREATE_GRAPH_FULL);\n";
-    out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob, evidences);\n";
+    out << "auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, queryManager, fact_prob, evidences);\n";
     out << "debugger.endStage();\n";
     out << "// graph->dumpStatistics(std::cout);\n";
     out << "graph->dumpDot(\"before_prune.dot\");\n" << std::endl;
@@ -4265,6 +4302,8 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     db.addGlobalInclude("\"souffle/problog/Atom.h\"");
     db.addGlobalInclude("\"souffle/problog/Rule.h\"");
     db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
+    db.addGlobalInclude("\"souffle/problog/Query.h\"");
+    db.addGlobalInclude("\"souffle/problog/QueryManager.h\"");
     db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
     db.addGlobalInclude("\"souffle/problog/formula/SddManager.h\"");
     db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");

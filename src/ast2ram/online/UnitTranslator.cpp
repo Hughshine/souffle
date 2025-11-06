@@ -21,6 +21,7 @@
 #include "ast/Evidence.h"
 #include "ast/Relation.h"
 #include "ast/SubsumptiveClause.h"
+#include "ast/ProbQuery.h"
 #include "ast/TranslationUnit.h"
 #include "ast/UserDefinedFunctor.h"
 #include "ast/analysis/TopologicallySortedSCCGraph.h"
@@ -56,6 +57,7 @@
 #include "ram/Negation.h"
 #include "ram/Parallel.h"
 #include "ram/Program.h"
+#include "ram/ProbQuery.h"
 #include "ram/Query.h"
 #include "ram/Relation.h"
 #include "ram/RelationSize.h"
@@ -2050,6 +2052,9 @@ Own<ram::Sequence> UnitTranslator::generateProgram(const ast::TranslationUnit& t
     return mk<ram::Sequence>(std::move(res));
 }
 
+Own<ram::Statement> UnitTranslator::translateProbQuery(const ast::ProbQuery& probQuery) {
+        return mk<ram::EmptyStatement>();
+    }
 Own<ram::Statement> UnitTranslator::translateEvidence(const ast::Evidence& evidence) {
     return mk<ram::EmptyStatement>();
 }
@@ -2167,6 +2172,9 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
     DebugReport& debugReport = tu.getDebugReport();
     auto ramProgram =
             mk<ram::Program>(std::move(ramRelations), std::move(ramMain), std::move(ramSubroutines), std::move(ramInc));
+    for (const auto& probQuery : tu.getProgram().getProbQueries()) {
+        const auto& atom = probQuery->getAtom();
+        ramProgram -> addProbQuery(mk<ram::ProbQuery>(atom.getQualifiedName().toString(), toString(atom)));
     for (const auto& evidence : tu.getProgram().getEvidences()) {
         const auto& atom = evidence->getAtom();
         ramProgram->addEvidence(

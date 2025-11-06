@@ -21,6 +21,7 @@
 #include "ast/Component.h"
 #include "ast/ComponentInit.h"
 #include "ast/Directive.h"
+#include "ast/ProbQuery.h"
 #include "ast/Evidence.h"
 #include "ast/FunctorDeclaration.h"
 #include "ast/ItemContainer.h"
@@ -64,7 +65,7 @@ struct GroundnessInfo {
     std::vector<Clause*> groundClauses;
     std::vector<Clause*> facts;
     std::vector<QualifiedName> inputRelationNames;
-    std::vector<QualifiedName> outputRelationNames;
+    std::vector<QualifiedName>  outputRelationNames;
     // std::vector<> queried terms;
     // std::vector<> evidences;
     // stdout
@@ -202,16 +203,23 @@ public:
     /** Add relation directive */
     void addDirective(Own<Directive> directive) override;
 
-    VecOwn<Evidence> evidences;
+    VecOwn<ProbQuery> queries;
 
-    // 添加 Evidence
+    void addProbQueries(Own<ProbQuery> qr) {
+        queries.push_back(std::move(qr));
+    }
+
+    const VecOwn<ProbQuery>& getProbQueries() const {
+        return queries;
+      
+    VecOwn<Evidence> evidences;
+      
     void addEvidence(Own<Evidence> ev) {
         evidences.push_back(std::move(ev));
     }
-
-    // 获取所有 Evidence
+      
     const VecOwn<Evidence>& getEvidences() const {
-        return evidences;
+        return evidence;
     }
 
     /** Return pragma directives */

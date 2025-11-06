@@ -17,6 +17,7 @@
 #include "ast/Relation.h"
 #include "ast2ram/UnitTranslator.h"
 #include "ram/Expression.h"
+#include "ast/ProbQuery.h"
 #include "souffle/utility/ContainerUtil.h"
 #include <map>
 #include "ast/Evidence.h"
@@ -100,7 +101,7 @@ protected:
     Own<ram::Statement> generateRecursiveStratum(const ast::RelationSet& scc, std::size_t sccNum) const;
     Own<ram::Statement> generateRecursiveStratumInc(
                 const ast::RelationSet& scc, std::size_t sccNumber) const;
-
+    Own<ram::Statement> translateProbQuery(const ast::ProbQuery& probQuery);
     /** IO translation */
     Own<ram::Statement> generateStoreRelation(const ast::Relation* relation) const;
     Own<ram::Statement> generateLoadRelation(const ast::Relation* relation) const;
