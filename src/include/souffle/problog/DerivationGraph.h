@@ -45,6 +45,7 @@ int mapEdgeId(size_t id) {
 // rule 2: path(x,y) :- path(x,z), edge(z,y).
 // facts: edge(1,2), edge(2,3)
 // (derived) paths: path(1,2), path(2,3), path(1,3)
+// evidence(path(1,3), true).
 
 // Forward declarations
 class Node;
@@ -54,8 +55,26 @@ struct CycleDependencyGraph;
 
 using NodePtr = std::shared_ptr<Node>;
 using EdgePtr = std::shared_ptr<Hyperedge>;
-
 // TODO: derivation graph now does not support negation...
+
+/** class Evidence {
+public:
+    friend class DerivationGraph;
+    friend class IncrementalDerivationGraph;
+    Evidence(const UntypedTuple tuple, bool value) : tuple(tuple), value(value) {}
+
+    const UntypedTuple& getTuple() const {return tuple;}
+    bool getValue() const {return value;}
+
+    std::string toString() const {
+        std::stringstream ss;
+        ss << "evidence(" << tuple.toString() << ", " << (value ? "true" : "false") << ")";
+        return ss.str();
+    }
+private:
+    UntypedTuple tuple;
+    bool value;
+}; **/
 
 class Node {
 public:
@@ -72,13 +91,23 @@ public:
     void setProbability(double prob) { probability = prob; }
     double getProbability() const { return probability; }
     std::string toString() const {
-        return tuple.toString();
+        std::stringstream ss;
+        ss << tuple.toString();
+        if (has_evidence) {  // 用 has_evidence 判断
+            ss << "[E:" << (evidenceValue ? "true" : "false") << "]";  // 用 evidenceValue
+        }
+        return ss.str();
     }
     void setQuery() {
         isQuery = true;
     }
     bool isQueryNode() {
         return isQuery;
+    bool hasEvidence() const { return has_evidence; }
+    bool getEvidenceValue() const { return evidenceValue; }
+    void setEvidence(bool value) {
+        evidenceValue = value;
+        has_evidence = true;
     }
 
     bool isFact = false;
@@ -98,6 +127,9 @@ private:
     std::vector<EdgePtr> outgoingEdges;
     size_t id;
     double probability;
+
+    bool has_evidence = false;
+    bool evidenceValue;
 
     void addIncomingEdge(EdgePtr edge);
     void addOutgoingEdge(EdgePtr edge);
@@ -392,7 +424,7 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
     }
 
     out << "{\n";
-    
+
     // Facts section
     out << "  \"facts\": [\n";
     bool first = true;
@@ -407,7 +439,7 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
         }
     }
     out << "\n  ],\n";
-    
+
     // Rules section
     out << "  \"rules\": [\n";
     first = true;
@@ -416,9 +448,9 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
             out << ",\n";
         }
         first = false;
-        
+
         out << "    {\n";
-        
+
         // Head
         NodePtr headNode = this->getOutput(edge);
         out << "      \"head\": \"" << headNode->getTuple().toString() << "\",\n";
@@ -426,27 +458,27 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
         out << "      \"probability\": " << edge->getProbability() << ",\n";
         // Bodies
         out << "      \"bodies\": [\n";
-        
+
         std::vector<NodePtr> inputs = this->getInputs(edge);
         std::vector<bool> negations = this->getBodyNegations(edge);
-        
+
         for (size_t i = 0; i < inputs.size(); ++i) {
             if (i > 0) {
                 out << ",\n";
             }
             out << "        {\n";
-            
+
             // Handle negation - default to false if negations vector is too short
             bool isNegated = (i < negations.size()) ? negations[i] : false;
             out << "          \"negation\": " << (isNegated ? "true" : "false") << ",\n";
             out << "          \"name\": \"" << inputs[i]->getTuple().toString() << "\"\n";
             out << "        }";
         }
-        
+
         out << "\n      ]\n";
         out << "    }";
     }
-    
+
     out << "\n  ]\n";
     out << "}\n";
     out.close();
@@ -569,7 +601,7 @@ public:
         std::set<NodePtr> impactedNodes;
         std::set<EdgePtr> impactedEdges;
         for (const auto& [deletedFact, impactedFact]: getNodeImpactedByDeltaDelete()) {
-            out << "  Deleted fact " << deletedFact->getTuple().toString() << " impacts visible nodes: ";
+            out << "  Deleted fact " << deletedFact->getTuple().toString() + "_" + std::to_string(deletedFact->getId()) << " impacts visible nodes: ";
             for (const auto& fact : impactedFact) {
                 out << fact->toString() << " ";
                 impactedNodes.insert(fact);
@@ -577,7 +609,7 @@ public:
             out << std::endl;
         }
         for (const auto& [deletedEdge, impactedEdge]: getEdgeImpactedByDeltaDelete()) {
-            out << "  Deleted fact " << deletedEdge->getTuple().toString() << " impacts visible edges: ";
+            out << "  Deleted fact " << deletedEdge->getTuple().toString() + "_" + std::to_string(deletedEdge->getId()) << " impacts visible edges: ";
             for (const auto& edge : impactedEdge) {
                 out << edge->toString() << " ";
                 impactedEdges.insert(edge);
@@ -601,16 +633,16 @@ public:
             out << std::endl;
         }
         for (const auto& node : getValidNodes()) {
-            out << "  Valid node: " << node->toString() << std::endl;
+            out << "  Valid node: " << node->toString() << "_" << node->getId() << "_" << mapNodeId(node->getId()) << std::endl;
         }
         for (const auto& node : getDeletedFacts()) {
-            out << "  Deleted fact: " << node->toString() << std::endl;
+            out << "  Deleted fact: " << node->toString() << "_" << node->getId() << "_" << mapNodeId(node->getId())  << std::endl;
         }
         for (const auto& node : getDeletedDeterminsticFacts()) {
-            out << "  Deleted deterministic fact: " << node->toString() << std::endl;
+            out << "  Deleted deterministic fact: " << node->toString() << "_" << node->getId() << std::endl;
         }
         for (const auto& node : getDeletedNonDeterministicFacts()) {
-            out << "  Deleted non-deterministic fact: " << node->toString() << std::endl;
+            out << "  Deleted non-deterministic fact: " << node->toString() << "_" << node->getId() << "_" << mapNodeId(node->getId()) << std::endl;
         }
         std::set<NodePtr> uselessValidNodes;
         for (const auto& node : getValidNodes()) {
@@ -752,6 +784,22 @@ public:
             }
         }
     }
+    void attachEvidence(const std::vector<std::pair<UntypedTuple,bool>>& evidenceList) {
+        for (const auto& [tuple, value] : evidenceList) {
+            NodePtr node = findNode(tuple);
+            if (node) {
+                node ->setEvidence(value);
+                std::cout << "[Info] Attached evidence (" << tuple.toString() << ","
+                                      << (value ? "true" : "false")
+                                      << ") to node " << node->toString() << std::endl;
+            } else {
+                std::cerr << "Evidence (" << tuple.toString() << ","
+                                      << (value ? "true" : "false")
+                                      << ") does not match any node" << std::endl;
+            }
+        }
+    }
+
 
     EdgePtr createHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& rm) {
         // 先查找是否存在对应的边
@@ -819,9 +867,9 @@ public:
     const std::unordered_set<NodePtr>& getNodes() const { return nodes; }
     const std::unordered_set<EdgePtr>& getEdges() const { return edges; }
 
-    static DerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {})  {
+    static DerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {})  {
+        std::cout << "[Debug] Enter DerivationGraph::createFrom()" << std::endl;
         FunctionTimer timer(" creating derivation graph ");
-
         auto graph = new DerivationGraph(&ruleManager);
         for (const auto& [tuple, prob] : fact_prob) {
             auto node = graph->createNode(tuple);  // actually "find node" here
@@ -838,6 +886,12 @@ public:
 				auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
             }
         }
+        std::cout << "[Debug] Current nodes in graph:" << std::endl;
+        graph->attachEvidence(evidences);
+        for (const auto& node : graph->getNodes()) {
+            std::cout << "  " << node->getTuple().toString() << std::endl;
+        }
+
         return graph;
     }
 
@@ -917,8 +971,11 @@ public:
         // 过滤节点和边
         std::unordered_set<NodePtr> newNodes;
         for (const auto& node : nodes) {
-            if (reachableNodes.count(node)) {
+            if (reachableNodes.count(node)){
                 newNodes.insert(node);
+            if (!reachableNodes.count(node)) {
+                node->needOutput = true;
+            }
             }
         }
 
@@ -1071,10 +1128,9 @@ public:
     IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
     IncSubgraphView prune(const std::vector<souffle::Relation*>& outputRelations);
     IncSubgraphView prune(const std::vector<std::string>& outputRelations);
-
-    static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}) {
+  
+    static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {}) {
         FunctionTimer timer(" creating derivation graph ");
-
         auto graph = new IncrementalDerivationGraph(&ruleManager);
         for (const auto& [tuple, prob] : fact_prob) {
             auto node = graph->createNode(tuple);  // actually "find node" here
@@ -1525,7 +1581,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     // 初始化：从所有输出 relation 的节点出发
     for (const auto& node : nodes) {
         if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
-//            std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
+            std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
             reachableNodes.insert(node);
             workQueue.push(node);
             node->needOutput = true;
@@ -1563,6 +1619,16 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         }
     }
 
+    // TODO
+    for (const auto& node : nodes) {
+        if (node->hasEvidence() && reachableNodes.insert(node).second) {
+            std::cout << "Found evidence node: " << node->toString()
+                      << " with value " << (node->getEvidenceValue() ? "true" : "false")
+                      << std::endl;
+            workQueue.push(node);
+        }
+    }
+
     // 反向 BFS 遍历
     while (!workQueue.empty()) {
         NodePtr current = workQueue.front();
@@ -1585,7 +1651,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
 
     std::unordered_set<NodePtr> newNodes;
     for (const auto& node : nodes) {
-        if (reachableNodes.count(node)) {
+        if (reachableNodes.count(node)){
             newNodes.insert(node);
             if (node->pruned) {
 //                std::cout << "reusing a pruned node: " << node->getTuple().toString() << std::endl;
@@ -1664,6 +1730,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     std::unordered_map<NodePtr, std::set<NodePtr>> newInsertedFactImpactedNodes;
     std::unordered_map<NodePtr, std::set<EdgePtr>> newInsertedFactImpactedEdges;
     for (const auto& [fact, impactedNodes] : insertedFactImpactedNodes) {
+        if (!reachableNodes.count(fact)) {
+            continue;
+        }
         std::set<NodePtr> newImpactedNodes;
         for (const auto& impactedNode : impactedNodes) {
             if (reachableNodes.count(impactedNode)) {
@@ -1673,6 +1742,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         newInsertedFactImpactedNodes[fact] = std::move(newImpactedNodes);
     }
     for (const auto& [fact, impactedEdges] : insertedFactImpactedEdges) {
+        if (!reachableNodes.count(fact)) {
+            continue;
+        }
         std::set<EdgePtr> newImpactedEdges;
         for (const auto& impactedEdge : impactedEdges) {
             if (reachableEdges.count(impactedEdge)) {
@@ -1684,6 +1756,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     std::unordered_map<NodePtr, std::set<NodePtr>> newDeletedFactImpactedNodes;
     std::unordered_map<NodePtr, std::set<EdgePtr>> newDeletedFactImpactedEdges;
     for (const auto& [fact, impactedNodes] : deletedFactImpactedNodes) {
+        if (!reachableNodes.count(fact)) {
+            continue;
+        }
         std::set<NodePtr> newImpactedNodes;
         for (const auto& impactedNode : impactedNodes) {
             if (reachableNodes.count(impactedNode)) {
@@ -1693,6 +1768,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         newDeletedFactImpactedNodes[fact] = std::move(newImpactedNodes);
     }
     for (const auto& [fact, impactedEdges] : deletedFactImpactedEdges) {
+        if (!reachableNodes.count(fact)) {
+            continue;
+        }
         std::set<EdgePtr> newImpactedEdges;
         for (const auto& impactedEdge : impactedEdges) {
             if (reachableEdges.count(impactedEdge)) {

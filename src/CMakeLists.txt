@@ -30,6 +30,8 @@ set(SOUFFLE_SOURCES
     ast/Constant.cpp
     ast/Counter.cpp
     ast/Directive.cpp
+    ast/Evidence.h
+    ast/Evidence.cpp
     ast/ExecutionOrder.cpp
     ast/ExecutionPlan.cpp
     ast/FunctorDeclaration.cpp
@@ -86,6 +88,7 @@ set(SOUFFLE_SOURCES
     ast/transform/ComponentInstantiation.cpp
     ast/transform/DebugReporter.cpp
     ast/transform/DebugDeltaRelation.cpp
+    ast/transform/EvidenceChecker.cpp
     ast/transform/ExecutionPlanChecker.cpp
     ast/transform/ExpandEqrels.cpp
     ast/transform/FoldAnonymousRecords.cpp

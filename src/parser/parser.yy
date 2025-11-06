@@ -51,6 +51,7 @@
     #include "ast/Constraint.h"
     #include "ast/Counter.h"
     #include "ast/Directive.h"
+    #include "ast/Evidence.h"
     #include "ast/ExecutionOrder.h"
     #include "ast/ExecutionPlan.h"
     #include "ast/FunctionalConstraint.h"
@@ -239,6 +240,7 @@
 %token <std::string> OUTER_DOC_COMMENT "outer doc comment"
 %token <std::string> INNER_DOC_COMMENT "inner doc comment"
 %token QUERY                     "query predicate"
+%token EVIDENCE                  "evidence"
 
 /* -- Non-Terminal Types -- */
 %type <RuleBody>                          aggregate_body
@@ -391,6 +393,19 @@ unit
 	  auto atom = mk<souffle::ast::Atom>($3, std::move(args), @$);
 	  driver.addProbQuery(mk<souffle::ast::ProbQuery>(std::move(atom), @$));
 	}
+	  // Parse query without parentheses
+	}*/
+| unit annotations EVIDENCE LPAREN atom COMMA TRUELIT RPAREN DOT
+{   auto& atom = *$5;
+    driver.addEvidence(
+        mk<souffle::ast::Evidence>(Own<ast::Atom>($5), true, atom.getSrcLoc()));
+}
+| unit annotations EVIDENCE LPAREN atom COMMA FALSELIT RPAREN DOT
+{   auto& atom = *$5;
+    driver.addEvidence(
+        mk<souffle::ast::Evidence>(Own<ast::Atom>($5), false, atom.getSrcLoc()));
+}
+
   | unit annotations component_decl
     {
       auto component_decl = $component_decl;

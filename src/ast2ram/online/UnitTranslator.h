@@ -20,6 +20,8 @@
 #include "ast/ProbQuery.h"
 #include "souffle/utility/ContainerUtil.h"
 #include <map>
+#include "ast/Evidence.h"
+#include "ram/Program.h"
 #include <set>
 #include <string>
 #include <vector>
@@ -49,8 +51,11 @@ public:
     UnitTranslator();
     ~UnitTranslator();
 
+    souffle::ram::Program* ramProgram = nullptr;
     Own<ram::TranslationUnit> translateUnit(ast::TranslationUnit& tu) override;
-
+inline  void setRamProgram(souffle::ram::Program* program) {
+        ramProgram = program;
+    };
 protected:
     void addRamSubroutine(std::string subroutineID, Own<ram::Statement> subroutine);
     virtual Own<ram::Relation> createRamRelation(
@@ -104,6 +109,7 @@ protected:
     Own<ram::Statement> generateLoadRelationForIDB(const ast::Relation* relation) const;
 
     /** Low-level stratum translation */
+    Own<ram::Statement> translateEvidence(const ast::Evidence& evidence);
     Own<ram::Statement> generateStratum(std::size_t scc) const;
     Own<ram::Statement> generateStratumInc(std::size_t scc) const;
     Own<ram::Statement> generateIncTableUpdate(const std::vector<std::size_t>& sccOrderings) const;  // TODO
@@ -141,7 +147,7 @@ protected:
 
 private:
     std::map<std::string, Own<ram::Statement>> ramSubroutines;
-
+    Own<ram::Program> ramProgramHolder;
     Global* glb;
 };
 

@@ -48,7 +48,8 @@ void buildFormulas(
             }
             baseNodeFormulas.insert({node, nodeFormulas[node]});
             formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1-node->getProbability());
-        }
+
+                    }
     }
 
     // Initialize formulas for rule instantiations (hyperedges)
@@ -230,7 +231,15 @@ void buildFormulasCyclewise(
             formulaManager.setVariableWeight(mapNodeId(node->getId()), node->getProbability(), 1 - node->getProbability());
             nodeFormulas[node] = var;
             baseNodeFormulas[node] = var;
+        } else if (node->hasEvidence()) {
+            FormulaNodeRef var = node->getEvidenceValue()
+            ? formulaManager.getTrue()
+            : formulaManager.getFalse();
+          nodeFormulas[node] = var;
+          baseNodeFormulas[node] = var;
+          std::cout << "Evidence node:" << node->toString() << std::endl;
         }
+
     }
 
     for (const auto& edge : view.getEdges()) {

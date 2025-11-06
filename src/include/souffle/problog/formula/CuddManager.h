@@ -703,15 +703,16 @@ std::string WeightedBDDManager::getVariableName(int varIndex) {
         // Direct access to private members thanks to friendship
         if (ref.node.has_value()) {
             if (ref.node.value()->pruned) {
-                return "pruned_" + std::to_string(varIndex);
+                return "pruned_" + std::to_string(varIndex) + "_n";
             }
-            return ref.node.value()->toString();
+            return ref.node.value()->toString() + "_" + std::to_string(varIndex);
         } else if (ref.edge.has_value()) {
             if (ref.edge.value()->pruned) {
-                return "pruned_" + std::to_string(varIndex);
+                return "pruned_" + std::to_string(varIndex) + "_e";
             }
-            return ref.edge.value()->toString();
+            return ref.edge.value()->toString() + "_" + std::to_string(varIndex);
         }
+        std::cout << "Warning: Variable index " << varIndex << " has no associated Node or Edge." << std::endl;
         assert (false && "Variable has no associated Node or Edge");
     }
     // Fallback to default naming

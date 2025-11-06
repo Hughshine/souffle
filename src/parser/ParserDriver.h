@@ -23,6 +23,7 @@
 #include "ast/ComponentInit.h"
 #include "ast/Counter.h"
 #include "ast/Directive.h"
+#include "ast/Evidence.h"
 #include "ast/FunctorDeclaration.h"
 #include "ast/Lattice.h"
 #include "ast/Pragma.h"
@@ -54,6 +55,7 @@ public:
     void addFunctorDeclaration(Own<ast::FunctorDeclaration> f);
     void addDirective(Own<ast::Directive> d);
     void addProbQuery(Own<ast::ProbQuery> query);
+    void addEvidence(Own<ast::Evidence> evidence);
     void addType(Own<ast::Type> type);
     void addClause(Own<ast::Clause> c);
     void addComponent(Own<ast::Component> c);

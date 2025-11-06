@@ -204,6 +204,7 @@ public:
                 NK_DeltaUnion,
             NK_LastRelationStatement,
         NK_ProbQuery,
+        NK_Evidence,
         NK_LastStatement,
     };
     // clang-format on

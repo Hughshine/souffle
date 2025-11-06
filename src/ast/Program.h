@@ -22,6 +22,7 @@
 #include "ast/ComponentInit.h"
 #include "ast/Directive.h"
 #include "ast/ProbQuery.h"
+#include "ast/Evidence.h"
 #include "ast/FunctorDeclaration.h"
 #include "ast/ItemContainer.h"
 #include "ast/Node.h"
@@ -210,6 +211,15 @@ public:
 
     const VecOwn<ProbQuery>& getProbQueries() const {
         return queries;
+      
+    VecOwn<Evidence> evidences;
+      
+    void addEvidence(Own<Evidence> ev) {
+        evidences.push_back(std::move(ev));
+    }
+      
+    const VecOwn<Evidence>& getEvidences() const {
+        return evidence;
     }
 
     /** Return pragma directives */
@@ -225,6 +235,7 @@ public:
      * @return true IFF the relation was found and removed
      */
     bool removeRelation(QualifiedName const&);
+
 
     /**
      * Remove a relation by identity. The relation must be owned by the program.
