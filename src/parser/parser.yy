@@ -393,8 +393,7 @@ unit
 	  auto atom = mk<souffle::ast::Atom>($3, std::move(args), @$);
 	  driver.addProbQuery(mk<souffle::ast::ProbQuery>(std::move(atom), @$));
 	}
-	  // Parse query without parentheses
-	}*/
+
 | unit annotations EVIDENCE LPAREN atom COMMA TRUELIT RPAREN DOT
 {   auto& atom = *$5;
     driver.addEvidence(

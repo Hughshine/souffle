@@ -103,6 +103,7 @@ public:
     }
     bool isQueryNode() {
         return isQuery;
+    }
     bool hasEvidence() const { return has_evidence; }
     bool getEvidenceValue() const { return evidenceValue; }
     void setEvidence(bool value) {

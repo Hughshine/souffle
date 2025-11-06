@@ -91,7 +91,29 @@ class Program : public Node {
         const Statement& getSubroutine(const std::string& name) const {
             return *subroutines.at(name);
         }
-    }
+
+
+        Program* cloning() const override {
+            auto* res = new Program();
+            res->main = clone(main);
+            for (auto& rel : relations) {
+                res->relations.push_back(clone(rel));
+            }
+            for (auto& sub : subroutines) {
+                res->subroutines[sub.first] = clone(sub.second);
+            }
+            return res;
+        }
+
+        void apply(const NodeMapper& map) override {
+            main = map(std::move(main));
+            for (auto& rel : relations) {
+                rel = map(std::move(rel));
+            }
+            for (auto& sub : subroutines) {
+                sub.second = map(std::move(sub.second));
+            }
+        }
 
     static bool classof(const Node* n) {
         return n->getKind() == NK_Program;
@@ -99,7 +121,7 @@ class Program : public Node {
 
     void addProbQuery(Own<ProbQuery> probQuery) {
         
-      .push_back(std::move(probQuery));
+      probQueries.push_back(std::move(probQuery));
     }
 
     const VecOwn<ProbQuery>& getProbQueries() const {
@@ -160,5 +182,4 @@ class Program : public Node {
         /** Subroutines for provenance system */
         std::map<std::string, Own<Statement>> subroutines;
     };
-
-    }  // namespace souffle::ram
+    }// namespace souffle::ram

@@ -211,7 +211,8 @@ public:
 
     const VecOwn<ProbQuery>& getProbQueries() const {
         return queries;
-      
+    }
+
     VecOwn<Evidence> evidences;
       
     void addEvidence(Own<Evidence> ev) {
@@ -219,7 +220,7 @@ public:
     }
       
     const VecOwn<Evidence>& getEvidences() const {
-        return evidence;
+        return evidences;
     }
 
     /** Return pragma directives */

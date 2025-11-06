@@ -2175,6 +2175,8 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
     for (const auto& probQuery : tu.getProgram().getProbQueries()) {
         const auto& atom = probQuery->getAtom();
         ramProgram -> addProbQuery(mk<ram::ProbQuery>(atom.getQualifiedName().toString(), toString(atom)));
+    }
+
     for (const auto& evidence : tu.getProgram().getEvidences()) {
         const auto& atom = evidence->getAtom();
         ramProgram->addEvidence(
