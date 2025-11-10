@@ -130,7 +130,7 @@ private:
     double probability;
 
     bool has_evidence = false;
-    bool evidenceValue;
+    bool evidenceValue = false;
 
     void addIncomingEdge(EdgePtr edge);
     void addOutgoingEdge(EdgePtr edge);
@@ -868,7 +868,7 @@ public:
     const std::unordered_set<NodePtr>& getNodes() const { return nodes; }
     const std::unordered_set<EdgePtr>& getEdges() const { return edges; }
 
-    static DerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {})  {
+    static DerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {})  {
         std::cout << "[Debug] Enter DerivationGraph::createFrom()" << std::endl;
         FunctionTimer timer(" creating derivation graph ");
         auto graph = new DerivationGraph(&ruleManager);
