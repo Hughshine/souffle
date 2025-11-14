@@ -17,8 +17,9 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
-
 #include <tuple>
+#include <filesystem>
+#include <algorithm>
 
 int nextFormulaNodeId = 0;
 std::unordered_map<size_t, int> nodeIdMap;
@@ -297,6 +298,7 @@ public:
     virtual const std::unordered_set<EdgePtr>& getEdges() const = 0;
     void dumpDot(const std::string& filename) const;
     void dumpJson(const std::string& filename) const;
+    void writeGraphStatsJson() const;
 
     std::vector<EdgePtr> getIncomingEdges(NodePtr node) const;
     std::vector<EdgePtr> getOutgoingEdges(NodePtr node) const;
@@ -524,6 +526,8 @@ void DerivationGraphViewInterface::dumpDot(const std::string& filename) const {
     out.close();
 }
 
+inline void writeGraphStatsJson(const DerivationGraphViewInterface& g);
+
 class IncrementalDerivationGraphViewInterface : virtual public DerivationGraphViewInterface {
 public:
     virtual const std::set<NodePtr>& getDeltaInsertNodes() const = 0;
@@ -587,6 +591,7 @@ public:
         }
         return deletedNonDeterministicFacts_;
     }
+
     // deletion impacted
     // insertion impacted
 
@@ -660,6 +665,8 @@ public:
             }
         }
         out << " percentage of useless valid nodes: " << (double)uselessValidNodes.size() / (double)getValidNodes().size() << std::endl;
+         // ===== JSON 数字统计输出（新增，不影响原有日志） =====
+        this->writeGraphStatsJson();
     }
 protected:
     std::set<NodePtr> validNodes_;
@@ -2255,5 +2262,104 @@ private:
         }
     }
 };
+
+void DerivationGraphViewInterface::writeGraphStatsJson() const {
+    static size_t s_idx = 0;  // 控制输出文件 index
+    const std::string dir = "output";
+    const std::string path = dir + "/graph-" + std::to_string(s_idx++) + ".json";
+
+#if __cplusplus >= 201703L
+    // 如目录不存在则创建（C++17）
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+#endif
+
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        throw std::runtime_error("Cannot open file: " + path);
+    }
+
+    const auto& nodes = getNodes();
+    const auto& edges = getEdges();
+
+    // 基本计数
+    const size_t num_nodes = nodes.size();
+    const size_t num_edges = edges.size();
+
+    // #queries：基于 Node 的 isQuery 标志
+    size_t num_queries = 0;
+
+    // in-degree（排除 facts）
+    size_t indeg_sum = 0, indeg_cnt = 0, indeg_max = 0;
+
+    // out-degree（仅统计 outdeg>0 的节点）
+    size_t outdeg_sum = 0, outdeg_cnt = 0, outdeg_max = 0;
+
+    for (const auto& n : nodes) {
+        const size_t indeg = getIncomingEdges(n).size();
+        const size_t outdeg = getOutgoingEdges(n).size();
+
+        // avg_in_degree: 排除 input facts
+        if (!n->isFact) {
+            indeg_sum += indeg;
+            ++indeg_cnt;
+            if (indeg > indeg_max) indeg_max = indeg;
+        }
+
+        // avg_out_degree: 排除 outdeg==0
+        if (outdeg > 0) {
+            outdeg_sum += outdeg;
+            ++outdeg_cnt;
+            if (outdeg > outdeg_max) outdeg_max = outdeg;
+        }
+
+        if (n->isQuery) ++num_queries;
+    }
+
+    const double avg_in_degree  = indeg_cnt  ? static_cast<double>(indeg_sum)  / indeg_cnt  : 0.0;
+    const double avg_out_degree = outdeg_cnt ? static_cast<double>(outdeg_sum) / outdeg_cnt : 0.0;
+
+    // 超边输入数（hyperedge arity）
+    size_t inp_sum = 0, inp_cnt = 0, inp_max = 0;
+    for (const auto& e : edges) {
+        const size_t k = getInputs(e).size();
+        inp_sum += k;
+        ++inp_cnt;
+        if (k > inp_max) inp_max = k;
+    }
+    const double avg_hyperedge_inputs = inp_cnt ? static_cast<double>(inp_sum) / inp_cnt : 0.0;
+
+    // 环统计（基于 SCC；仅统计 |SCC|>=2 的非平凡环）
+    CycleDependencyGraph cdg(*this);
+    size_t cycles = 0, cyc_size_sum = 0, cyc_size_max = 0;
+    for (const auto& scc : cdg.nodeCycles) {
+        const size_t s = scc.size();
+        if (s >= 2) {
+            ++cycles;
+            cyc_size_sum += s;
+            if (s > cyc_size_max) cyc_size_max = s;
+        }
+    }
+    const double avg_cycle_size = cycles ? static_cast<double>(cyc_size_sum) / cycles : 0.0;
+
+    // 只输出数值（键是字符串，值全为数字）
+    out.setf(std::ios::fixed);
+    out << std::setprecision(6);
+    out << "{\n"
+        << "  \"nodes\": " << num_nodes << ",\n"
+        << "  \"edges\": " << num_edges << ",\n"
+        << "  \"queries\": " << num_queries << ",\n"
+        << "  \"avg_in_degree\": " << avg_in_degree << ",\n"
+        << "  \"max_in_degree\": " << indeg_max << ",\n"
+        << "  \"avg_out_degree\": " << avg_out_degree << ",\n"
+        << "  \"max_out_degree\": " << outdeg_max << ",\n"
+        << "  \"avg_hyperedge_inputs\": " << avg_hyperedge_inputs << ",\n"
+        << "  \"max_hyperedge_inputs\": " << inp_max << ",\n"
+        << "  \"cycles\": " << cycles << ",\n"
+        << "  \"avg_cycle_size\": " << avg_cycle_size << ",\n"
+        << "  \"max_cycle_size\": " << cyc_size_max << "\n"
+        << "}\n";
+}
+
 
 #endif //DERIVATIONGRAPH_H
