@@ -304,6 +304,7 @@ bool TypeAnalysis::hasValidTypeInfo(const Argument& argument) const {
             auto const& declaration = functorAnalysis->getFunctorDeclaration(*udf);
             return hasValidTypeInfo(declaration);
         } catch (...) {  // functor hasn't been declared
+            std::cout << "functor valid type exception" << std::endl;
             return false;
         }
     } else if (auto* nc = as<NumericConstant>(argument)) {
@@ -356,6 +357,11 @@ AggregateOp TypeAnalysis::getPolymorphicOperator(const IntrinsicAggregator& agg)
 }
 
 FunctorOp TypeAnalysis::getPolymorphicOperator(const IntrinsicFunctor& inf) const {
+    if (!hasValidTypeInfo(inf)) {
+        std::cout << "invalid intrinsic: ";
+        inf.print(std::cout);
+        std::cout << std::endl;
+    }
     assert(hasValidTypeInfo(inf) && "functor type not set");
     return functorInfo.at(&inf)->op;
 }
