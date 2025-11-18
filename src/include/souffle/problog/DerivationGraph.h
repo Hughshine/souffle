@@ -20,6 +20,7 @@
 #include <tuple>
 #include <filesystem>
 #include <algorithm>
+#include "souffle/utility/json11.h"
 
 int nextFormulaNodeId = 0;
 std::unordered_map<size_t, int> nodeIdMap;
@@ -262,7 +263,7 @@ public:
 private:
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, RuleApplication ruleApp)
         : inputs(inputs), output(output), id(edgeId), rule(nullptr), ruleApp(ruleApp) {
-        assert (false);
+        // assert (false);
     }
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, const Rule* rule, const std::vector<bool>& bodyNegations, RuleApplication ruleApp)
         : inputs(inputs), output(output), id(edgeId), rule(rule), ruleApp(ruleApp) {
@@ -309,7 +310,7 @@ public:
     std::vector<bool> getBodyNegations(EdgePtr edge) const;
     std::vector<bool> getBodyNegationsStable(EdgePtr edge) const;
 
-    mutable std::optional<std::vector<EdgePtr>> cachedSortedIncomingEdges;
+    mutable std::unordered_map<size_t, std::vector<EdgePtr>> cachedSortedIncomingEdges;
     std::vector<EdgePtr> getIncomingEdgesStable(NodePtr node) const;
 
     virtual ~DerivationGraphViewInterface() = default;
@@ -326,15 +327,17 @@ std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdges(NodePtr node
 }
 
 std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdgesStable(NodePtr node) const {
-    if (cachedSortedIncomingEdges.has_value()) {
-        return *cachedSortedIncomingEdges;
+    if (!node) return {};
+    auto it = cachedSortedIncomingEdges.find(node->getId());
+    if (it != cachedSortedIncomingEdges.end()) {
+        return it->second;
     }
-    std::vector<EdgePtr> sortedEdges = getIncomingEdges(node);
-    std::sort(sortedEdges.begin(), sortedEdges.end(), [](const EdgePtr& a, const EdgePtr& b) {
+    std::vector<EdgePtr> sorted = getIncomingEdges(node);
+    std::sort(sorted.begin(), sorted.end(), [](const EdgePtr& a, const EdgePtr& b) {
         return a->getEdgeKey() < b->getEdgeKey();
     });
-    cachedSortedIncomingEdges.emplace(sortedEdges.begin(), sortedEdges.end());
-    return *cachedSortedIncomingEdges;
+    cachedSortedIncomingEdges.emplace(node->getId(), sorted);
+    return sorted;
 }
 
 
@@ -560,6 +563,12 @@ public:
         }
         return validEdges_;
      }
+     const std::set<NodePtr>& getValidNodes() const {
+        return const_cast<IncrementalDerivationGraphViewInterface*>(this)->getValidNodes();
+    }
+    const std::set<EdgePtr>& getValidEdges() const {
+        return const_cast<IncrementalDerivationGraphViewInterface*>(this)->getValidEdges();
+    }
     const std::set<NodePtr>& getDeletedFacts() {
         if (deletedFacts_.size() > 0) {
             return deletedFacts_;
@@ -596,6 +605,7 @@ public:
     // insertion impacted
 
     void dumpDotInc(const std::string& filename) const;
+    void dumpJsonInc(const std::string& filename) const;
     void dumpStatisticsInc(std::ostream& out) {
         out << "IncrementalDerivationGraph Statistics:" << std::endl;
         out << "  Number of nodes: " << getNodes().size() << std::endl;
@@ -1136,7 +1146,9 @@ public:
     IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
     IncSubgraphView prune(const std::vector<souffle::Relation*>& outputRelations);
     IncSubgraphView prune(const std::vector<std::string>& outputRelations);
-  
+    
+    static IncrementalDerivationGraph* loadFromJsonInc(const std::string& filename);
+
     static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {}) {
         FunctionTimer timer(" creating derivation graph ");
         auto graph = new IncrementalDerivationGraph(&ruleManager);
@@ -1163,6 +1175,8 @@ public:
         return graph;
     }
 
+    // static std::unique_ptr<IncrementalDerivationGraph> 
+    //     loadFromJson(const std::string& filename, const RuleManager* rm);
     // 应用增量插入
     void applyDeltaInserts(
         const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaInsertRuleApps,
@@ -2359,6 +2373,398 @@ void DerivationGraphViewInterface::writeGraphStatsJson() const {
         << "  \"avg_cycle_size\": " << avg_cycle_size << ",\n"
         << "  \"max_cycle_size\": " << cyc_size_max << "\n"
         << "}\n";
+}
+
+// ====================== dumpJsonInc 实现 ======================
+void IncrementalDerivationGraphViewInterface::dumpJsonInc(const std::string& filename) const {
+    using json11::Json;
+
+    auto fact_to_json = [](const NodePtr& n) -> Json {
+        return Json::object{
+            {"name", n->getTuple().toString()},
+            {"probability", n->getProbability()}
+        };
+    };
+
+    auto edge_to_json = [this](const EdgePtr& e) -> Json {
+        Json bodies = Json::array();
+        auto inputs = this->getInputs(e);
+        auto negs   = this->getBodyNegations(e);
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            bool neg = (i < negs.size()) ? negs[i] : false;
+            json_array_append(bodies, Json::object{
+                {"negation", neg},
+                {"name", inputs[i]->getTuple().toString()}
+            });
+        }
+        NodePtr head = this->getOutput(e);
+        return Json::object{
+            {"head", head ? head->getTuple().toString() : std::string("<null-head>")},
+            {"probability", e->getProbability()},
+            {"bodies", bodies}
+        };
+    };
+
+    // 主体：使用“有效子图”，排除 delta-delete
+    Json facts = Json::array();
+    for (const auto& n : this->getValidNodes()) {
+        if (n->isFact) {
+            json_array_append(facts, fact_to_json(n));
+        }
+    }
+
+    Json rules = Json::array();
+    for (const auto& e : this->getValidEdges()) {
+        json_array_append(rules, edge_to_json(e));
+    }
+
+    // delta.insert
+    Json ins_nodes = Json::array();
+    Json ins_edges = Json::array();
+    Json ins_facts = Json::array();
+    for (const auto& n : this->getDeltaInsertNodes()) {
+        json_array_append(ins_nodes, n->getTuple().toString());
+        if (n->isFact) json_array_append(ins_facts, fact_to_json(n));
+    }
+    for (const auto& e : this->getDeltaInsertEdges()) {
+        json_array_append(ins_edges, edge_to_json(e));
+    }
+
+    // delta.delete
+    Json del_nodes = Json::array();
+    Json del_edges = Json::array();
+    Json del_facts = Json::array();
+    for (const auto& n : this->getDeltaDeleteNodes()) {
+        json_array_append(del_nodes, n->getTuple().toString());
+        if (n->isFact) 
+            json_array_append(del_facts, fact_to_json(n));
+    }
+    for (const auto& e : this->getDeltaDeleteEdges()) {
+        json_array_append(del_edges, edge_to_json(e));
+    }
+
+    // impact_by_delete
+    Json impact_del_nodes = Json::array();
+    for (const auto& kv : this->getNodeImpactedByDeltaDelete()) {
+        Json arr = Json::array();
+        for (const auto& n : kv.second) {
+            json_array_append(arr, n->getTuple().toString());
+        }
+        json_array_append(impact_del_nodes, Json::object{
+            {"delta", kv.first->getTuple().toString()},
+            {"impacted", arr}
+        });
+    }
+    Json impact_del_edges = Json::array();
+    for (const auto& kv : this->getEdgeImpactedByDeltaDelete()) {
+        Json arr = Json::array();
+        for (const auto& e : kv.second) {
+            json_array_append(arr, edge_to_json(e));
+        }
+        json_array_append(impact_del_edges, Json::object{
+            {"delta", kv.first->getTuple().toString()},
+            {"impacted", arr}
+        });
+    }
+
+    // impact_by_insert
+    Json impact_ins_nodes = Json::array();
+    for (const auto& kv : this->getNodeImpactedByDeltaInsert()) {
+        Json arr = Json::array();
+        for (const auto& n : kv.second) {
+            json_array_append(arr, n->getTuple().toString());
+        }
+        json_array_append(impact_ins_nodes, Json::object{
+            {"delta", kv.first->getTuple().toString()},
+            {"impacted", arr}
+        });
+    }
+    Json impact_ins_edges = Json::array();
+    for (const auto& kv : this->getEdgeImpactedByDeltaInsert()) {
+        Json arr = Json::array();
+        for (const auto& e : kv.second) {
+            json_array_append(arr, edge_to_json(e));
+        }
+        json_array_append(impact_ins_edges, Json::object{
+            {"delta", kv.first->getTuple().toString()},
+            {"impacted", arr}
+        });
+    }
+
+    Json root = Json::object{
+        {"facts", facts},
+        {"rules", rules},
+        {"delta", Json::object{
+            {"insert", Json::object{
+                {"nodes", ins_nodes}, {"edges", ins_edges}, {"facts", ins_facts}
+            }},
+            {"delete", Json::object{
+                {"nodes", del_nodes}, {"edges", del_edges}, {"facts", del_facts}
+            }},
+            {"impact_by_delete", Json::object{
+                {"nodes", impact_del_nodes}, {"edges", impact_del_edges}
+            }},
+            {"impact_by_insert", Json::object{
+                {"nodes", impact_ins_nodes}, {"edges", impact_ins_edges}
+            }}
+        }}
+    };
+
+    std::ofstream out(filename);
+    if (!out.is_open()) {
+        throw std::runtime_error("Cannot open file: " + filename);
+    }
+    out << root.dump();
+    out.close();
+}
+
+// ====================== loadFromJsonInc 实现 ======================
+static inline std::string _trim(std::string s) {
+    auto issp = [](unsigned char c){ return std::isspace(c); };
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [&](unsigned char c){ return !issp(c); }));
+    s.erase(std::find_if(s.rbegin(), s.rend(), [&](unsigned char c){ return !issp(c); }).base(), s.end());
+    return s;
+}
+
+static inline UntypedTuple _parse_tuple(const std::string& s_in) {
+    std::string s = _trim(s_in);
+    auto lp = s.find('(');
+    if (lp == std::string::npos) {
+        // 允许 0 元组关系
+        return UntypedTuple{s, {}};
+    }
+    auto rp = s.rfind(')');
+    if (rp == std::string::npos || rp <= lp) {
+        throw std::runtime_error("Bad tuple string: " + s);
+    }
+    std::string rel = _trim(s.substr(0, lp));
+    std::string inside = s.substr(lp + 1, rp - lp - 1);
+    std::vector<souffle::RamDomain> fields;
+    std::stringstream ss(inside);
+    std::string tok;
+    while (std::getline(ss, tok, ',')) {
+        tok = _trim(tok);
+        if (tok.empty()) continue;
+        // 统一以整数解析（和 UntypedTuple::fields 类型一致）
+        long long v = std::stoll(tok);
+        fields.push_back(static_cast<souffle::RamDomain>(v));
+    }
+    return UntypedTuple{rel, fields};
+}
+
+static EdgePtr _find_edge_by_structure(
+    IncrementalDerivationGraph* g,
+    const NodePtr& head,
+    const std::vector<NodePtr>& inputs,
+    const std::vector<bool>& negs
+) {
+    // 生成稳定排序后的 (tuple, neg) 序列
+    std::vector<std::pair<UntypedTuple,bool>> desired;
+    desired.reserve(inputs.size());
+    for (size_t i=0;i<inputs.size();++i) {
+        bool neg = (i < negs.size()) ? negs[i] : false;
+        desired.emplace_back(inputs[i]->getTuple(), neg);
+    }
+    std::sort(desired.begin(), desired.end());
+
+    for (const auto& e : g->getEdges()) {  // 受保护成员，但在类内静态函数中可用
+        if (e->getOutput()->getTuple() != head->getTuple()) continue;
+        const auto& sin  = e->getInputsStable();       // 稳定（按 tuple 排序）【:contentReference[oaicite:10]{index=10}】
+        const auto& sneg = e->getBodyNegationsStable();
+        if (sin.size() != desired.size() || sneg.size() != desired.size()) continue;
+        bool ok = true;
+        for (size_t i = 0; i < desired.size(); ++i) {
+            if (sin[i]->getTuple() != desired[i].first || sneg[i] != desired[i].second) {
+                ok = false; break;
+            }
+        }
+        if (ok) return e;
+    }
+    return nullptr;
+}
+
+IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const std::string& filename) {
+    using json11::Json;
+
+    // 读文件并解析 JSON
+    std::ifstream in(filename);
+    if (!in.is_open()) {
+        throw std::runtime_error("Cannot open JSON file: " + filename);
+    }
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::string err;
+    Json root = Json::parse(content, err);
+    if (!err.empty()) {
+        throw std::runtime_error("JSON parse error: " + err);
+    }
+
+    auto* g = new IncrementalDerivationGraph();
+
+    auto arr_or = [](const Json& j)->std::vector<Json> {
+        if (!j.is_array()) return {};
+        return j.array_items();
+    };
+
+    // ---------- 1) 基线：facts ----------
+    for (const auto& jf : arr_or(root["facts"])) {
+        auto name = jf["name"].string_value();
+        double p  = jf["probability"].number_value();
+        UntypedTuple t = _parse_tuple(name);
+        NodePtr n = g->createNode(t);
+        n->isFact = true;
+        n->setProbability(p);
+    }
+
+    // ---------- 2) 基线：rules ----------
+    for (const auto& je : arr_or(root["rules"])) {
+        auto headName = je["head"].string_value();
+        double p      = je["probability"].number_value();
+
+        UntypedTuple ht = _parse_tuple(headName);
+        NodePtr head = g->createNode(ht);
+
+        std::vector<NodePtr> inputs;
+        std::vector<bool>    negs;
+        for (const auto& jb : arr_or(je["bodies"])) {
+            UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+            bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
+            inputs.push_back(g->createNode(bt));
+            negs.push_back(neg);
+        }
+        EdgePtr e = g->createHyperedge(inputs, head, /*rule=*/nullptr, /*negs=*/negs);
+        if (e) e->setProbability(p);
+    }
+
+    // ---------- 3) delta.insert ----------
+    const Json& jdelta      = root["delta"];
+    const Json& jins        = jdelta["insert"];
+    for (const auto& jf : arr_or(jins["facts"])) {
+        UntypedTuple t = _parse_tuple(jf["name"].string_value());
+        double p = jf["probability"].number_value();
+        NodePtr n = g->createNode(t);
+        n->isFact = true; n->setProbability(p);
+        g->deltaInsertNodes.insert(n);
+    }
+    for (const auto& jn : arr_or(jins["nodes"])) {
+        UntypedTuple t = _parse_tuple(jn.string_value());
+        NodePtr n = g->createNode(t);
+        g->deltaInsertNodes.insert(n);
+    }
+    for (const auto& je : arr_or(jins["edges"])) {
+        UntypedTuple ht = _parse_tuple(je["head"].string_value());
+        double p = je["probability"].number_value();
+        NodePtr head = g->createNode(ht);
+
+        std::vector<NodePtr> inputs;
+        std::vector<bool>    negs;
+        for (const auto& jb : arr_or(je["bodies"])) {
+            UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+            bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
+            inputs.push_back(g->createNode(bt));
+            negs.push_back(neg);
+        }
+        EdgePtr e = _find_edge_by_structure(g, head, inputs, negs);
+        if (!e) {
+            e = g->createHyperedge(inputs, head, /*rule=*/nullptr, /*negs=*/negs);
+        }
+        if (e) {
+            e->setProbability(p);
+            g->deltaInsertEdges.insert(e);
+        }
+    }
+
+    // ---------- 4) delta.delete ----------
+    const Json& jdel = jdelta["delete"];
+    for (const auto& jf : arr_or(jdel["facts"])) {
+        UntypedTuple t = _parse_tuple(jf["name"].string_value());
+        double p = jf["probability"].number_value();
+        NodePtr n = g->createNode(t);
+        n->isFact = true; n->setProbability(p);
+        g->deltaDeleteNodes.insert(n);
+    }
+    for (const auto& jn : arr_or(jdel["nodes"])) {
+        UntypedTuple t = _parse_tuple(jn.string_value());
+        NodePtr n = g->createNode(t);
+        g->deltaDeleteNodes.insert(n);
+    }
+    for (const auto& je : arr_or(jdel["edges"])) {
+        UntypedTuple ht = _parse_tuple(je["head"].string_value());
+        double p = je["probability"].number_value();
+        NodePtr head = g->createNode(ht);
+
+        std::vector<NodePtr> inputs;
+        std::vector<bool>    negs;
+        for (const auto& jb : arr_or(je["bodies"])) {
+            UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+            bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
+            inputs.push_back(g->createNode(bt));
+            negs.push_back(neg);
+        }
+        EdgePtr e = _find_edge_by_structure(g, head, inputs, negs);
+        if (!e) {
+            e = g->createHyperedge(inputs, head, /*rule=*/nullptr, /*negs=*/negs);
+        }
+        if (e) {
+            e->setProbability(p);
+            g->deltaDeleteEdges.insert(e);
+        }
+    }
+
+    // ---------- 5) impact_by_delete ----------
+    const Json& jbdel = jdelta["impact_by_delete"];
+    for (const auto& jmap : arr_or(jbdel["nodes"])) {
+        NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
+        for (const auto& jv : arr_or(jmap["impacted"])) {
+            NodePtr n = g->createNode(_parse_tuple(jv.string_value()));
+            g->deletedFactImpactedNodes[d].insert(n);
+        }
+    }
+    for (const auto& jmap : arr_or(jbdel["edges"])) {
+        NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
+        for (const auto& je : arr_or(jmap["impacted"])) {
+            UntypedTuple ht = _parse_tuple(je["head"].string_value());
+            double p = je["probability"].number_value();
+            NodePtr head = g->createNode(ht);
+            std::vector<NodePtr> inputs; std::vector<bool> negs;
+            for (const auto& jb : arr_or(je["bodies"])) {
+                UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+                bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
+                inputs.push_back(g->createNode(bt)); negs.push_back(neg);
+            }
+            EdgePtr e = _find_edge_by_structure(g, head, inputs, negs);
+            if (!e) e = g->createHyperedge(inputs, head, nullptr, negs);
+            if (e) { e->setProbability(p); g->deletedFactImpactedEdges[d].insert(e); }
+        }
+    }
+
+    // ---------- 6) impact_by_insert ----------
+    const Json& jbins = jdelta["impact_by_insert"];
+    for (const auto& jmap : arr_or(jbins["nodes"])) {
+        NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
+        for (const auto& jv : arr_or(jmap["impacted"])) {
+            NodePtr n = g->createNode(_parse_tuple(jv.string_value()));
+            g->insertedFactImpactedNodes[d].insert(n);
+        }
+    }
+    for (const auto& jmap : arr_or(jbins["edges"])) {
+        NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
+        for (const auto& je : arr_or(jmap["impacted"])) {
+            UntypedTuple ht = _parse_tuple(je["head"].string_value());
+            double p = je["probability"].number_value();
+            NodePtr head = g->createNode(ht);
+            std::vector<NodePtr> inputs; std::vector<bool> negs;
+            for (const auto& jb : arr_or(je["bodies"])) {
+                UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+                bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
+                inputs.push_back(g->createNode(bt)); negs.push_back(neg);
+            }
+            EdgePtr e = _find_edge_by_structure(g, head, inputs, negs);
+            if (!e) e = g->createHyperedge(inputs, head, nullptr, negs);
+            if (e) { e->setProbability(p); g->insertedFactImpactedEdges[d].insert(e); }
+        }
+    }
+
+    return g;
 }
 
 

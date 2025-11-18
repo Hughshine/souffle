@@ -1,0 +1,1117 @@
+
+#pragma once
+#include <algorithm>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <functional>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <map>
+#include <memory>
+#include <queue>
+#include <set>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+#include <climits>
+#include <initializer_list>
+
+// The user's request: include the graph API like this
+#include "souffle/problog/DerivationGraph.h"
+
+// Everything lives in one header, in namespace incra.
+namespace incra {
+
+// Shorthand aliases taken from the host DerivationGraph.h.
+using NodePtr = std::shared_ptr<Node>;
+using EdgePtr = std::shared_ptr<Hyperedge>;
+using DGView  = IncrementalDerivationGraphViewInterface;
+
+// A small helper to stringify a node and an edge consistently.
+static inline std::string node_id(const NodePtr& n) {
+    return n ? n->getTuple().toString() : std::string("<null>");
+}
+static inline std::string edge_id(const EdgePtr& e, DGView& view) {
+    std::ostringstream oss;
+    oss << "[";
+    auto ins = view.getInputs(e);
+    for (size_t i = 0; i < ins.size(); ++i) {
+        if (i) oss << ", ";
+        oss << node_id(ins[i]);
+    }
+    oss << " -> " << node_id(view.getOutput(e)) << "]";
+    return oss.str();
+}
+
+struct Region {
+    std::set<NodePtr> nodes;
+    std::set<EdgePtr> edges;
+};
+
+struct Boundaries {
+    std::set<NodePtr> out_induced;   // region nodes whose outgoing edges received new inputs
+    std::set<NodePtr> scope_induced; // region nodes that are least parents of delta scopes
+    std::set<NodePtr> residual;      // remaining boundary nodes
+};
+
+struct Stats {
+    size_t optimized_recomputed = 0;  // #non-fact nodes to recompute under our region
+    size_t naive_recomputed     = 0;  // #non-fact nodes in delta-reachable
+    size_t dr_nodes             = 0;  // delta-reachable nodes
+    size_t region_nodes         = 0;  // region nodes
+    size_t dr_edges             = 0;  // delta-reachable edges
+    size_t region_edges         = 0;  // region edges
+    double ratio() const {
+        return naive_recomputed == 0 ? 1.0 :
+               double(optimized_recomputed) / double(naive_recomputed);
+    }
+    long   diff() const { return long(naive_recomputed) - long(optimized_recomputed); }
+};
+
+// The analyzer. All heavy lifting is here.
+class RegionAnalyzer {
+public:
+    explicit RegionAnalyzer(DGView& view)
+    : view_(view) {}
+
+    // Main entry: run analysis and emit outputs.
+    Stats analyze(const std::vector<NodePtr>& delta_input_facts,
+                  const std::string& json_out_path = "",
+                  const std::string& csv_out_path  = "") {
+        // Build "least-parents" and "scopes". Pre- and post- ignoring insert edges is supported,
+        // but we focus on "now" for region computation.
+        buildLeastParents_();
+        debugPrintLeastParents_();
+        computeScopes_();
+        debugPrintNodeScopes_();
+        debugPrintEdgeScopes_();
+
+        last_delta_inputs_.clear();
+        last_delta_inputs_.insert(delta_input_facts.begin(), delta_input_facts.end());
+        last_delta_nodes_ = view_.getDeltaInsertNodes();
+        last_delta_nodes_.insert(last_delta_inputs_.begin(), last_delta_inputs_.end());
+        last_delta_edges_.clear();
+        auto deltaEdgeSet = view_.getDeltaInsertEdges();
+        last_delta_edges_.insert(deltaEdgeSet.begin(), deltaEdgeSet.end());
+        current_delta_sources_ = last_delta_inputs_;
+        if (current_delta_sources_.empty()) {
+            current_delta_sources_ = last_delta_nodes_;
+        }
+        reach_filter_ = reachFromSources_(current_delta_sources_);
+
+        // Initial region + boundaries + expansion
+        Region region = initialRegion_(delta_input_facts);
+        Boundaries B  = classifyBoundaries_(region);
+        expandToFixpoint_(region, B);
+
+        // Final safeguard: region must be a subset of delta-reachable
+        auto dr = deltaReachable_(delta_input_facts);
+        intersectWithDeltaReachable_(region, dr);
+
+        // Save last state for toDot()
+        last_region_     = region;
+        last_boundaries_ = B;
+        dr_              = dr;
+        have_last_       = true;
+
+        // Count stats
+        Stats stats;
+        stats.dr_nodes     = dr.nodes.size();
+        stats.dr_edges     = dr.edges.size();
+        stats.region_nodes = region.nodes.size();
+        stats.region_edges = region.edges.size();
+        for (const auto& n : region.nodes) if (!n->isFact) stats.optimized_recomputed++;
+        for (const auto& n : dr.nodes)     if (!n->isFact) stats.naive_recomputed++;
+
+        // Emit
+        emitConsole_(stats, region);
+        if (!json_out_path.empty()) emitJSON_(stats, region, json_out_path);
+        if (!csv_out_path.empty())  emitCSV_(stats, region, csv_out_path);
+
+        return stats;
+    }
+
+    // toDot with visual marks: region nodes (double border), boundary nodes (dashed, orange),
+    // mergeable incoming edges to boundary heads (red), delta items (green).
+    bool toDot(const std::string& path, bool mark_merge = true) {
+        if (!have_last_) return false;
+        std::ofstream out(path);
+        if (!out) return false;
+        out << "digraph G {\n";
+        out << "  rankdir=LR;\n";
+
+        auto inRegion = [&](const NodePtr& n){ return last_region_.nodes.count(n) > 0; };
+        auto isOutB   = [&](const NodePtr& n){ return last_boundaries_.out_induced.count(n)   > 0; };
+        auto isScopeB = [&](const NodePtr& n){ return last_boundaries_.scope_induced.count(n)> 0; };
+        auto isResB   = [&](const NodePtr& n){ return last_boundaries_.residual.count(n)      > 0; };
+        auto isDeltaN = [&](const NodePtr& n){
+            return isIn_<NodePtr>(n, view_.getDeltaInsertNodes())
+                || isIn_<NodePtr>(n, view_.getDeltaDeleteNodes());
+        };
+        auto isDeltaE = [&](const EdgePtr& e){
+            return isIn_<EdgePtr>(e, view_.getDeltaInsertEdges())
+                || isIn_<EdgePtr>(e, view_.getDeltaDeleteEdges());
+        };
+
+        // Nodes
+        for (auto& n : view_.getValidNodes()) {
+            // base vs derived
+            std::string shape = n->isFact ? "box" : "ellipse";
+            std::string pen   = inRegion(n) ? "2"  : "1";
+            std::string color = inRegion(n) ? "#1f77b4" : "black"; // region nodes: blue border
+            if (isOutB(n) || isScopeB(n) || isResB(n)) {
+                color = "#ff7f0e"; // orange for boundary nodes
+                pen   = "2";
+                shape = n->isFact ? "box" : "ellipse";
+            }
+            if (isDeltaN(n)) {
+                color = "#2ca02c"; // green for delta
+                pen   = "2";
+            }
+            out << "  \"" << node_id(n) << "\""
+                << " [shape=" << shape << ", penwidth=" << pen << ", color=\"" << color << "\"];\n";
+        }
+
+        // Hyperedges are rendered with intermediate edge nodes, similar to DerivationGraph::dumpDot.
+        for (auto& e : view_.getValidEdges()) {
+            auto head  = view_.getOutput(e);
+            auto ins   = view_.getInputs(e);
+            bool inRegEdge = last_region_.edges.count(e) > 0;
+            bool onBHead   = isOutB(head) || isScopeB(head) || isResB(head);
+            bool delta     = isDeltaE(e);
+            bool canMerge  = mark_merge && edgeMergeable_(e);
+            std::ostringstream edgeNodeName;
+            edgeNodeName << "edge_node_" << reinterpret_cast<uintptr_t>(e.get());
+            std::string color = "black";
+            std::string pen   = "1";
+            if (inRegEdge) { color = "#1f77b4"; pen = "2"; }          // in-region edges: blue
+            if (onBHead && canMerge) { color = "red"; pen = "2"; }    // mergeable into boundary: red
+            if (delta) { color = "#2ca02c"; pen = "2"; }              // delta edges: green
+            out << "  " << quote_(edgeNodeName.str())
+                << " [shape=point, width=0.2, height=0.2, label=\"\", style=filled, color=\"" << color
+                << "\", fillcolor=\"" << color << "\", penwidth=" << pen << "];\n";
+            for (auto& t : ins) {
+                out << "  \"" << node_id(t) << "\" -> " << quote_(edgeNodeName.str())
+                    << " [color=\"" << color << "\", penwidth=" << pen << ", style=solid];\n";
+            }
+            out << "  " << quote_(edgeNodeName.str()) << " -> \"" << node_id(head) << "\""
+                << " [color=\"" << color << "\", penwidth=" << pen << ", style=solid];\n";
+        }
+
+        emitLegend_(out, mark_merge);
+        out << "}\n";
+        return true;
+    }
+
+    // Accessors for last run
+    const Region&     lastRegion()    const { return last_region_; }
+    const Boundaries& lastBoundaries()const { return last_boundaries_; }
+    const Region&     lastDeltaReachable() const { return dr_; }
+
+private:
+    // ---- helpers ----
+
+    template <class T, class SetT>
+    static bool isIn_(const T& x, const SetT& s) {
+        return s.find(x) != s.end();
+    }
+
+    static bool isBase_(const NodePtr& n) { return n->isFact; }
+
+    void prepareGraphStructures_() {
+        incoming_edges_map_.clear();
+        outgoing_edges_map_.clear();
+        preds_.clear();
+        succs_.clear();
+        for (auto& n : view_.getValidNodes()) {
+            incoming_edges_map_[n];
+            outgoing_edges_map_[n];
+            preds_[n];
+            succs_[n];
+        }
+        for (auto& e : view_.getValidEdges()) {
+            auto head = view_.getOutput(e);
+            incoming_edges_map_[head].push_back(e);
+            auto ins = view_.getInputs(e);
+            for (auto& t : ins) {
+                outgoing_edges_map_[t].push_back(e);
+                preds_[head].insert(t);
+                succs_[t].insert(head);
+            }
+        }
+        delta_insert_edges_cache_.clear();
+        for (auto& e : view_.getDeltaInsertEdges()) {
+            delta_insert_edges_cache_.insert(e);
+        }
+    }
+
+    // Build Least-Parents (LP) sets for nodes following the dominance-based definition.
+    void buildLeastParents_() {
+        prepareGraphStructures_();
+        lp_set_.clear();
+        reachable_cache_.clear();
+        for (auto& source : view_.getValidNodes()) {
+            auto reachable = forwardReachable_(source);
+            reachable_cache_[source] = reachable;
+            auto outIt = outgoing_edges_map_.find(source);
+            if (outIt == outgoing_edges_map_.end() || outIt->second.size() < 2) {
+                lp_set_[source] = {};
+                continue;
+            }
+            std::unordered_map<NodePtr, size_t> branch_counts;
+            for (auto& edge : outIt->second) {
+                if (!edge) continue;
+                auto child = view_.getOutput(edge);
+                if (!child) continue;
+                auto branchReach = forwardReachableFromBranch_(child, source);
+                for (auto& node : branchReach) {
+                    if (node.get() == source.get()) continue;
+                    branch_counts[node]++;
+                }
+            }
+            std::set<NodePtr> merge_nodes;
+            for (auto& [node, count] : branch_counts) {
+                if (count >= 2 && reachable.count(node)) {
+                    merge_nodes.insert(node);
+                }
+            }
+            if (merge_nodes.empty()) {
+                lp_set_[source] = {};
+                continue;
+            }
+            auto dom = computeDominators_(source, reachable);
+            std::set<NodePtr> least;
+            for (auto& m : merge_nodes) {
+                bool dominated = false;
+                for (auto& other : merge_nodes) {
+                    if (m.get() == other.get()) continue;
+                    auto dit = dom.find(m);
+                    if (dit != dom.end() && dit->second.count(other)) {
+                        dominated = true;
+                        break;
+                    }
+                }
+                if (!dominated) least.insert(m);
+            }
+            lp_set_[source] = std::move(least);
+        }
+    }
+
+    void computeScopes_() {
+        node_scope_.clear();
+        edge_scope_by_source_.clear();
+        edge_scope_index_.clear();
+        for (auto& n : view_.getValidNodes()) {
+            std::set<NodePtr> scope_nodes;
+            std::set<EdgePtr> scope_edges;
+            auto lp_it = lp_set_.find(n);
+            auto reach_it = reachable_cache_.find(n);
+            if (lp_it != lp_set_.end() && reach_it != reachable_cache_.end()) {
+                for (auto& m : lp_it->second) {
+                    collectScopeFrom_(m, reach_it->second, scope_nodes, scope_edges);
+                }
+            }
+            node_scope_[n] = scope_nodes;
+            edge_scope_by_source_[n] = scope_edges;
+            for (auto& e : scope_edges) {
+                edge_scope_index_[e].insert(n);
+            }
+        }
+    }
+
+    const std::set<NodePtr>& edgeScope_(const EdgePtr& e, bool ignore_insert_edges=false) {
+        static const std::set<NodePtr> kEmpty;
+        auto it = edge_scope_index_.find(e);
+        return it == edge_scope_index_.end() ? kEmpty : it->second;
+    }
+
+    std::set<NodePtr> forwardReachable_(const NodePtr& source) {
+        std::set<NodePtr> reachable;
+        if (!source) return reachable;
+        std::vector<NodePtr> stack;
+        stack.push_back(source);
+        while (!stack.empty()) {
+            auto cur = stack.back();
+            stack.pop_back();
+            if (!reachable.insert(cur).second) continue;
+            auto sit = succs_.find(cur);
+            if (sit == succs_.end()) continue;
+            for (auto& next : sit->second) {
+                stack.push_back(next);
+            }
+        }
+        return reachable;
+    }
+
+    std::unordered_map<NodePtr, std::set<NodePtr>> computeDominators_(const NodePtr& source,
+            const std::set<NodePtr>& reachable) {
+        std::unordered_map<NodePtr, std::set<NodePtr>> dom;
+        if (!source) return dom;
+        for (auto& node : reachable) {
+            if (node.get() == source.get()) {
+                dom[node] = { source };
+            } else {
+                dom[node] = reachable;
+            }
+        }
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (auto& node : reachable) {
+                if (node.get() == source.get()) continue;
+                std::set<NodePtr> intersection;
+                bool first = true;
+                bool has_pred = false;
+                auto pit = preds_.find(node);
+                if (pit != preds_.end()) {
+                    for (auto& pred : pit->second) {
+                        if (!reachable.count(pred)) continue;
+                        has_pred = true;
+                        if (first) {
+                            intersection = dom[pred];
+                            first = false;
+                        } else {
+                            std::set<NodePtr> temp;
+                            std::set_intersection(intersection.begin(), intersection.end(),
+                                dom[pred].begin(), dom[pred].end(), std::inserter(temp, temp.begin()));
+                            intersection.swap(temp);
+                        }
+                    }
+                }
+                std::set<NodePtr> new_dom;
+                new_dom.insert(node);
+                if (has_pred) {
+                    new_dom.insert(intersection.begin(), intersection.end());
+                }
+                if (dom[node] != new_dom) {
+                    dom[node] = std::move(new_dom);
+                    changed = true;
+                }
+            }
+        }
+        return dom;
+    }
+
+    void collectScopeFrom_(const NodePtr& target, const std::set<NodePtr>& reachable,
+            std::set<NodePtr>& scope_nodes, std::set<EdgePtr>& scope_edges) {
+        if (!target) return;
+        std::vector<NodePtr> stack;
+        std::unordered_set<NodePtr> visited;
+        stack.push_back(target);
+        visited.insert(target);
+        while (!stack.empty()) {
+            auto cur = stack.back();
+            stack.pop_back();
+            if (!reachable.count(cur)) continue;
+            scope_nodes.insert(cur);
+            auto it = incoming_edges_map_.find(cur);
+            if (it == incoming_edges_map_.end()) continue;
+            for (auto& e : it->second) {
+                auto ins = view_.getInputs(e);
+                bool all_reachable = true;
+                for (auto& tail : ins) {
+                    if (!reachable.count(tail)) {
+                        all_reachable = false;
+                        break;
+                    }
+                }
+                if (!all_reachable) continue;
+                scope_edges.insert(e);
+                for (auto& tail : ins) {
+                    if (visited.insert(tail).second) {
+                        stack.push_back(tail);
+                    }
+                }
+            }
+        }
+    }
+
+    struct ReachInfo {
+        std::set<NodePtr> nodes;
+        std::set<EdgePtr> edges;
+    };
+
+    ReachInfo reachFromSources_(const std::set<NodePtr>& sources) {
+        ReachInfo info;
+        std::queue<NodePtr> q;
+        for (auto& src : sources) {
+            if (!src) continue;
+            if (info.nodes.insert(src).second) {
+                q.push(src);
+            }
+        }
+        while (!q.empty()) {
+            auto cur = q.front();
+            q.pop();
+            auto oit = outgoing_edges_map_.find(cur);
+            if (oit == outgoing_edges_map_.end()) continue;
+            for (auto& e : oit->second) {
+                info.edges.insert(e);
+                auto head = view_.getOutput(e);
+                if (head && info.nodes.insert(head).second) {
+                    q.push(head);
+                }
+            }
+        }
+        return info;
+    }
+
+    std::set<NodePtr> forwardReachableFromBranch_(const NodePtr& start, const NodePtr& source) {
+        std::set<NodePtr> reachable;
+        if (!start) return reachable;
+        std::vector<NodePtr> stack;
+        stack.push_back(start);
+        while (!stack.empty()) {
+            auto cur = stack.back();
+            stack.pop_back();
+            if (cur.get() == source.get()) continue;
+            if (!reachable.insert(cur).second) continue;
+            auto sit = succs_.find(cur);
+            if (sit == succs_.end()) continue;
+            for (auto& next : sit->second) {
+                stack.push_back(next);
+            }
+        }
+        return reachable;
+    }
+
+    bool mergeableEdgeAtHead_(const NodePtr& head, const EdgePtr& edge) {
+        if (!head || !edge) return false;
+        if (delta_insert_edges_cache_.count(edge)) return false;
+        if (!edgeRespectsScopes_(head, edge)) return false;
+        if (!edgeNonSubsumed_(head, edge)) return false;
+        return true;
+    }
+
+    bool edgeRespectsScopes_(const NodePtr& head, const EdgePtr& edge) {
+        auto it = edge_scope_index_.find(edge);
+        if (it == edge_scope_index_.end()) return true;
+        for (auto& source : it->second) {
+            auto lp_it = lp_set_.find(source);
+            if (lp_it == lp_set_.end()) return false;
+            if (!lp_it->second.count(head)) return false;
+        }
+        return true;
+    }
+
+    bool edgeNonSubsumed_(const NodePtr& head, const EdgePtr& edge) {
+        auto inputs = view_.getInputs(edge);
+        std::set<NodePtr> candidate(inputs.begin(), inputs.end());
+        auto inEdges = view_.getIncomingEdges(head);
+        for (auto& other : inEdges) {
+            if (other.get() == edge.get()) continue;
+            auto otherInputs = view_.getInputs(other);
+            std::set<NodePtr> otherSet(otherInputs.begin(), otherInputs.end());
+            if (otherSet.empty()) continue;
+            if (std::includes(candidate.begin(), candidate.end(), otherSet.begin(), otherSet.end())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // ---- region building ----
+
+    Region initialRegion_(const std::vector<NodePtr>& delta_input_facts) {
+        Region R;
+        std::set<NodePtr> delta_nodes = view_.getDeltaInsertNodes();
+        std::set<EdgePtr> delta_edges = view_.getDeltaInsertEdges();
+        for (auto& n : delta_input_facts) delta_nodes.insert(n);
+
+        std::set<NodePtr> out_nodes;
+        for (auto& e : delta_edges) {
+            out_nodes.insert(view_.getOutput(e));
+        }
+
+        std::set<NodePtr> scope_nodes_union;
+        std::set<EdgePtr> scope_edges_union;
+        for (auto& x : delta_nodes) {
+            auto nit = node_scope_.find(x);
+            if (nit != node_scope_.end()) {
+                scope_nodes_union.insert(nit->second.begin(), nit->second.end());
+            }
+            auto eit = edge_scope_by_source_.find(x);
+            if (eit != edge_scope_by_source_.end()) {
+                scope_edges_union.insert(eit->second.begin(), eit->second.end());
+            }
+        }
+
+        std::set<NodePtr> candidate_nodes = delta_nodes;
+        candidate_nodes.insert(out_nodes.begin(), out_nodes.end());
+        candidate_nodes.insert(scope_nodes_union.begin(), scope_nodes_union.end());
+
+        std::set<EdgePtr> candidate_edges = delta_edges;
+        candidate_edges.insert(scope_edges_union.begin(), scope_edges_union.end());
+
+        for (auto& n : candidate_nodes) {
+            if (reach_filter_.nodes.count(n)) {
+                R.nodes.insert(n);
+            }
+        }
+        for (auto& e : candidate_edges) {
+            if (reach_filter_.edges.count(e)) {
+                R.edges.insert(e);
+            }
+        }
+        return R;
+    }
+
+    Boundaries classifyBoundaries_(const Region& R) {
+        Boundaries B;
+        std::set<NodePtr> boundary_nodes;
+        for (auto& e : view_.getValidEdges()) {
+            auto head = view_.getOutput(e);
+            auto ins = view_.getInputs(e);
+            if (R.nodes.count(head)) continue;
+            for (auto& tail : ins) {
+                if (R.nodes.count(tail)) {
+                    boundary_nodes.insert(tail);
+                }
+            }
+        }
+
+        std::set<NodePtr> out_nodes;
+        for (auto& e : last_delta_edges_) {
+            out_nodes.insert(view_.getOutput(e));
+        }
+
+        std::set<NodePtr> lp_union;
+        for (auto& x : last_delta_nodes_) {
+            auto it = lp_set_.find(x);
+            if (it != lp_set_.end()) {
+                lp_union.insert(it->second.begin(), it->second.end());
+            }
+        }
+
+        for (auto& n : boundary_nodes) {
+            if (out_nodes.count(n)) {
+                B.out_induced.insert(n);
+            } else if (lp_union.count(n)) {
+                B.scope_induced.insert(n);
+            } else {
+                B.residual.insert(n);
+            }
+        }
+        return B;
+    }
+
+    bool edgeMergeable_(const EdgePtr& e) {
+        auto head = view_.getOutput(e);
+        return mergeableEdgeAtHead_(head, e);
+    }
+
+    bool mergeableHead_(const NodePtr& h, const Region& R) {
+        if (!h || !R.nodes.count(h)) return false;
+        auto inEs = view_.getIncomingEdges(h);
+        for (auto& e : inEs) {
+            if (mergeableEdgeAtHead_(h, e)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void expandToFixpoint_(Region& R, Boundaries& B) {
+        int guard = 0;
+        while (guard++ < 10000) {
+            auto boundary_nodes = B.out_induced;
+            boundary_nodes.insert(B.scope_induced.begin(), B.scope_induced.end());
+            boundary_nodes.insert(B.residual.begin(), B.residual.end());
+            std::cout << "[region] expand iter " << guard
+                      << " |R_nodes|=" << R.nodes.size()
+                      << " |R_edges|=" << R.edges.size()
+                      << " |boundary|=" << boundary_nodes.size()
+                      << std::endl;
+            if (boundary_nodes.empty()) {
+                std::cout << "[region] boundary empty, stopping expansion\n";
+                break;
+            }
+            std::vector<NodePtr> blocking;
+            for (auto& n : boundary_nodes) {
+                if (!mergeableHead_(n, R)) {
+                    blocking.push_back(n);
+                }
+            }
+            std::cout << "[region] blocking boundary count=" << blocking.size() << std::endl;
+            if (blocking.empty()) {
+                std::cout << "[region] all boundary nodes mergeable, stopping expansion\n";
+                break;
+            }
+            bool extended = false;
+            for (auto& n : blocking) {
+                auto sit = node_scope_.find(n);
+                if (sit != node_scope_.end()) {
+                    for (auto& sn : sit->second) {
+                        if (reach_filter_.nodes.count(sn) && R.nodes.insert(sn).second) {
+                            extended = true;
+                        }
+                    }
+                }
+                auto eit = edge_scope_by_source_.find(n);
+                if (eit != edge_scope_by_source_.end()) {
+                    for (auto& e : eit->second) {
+                        if (reach_filter_.edges.count(e) && R.edges.insert(e).second) {
+                            extended = true;
+                        }
+                    }
+                }
+            }
+            if (!extended) {
+                std::cout << "[region] scopes added no new items, stopping expansion\n";
+                break;
+            }
+            B = classifyBoundaries_(R);
+        }
+        if (guard >= 10000) {
+            std::cout << "[region] expand reached iteration guard limit" << std::endl;
+        }
+        std::cout << "[region] final region nodes=" << R.nodes.size()
+                  << " edges=" << R.edges.size()
+                  << " boundaries(out=" << B.out_induced.size()
+                  << ", scope=" << B.scope_induced.size()
+                  << ", residual=" << B.residual.size() << ")\n";
+    }
+
+    // Compute delta-reachable region (all nodes and edges reachable forward from delta facts/edges)
+    Region deltaReachable_(const std::vector<NodePtr>& delta_input_facts) {
+        Region DR;
+        // Seeds
+        std::set<NodePtr> seeds = view_.getDeltaInsertNodes();
+        auto dels = view_.getDeltaDeleteNodes();
+        seeds.insert(dels.begin(), dels.end());
+        for (auto& n : delta_input_facts) seeds.insert(n);
+        // forward
+        std::queue<NodePtr> q;
+        std::unordered_set<NodePtr> inq;
+        for (auto& n : seeds) { q.push(n); inq.insert(n); DR.nodes.insert(n); }
+        while (!q.empty()) {
+            auto cur = q.front(); q.pop();
+            for (auto& e : view_.getValidEdges()) {
+                auto ins = view_.getInputs(e);
+                bool touches = false;
+                for (auto& t : ins) if (t.get()==cur.get()) { touches = true; break; }
+                if (!touches) continue;
+                DR.edges.insert(e);
+                auto h = view_.getOutput(e);
+                DR.nodes.insert(h);
+                if (!inq.count(h)) { q.push(h); inq.insert(h); }
+            }
+        }
+        return DR;
+    }
+
+    void intersectWithDeltaReachable_(Region& R, const Region& DR) {
+        // filter nodes
+        for (auto it = R.nodes.begin(); it != R.nodes.end(); ) {
+            if (!DR.nodes.count(*it)) it = R.nodes.erase(it);
+            else ++it;
+        }
+        for (auto it = R.edges.begin(); it != R.edges.end(); ) {
+            if (!DR.edges.count(*it)) it = R.edges.erase(it);
+            else ++it;
+        }
+    }
+
+    // ---- emissions ----
+
+    void emitConsole_(const Stats& s, const Region& R) {
+        std::cout << "=== Incremental Region Analysis ===\n";
+        std::cout << "Region nodes: " << s.region_nodes << " / DR nodes: " << s.dr_nodes << "\n";
+        std::cout << "Region edges: " << s.region_edges << " / DR edges: " << s.dr_edges << "\n";
+        std::cout << "Recompute (optimized): " << s.optimized_recomputed
+                  << " ; (naive): " << s.naive_recomputed
+                  << " ; ratio: " << std::fixed << std::setprecision(3) << s.ratio()
+                  << " ; diff: " << s.diff() << "\n";
+
+        // Per-node quick print
+        for (auto& n : view_.getValidNodes()) {
+            bool inR   = R.nodes.count(n);
+            bool delta = view_.getDeltaInsertNodes().count(n) || view_.getDeltaDeleteNodes().count(n);
+            std::cout << "node,\"" << node_id(n) << "\"," << (n->isFact?1:0) << "," << (inR?1:0) << "," << (delta?1:0)
+                      << "," << 0 /*mergeable as node*/ << ",\"" << scopeStr_(node_scope_[n]) << "\"\n";
+        }
+        for (auto& e : view_.getValidEdges()) {
+            bool inR   = R.edges.count(e);
+            bool delta = view_.getDeltaInsertEdges().count(e) || view_.getDeltaDeleteEdges().count(e);
+            std::cout << "edge,\"" << edge_id(e, view_) << "\"," << 0 << "," << (inR?1:0) << "," << (delta?1:0)
+                      << "," << (edgeMergeable_(e)?1:0) << ",\"" << scopeStr_(edgeScope_(e)) << "\"\n";
+        }
+    }
+
+    void emitJSON_(const Stats& s, const Region& R, const std::string& path) {
+        std::ofstream out(path);
+        if (!out) return;
+        out << "{\n";
+        out << "  \"stats\": {\"region_nodes\": " << s.region_nodes << ", \"dr_nodes\": " << s.dr_nodes
+            << ", \"region_edges\": " << s.region_edges << ", \"dr_edges\": " << s.dr_edges
+            << ", \"optimized\": " << s.optimized_recomputed << ", \"naive\": " << s.naive_recomputed
+            << ", \"ratio\": " << std::fixed << std::setprecision(6) << s.ratio()
+            << ", \"diff\": " << s.diff() << "},\n";
+        out << "  \"nodes\": [\n";
+        bool first = true;
+        for (auto& n : view_.getValidNodes()) {
+            if (!first) out << ",\n";
+            first = false;
+            bool inR   = R.nodes.count(n);
+            bool delta = view_.getDeltaInsertNodes().count(n) || view_.getDeltaDeleteNodes().count(n);
+            out << "    {\"id\": " << quote_(node_id(n)) << ", \"is_fact\": " << (n->isFact?1:0)
+                << ", \"in_region\": " << (inR?1:0) << ", \"is_delta\": " << (delta?1:0)
+                << ", \"scope\": " << quote_(scopeStr_(node_scope_[n])) << "}";
+        }
+        out << "\n  ],\n  \"edges\": [\n";
+        first = true;
+        for (auto& e : view_.getValidEdges()) {
+            if (!first) out << ",\n";
+            first = false;
+            bool inR   = R.edges.count(e);
+            bool delta = view_.getDeltaInsertEdges().count(e) || view_.getDeltaDeleteEdges().count(e);
+            out << "    {\"id\": " << quote_(edge_id(e, view_)) << ", \"in_region\": " << (inR?1:0)
+                << ", \"is_delta\": " << (delta?1:0) << ", \"mergeable\": " << (edgeMergeable_(e)?1:0)
+                << ", \"scope\": " << quote_(scopeStr_(edgeScope_(e))) << "}";
+        }
+        out << "\n  ]\n}\n";
+    }
+
+    void emitCSV_(const Stats& s, const Region& R, const std::string& path) {
+        std::ofstream out(path);
+        if (!out) return;
+        out << "type,id,is_fact,in_region,is_delta,mergeable,scope\n";
+        for (auto& n : view_.getValidNodes()) {
+            bool inR   = R.nodes.count(n);
+            bool delta = view_.getDeltaInsertNodes().count(n) || view_.getDeltaDeleteNodes().count(n);
+            out << "node," << quote_(node_id(n)) << "," << (n->isFact?1:0) << "," << (inR?1:0) << "," << (delta?1:0)
+                << ",0," << quote_(scopeStr_(node_scope_[n])) << "\n";
+        }
+        for (auto& e : view_.getValidEdges()) {
+            bool inR   = R.edges.count(e);
+            bool delta = view_.getDeltaInsertEdges().count(e) || view_.getDeltaDeleteEdges().count(e);
+            out << "edge," << quote_(edge_id(e, view_)) << ",0," << (inR?1:0) << "," << (delta?1:0)
+                << "," << (edgeMergeable_(e)?1:0) << "," << quote_(scopeStr_(edgeScope_(e))) << "\n";
+        }
+    }
+
+    void emitLegend_(std::ofstream& out, bool includeMerge) const {
+        out << "  subgraph cluster_legend {\n";
+        out << "    label=\"Legend\";\n";
+        out << "    color=gray;\n";
+        out << "    legend_fact [shape=box, label=\"Fact node\"];\n";
+        out << "    legend_derived [shape=ellipse, label=\"Derived node\"];\n";
+        out << "    legend_region [shape=ellipse, penwidth=2, color=\"#1f77b4\", label=\"Region member\"];\n";
+        out << "    legend_boundary [shape=ellipse, penwidth=2, color=\"#ff7f0e\", label=\"Boundary head\"];\n";
+        out << "    legend_delta_node [shape=ellipse, penwidth=2, color=\"#2ca02c\", label=\"Delta node\"];\n";
+        out << "    legend_src_region [shape=box, label=\"Sample fact\"];\n";
+        out << "    legend_dst_region [shape=ellipse, label=\"Sample head\"];\n";
+        out << "    legend_hyper_region [shape=point, width=0.2, height=0.2, label=\"\", style=filled, color=\"#1f77b4\", fillcolor=\"#1f77b4\"];\n";
+        out << "    legend_src_region -> legend_hyper_region [color=\"#1f77b4\", penwidth=2, label=\"region hyperedge\"];\n";
+        out << "    legend_hyper_region -> legend_dst_region [color=\"#1f77b4\", penwidth=2];\n";
+        out << "    legend_src_delta [shape=box, label=\"Sample fact\"];\n";
+        out << "    legend_dst_delta [shape=ellipse, label=\"Sample head\"];\n";
+        out << "    legend_hyper_delta [shape=point, width=0.2, height=0.2, label=\"\", style=filled, color=\"#2ca02c\", fillcolor=\"#2ca02c\"];\n";
+        out << "    legend_src_delta -> legend_hyper_delta [color=\"#2ca02c\", penwidth=2, label=\"delta hyperedge\"];\n";
+        out << "    legend_hyper_delta -> legend_dst_delta [color=\"#2ca02c\", penwidth=2];\n";
+        if (includeMerge) {
+            out << "    legend_src_merge [shape=box, label=\"Sample fact\"];\n";
+            out << "    legend_dst_merge [shape=ellipse, label=\"Sample head\"];\n";
+            out << "    legend_hyper_merge [shape=point, width=0.2, height=0.2, label=\"\", style=filled, color=\"red\", fillcolor=\"red\"];\n";
+            out << "    legend_src_merge -> legend_hyper_merge [color=\"red\", penwidth=2, label=\"mergeable hyperedge\"];\n";
+            out << "    legend_hyper_merge -> legend_dst_merge [color=\"red\", penwidth=2];\n";
+        }
+        out << "  }\n";
+    }
+
+    static std::string scopeStr_(const std::set<NodePtr>& ss) {
+        std::ostringstream oss;
+        oss << "{";
+        bool first = true;
+        for (auto& n : ss) {
+            if (!first) oss << "; ";
+            first = false;
+            oss << node_id(n);
+        }
+        oss << "}";
+        return oss.str();
+    }
+
+    static std::string quote_(const std::string& s) {
+        std::ostringstream oss;
+        oss << "\"";
+        for (char c : s) {
+            if (c=='"') oss << "\\\"";
+            else if (c=='\\') oss << "\\\\";
+            else oss << c;
+        }
+        oss << "\"";
+        return oss.str();
+    }
+
+private:
+    DGView& view_;
+
+    // Derived artifacts
+    std::unordered_map<NodePtr, std::set<NodePtr>> lp_set_;     // least-parents set (approx)
+    std::unordered_map<NodePtr, std::set<NodePtr>> node_scope_; // node -> scope (base facts)
+
+    // Scope caches keyed by source node
+    std::unordered_map<NodePtr, std::set<EdgePtr>> edge_scope_by_source_;
+    std::unordered_map<EdgePtr, std::set<NodePtr>> edge_scope_index_;
+    std::unordered_map<NodePtr, std::set<NodePtr>> reachable_cache_;
+
+    // Structural helpers
+    std::unordered_map<NodePtr, std::vector<EdgePtr>> incoming_edges_map_;
+    std::unordered_map<NodePtr, std::vector<EdgePtr>> outgoing_edges_map_;
+    std::unordered_map<NodePtr, std::set<NodePtr>> preds_;
+    std::unordered_map<NodePtr, std::set<NodePtr>> succs_;
+    std::unordered_set<EdgePtr> delta_insert_edges_cache_;
+
+    // Last run
+    Region     last_region_;
+    Boundaries last_boundaries_;
+    Region     dr_;
+    bool       have_last_ = false;
+    std::set<NodePtr> last_delta_nodes_;
+    std::set<EdgePtr> last_delta_edges_;
+    std::set<NodePtr> last_delta_inputs_;
+    std::set<NodePtr> current_delta_sources_;
+    ReachInfo reach_filter_;
+
+    void debugPrintLeastParents_() {
+        std::cout << "[lp] least parents per node:\n";
+        for (auto& [node, parents] : lp_set_) {
+            std::cout << "  " << node_id(node) << " <- {";
+            bool first = true;
+            for (auto& p : parents) {
+                if (!first) std::cout << ", ";
+                std::cout << node_id(p);
+                first = false;
+            }
+            std::cout << "}\n";
+        }
+    }
+
+    void debugPrintNodeScopes_() {
+        std::cout << "[scope] node scopes:\n";
+        for (auto& [node, scope] : node_scope_) {
+            std::cout << "  " << node_id(node) << " scope=" << scopeStr_(scope) << "\n";
+        }
+    }
+
+    void debugPrintEdgeScopes_() {
+        std::cout << "[scope] edge scopes:\n";
+        for (auto& e : view_.getValidEdges()) {
+            std::cout << "  " << edge_id(e, view_) << " scope=" << scopeStr_(edgeScope_(e)) << "\n";
+        }
+    }
+};
+
+// ---------- A minimal in-header ExampleIncView for demo and tests ----------
+// This is optional. If you use your repository view, you do not need this.
+// We implement a small synthetic graph with relations edge(X,Y), path(X,Y).
+// The delta is a small set of edges; path facts derived accordingly.
+class ExampleIncView : public IncrementalDerivationGraphViewInterface {
+public:
+    ExampleIncView() : builder_(std::make_unique<DerivationGraph>()) {}
+
+    // Build a small integer graph with inserted/deleted facts to illustrate the API.
+    void build_demo() {
+        clearAll_();
+
+        // Base edge(X,Y) facts. We treat (1,3) and (3,5) as inserts, (2,4) as a deletion.
+        auto e12 = makeNode_("edge", {1, 2}, true);
+        auto e23 = makeNode_("edge", {2, 3}, true);
+        auto e34 = makeNode_("edge", {3, 4}, true);
+        auto e45 = makeNode_("edge", {4, 5}, true);
+        auto e24 = makeNode_("edge", {2, 4}, true, DeltaTag::Delete);
+        auto e13 = makeNode_("edge", {1, 3}, true, DeltaTag::Insert);
+        auto e35 = makeNode_("edge", {3, 5}, true, DeltaTag::Insert);
+        auto e56 = makeNode_("edge", {5, 6}, true);
+        auto e67 = makeNode_("edge", {6, 7}, true);
+        auto e78 = makeNode_("edge", {7, 8}, true);
+
+        // Derived path(X,Y) nodes we care about.
+        auto p12 = makeNode_("path", {1, 2}, false);
+        auto p23 = makeNode_("path", {2, 3}, false);
+        auto p34 = makeNode_("path", {3, 4}, false);
+        auto p45 = makeNode_("path", {4, 5}, false);
+        auto p24 = makeNode_("path", {2, 4}, false);
+        auto p13 = makeNode_("path", {1, 3}, false);
+        auto p35 = makeNode_("path", {3, 5}, false);
+        auto p14 = makeNode_("path", {1, 4}, false);
+        auto p15 = makeNode_("path", {1, 5}, false);
+        auto p25 = makeNode_("path", {2, 5}, false);
+        auto p56 = makeNode_("path", {5, 6}, false);
+        auto p67 = makeNode_("path", {6, 7}, false);
+        auto p78 = makeNode_("path", {7, 8}, false);
+        auto p57 = makeNode_("path", {5, 7}, false);
+        auto p58 = makeNode_("path", {5, 8}, false);
+        auto p26 = makeNode_("path", {2, 6}, false);
+        auto p27 = makeNode_("path", {2, 7}, false);
+        auto p28 = makeNode_("path", {2, 8}, false);
+        auto p16 = makeNode_("path", {1, 6}, false);
+        auto p17 = makeNode_("path", {1, 7}, false);
+        auto p18 = makeNode_("path", {1, 8}, false);
+        auto p36 = makeNode_("path", {3, 6}, false);
+        auto p37 = makeNode_("path", {3, 7}, false);
+        auto p38 = makeNode_("path", {3, 8}, false);
+        auto p68 = makeNode_("path", {6, 8}, false);
+
+        // Direct rules: path(X,Y) :- edge(X,Y)
+        auto edge_p12 = addEdge_({ e12 }, p12);
+        auto edge_p23 = addEdge_({ e23 }, p23);
+        auto edge_p34 = addEdge_({ e34 }, p34);
+        auto edge_p45 = addEdge_({ e45 }, p45);
+        auto edge_p24_fact = addEdge_({ e24 }, p24, DeltaTag::Delete);
+        auto edge_p13_fact = addEdge_({ e13 }, p13, DeltaTag::Insert);
+        auto edge_p35_fact = addEdge_({ e35 }, p35, DeltaTag::Insert);
+        auto edge_p56 = addEdge_({ e56 }, p56);
+        auto edge_p67 = addEdge_({ e67 }, p67);
+        auto edge_p78 = addEdge_({ e78 }, p78);
+
+        // Recursive rules: path(X,Z) :- path(X,Y), edge(Y,Z)
+        auto edge_p13_rec = addEdge_({ p12, e23 }, p13);
+        auto edge_p14_rec = addEdge_({ p13, e34 }, p14);
+        auto edge_p15_chain = addEdge_({ p14, e45 }, p15);
+        auto edge_p24_rec = addEdge_({ p23, e34 }, p24);
+        auto edge_p25_via24 = addEdge_({ p24, e45 }, p25);
+        auto edge_p25_delta = addEdge_({ p23, e35 }, p25, DeltaTag::Insert);
+        auto edge_p35_rec = addEdge_({ p34, e45 }, p35);
+        auto edge_p15_delta = addEdge_({ p13, e35 }, p15, DeltaTag::Insert);
+        auto edge_p57 = addEdge_({ p56, e67 }, p57);
+        auto edge_p58 = addEdge_({ p57, e78 }, p58);
+        auto edge_p26 = addEdge_({ p25, e56 }, p26);
+        auto edge_p27 = addEdge_({ p26, e67 }, p27);
+        auto edge_p28 = addEdge_({ p27, e78 }, p28);
+        auto edge_p16 = addEdge_({ p15, e56 }, p16);
+        auto edge_p17 = addEdge_({ p16, e67 }, p17);
+        auto edge_p18 = addEdge_({ p17, e78 }, p18);
+        auto edge_p36 = addEdge_({ p35, e56 }, p36);
+        auto edge_p37 = addEdge_({ p36, e67 }, p37);
+        auto edge_p38 = addEdge_({ p37, e78 }, p38);
+        auto edge_p68 = addEdge_({ p67, e78 }, p68);
+
+        // Illustrative impact lookup tables (not used by the analyzer but nice for demos).
+        recordNodeImpact_(e13, {p13, p14, p15, p16, p17, p18}, /*insert*/ true);
+        recordNodeImpact_(e35, {p35, p15, p25, p36, p37, p38}, /*insert*/ true);
+        recordNodeImpact_(e24, {p24, p25, p26, p27, p28}, /*insert*/ false);
+
+        recordEdgeImpact_(e13, {edge_p13_fact, edge_p13_rec, edge_p14_rec, edge_p15_chain, edge_p15_delta,
+                edge_p16, edge_p17, edge_p18}, /*insert*/ true);
+        recordEdgeImpact_(e35, {edge_p35_fact, edge_p35_rec, edge_p25_delta, edge_p15_delta,
+                edge_p36, edge_p37, edge_p38}, /*insert*/ true);
+        recordEdgeImpact_(e24, {edge_p24_fact, edge_p25_via24, edge_p26, edge_p27, edge_p28}, /*insert*/ false);
+
+        (void)edge_p12; (void)edge_p23; (void)edge_p34; (void)edge_p45; (void)edge_p24_rec; (void)edge_p56;
+        (void)edge_p67; (void)edge_p78; (void)edge_p57; (void)edge_p58; (void)edge_p68;
+
+        // Reset cached validity sets inherited from IncrementalDerivationGraphViewInterface.
+        validNodes_.clear();
+        validEdges_.clear();
+    }
+
+    // ---------- Interface expected by analyzer ----------
+
+    const std::unordered_set<NodePtr>& getNodes() const override { return nodes_; }
+    const std::unordered_set<EdgePtr>& getEdges() const override { return edges_; }
+
+    const std::set<NodePtr>& getDeltaInsertNodes() const override { return delta_ins_nodes_; }
+    const std::set<NodePtr>& getDeltaDeleteNodes() const override { return delta_del_nodes_; }
+    const std::set<EdgePtr>& getDeltaInsertEdges() const override { return delta_ins_edges_; }
+    const std::set<EdgePtr>& getDeltaDeleteEdges() const override { return delta_del_edges_; }
+
+    const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaDelete() const override {
+        return node_impacted_by_del_;
+    }
+    const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const override {
+        return edge_impacted_by_del_;
+    }
+    const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaInsert() const override {
+        return node_impacted_by_ins_;
+    }
+    const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const override {
+        return edge_impacted_by_ins_;
+    }
+
+private:
+    enum class DeltaTag { None, Insert, Delete };
+
+    static UntypedTuple makeTuple_(const std::string& rel, std::initializer_list<int> fields) {
+        UntypedTuple tuple;
+        tuple.relation_name = rel;
+        tuple.fields.reserve(fields.size());
+        for (int v : fields) {
+            tuple.fields.push_back(static_cast<souffle::RamDomain>(v));
+        }
+        return tuple;
+    }
+
+    NodePtr makeNode_(const std::string& rel, std::initializer_list<int> fields, bool isFact,
+            DeltaTag delta = DeltaTag::None) {
+        auto tuple = makeTuple_(rel, fields);
+        auto node = builder_->createNode(tuple);
+        node->isFact = isFact;
+        if (isFact) {
+            node->setProbability(1.0);
+        }
+        nodes_.insert(node);
+        if (delta == DeltaTag::Insert) {
+            delta_ins_nodes_.insert(node);
+        } else if (delta == DeltaTag::Delete) {
+            delta_del_nodes_.insert(node);
+        }
+        return node;
+    }
+
+    EdgePtr addEdge_(const std::vector<NodePtr>& ins, const NodePtr& out, DeltaTag delta = DeltaTag::None) {
+        auto e = builder_->createHyperedge(ins, out);
+        if (!e) return nullptr;
+        edges_.insert(e);
+        if (delta == DeltaTag::Insert) {
+            delta_ins_edges_.insert(e);
+        } else if (delta == DeltaTag::Delete) {
+            delta_del_edges_.insert(e);
+        }
+        return e;
+    }
+
+    void recordNodeImpact_(const NodePtr& deltaNode, std::initializer_list<NodePtr> impacted, bool insert) {
+        auto& target = insert ? node_impacted_by_ins_ : node_impacted_by_del_;
+        auto& slot = target[deltaNode];
+        slot.insert(impacted.begin(), impacted.end());
+    }
+
+    void recordEdgeImpact_(const NodePtr& deltaNode, std::initializer_list<EdgePtr> impacted, bool insert) {
+        auto& target = insert ? edge_impacted_by_ins_ : edge_impacted_by_del_;
+        auto& slot = target[deltaNode];
+        slot.insert(impacted.begin(), impacted.end());
+    }
+
+    void clearAll_() {
+        builder_ = std::make_unique<DerivationGraph>();
+        nodes_.clear(); edges_.clear();
+        delta_ins_nodes_.clear(); delta_del_nodes_.clear();
+        delta_ins_edges_.clear(); delta_del_edges_.clear();
+        node_impacted_by_del_.clear(); edge_impacted_by_del_.clear();
+        node_impacted_by_ins_.clear(); edge_impacted_by_ins_.clear();
+        validNodes_.clear(); validEdges_.clear();
+    }
+
+    std::unique_ptr<DerivationGraph> builder_;
+    std::unordered_set<NodePtr>      nodes_;
+    std::unordered_set<EdgePtr>      edges_;
+    std::set<NodePtr>                delta_ins_nodes_, delta_del_nodes_;
+    std::set<EdgePtr>                delta_ins_edges_, delta_del_edges_;
+    std::unordered_map<NodePtr, std::set<NodePtr>> node_impacted_by_del_;
+    std::unordered_map<NodePtr, std::set<EdgePtr>> edge_impacted_by_del_;
+    std::unordered_map<NodePtr, std::set<NodePtr>> node_impacted_by_ins_;
+    std::unordered_map<NodePtr, std::set<EdgePtr>> edge_impacted_by_ins_;
+};
+
+} // namespace incra

@@ -1113,6 +1113,13 @@ inline std::vector<Json> parse_multi(const std::string& in, std::string::size_ty
     return json_vec;
 }
 
+inline void json_array_append(json11::Json& arr, const json11::Json& val) {
+    const auto& items = arr.array_items();              // const ref
+    std::vector<json11::Json> tmp(items.begin(), items.end());
+    tmp.push_back(val);
+    arr = json11::Json(std::move(tmp));                 // 重新赋值
+}
+
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif  // _MSC_VER

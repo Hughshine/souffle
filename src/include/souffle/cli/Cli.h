@@ -1,8 +1,10 @@
 #ifndef CLI_H
 #define CLI_H
+#include <chrono>
+#include <ctime>
 #include <iostream>
-#include <string>
 #include <sstream>
+#include <string>
 #include <vector>
 #include <regex>
 #include <iomanip>
@@ -17,6 +19,27 @@
 #include "souffle/CompiledOptions.h"
 #include "souffle/problog/PreDerivationGraph.h"
 #include <unistd.h> // Required for isatty()
+
+inline std::string makeTimestampLabel() {
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+    std::tm localTm{};
+#if defined(_MSC_VER)
+    localtime_s(&localTm, &nowTime);
+#else
+    if (auto* tmPtr = std::localtime(&nowTime)) {
+        localTm = *tmPtr;
+    }
+#endif
+    std::ostringstream oss;
+    oss << std::put_time(&localTm, "%Y%m%d-%H%M%S");
+    return oss.str();
+}
+
+inline std::string makeTimestampedFilename(const std::string& prefix, size_t iteration,
+        const std::string& extension) {
+    return prefix + std::to_string(iteration) + "-" + makeTimestampLabel() + extension;
+}
 
 std::string getConcreteRelationName(const std::string& name, const std::string prefix) {
     return prefix + name;
@@ -505,13 +528,19 @@ public:
                 auto view = graph->prune(this->outputRelations);
                 debugger.endStage();
                 view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                view.dumpJsonInc(makeTimestampedFilename("derivation-inc-after-prune", iteration, ".json"));
                 changedNodes.clear();
 
-                // TODO: derv-only
                 std::cout << view.getDeltaInsertNodes().size() << " nodes with inserted derivations.\n";
                 std::cout << view.getDeltaDeleteNodes().size() << " nodes with deleted derivations.\n";
                 std::cout << view.getDeltaInsertEdges().size() << " edges with inserted derivations.\n";
                 std::cout << view.getDeltaDeleteEdges().size() << " edges with deleted derivations.\n";
+                if (derivationOnly) {
+                    debugger.endTurn();
+                    iteration++;
+                    pendingOperations.clear();
+                    return;
+                }
                 // knowledge representation
                 debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
                 buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
@@ -542,8 +571,15 @@ public:
                 auto view = graph->prune(this->outputRelations);
                 debugger.endStage();
                 view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
+                view.dumpJsonInc(makeTimestampedFilename("derivation-full-after-prune", iteration, ".json"));
                 debugger.endStage();
 
+                if (derivationOnly) {
+                    debugger.endTurn();
+                    iteration++;
+                    pendingOperations.clear();
+                    return;
+                }
                 debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
                 nodeFormulas->clear(), edgeFormulas->clear();
                 buildFormulasCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas);
@@ -676,6 +712,7 @@ public:
                 auto view = graph->prune(program->getOutputRelations());
                 debugger.endStage();
                 view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                view.dumpJsonInc(makeTimestampedFilename("derivation-inc-after-prune", iteration, ".json"));
                 changedNodes.clear();
                 if (derivationOnly) {
                     debugger.endTurn();
@@ -722,6 +759,7 @@ public:
                 auto view = graph->prune(program->getOutputRelations());
                 debugger.endStage();
                 view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
+                view.dumpJsonInc(makeTimestampedFilename("derivation-full-after-prune", iteration, ".json"));
                 if (derivationOnly) {
                     debugger.endTurn();
                     iteration++;

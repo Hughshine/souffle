@@ -165,6 +165,9 @@ struct UntypedTuple {
         return relation_name == other.relation_name && fields == other.fields;
     }
 
+    bool operator!=(const UntypedTuple& other) const {
+        return !(*this == other);
+    }
     template<std::size_t N>
     static UntypedTuple fromTypedTuple(const std::string& relationName, const souffle::Tuple<souffle::RamDomain, N>& typedTuple) {
         UntypedTuple result;

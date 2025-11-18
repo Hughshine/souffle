@@ -597,7 +597,7 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
 //     // TODO
 //     out << "dumpInitialInputRelations(opt.getOutputFileDir() + \"/initial-input-relations-iter0.txt\");\n";
 //     out << "}\n";
-    if (glb.config().has("online")) {
+    if (glb.config().has("online") && !glb.config().has("full-only")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas, false);\n";
         out << "cli.setCmdOptions(opt);\n";
         out << "cli.run();\n";
@@ -639,8 +639,9 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "debugger.endTurn();\n";
     out << "}\n" << std::endl;
     out << "}\n" << std::endl;
+    out << "dumpInitialInputRelations(opt.getOutputFileDir() + \"/initial-input-relations-iter0.txt\");\n";
 
-    if (glb.config().has("online")) {
+    if (glb.config().has("online") && !glb.config().has("full-only")) {
         out << "IncrementalCLI cli(&obj, graph, &ruleManager, &sddManager, &nodeFormulas, &edgeFormulas);\n";
         out << "cli.setCmdOptions(opt);\n";
         out << "cli.run();\n";
