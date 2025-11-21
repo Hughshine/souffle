@@ -211,6 +211,11 @@ public:
     void setCmdOptions(const souffle::CmdOptions& options) {
         opt = options;
         setDerivationOnly(options.isDerivationOnly());
+        if (options.isMergeBiImpEnabled()) {
+            DerivationGraph::setMergeBiImpEnabled(true);
+        } else {
+            DerivationGraph::setMergeBiImpEnabled(false);
+        }
         auto& mode = options.getIncMode();
         if (mode == "full") {
             setIncMode(IncMode::FULL);

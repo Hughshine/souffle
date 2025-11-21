@@ -19,7 +19,7 @@
 
 class RuleManager {
 public:
-    RuleManager(std::vector<Rule> rules);
+    RuleManager(std::vector<Rule> rules, std::vector<std::string> eqrelRelations = {});
     void addRule(Rule rule);
     const Rule* getRule(std::size_t ruleId) const;
     std::vector<const Rule*> getRulesForPredicate(const std::string& predicate) const;
@@ -35,10 +35,17 @@ public:
     bool isInRecursiveStratum(std::size_t ruleId) const {
         return getRule(ruleId)->isInRecursiveStratum();
     }
+    bool isEqrelRelation(const std::string& predicate) const {
+        return eqrelRelations.count(predicate) != 0;
+     }
+    void addEqrelRelation(const std::string& predicate) {
+        eqrelRelations.insert(predicate);
+    }
 
 private:
     std::unordered_map<std::size_t, Rule> rules;
     std::unordered_map<std::string, std::unordered_set<std::size_t>> predicateToRules;
+    std::unordered_set<std::string> eqrelRelations;
 };
 
 class ExampleRuleComponents {
@@ -78,7 +85,10 @@ private:
 };
 
 
-RuleManager::RuleManager(std::vector<Rule> rules) {
+RuleManager::RuleManager(std::vector<Rule> rules, std::vector<std::string> eqrelRelations) {
+    for (const auto& rel : eqrelRelations) {
+        addEqrelRelation(rel);
+    }
     for (const auto& rule : rules) {
         addRule(rule);
     }

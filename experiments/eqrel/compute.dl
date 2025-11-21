@@ -1,0 +1,450 @@
+// (define-sort s () (_ BitVec 8))
+.type s <: number
+// (define-sort BitSet () (_ BitVec 4))
+.type BitSet <: number
+// (define-sort ind () (_ BitVec 1))
+.type ind <: number
+// (declare-rel assign (s s))
+.decl assign(v0:s,v1:s)
+// (declare-rel TDEP (s s))
+.decl TDEP(v0:s,v1:s)
+// (declare-rel xor_assign_left (s s))
+.decl xor_assign_left(v0:s,v1:s)
+// (declare-rel xor_assign_right (s s))
+.decl xor_assign_right(v0:s,v1:s)
+// (declare-rel andor_assign_left (s s))
+.decl andor_assign_left(v0:s,v1:s)
+// (declare-rel andor_assign_right (s s))
+.decl andor_assign_right(v0:s,v1:s)
+// (declare-rel not_assign (s s))
+.decl not_assign(v0:s,v1:s)
+// (declare-rel load_assign (s s))
+.decl load_assign(v0:s,v1:s)
+// (declare-rel store_assign (s s))
+.decl store_assign(v0:s,v1:s)
+// (declare-rel zext_assign (s s))
+.decl zext_assign(v0:s,v1:s)
+// (declare-rel icmp_assign (s s))
+.decl icmp_assign(v0:s,v1:s)
+// (declare-rel trunc_assign (s s))
+.decl trunc_assign(v0:s,v1:s)
+// (declare-rel share (s s))
+.decl share(v0:s,v1:s)
+// (declare-rel binary_constant (s s))
+.decl binary_constant(v0:s,v1:s)
+// (declare-rel equal_assign (s s))
+.decl equal_assign(v0:s,v1:s)
+// (declare-rel KEY_SENSITIVE (s))
+.decl KEY_SENSITIVE(v0:s)
+// (declare-rel KEY_IND (s))
+.decl KEY_IND(v0:s)
+// (declare-rel CONSTANT (s))
+.decl CONSTANT(v0:s)
+// (declare-rel RAND (s))
+.decl RAND(v0:s)
+// (declare-rel HD_SENSITIVE (s s))
+.decl HD_SENSITIVE(v0:s,v1:s)
+// (declare-rel RAND_NUMBER (ind BitSet))
+.decl RAND_NUMBER(v0:ind,v1:BitSet)
+// (declare-rel KEY_NUMBER (ind BitSet))
+.decl KEY_NUMBER(v0:ind,v1:BitSet)
+// (declare-rel REC_RAND_VAR (s ind BitSet))
+.decl REC_RAND_VAR(v0:s,v1:ind,v2:BitSet)
+// (declare-rel REC_ALL_INC (s ind BitSet))
+.decl REC_ALL_INC(v0:s,v1:ind,v2:BitSet)
+// (declare-rel Time (ind))
+.decl Time(v0:ind)
+// (declare-rel BVAND (BitSet BitSet BitSet))
+.decl BVAND(v0:BitSet,v1:BitSet,v2:BitSet)
+// (declare-rel BVOR (BitSet BitSet BitSet))
+.decl BVOR(v0:BitSet,v1:BitSet,v2:BitSet)
+// (declare-rel BVNOT (BitSet BitSet))
+.decl BVNOT(v0:BitSet,v1:BitSet)
+// (declare-rel BV_Intersect (BitSet BitSet BitSet))
+.decl BV_Intersect(v0:BitSet,v1:BitSet,v2:BitSet)
+// (declare-rel BV_Diff (BitSet BitSet BitSet))
+.decl BV_Diff(v0:BitSet,v1:BitSet,v2:BitSet)
+// (declare-rel ISEMPTY (BitSet bool))
+.decl ISEMPTY(v0:BitSet,v1:bool)
+// (declare-rel NOEMPTY (BitSet bool))
+.decl NOEMPTY(v0:BitSet,v1:bool)
+// (declare-rel SET_SUM (BitSet BitSet BitSet))
+.decl SET_SUM(v0:BitSet,v1:BitSet,v2:BitSet)
+// (declare-rel XOR_RUD1_ALL_INC (BitSet BitSet BitSet BitSet BitSet BitSet))
+.decl XOR_RUD1_ALL_INC(v0:BitSet,v1:BitSet,v2:BitSet,v3:BitSet,v4:BitSet,v5:BitSet)
+// (declare-rel BV_EQUAL (BitSet BitSet))
+.decl BV_EQUAL(v0:BitSet,v1:BitSet)
+// (declare-rel BV_ZERO (BitSet BitSet))
+.decl BV_ZERO(v0:BitSet,v1:BitSet)
+// (declare-rel BVAND_REC (s s s ind))
+.decl BVAND_REC(v0:s,v1:s,v2:s,v3:ind)
+// (declare-rel BVAND_ALL_KEY_REC (s ind BitSet))
+.decl BVAND_ALL_KEY_REC(v0:s,v1:ind,v2:BitSet)
+// (declare-rel BVOR_RAND_REC (s s s ind))
+.decl BVOR_RAND_REC(v0:s,v1:s,v2:s,v3:ind)
+// (declare-rel BVOR_ALL_REC (s s s ind))
+.decl BVOR_ALL_REC(v0:s,v1:s,v2:s,v3:ind)
+// (declare-rel BV_INTERSECT_REC (s s ind BitSet))
+.decl BV_INTERSECT_REC(v0:s,v1:s,v2:ind,v3:BitSet)
+// (declare-rel INTERSECT_LABEL (s s))
+.decl INTERSECT_LABEL(v0:s,v1:s)
+// (declare-rel BV_DIFF_REC (s s ind BitSet))
+.decl BV_DIFF_REC(v0:s,v1:s,v2:ind,v3:BitSet)
+// (declare-rel DIFF_LABEL (s s))
+.decl DIFF_LABEL(v0:s,v1:s)
+// (declare-rel BV_SAME_REC (s s ind BitSet))
+.decl BV_SAME_REC(v0:s,v1:s,v2:ind,v3:BitSet)
+// (declare-rel CHECK_SAME (s s))
+.decl CHECK_SAME(v0:s,v1:s)
+// (declare-rel SET_SUM_REC (s s s ind))
+.decl SET_SUM_REC(v0:s,v1:s,v2:s,v3:ind)
+// (declare-rel XOR_RUD1_ALL_INC_REC (s s s ind))
+.decl XOR_RUD1_ALL_INC_REC(v0:s,v1:s,v2:s,v3:ind)
+// (declare-rel BV_EQUAL_RAND_REC (s s ind))
+.decl BV_EQUAL_RAND_REC(v0:s,v1:s,v2:ind)
+// (declare-rel BV_EQUAL_ALL_REC (s s ind))
+.decl BV_EQUAL_ALL_REC(v0:s,v1:s,v2:ind)
+// (declare-rel BV_ZERO_REC (s s ind))
+.decl BV_ZERO_REC(v0:s,v1:s,v2:ind)
+// (declare-rel BV_IS_EMPTY_REC (s ind bool))
+.decl BV_IS_EMPTY_REC(v0:s,v1:ind,v2:bool)
+// (declare-rel q1 (s))
+.decl q1(v0:s)
+// (rule (=> (and true true) (ISEMPTY X (= X #b0000))))
+ISEMPTY(X,=(X,0)).
+// (rule (=> (and true true) (SET_SUM X Y (bvor (bvand X (bvnot Y)) (bvand (bvnot X) Y)))))
+SET_SUM(X,Y,((X band (bnot (Y))) bor ((bnot (X)) band Y))).
+// (rule (=> (and true true) (XOR_RUD1_ALL_INC X_A Y_A X_R Y_R N (bvand (bvor X_A Y_A) (bvor (bvnot N) (bvor (bvand X_R (bvnot Y_R)) (bvand (bvnot X_R) Y_R)))))))
+XOR_RUD1_ALL_INC(X_A,Y_A,X_R,Y_R,N,((X_A bor Y_A) band ((bnot (N)) bor ((X_R band (bnot (Y_R))) bor ((bnot (X_R)) band Y_R))))).
+// (rule (=> (and (REC_RAND_VAR var_x Times X) (REC_RAND_VAR var_y Times Y) (BVAND_REC var_x var_y var_z Times) (= tmp (bvand X Y))) (REC_RAND_VAR var_z Times tmp)))
+REC_RAND_VAR(VAR_Z,TIMES,TMP) :- REC_RAND_VAR(VAR_X,TIMES,X), REC_RAND_VAR(VAR_Y,TIMES,Y), BVAND_REC(VAR_X,VAR_Y,VAR_Z,TIMES), (TMP = (X band Y)).
+// (rule (=> (and (REC_RAND_VAR var_x Times X) (REC_RAND_VAR var_y Times Y) (BVOR_RAND_REC var_x var_y var_z Times) (BVOR X Y XY)) (REC_RAND_VAR var_z Times XY)))
+REC_RAND_VAR(VAR_Z,TIMES,XY) :- REC_RAND_VAR(VAR_X,TIMES,X), REC_RAND_VAR(VAR_Y,TIMES,Y), BVOR_RAND_REC(VAR_X,VAR_Y,VAR_Z,TIMES), BVOR(X,Y,XY).
+// (rule (=> (and (REC_ALL_INC var_x Times X) (REC_ALL_INC var_y Times Y) (BVOR_ALL_REC var_x var_y var_z Times) (BVOR X Y XY)) (REC_ALL_INC var_z Times XY)))
+REC_ALL_INC(VAR_Z,TIMES,XY) :- REC_ALL_INC(VAR_X,TIMES,X), REC_ALL_INC(VAR_Y,TIMES,Y), BVOR_ALL_REC(VAR_X,VAR_Y,VAR_Z,TIMES), BVOR(X,Y,XY).
+// (rule (=> (and (REC_RAND_VAR var_x Times X) (REC_RAND_VAR var_y Times Y) (SET_SUM_REC var_x var_y var_z Times) (SET_SUM X Y XY)) (REC_RAND_VAR var_z Times XY)))
+REC_RAND_VAR(VAR_Z,TIMES,XY) :- REC_RAND_VAR(VAR_X,TIMES,X), REC_RAND_VAR(VAR_Y,TIMES,Y), SET_SUM_REC(VAR_X,VAR_Y,VAR_Z,TIMES), SET_SUM(X,Y,XY).
+// (rule (=> (and (SET_SUM_REC var_x var_y var_z Times) (not (= Times_New #b0)) (= Times_New (bvsub Times #b1))) (SET_SUM_REC var_x var_y var_z Times_New)))
+SET_SUM_REC(VAR_X,VAR_Y,VAR_Z,TIMES_NEW) :- SET_SUM_REC(VAR_X,VAR_Y,VAR_Z,TIMES), !((TIMES_NEW = 0)), (TIMES_NEW = (TIMES - 1)).
+// (rule (=> (and (REC_RAND_VAR var_x Times X_R) (REC_RAND_VAR var_y Times Y_R) (REC_ALL_INC var_x Times X_A) (REC_ALL_INC var_y Times Y_A) (RAND_NUMBER Times RAND_NUM) (XOR_RUD1_ALL_INC X_A Y_A X_R Y_R RAND_NUM XY) (XOR_RUD1_ALL_INC_REC var_x var_y var_z Times)) (REC_ALL_INC var_z Times XY)))
+REC_ALL_INC(VAR_Z,TIMES,XY) :- REC_RAND_VAR(VAR_X,TIMES,X_R), REC_RAND_VAR(VAR_Y,TIMES,Y_R), REC_ALL_INC(VAR_X,TIMES,X_A), REC_ALL_INC(VAR_Y,TIMES,Y_A), RAND_NUMBER(TIMES,RAND_NUM), XOR_RUD1_ALL_INC(X_A,Y_A,X_R,Y_R,RAND_NUM,XY), XOR_RUD1_ALL_INC_REC(VAR_X,VAR_Y,VAR_Z,TIMES).
+// (rule (=> (and (XOR_RUD1_ALL_INC_REC var_x var_y var_z Times) (= Times_New (bvsub Times #b1)) (not (= Times_New #b0))) (XOR_RUD1_ALL_INC_REC var_x var_y var_z Times_New)))
+XOR_RUD1_ALL_INC_REC(VAR_X,VAR_Y,VAR_Z,TIMES_NEW) :- XOR_RUD1_ALL_INC_REC(VAR_X,VAR_Y,VAR_Z,TIMES), (TIMES_NEW = (TIMES - 1)), !((TIMES_NEW = 0)).
+// (rule (=> (and (REC_RAND_VAR var_x Times X) (BV_EQUAL_RAND_REC var_x var_y Times)) (REC_RAND_VAR var_y Times X)))
+REC_RAND_VAR(VAR_Y,TIMES,X) :- REC_RAND_VAR(VAR_X,TIMES,X), BV_EQUAL_RAND_REC(VAR_X,VAR_Y,TIMES).
+// (rule (=> (and (REC_ALL_INC var_x Times X) (BV_EQUAL_ALL_REC var_x var_y Times)) (REC_ALL_INC var_y Times X)))
+REC_ALL_INC(VAR_Y,TIMES,X) :- REC_ALL_INC(VAR_X,TIMES,X), BV_EQUAL_ALL_REC(VAR_X,VAR_Y,TIMES).
+// (rule (=> (and (REC_RAND_VAR var_x Times X) (BV_ZERO_REC var_x var_y Times) (= XY #b0000)) (REC_RAND_VAR var_y Times XY)))
+REC_RAND_VAR(VAR_Y,TIMES,XY) :- REC_RAND_VAR(VAR_X,TIMES,X), BV_ZERO_REC(VAR_X,VAR_Y,TIMES), (XY = 0).
+// (rule (=> (assign to from) (TDEP to from)))
+TDEP(TO,FROM) :- assign(TO,FROM).
+// (rule (=> (load_assign to from) (assign to from)))
+assign(TO,FROM) :- load_assign(TO,FROM).
+// (rule (=> (store_assign to from) (assign to from)))
+assign(TO,FROM) :- store_assign(TO,FROM).
+// (rule (=> (and (assign to from) (TDEP from prev)) (TDEP to prev)))
+TDEP(TO,PREV) :- assign(TO,FROM), TDEP(FROM,PREV).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (RAND from1)) (DIFF_LABEL from1 from2)))
+DIFF_LABEL(FROM1,FROM2) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM1).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (RAND from2)) (DIFF_LABEL from2 from1)))
+DIFF_LABEL(FROM2,FROM1) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM2).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (or (and (RAND from1) (BV_DIFF_REC from1 from2 Times int_res0) (not (= int_res0 #b0000))) (and (RAND from2) (BV_DIFF_REC from2 from1 Times int_res1) (not (= int_res1 #b0000))))) (RAND to)))
+RAND(TO) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM1), BV_DIFF_REC(FROM1,FROM2,TIMES,INT_RES0), !((INT_RES0 = 0)).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (or (and (RAND from1) (BV_DIFF_REC from1 from2 Times int_res0) (not (= int_res0 #b0000))) (and (RAND from2) (BV_DIFF_REC from2 from1 Times int_res1) (not (= int_res1 #b0000))))) (RAND to)))
+RAND(TO) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM2), BV_DIFF_REC(FROM2,FROM1,TIMES,INT_RES1), !((INT_RES1 = 0)).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (and (and (RAND from1) (BV_DIFF_REC from1 from2 Times int_res0) (= int_res0 #b0000)) (and (RAND from2) (BV_DIFF_REC from2 from1 Times int_res1) (= int_res1 #b0000)))) (CHECK_SAME from1 from2)))
+CHECK_SAME(FROM1,FROM2) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM1), BV_DIFF_REC(FROM1,FROM2,TIMES,INT_RES0), (INT_RES0 = 0), RAND(FROM2), BV_DIFF_REC(FROM2,FROM1,TIMES,INT_RES1), (INT_RES1 = 0).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (or (RAND from1) (RAND from2)) (BV_SAME_REC from1 from2 Times int_res0) (= int_res0 #b0000)) (KEY_IND to)))
+KEY_IND(TO) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM1), BV_SAME_REC(FROM1,FROM2,TIMES,INT_RES0), (INT_RES0 = 0).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (or (RAND from1) (RAND from2)) (BV_SAME_REC from1 from2 Times int_res0) (= int_res0 #b0000)) (KEY_IND to)))
+KEY_IND(TO) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM2), BV_SAME_REC(FROM1,FROM2,TIMES,INT_RES0), (INT_RES0 = 0).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (or (RAND from1) (RAND from2)) (BV_SAME_REC from1 from2 Times int_res0) (not (= int_res0 #b0000))) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM1), BV_SAME_REC(FROM1,FROM2,TIMES,INT_RES0), !((INT_RES0 = 0)).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (or (RAND from1) (RAND from2)) (BV_SAME_REC from1 from2 Times int_res0) (not (= int_res0 #b0000))) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM2), BV_SAME_REC(FROM1,FROM2,TIMES,INT_RES0), !((INT_RES0 = 0)).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (or (and (RAND from1) (BV_DIFF_REC from1 from2 Times int_res0) (not (= int_res0 #b0000))) (and (RAND from2) (BV_DIFF_REC from2 from1 Times int_res1) (not (= int_res1 #b0000))))) (SET_SUM_REC from1 from2 to Times)))
+SET_SUM_REC(FROM1,FROM2,TO,TIMES) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM1), BV_DIFF_REC(FROM1,FROM2,TIMES,INT_RES0), !((INT_RES0 = 0)).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (or (and (RAND from1) (BV_DIFF_REC from1 from2 Times int_res0) (not (= int_res0 #b0000))) (and (RAND from2) (BV_DIFF_REC from2 from1 Times int_res1) (not (= int_res1 #b0000))))) (SET_SUM_REC from1 from2 to Times)))
+SET_SUM_REC(FROM1,FROM2,TO,TIMES) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM2), BV_DIFF_REC(FROM2,FROM1,TIMES,INT_RES1), !((INT_RES1 = 0)).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (or (RAND from1) (RAND from2))) (XOR_RUD1_ALL_INC_REC from1 from2 to Times)))
+XOR_RUD1_ALL_INC_REC(FROM1,FROM2,TO,TIMES) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM1).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (Time Times) (or (RAND from1) (RAND from2))) (XOR_RUD1_ALL_INC_REC from1 from2 to Times)))
+XOR_RUD1_ALL_INC_REC(FROM1,FROM2,TO,TIMES) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), Time(TIMES), RAND(FROM2).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (KEY_SENSITIVE from1) (KEY_SENSITIVE from2)) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), KEY_SENSITIVE(FROM1), KEY_SENSITIVE(FROM2).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (KEY_IND from1) (KEY_IND from2)) (INTERSECT_LABEL from1 from2)))
+INTERSECT_LABEL(FROM1,FROM2) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), KEY_IND(FROM1), KEY_IND(FROM2).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (KEY_IND from1) (KEY_IND from2) (Time Times) (BV_INTERSECT_REC from1 from2 Times int_res0) (= int_res0 #b0000)) (KEY_IND to)))
+KEY_IND(TO) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), KEY_IND(FROM1), KEY_IND(FROM2), Time(TIMES), BV_INTERSECT_REC(FROM1,FROM2,TIMES,INT_RES0), (INT_RES0 = 0).
+// (rule (=> (and (xor_assign_left to from1) (xor_assign_right to from2) (KEY_IND from1) (KEY_IND from2) (Time Times) (BV_INTERSECT_REC from1 from2 Times int_res0) (not (= int_res0 #b0000))) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- xor_assign_left(TO,FROM1), xor_assign_right(TO,FROM2), KEY_IND(FROM1), KEY_IND(FROM2), Time(TIMES), BV_INTERSECT_REC(FROM1,FROM2,TIMES,INT_RES0), !((INT_RES0 = 0)).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (RAND from1) (or (KEY_IND from2) (RAND from2))) (INTERSECT_LABEL from1 from2)))
+INTERSECT_LABEL(FROM1,FROM2) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM1), KEY_IND(FROM2).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (RAND from1) (or (KEY_IND from2) (RAND from2))) (INTERSECT_LABEL from1 from2)))
+INTERSECT_LABEL(FROM1,FROM2) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM1), RAND(FROM2).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (RAND from1) (or (KEY_IND from2) (RAND from2)) (Time Times) (BV_INTERSECT_REC from1 from2 Times int_res0) (= int_res0 #b0000)) (KEY_IND to)))
+KEY_IND(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM1), KEY_IND(FROM2), Time(TIMES), BV_INTERSECT_REC(FROM1,FROM2,TIMES,INT_RES0), (INT_RES0 = 0).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (RAND from1) (or (KEY_IND from2) (RAND from2)) (Time Times) (BV_INTERSECT_REC from1 from2 Times int_res0) (= int_res0 #b0000)) (KEY_IND to)))
+KEY_IND(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM1), RAND(FROM2), Time(TIMES), BV_INTERSECT_REC(FROM1,FROM2,TIMES,INT_RES0), (INT_RES0 = 0).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (RAND from1) (or (KEY_IND from2) (RAND from2)) (Time Times) (BV_INTERSECT_REC from1 from2 Times int_res0) (not (= int_res0 #b0000))) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM1), KEY_IND(FROM2), Time(TIMES), BV_INTERSECT_REC(FROM1,FROM2,TIMES,INT_RES0), !((INT_RES0 = 0)).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (RAND from1) (or (KEY_IND from2) (RAND from2)) (Time Times) (BV_INTERSECT_REC from1 from2 Times int_res0) (not (= int_res0 #b0000))) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM1), RAND(FROM2), Time(TIMES), BV_INTERSECT_REC(FROM1,FROM2,TIMES,INT_RES0), !((INT_RES0 = 0)).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (KEY_SENSITIVE from2) (RAND from1)) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), KEY_SENSITIVE(FROM2), RAND(FROM1).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (RAND from2) (or (KEY_IND from1) (RAND from1))) (INTERSECT_LABEL from1 from2)))
+INTERSECT_LABEL(FROM1,FROM2) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM2), KEY_IND(FROM1).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (RAND from2) (or (KEY_IND from1) (RAND from1))) (INTERSECT_LABEL from1 from2)))
+INTERSECT_LABEL(FROM1,FROM2) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM2), RAND(FROM1).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (or (KEY_IND from1) (RAND from1)) (RAND from2) (Time Times) (BV_INTERSECT_REC from1 from2 Times int_res0) (= int_res0 #b0000)) (KEY_IND to)))
+KEY_IND(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), KEY_IND(FROM1), RAND(FROM2), Time(TIMES), BV_INTERSECT_REC(FROM1,FROM2,TIMES,INT_RES0), (INT_RES0 = 0).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (or (KEY_IND from1) (RAND from1)) (RAND from2) (Time Times) (BV_INTERSECT_REC from1 from2 Times int_res0) (= int_res0 #b0000)) (KEY_IND to)))
+KEY_IND(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM1), RAND(FROM2), Time(TIMES), BV_INTERSECT_REC(FROM1,FROM2,TIMES,INT_RES0), (INT_RES0 = 0).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (or (KEY_IND from1) (RAND from1)) (RAND from2) (Time Times) (BV_INTERSECT_REC from1 from2 Times int_res0) (not (= int_res0 #b0000))) (KEY_IND to)))
+KEY_IND(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), KEY_IND(FROM1), RAND(FROM2), Time(TIMES), BV_INTERSECT_REC(FROM1,FROM2,TIMES,INT_RES0), !((INT_RES0 = 0)).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (or (KEY_IND from1) (RAND from1)) (RAND from2) (Time Times) (BV_INTERSECT_REC from1 from2 Times int_res0) (not (= int_res0 #b0000))) (KEY_IND to)))
+KEY_IND(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM1), RAND(FROM2), Time(TIMES), BV_INTERSECT_REC(FROM1,FROM2,TIMES,INT_RES0), !((INT_RES0 = 0)).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (RAND from2) (KEY_SENSITIVE from1)) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM2), KEY_SENSITIVE(FROM1).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (RAND from1) (RAND from2)) (DIFF_LABEL from1 from2)))
+DIFF_LABEL(FROM1,FROM2) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM1), RAND(FROM2).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (RAND from1) (RAND from2) (Time Times) (BV_DIFF_REC from1 from2 Times int_res0) (BV_DIFF_REC from2 from1 Times int_res1) (BVOR int_res0 int_res1 int_res2) (not (= int_res2 #b0000))) (KEY_IND to)))
+KEY_IND(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM1), RAND(FROM2), Time(TIMES), BV_DIFF_REC(FROM1,FROM2,TIMES,INT_RES0), BV_DIFF_REC(FROM2,FROM1,TIMES,INT_RES1), BVOR(INT_RES0,INT_RES1,INT_RES2), !((INT_RES2 = 0)).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (RAND from1) (RAND from2) (Time Times) (BV_DIFF_REC from1 from2 Times int_res0) (BV_DIFF_REC from2 from1 Times int_res1) (BVOR int_res0 int_res1 int_res2) (= int_res2 #b0000)) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), RAND(FROM1), RAND(FROM2), Time(TIMES), BV_DIFF_REC(FROM1,FROM2,TIMES,INT_RES0), BV_DIFF_REC(FROM2,FROM1,TIMES,INT_RES1), BVOR(INT_RES0,INT_RES1,INT_RES2), (INT_RES2 = 0).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (KEY_SENSITIVE from1) (KEY_SENSITIVE from2)) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), KEY_SENSITIVE(FROM1), KEY_SENSITIVE(FROM2).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (KEY_IND from1) (KEY_IND from2)) (INTERSECT_LABEL from1 from2)))
+INTERSECT_LABEL(FROM1,FROM2) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), KEY_IND(FROM1), KEY_IND(FROM2).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (KEY_IND from1) (KEY_IND from2) (Time Times) (BV_INTERSECT_REC from1 from2 Times int_res0) (= int_res0 #b0000)) (KEY_IND to)))
+KEY_IND(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), KEY_IND(FROM1), KEY_IND(FROM2), Time(TIMES), BV_INTERSECT_REC(FROM1,FROM2,TIMES,INT_RES0), (INT_RES0 = 0).
+// (rule (=> (and (andor_assign_left to from1) (andor_assign_right to from2) (KEY_IND from1) (KEY_IND from2) (Time Times) (BV_INTERSECT_REC from1 from2 Times int_res0) (not (= int_res0 #b0000))) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- andor_assign_left(TO,FROM1), andor_assign_right(TO,FROM2), KEY_IND(FROM1), KEY_IND(FROM2), Time(TIMES), BV_INTERSECT_REC(FROM1,FROM2,TIMES,INT_RES0), !((INT_RES0 = 0)).
+// (rule (=> (and (not_assign to from1) (RAND from1)) (RAND to)))
+RAND(TO) :- not_assign(TO,FROM1), RAND(FROM1).
+// (rule (=> (and (not_assign to from1) (KEY_IND from1)) (KEY_IND to)))
+KEY_IND(TO) :- not_assign(TO,FROM1), KEY_IND(FROM1).
+// (rule (=> (and (not_assign to from1) (KEY_SENSITIVE from1)) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- not_assign(TO,FROM1), KEY_SENSITIVE(FROM1).
+// (rule (=> (CONSTANT from1) (KEY_IND from1)))
+KEY_IND(FROM1) :- CONSTANT(FROM1).
+// (rule (=> (and (load_assign to from1) (KEY_SENSITIVE from1)) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- load_assign(TO,FROM1), KEY_SENSITIVE(FROM1).
+// (rule (=> (and (load_assign to from1) (KEY_IND from1)) (KEY_IND to)))
+KEY_IND(TO) :- load_assign(TO,FROM1), KEY_IND(FROM1).
+// (rule (=> (and (load_assign to from1) (RAND from1)) (RAND to)))
+RAND(TO) :- load_assign(TO,FROM1), RAND(FROM1).
+// (rule (=> (and (store_assign to from1) (KEY_SENSITIVE from1)) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- store_assign(TO,FROM1), KEY_SENSITIVE(FROM1).
+// (rule (=> (and (store_assign to from1) (KEY_IND from1)) (KEY_IND to)))
+KEY_IND(TO) :- store_assign(TO,FROM1), KEY_IND(FROM1).
+// (rule (=> (and (store_assign to from1) (RAND from1)) (RAND to)))
+RAND(TO) :- store_assign(TO,FROM1), RAND(FROM1).
+// (rule (=> (and (equal_assign to from1) (RAND from1)) (RAND to)))
+RAND(TO) :- equal_assign(TO,FROM1), RAND(FROM1).
+// (rule (=> (and (equal_assign to from1) (KEY_IND from1)) (KEY_IND to)))
+KEY_IND(TO) :- equal_assign(TO,FROM1), KEY_IND(FROM1).
+// (rule (=> (and (equal_assign to from1) (KEY_SENSITIVE from1)) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- equal_assign(TO,FROM1), KEY_SENSITIVE(FROM1).
+// (rule (=> (and (binary_constant to from1) (KEY_SENSITIVE from1)) (KEY_SENSITIVE to)))
+KEY_SENSITIVE(TO) :- binary_constant(TO,FROM1), KEY_SENSITIVE(FROM1).
+// (rule (=> (and (binary_constant to from1) (KEY_IND from1)) (KEY_IND to)))
+KEY_IND(TO) :- binary_constant(TO,FROM1), KEY_IND(FROM1).
+// (rule (=> (and (binary_constant to from1) (RAND from1)) (RAND to)))
+RAND(TO) :- binary_constant(TO,FROM1), RAND(FROM1).
+// (rule (=> (zext_assign to from1) (load_assign to from1)))
+load_assign(TO,FROM1) :- zext_assign(TO,FROM1).
+// (rule (=> (trunc_assign to from1) (load_assign to from1)))
+load_assign(TO,FROM1) :- trunc_assign(TO,FROM1).
+// (rule (=> (icmp_assign to from1) (load_assign to from1)))
+load_assign(TO,FROM1) :- icmp_assign(TO,FROM1).
+// (rule (=> (load_assign to from1) (assign to from1)))
+assign(TO,FROM1) :- load_assign(TO,FROM1).
+// (rule (=> (store_assign to from1) (assign to from1)))
+assign(TO,FROM1) :- store_assign(TO,FROM1).
+// (rule (=> (and (assign to from1) (assign from1 from2)) (assign to from2)))
+assign(TO,FROM2) :- assign(TO,FROM1), assign(FROM1,FROM2).
+// (rule (=> (assign to from1) (equal_assign to from1)))
+equal_assign(TO,FROM1) :- assign(TO,FROM1).
+// (rule (=> (binary_constant to from1) (equal_assign to from1)))
+equal_assign(TO,FROM1) :- binary_constant(TO,FROM1).
+// (rule (=> (equal_assign from1 from2) (equal_assign from2 from1)))
+equal_assign(FROM2,FROM1) :- equal_assign(FROM1,FROM2).
+// (rule (=> (and (equal_assign from1 from2) (equal_assign from2 to)) (equal_assign from1 to)))
+equal_assign(FROM1,TO) :- equal_assign(FROM1,FROM2), equal_assign(FROM2,TO).
+// (rule (=> (share from1 from2) (share from2 from1)))
+share(FROM2,FROM1) :- share(FROM1,FROM2).
+// (rule (share #x04 #x09))
+share(4,9).
+// (rule (share #x09 #x03))
+share(9,3).
+// (rule (share #x03 #x07))
+share(3,7).
+// (rule (share #x07 #x06))
+share(7,6).
+// (rule (share #x06 #x09))
+share(6,9).
+// (rule (share #x09 #x05))
+share(9,5).
+// (rule (share #x05 #x08))
+share(5,8).
+// (rule (share #x08 #x06))
+share(8,6).
+// (rule (share #x06 #x0a))
+share(6,10).
+// (rule (share #x04 #x08))
+share(4,8).
+// (rule (RAND #b00001011))
+RAND(11).
+// (rule (REC_RAND_VAR #b00001011 #b1 #b0001))
+REC_RAND_VAR(11,1,1).
+// (rule (REC_ALL_INC #b00001011 #b1 #b0001))
+REC_ALL_INC(11,1,1).
+// (rule (store_assign #b00000001 #b00001011))
+store_assign(1,11).
+// (rule (RAND #b00001101))
+RAND(13).
+// (rule (REC_RAND_VAR #b00001101 #b1 #b0010))
+REC_RAND_VAR(13,1,2).
+// (rule (REC_ALL_INC #b00001101 #b1 #b0010))
+REC_ALL_INC(13,1,2).
+// (rule (store_assign #b00000010 #b00001101))
+store_assign(2,13).
+// (rule (KEY_SENSITIVE #b00001111))
+KEY_SENSITIVE(15).
+// (rule (REC_RAND_VAR #b00001111 #b1 #b0000))
+REC_RAND_VAR(15,1,0).
+// (rule (REC_ALL_INC #b00001111 #b1 #b0100))
+REC_ALL_INC(15,1,4).
+// (rule (store_assign #b00000011 #b00001111))
+store_assign(3,15).
+// (rule (KEY_SENSITIVE #b00010001))
+KEY_SENSITIVE(17).
+// (rule (REC_RAND_VAR #b00010001 #b1 #b0000))
+REC_RAND_VAR(17,1,0).
+// (rule (REC_ALL_INC #b00010001 #b1 #b1000))
+REC_ALL_INC(17,1,8).
+// (rule (store_assign #b00000100 #b00010001))
+store_assign(4,17).
+// (rule (load_assign #b00010011 #b00000100))
+load_assign(19,4).
+// (rule (trunc_assign #b00010100 #b00010011))
+trunc_assign(20,19).
+// (rule (zext_assign #b00010101 #b00010100))
+zext_assign(21,20).
+// (rule (load_assign #b00010110 #b00000001))
+load_assign(22,1).
+// (rule (trunc_assign #b00010111 #b00010110))
+trunc_assign(23,22).
+// (rule (zext_assign #b00011000 #b00010111))
+zext_assign(24,23).
+// (rule (xor_assign_left #b00011001 #b00010101))
+xor_assign_left(25,21).
+// (rule (xor_assign_right #b00011001 #b00011000))
+xor_assign_right(25,24).
+// (rule (icmp_assign #b00011010 #b00011001))
+icmp_assign(26,25).
+// (rule (zext_assign #b00011011 #b00011010))
+zext_assign(27,26).
+// (rule (store_assign #b00001001 #b00011011))
+store_assign(9,27).
+// (rule (load_assign #b00011101 #b00000011))
+load_assign(29,3).
+// (rule (trunc_assign #b00011110 #b00011101))
+trunc_assign(30,29).
+// (rule (zext_assign #b00011111 #b00011110))
+zext_assign(31,30).
+// (rule (load_assign #b00100000 #b00000001))
+load_assign(32,1).
+// (rule (trunc_assign #b00100001 #b00100000))
+trunc_assign(33,32).
+// (rule (zext_assign #b00100010 #b00100001))
+zext_assign(34,33).
+// (rule (xor_assign_left #b00100011 #b00011111))
+xor_assign_left(35,31).
+// (rule (xor_assign_right #b00100011 #b00100010))
+xor_assign_right(35,34).
+// (rule (icmp_assign #b00100100 #b00100011))
+icmp_assign(36,35).
+// (rule (zext_assign #b00100101 #b00100100))
+zext_assign(37,36).
+// (rule (store_assign #b00000111 #b00100101))
+store_assign(7,37).
+// (rule (load_assign #b00100111 #b00000111))
+load_assign(39,7).
+// (rule (trunc_assign #b00101000 #b00100111))
+trunc_assign(40,39).
+// (rule (zext_assign #b00101001 #b00101000))
+zext_assign(41,40).
+// (rule (binary_constant #b00101010 #b00101001))
+binary_constant(42,41).
+// (rule (icmp_assign #b00101011 #b00101010))
+icmp_assign(43,42).
+// (rule (zext_assign #b00101100 #b00101011))
+zext_assign(44,43).
+// (rule (store_assign #b00000110 #b00101100))
+store_assign(6,44).
+// (rule (load_assign #b00101110 #b00001001))
+load_assign(46,9).
+// (rule (trunc_assign #b00101111 #b00101110))
+trunc_assign(47,46).
+// (rule (zext_assign #b00110000 #b00101111))
+zext_assign(48,47).
+// (rule (binary_constant #b00110001 #b00110000))
+binary_constant(49,48).
+// (rule (icmp_assign #b00110010 #b00110001))
+icmp_assign(50,49).
+// (rule (zext_assign #b00110011 #b00110010))
+zext_assign(51,50).
+// (rule (store_assign #b00000101 #b00110011))
+store_assign(5,51).
+// (rule (load_assign #b00110101 #b00000101))
+load_assign(53,5).
+// (rule (trunc_assign #b00110110 #b00110101))
+trunc_assign(54,53).
+// (rule (zext_assign #b00110111 #b00110110))
+zext_assign(55,54).
+// (rule (binary_constant #b00111000 #b00110111))
+binary_constant(56,55).
+// (rule (icmp_assign #b00111001 #b00111000))
+icmp_assign(57,56).
+// (rule (zext_assign #b00111010 #b00111001))
+zext_assign(58,57).
+// (rule (store_assign #b00001000 #b00111010))
+store_assign(8,58).
+// (rule (load_assign #b00111100 #b00000110))
+load_assign(60,6).
+// (rule (trunc_assign #b00111101 #b00111100))
+trunc_assign(61,60).
+// (rule (zext_assign #b00111110 #b00111101))
+zext_assign(62,61).
+// (rule (binary_constant #b00111111 #b00111110))
+binary_constant(63,62).
+// (rule (icmp_assign #b01000000 #b00111111))
+icmp_assign(64,63).
+// (rule (zext_assign #b01000001 #b01000000))
+zext_assign(65,64).
+// (rule (store_assign #b00001010 #b01000001))
+store_assign(10,65).
+// (rule (load_assign #b01000011 #b00001000))
+load_assign(67,8).
+// (rule (trunc_assign #b01000100 #b01000011))
+trunc_assign(68,67).
+// (rule (zext_assign #b01000101 #b01000100))
+zext_assign(69,68).
+// (rule (load_assign #b01000110 #b00001010))
+load_assign(70,10).
+// (rule (trunc_assign #b01000111 #b01000110))
+trunc_assign(71,70).
+// (rule (zext_assign #b01001000 #b01000111))
+zext_assign(72,71).
+// (rule (assign #b01001001 #b01000101))
+assign(73,69).
+// (rule (assign #b01001001 #b01001000))
+assign(73,72).
+// (rule (icmp_assign #b01001010 #b01001001))
+icmp_assign(74,73).
+// (rule (=> (and (HD_SENSITIVE from1 from2) (assign to from1)) (q1 to)))
+q1(TO) :- HD_SENSITIVE(FROM1,FROM2), assign(TO,FROM1).
+.output KEY_IND
+.output KEY_SENSITIVE

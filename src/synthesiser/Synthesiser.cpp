@@ -18,6 +18,7 @@
 #include "AggregateOp.h"
 #include "FunctorOps.h"
 #include "GenDb.h"
+#include "RelationTag.h"
 #include "Global.h"
 #include "RelationTag.h"
 #include "config.h"
@@ -298,8 +299,10 @@ void Synthesiser::emitRules (std::ostream& out) {
         std::size_t atomId = 0;
         std::vector<std::string> atomNames;
         std::string headAtomName = "rule" + std::to_string(ruleId) + "_head";
+        std::string headRelName;
         {
             ast::Atom* headAtom = as<ast::Atom>(clause->getHead());
+            headRelName = headAtom->getQualifiedName().toString();
             std::vector<std::pair<char, std::string>> fields;
             // std::vector<std::string> fieldVars{};  // only consider variables for now
             // TODO: change to use serialize()
@@ -339,7 +342,7 @@ void Synthesiser::emitRules (std::ostream& out) {
                     continue;
                 }
             }
-            out << "const Atom " << headAtomName << " = Atom(\"" << headAtom->getQualifiedName().toString() << "\", std::vector<SymbolicField>{";
+            out << "const Atom " << headAtomName << " = Atom(\"" << headRelName << "\", std::vector<SymbolicField>{";
             for (size_t ii = 0; ii < fields.size(); ++ii) {
                 const auto& [tag, field] = fields[ii];
                 switch (tag) {
@@ -418,6 +421,12 @@ void Synthesiser::emitRules (std::ostream& out) {
         }
         std::string ruleName = "rule" + std::to_string(ruleId);
         ruleNames.push_back(ruleName);
+        bool isEqrelHead = false;
+        if (!headRelName.empty()) {
+            if (auto* headRel = newAstProgram->getRelation(ast::QualifiedName::fromString(headRelName))) {
+                isEqrelHead = headRel->getRepresentation() == RelationRepresentation::EQREL;
+            }
+        }
         out << "const Rule " << ruleName << " = Rule(" << std::to_string(ruleId) + "," + headAtomName
         << ", {" << join(atomNames, ", ") << "}, "
         << "{" << join(map(clause->getVariables(),
@@ -425,9 +434,18 @@ void Synthesiser::emitRules (std::ostream& out) {
         << std::to_string(clause->getProbability())
         << ", " << std::to_string(clause->isRecursive())
         << ", " << std::to_string(clause->isInRecursiveStratum())
+        << ", " << (isEqrelHead ? "true" : "false")
         << ");" << std::endl;
     }
-    out << "ruleManager = RuleManager({" << join(ruleNames, ", ") << "});" << std::endl;
+    std::vector<std::string> eqrelNames;
+    for (const auto* rel : this->newAstProgram->getRelations()) {
+        if (rel->getRepresentation() == RelationRepresentation::EQREL) {
+            eqrelNames.push_back("\"" + rel->getQualifiedName().toString() + "\"");
+        }
+    }
+
+    out << "ruleManager = RuleManager({" << join(ruleNames, ", ") << "}"
+        << ", {" << join(eqrelNames, ", ") << "});" << std::endl;
     // out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
         // out << "std::cout << ruleManager.toString();\n";
     const auto& queries = this->newAstProgram->getProbQueries();
@@ -4198,6 +4216,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     hook << "\n#ifndef __EMBEDDED_SOUFFLE__\n";
     hook << "#include \"souffle/CompiledOptions.h\"\n";
+    hook << "#include \"souffle/problog/DerivationGraph.h\"\n";
 
     hook << "int main(int argc, char** argv)\n{\n";
     hook << "try{\n";
@@ -4229,6 +4248,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << ");\n";
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";
+    hook << "DerivationGraph::setMergeBiImpEnabled(opt.isMergeBiImpEnabled());\n";
 
     if (!db.getNS(false).empty()) {
         hook << db.getNS(false) << "::";

@@ -72,11 +72,12 @@ protected:
     * knowledge representation
     */
     std::string knowledge_representation;  // bdd, sdd are supported
+    bool merge_bi_imp = false;  // enable merging mutually implying deterministic nodes
 public:
     // all argument constructor
-    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc")
+    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc", bool merge_bi = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
-    , incMode(mode) {}
+    , incMode(mode), merge_bi_imp(merge_bi) {}
 
     CmdOptions() {}
     /**
@@ -118,6 +119,10 @@ public:
         return derivation_only;
     }
 
+    bool isMergeBiImpEnabled() const {
+        return merge_bi_imp;
+    }
+
     /**
      * get filename of profile
      */
@@ -156,6 +161,7 @@ public:
                 {"profile", true, nullptr, 'p'}, {"jobs", true, nullptr, 'j'}, {"index", true, nullptr, 'i'},
                 {"knowledge", true, nullptr, 'k'}, {"logfile", true, nullptr, 'l'},
                 {"derv-only", true, nullptr, 'd'}, {"setmode", true, nullptr, 'm'},
+                {"merge-bi-imp", false, nullptr, 'e'},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -163,7 +169,7 @@ public:
         bool ok = true;
         knowledge_representation = "bdd";  // default knowledge representation
         int c; /* command-line arguments processing */
-        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:", longOptions, nullptr)) != EOF) {
+        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d:em:", longOptions, nullptr)) != EOF) {
             switch (c) {
                 /* Fact directories */
                 case 'F':
@@ -242,6 +248,9 @@ public:
                         ok = false;
                     }
                     break;
+                case 'e':
+                    merge_bi_imp = true;
+                    break;
                 default: printHelpPage(exec_name); return false;
             }
         }
@@ -275,6 +284,7 @@ private:
         std::cerr << "    -k <KR>, --knowledge=<KR>    -- Specify knowledge representation (bdd or sdd)\n";
         std::cerr << "                                    (default: " << knowledge_representation << ")\n";
         std::cerr << "    -d, --derv-only              -- Only compute the derivation graph\n";
+        std::cerr << "    -e, --merge-bi-imp           -- Enable merging mutually implying deterministic nodes during pruning\n";
 #ifdef _OPENMP
         std::cerr << "    -j <NUM>, --jobs=<NUM>       -- Specify number of threads\n";
         if (num_jobs > 0) {

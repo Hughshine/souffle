@@ -48,7 +48,6 @@
 #include "ram/LogSize.h"
 #include "ram/LogTimer.h"
 #include "ram/Loop.h"
-#include "ram/MergeExtend.h"
 #include "ram/Negation.h"
 #include "ram/Parallel.h"
 #include "ram/Program.h"
@@ -253,9 +252,6 @@ Own<ram::Statement> UnitTranslator::generateMergeRelationsWithFilter(const ast::
                     std::move(insertion));
     auto stmt = mk<ram::Query>(mk<ram::Scan>(srcRelation, 0, std::move(filtered)));
 
-    if (rel->getRepresentation() == RelationRepresentation::EQREL) {
-        return mk<ram::Sequence>(mk<ram::MergeExtend>(destRelation, srcRelation), std::move(stmt));
-    }
     return stmt;
 }
 
@@ -271,9 +267,6 @@ Own<ram::Statement> UnitTranslator::generateMergeRelations(
     }
 
     // Predicate - insert all values
-    if (rel->getRepresentation() == RelationRepresentation::EQREL) {
-        return mk<ram::MergeExtend>(destRelation, srcRelation);
-    }
     for (std::size_t i = 0; i < rel->getArity(); i++) {
         values.push_back(mk<ram::TupleElement>(0, i));  // TupleElement对应tuple的具体元。这里的逻辑看起来有些冗余，不知道生成代码有没有影响，相当于拆除一个tuple又重建回去。和RAM的设计直接相关。
     }
@@ -817,11 +810,8 @@ Own<ram::Statement> UnitTranslator::generateMergeRelationsWithNegativeFilter(con
                     std::move(insertion));
     auto stmt = mk<ram::Query>(mk<ram::Scan>(srcRelation, 0, std::move(filtered)));
 
-    if (rel->getRepresentation() == RelationRepresentation::EQREL) {
-        return mk<ram::Sequence>(mk<ram::MergeExtend>(destRelation, srcRelation), std::move(stmt));
+        return stmt;
     }
-    return stmt;
-}
 
 Own<ram::Statement> UnitTranslator::generateLoadRelation(const ast::Relation* relation) const {
     VecOwn<ram::Statement> loadStmts;
