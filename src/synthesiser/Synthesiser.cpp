@@ -481,6 +481,11 @@ void Synthesiser::emitProblogPipeline(std::ostream& out) {
     out << "debugger.endStage();\n";
     out << "view.dumpDot(\"after_prune.dot\");\n" << std::endl;
     out << "view.dumpJson(\"derivation.json\");\n";
+    out << "auto regions = GraphAnalyzer::detectAllSISOStrictFromExit(view);\n";
+    out << "std::cout << \"Found \" << regions.size() << \" SISO regions\" << std::endl;\n";
+    out << "for (const auto& r : regions) {\n";
+    out << "    GraphAnalyzer::printSISOInfo(view, r);\n";
+    out << "}\n";
 
     // out << "view.dumpStatistics(std::cout);\n";
     // out << "view.dumpStatisticsInc(std::cout);\n";
@@ -4318,6 +4323,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");
     db.addGlobalInclude("\"souffle/problog/Query.h\"");
     db.addGlobalInclude("\"souffle/problog/QueryManager.h\"");
+    db.addGlobalInclude("\"souffle/problog/GraphAnalyzer.h\"");
     db.addGlobalInclude("\"souffle/problog/formula/CuddManager.h\"");
     db.addGlobalInclude("\"souffle/problog/formula/SddManager.h\"");
     db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
