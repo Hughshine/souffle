@@ -17,6 +17,10 @@ extern "C" {
 #include <cudd.h>
 }
 
+void adaptiveReorder(DdManager* manager);
+void adaptiveReorder2(DdManager* manager);
+double getCacheHitRate(DdManager* manager);
+
 
 double getCacheHitRate(DdManager* manager);
 // Cudd Version. Should rename.
@@ -169,34 +173,19 @@ public:
         start = high_resolution_clock::now();
         heuristics.compute(view);
         std::vector<int> order = heuristics.getOrder();
-//        heuristics.setAnchorOrder(order);
         end = high_resolution_clock::now();
         duration = duration_cast<milliseconds>(end - start).count();
         debugger.logMessage(Level::INFO, "Heuristic ordering computed in " + std::to_string(duration) + " ms");
 
         std::cout << "Pure variable ordering: ";
-        for (int i = 0; i < order.size(); ++i) {
-            std::cout << getVariableName(order[i]) << " ";
+        for (int v : order) {
+            std::cout << getVariableName(v) << " ";
         }
         std::cout << std::endl;
 
-        start = high_resolution_clock::now();
-        // for each variable, if it is not in the heuristic order, then put it at the beginning
-        // since it must be deleted
-        std::vector<int> newOrder;
-        for (int i = 0; i < Cudd_ReadSize(manager.get()); ++i) {
-            int index = Cudd_ReadPerm(manager.get(), i);
-            auto it = std::find(order.begin(), order.end(), index);
-            if (it == order.end()) {
-                newOrder.push_back(index);
-            }
-        }
-        // append order to newOrder
-        newOrder.insert(newOrder.end(), order.begin(), order.end());
-        Cudd_ShuffleHeap(manager.get(), newOrder.data());
-        end = high_resolution_clock::now();
-        duration = duration_cast<milliseconds>(end - start).count();
-        debugger.logMessage(Level::INFO, "CUDD heap shuffled in " + std::to_string(duration) + " ms");
+        debugger.logMessage(Level::INFO, "Enabling adaptive dynamic reordering");
+        adaptiveReorder(manager.get());
+        debugger.logMessage(Level::INFO, "Adaptive reordering initialized");
     }
 
     // Basic BDD operations
@@ -234,6 +223,7 @@ public:
     void dumpProfilingStatistics() override {
             std::cout << "Current live nodes: " << Cudd_ReadNodeCount(manager.get()) << std::endl;
             std::cout << "Memory usage: " << Cudd_ReadMemoryInUse(manager.get()) / (1024.0 * 1024) << " MB" << std::endl;
+            std::cout << "current error code = " << Cudd_ReadErrorCode(manager.get()) << "\n";
             // current variable ordering
             std::cout << "Current variable ordering: ";
             for (int i = 0; i < Cudd_ReadSize(manager.get()); ++i) {
@@ -337,6 +327,7 @@ std::chrono::time_point<Clock> _cudd_gc_end_time;
 int _cudd_gc_count = 0;
 bool gc_begin = true;
 int myGCFunc(DdManager* dd, const char* str, void* data) {
+    std::cout << "[GC] current error code = " << Cudd_ReadErrorCode(dd) << "\n";
     fprintf(stdout, "[GC] Dead = %u, Keys = %u, Mem = %zu\n",
             Cudd_ReadDead(dd), Cudd_ReadKeys(dd), Cudd_ReadMemoryInUse(dd));
     fprintf(stdout, "[GC] Recursive calls = %.2f, Cache Used = %.2f, Cache hits = %.0f, lookups = %.0f, hit rate = %.2f%%\n",
@@ -367,6 +358,7 @@ std::chrono::time_point<Clock> _cudd_reordering_start_time;
 std::chrono::time_point<Clock> _cudd_reordering_end_time;
 bool reordering_begin = true;
 int myVRFunc(DdManager* dd, const char* str, void* data) {
+    std::cout << "[VR] current error code = " << Cudd_ReadErrorCode(dd) << "\n";
     if (reordering_begin) {
         _cudd_reordering_start_time = Clock::now();
         reordering_begin = false;
@@ -553,9 +545,16 @@ BddNodeRef WeightedBDDManager::makeOrBalanced(const std::vector<BddNodeRef>& nod
     BddNodeRef right = makeOrBalanced(nodes, mid, end);
 //    assert (left.get() != nullptr && "makeOrBalanced received null left node");
 //    assert (right.get() != nullptr && "makeOrBalanced received null right node");
+    unsigned int r_before = Cudd_ReadReorderings(manager.get());
     DdNode* or_node = Cudd_bddOr(manager.get(), left.get(), right.get());
+    unsigned int r_after  = Cudd_ReadReorderings(manager.get());
     if (or_node == nullptr) {
-        std::cout << "error code: " << Cudd_ReadErrorCode(manager.get()) << std::endl;
+        Cudd_ErrorType ec = Cudd_ReadErrorCode(manager.get());
+        dumpProfilingStatistics();
+        fprintf(stderr, "[CUDD] bddOr returned NULL. err=%d, reorders:%u->%u, "
+                            "timeLimited=%d, nodeCount=%ld, maxMem=%zu\n",
+                    (int)ec, r_before, r_after, Cudd_TimeLimited(manager.get()),
+                    Cudd_ReadNodeCount(manager.get()), Cudd_ReadMaxMemory(manager.get()));
         assert (false && "makeOrBalanced failed");
     }
     return BddNodeRef(manager, or_node);

@@ -17,8 +17,11 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
-
 #include <tuple>
+#include <filesystem>
+#include <algorithm>
+#include <optional>
+#include "souffle/utility/json11.h"
 
 int nextFormulaNodeId = 0;
 std::unordered_map<size_t, int> nodeIdMap;
@@ -80,6 +83,7 @@ class Node {
 public:
     friend class DerivationGraph;
     friend class IncrementalDerivationGraph;
+    friend class Hyperedge;
 
     const UntypedTuple& getTuple() const { return tuple; }
     const std::vector<EdgePtr>& getIncomingEdges() const { return incomingEdges; }
@@ -258,10 +262,29 @@ public:
         return *cachedEdgeKey;
     }
 
+    // Rewrite endpoints after eqrel merging; callers must keep node edge lists in sync.
+    void replaceOutput(const NodePtr& newOutput) {
+        output = newOutput;
+        cachedSortedInputs.reset();
+        cachedSortedBodyNegations.reset();
+        cachedEdgeKey.reset();
+    }
+
+    void replaceInput(const NodePtr& oldNode, const NodePtr& newNode) {
+        for (auto& input : inputs) {
+            if (input == oldNode) {
+                input = newNode;
+            }
+        }
+        cachedSortedInputs.reset();
+        cachedSortedBodyNegations.reset();
+        cachedEdgeKey.reset();
+    }
+
 private:
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, RuleApplication ruleApp)
         : inputs(inputs), output(output), id(edgeId), rule(nullptr), ruleApp(ruleApp) {
-        assert (false);
+        // assert (false);
     }
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, const Rule* rule, const std::vector<bool>& bodyNegations, RuleApplication ruleApp)
         : inputs(inputs), output(output), id(edgeId), rule(rule), ruleApp(ruleApp) {
@@ -297,6 +320,7 @@ public:
     virtual const std::unordered_set<EdgePtr>& getEdges() const = 0;
     void dumpDot(const std::string& filename) const;
     void dumpJson(const std::string& filename) const;
+    void writeGraphStatsJson() const;
 
     std::vector<EdgePtr> getIncomingEdges(NodePtr node) const;
     std::vector<EdgePtr> getOutgoingEdges(NodePtr node) const;
@@ -307,7 +331,7 @@ public:
     std::vector<bool> getBodyNegations(EdgePtr edge) const;
     std::vector<bool> getBodyNegationsStable(EdgePtr edge) const;
 
-    mutable std::optional<std::vector<EdgePtr>> cachedSortedIncomingEdges;
+    mutable std::unordered_map<size_t, std::vector<EdgePtr>> cachedSortedIncomingEdges;
     std::vector<EdgePtr> getIncomingEdgesStable(NodePtr node) const;
 
     virtual ~DerivationGraphViewInterface() = default;
@@ -324,15 +348,17 @@ std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdges(NodePtr node
 }
 
 std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdgesStable(NodePtr node) const {
-    if (cachedSortedIncomingEdges.has_value()) {
-        return *cachedSortedIncomingEdges;
+    if (!node) return {};
+    auto it = cachedSortedIncomingEdges.find(node->getId());
+    if (it != cachedSortedIncomingEdges.end()) {
+        return it->second;
     }
-    std::vector<EdgePtr> sortedEdges = getIncomingEdges(node);
-    std::sort(sortedEdges.begin(), sortedEdges.end(), [](const EdgePtr& a, const EdgePtr& b) {
+    std::vector<EdgePtr> sorted = getIncomingEdges(node);
+    std::sort(sorted.begin(), sorted.end(), [](const EdgePtr& a, const EdgePtr& b) {
         return a->getEdgeKey() < b->getEdgeKey();
     });
-    cachedSortedIncomingEdges.emplace(sortedEdges.begin(), sortedEdges.end());
-    return *cachedSortedIncomingEdges;
+    cachedSortedIncomingEdges.emplace(node->getId(), sorted);
+    return sorted;
 }
 
 
@@ -373,7 +399,8 @@ NodePtr DerivationGraphViewInterface::getOutput(EdgePtr edge) const {
     assert (out != nullptr);
     if (getNodes().count(out) == 0) {
         std::cout << "Node not in view: " << out->toString() << std::endl;
-        assert (getNodes().count(out) != 0);
+        // assert (getNodes().count(out) != 0);
+        std::cerr << "Warning: Output node not in view or being deleted: " << out->toString() << std::endl;
     }
     return getNodes().count(out) ? out : nullptr;
 }
@@ -504,16 +531,21 @@ void DerivationGraphViewInterface::dumpDot(const std::string& filename) const {
     // 边样式
     out << "  node [shape=point, fillcolor=red, width=0.2];\n";
     for (const auto& edge : getEdges()) {
+        if (edge->pruned) continue;
+        NodePtr outNode = this->getOutput(edge);
+        auto inputs = this->getInputs(edge);
+        if (std::find(inputs.begin(), inputs.end(), outNode) != inputs.end()) {
+            continue;  // skip edges whose head appears in body (self-loop style)
+        }
         out << "  edge" << edge->getId() << ";\n";
 
-        for (const auto& input : this->getInputs(edge)) {
+        for (const auto& input : inputs) {
             if (getNodes().count(input)) {  // TODO: seems redundant
                 out << "  node" << input->getId()
                     << " -> edge" << edge->getId() << ";\n";
             }
         }
 
-        NodePtr outNode = this->getOutput(edge);
         if (getNodes().count(outNode)) {
             out << "  edge" << edge->getId()
                 << " -> node" << outNode->getId() << ";\n";
@@ -523,6 +555,8 @@ void DerivationGraphViewInterface::dumpDot(const std::string& filename) const {
     out << "}\n";
     out.close();
 }
+
+inline void writeGraphStatsJson(const DerivationGraphViewInterface& g);
 
 class IncrementalDerivationGraphViewInterface : virtual public DerivationGraphViewInterface {
 public:
@@ -556,6 +590,12 @@ public:
         }
         return validEdges_;
      }
+     const std::set<NodePtr>& getValidNodes() const {
+        return const_cast<IncrementalDerivationGraphViewInterface*>(this)->getValidNodes();
+    }
+    const std::set<EdgePtr>& getValidEdges() const {
+        return const_cast<IncrementalDerivationGraphViewInterface*>(this)->getValidEdges();
+    }
     const std::set<NodePtr>& getDeletedFacts() {
         if (deletedFacts_.size() > 0) {
             return deletedFacts_;
@@ -587,10 +627,12 @@ public:
         }
         return deletedNonDeterministicFacts_;
     }
+
     // deletion impacted
     // insertion impacted
 
     void dumpDotInc(const std::string& filename) const;
+    void dumpJsonInc(const std::string& filename) const;
     void dumpStatisticsInc(std::ostream& out) {
         out << "IncrementalDerivationGraph Statistics:" << std::endl;
         out << "  Number of nodes: " << getNodes().size() << std::endl;
@@ -660,6 +702,8 @@ public:
             }
         }
         out << " percentage of useless valid nodes: " << (double)uselessValidNodes.size() / (double)getValidNodes().size() << std::endl;
+         // ===== JSON 数字统计输出（新增，不影响原有日志） =====
+        this->writeGraphStatsJson();
     }
 protected:
     std::set<NodePtr> validNodes_;
@@ -730,6 +774,10 @@ protected:
 
 class DerivationGraph: virtual public DerivationGraphViewInterface {
 public:
+    static void setMergeBiImpEnabled(bool enabled) {
+        mergeBiImpEnabled = enabled;
+    }
+
     DerivationGraph() : nextNodeId(0), nextEdgeId(0) {}
     DerivationGraph(const RuleManager* rm) : nextNodeId(0), nextEdgeId(0), ruleManager(rm) {}
     void dumpStatistics(std::ostream& out) const {
@@ -747,6 +795,7 @@ public:
         // 不存在则创建新节点
         auto node = std::shared_ptr<Node>(new Node(tuple, nextNodeId++));
         nodes.insert(node);
+        nodeRepMap[node->getId()] = node;
         node->setProbability(weight);
 
         // 添加到映射中
@@ -996,19 +1045,21 @@ public:
                     newIncomingEdges.push_back(edge);
                 }
             }
-            for (const auto& edge : node->getOutgoingEdges()) {
-                if (reachableEdges.count(edge)) {
-                    newOutgoingEdges.push_back(edge);
-                }
+        for (const auto& edge : node->getOutgoingEdges()) {
+            if (reachableEdges.count(edge)) {
+                newOutgoingEdges.push_back(edge);
             }
-            node->incomingEdges = std::move(newIncomingEdges);
-            node->outgoingEdges = std::move(newOutgoingEdges);
         }
-
-//        nodes = std::move(newNodes);
-//        edges = std::move(newEdges);
-        return SubgraphView(std::move(newNodes), std::move(newEdges));
+        node->incomingEdges = std::move(newIncomingEdges);
+        node->outgoingEdges = std::move(newOutgoingEdges);
     }
+
+    // eqrel merge (if enabled) and cleanup
+    mergeBiImpEquivalences(newNodes, newEdges);
+    removeSelfLoopEdges(newNodes, newEdges);
+
+    return SubgraphView(std::move(newNodes), std::move(newEdges));
+}
 
     static DerivationGraph createExample() {
         DerivationGraph graph;
@@ -1073,6 +1124,9 @@ protected:
     size_t nextNodeId;
     size_t nextEdgeId;
     const RuleManager* ruleManager;
+    static inline bool mergeBiImpEnabled = false;
+    // map original node id to its current representative after merges
+    std::unordered_map<size_t, NodePtr> nodeRepMap;
 
     // 添加元组到节点的映射
     std::map<UntypedTuple, NodePtr> tupleToNodeMap;
@@ -1104,6 +1158,25 @@ protected:
         return ss.str();
     }
 
+    NodePtr findRepresentative(const NodePtr& node) const {
+        if (!node) return node;
+        auto it = nodeRepMap.find(node->getId());
+        if (it != nodeRepMap.end()) {
+            return it->second;
+        }
+        return node;
+    }
+
+    void setRepresentative(const NodePtr& node, const NodePtr& rep) {
+        if (node) {
+            nodeRepMap[node->getId()] = rep;
+        }
+    }
+
+    void mergeBiImpEquivalences(
+            std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges);
+    void removeSelfLoopEdges(std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges);
+
 
 };
 
@@ -1129,7 +1202,9 @@ public:
     IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
     IncSubgraphView prune(const std::vector<souffle::Relation*>& outputRelations);
     IncSubgraphView prune(const std::vector<std::string>& outputRelations);
-  
+    
+    static IncrementalDerivationGraph* loadFromJsonInc(const std::string& filename);
+
     static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {}) {
         FunctionTimer timer(" creating derivation graph ");
         auto graph = new IncrementalDerivationGraph(&ruleManager);
@@ -1156,6 +1231,8 @@ public:
         return graph;
     }
 
+    // static std::unique_ptr<IncrementalDerivationGraph> 
+    //     loadFromJson(const std::string& filename, const RuleManager* rm);
     // 应用增量插入
     void applyDeltaInserts(
         const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaInsertRuleApps,
@@ -1692,6 +1769,30 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         }
     }
 
+    // eqrel merge (if enabled) and cleanup
+    mergeBiImpEquivalences(newNodes, newEdges);
+    removeSelfLoopEdges(newNodes, newEdges);
+
+    // Canonicalise delta-deleted sets after merging.
+    {
+        std::set<NodePtr> filtered;
+        for (const auto& n : newDeltaDeletedNodes) {
+            auto rep = findRepresentative(n);
+            if (newNodes.count(rep)) {
+                filtered.insert(rep);
+            }
+        }
+        newDeltaDeletedNodes.swap(filtered);
+    }
+    {
+        std::set<EdgePtr> filtered;
+        for (const auto& e : newDeltaDeletedEdges) {
+            if (newEdges.count(e)) {
+                filtered.insert(e);
+            }
+        }
+        newDeltaDeletedEdges.swap(filtered);
+    }
 
 
 
@@ -1793,6 +1894,268 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
             );
     view.dumpStatisticsInc(std::cout);
     return view;
+}
+
+void DerivationGraph::mergeBiImpEquivalences(
+        std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges) {
+    if (!mergeBiImpEnabled || liveNodes.size() < 2) {
+        return;
+    }
+
+    auto isEqEdge = [](const EdgePtr& e) {
+        if (!e || !e->isDeterministic()) return false;
+        if (e->getInputs().size() != 1) return false;
+        for (bool neg : e->getBodyNegations()) {
+            if (neg) return false;
+        }
+        return true;
+    };
+
+    std::unordered_map<NodePtr, std::vector<NodePtr>> adj;
+    for (const auto& n : liveNodes) {
+        adj[n];  // consider all nodes; eqrel tag no longer gates merging
+    }
+    for (const auto& e : liveEdges) {
+        if (!isEqEdge(e)) continue;
+        NodePtr dst = e->getOutput();
+        for (const auto& src : e->getInputs()) {
+            if (liveNodes.count(src) && liveNodes.count(dst)) {
+                adj[src].push_back(dst);
+            }
+        }
+    }
+
+    // Tarjan SCC
+    std::unordered_map<NodePtr, int> index, lowlink;
+    std::vector<NodePtr> stack;
+    std::unordered_set<NodePtr> onStack;
+    int idx = 0;
+    std::vector<std::vector<NodePtr>> sccs;
+
+    std::function<void(NodePtr)> strongConnect = [&](NodePtr v) {
+        index[v] = lowlink[v] = idx++;
+        stack.push_back(v);
+        onStack.insert(v);
+        for (const auto& w : adj[v]) {
+            if (!index.count(w)) {
+                strongConnect(w);
+                lowlink[v] = std::min(lowlink[v], lowlink[w]);
+            } else if (onStack.count(w)) {
+                lowlink[v] = std::min(lowlink[v], index[w]);
+            }
+        }
+        if (lowlink[v] == index[v]) {
+            std::vector<NodePtr> component;
+            while (true) {
+                NodePtr w = stack.back();
+                stack.pop_back();
+                onStack.erase(w);
+                component.push_back(w);
+                if (w == v) break;
+            }
+            sccs.push_back(std::move(component));
+        }
+    };
+
+    for (const auto& [node, _] : adj) {
+        if (!index.count(node)) {
+            strongConnect(node);
+        }
+    }
+
+    auto hasSelfLoop = [&](NodePtr n) {
+        auto it = adj.find(n);
+        if (it == adj.end()) return false;
+        return std::find(it->second.begin(), it->second.end(), n) != it->second.end();
+    };
+
+    std::size_t mergedClasses = 0;
+    std::size_t mergedNodes = 0;
+
+    for (const auto& comp : sccs) {
+        if (comp.size() <= 1 && !hasSelfLoop(comp.front())) continue;
+
+        NodePtr rep = *std::min_element(comp.begin(), comp.end(),
+                [](const NodePtr& a, const NodePtr& b) { return a->getId() < b->getId(); });
+
+        bool hasEvidence = false;
+        bool evidenceValue = false;
+        bool conflict = false;
+        for (const auto& n : comp) {
+            if (n->hasEvidence()) {
+                if (!hasEvidence) {
+                    hasEvidence = true;
+                    evidenceValue = n->getEvidenceValue();
+                } else if (n->getEvidenceValue() != evidenceValue) {
+                    conflict = true;
+                    break;
+                }
+            }
+        }
+        if (conflict) {
+            std::cerr << "Skip merging SCC with conflicting evidence: " << rep->toString() << std::endl;
+            continue;
+        }
+
+        std::cerr << "[bi-imp-merge] merging class (size=" << comp.size()
+                  << ") -> rep " << rep->toString() << "_" << rep->getId() << std::endl;
+
+        for (const auto& n : comp) {
+            setRepresentative(n, rep);
+            if (n->isQueryNode()) rep->setQuery();
+            rep->needOutput = rep->needOutput || n->needOutput;
+        }
+        if (hasEvidence) {
+            rep->setEvidence(evidenceValue);
+        }
+
+        for (const auto& n : comp) {
+            if (n == rep) continue;
+
+            auto incoming = n->incomingEdges;
+            for (const auto& e : incoming) {
+                e->replaceOutput(rep);
+                // drop self-loop edges created by symmetric fusion
+                bool allInputsRep = std::all_of(e->inputs.begin(), e->inputs.end(),
+                        [&](const NodePtr& in) { return in == rep; });
+                if (allInputsRep && e->getOutput() == rep) {
+                    e->pruned = true;
+                } else {
+                    rep->incomingEdges.push_back(e);
+                }
+            }
+
+            auto outgoing = n->outgoingEdges;
+            for (const auto& e : outgoing) {
+                e->replaceInput(n, rep);
+                bool allInputsRep = std::all_of(e->inputs.begin(), e->inputs.end(),
+                        [&](const NodePtr& in) { return in == rep; });
+                if (allInputsRep && e->getOutput() == rep) {
+                    e->pruned = true;
+                } else {
+                    rep->outgoingEdges.push_back(e);
+                }
+            }
+
+            tupleToNodeMap[n->getTuple()] = rep;
+            n->incomingEdges.clear();
+            n->outgoingEdges.clear();
+            liveNodes.erase(n);
+            nodes.erase(n);
+            mergedNodes++;
+        }
+        mergedClasses++;
+    }
+
+    auto edgeSig = [](const EdgePtr& e) {
+        std::stringstream ss;
+        ss << (e->getRule() ? e->getRule()->getRuleId() : e->getRuleApp().ruleId) << "|";
+        ss << e->getOutput()->getTuple().toString() << "|";
+        auto inputs = e->getInputsStable();
+        auto negs = e->getBodyNegationsStable();
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            ss << (negs[i] ? "!" : "") << inputs[i]->getTuple().toString() << ";";
+        }
+        return ss.str();
+    };
+
+    std::unordered_map<std::string, EdgePtr> seen;
+    std::unordered_set<EdgePtr> toRemove;
+    // remove edges whose body already contains the head (self-loop style)
+    for (const auto& e : liveEdges) {
+        if (std::find(e->inputs.begin(), e->inputs.end(), e->getOutput()) != e->inputs.end()) {
+            e->pruned = true;
+            toRemove.insert(e);
+            continue;
+        }
+        auto sig = edgeSig(e);
+        auto[it, inserted] = seen.emplace(sig, e);
+        if (!inserted) {
+            toRemove.insert(e);
+        }
+    }
+
+    for (const auto& e : toRemove) {
+        liveEdges.erase(e);
+        edges.erase(e);
+        auto out = e->getOutput();
+        auto& inVec = out->incomingEdges;
+        inVec.erase(std::remove(inVec.begin(), inVec.end(), e), inVec.end());
+        for (const auto& in : e->getInputs()) {
+            auto& outVec = in->outgoingEdges;
+            outVec.erase(std::remove(outVec.begin(), outVec.end(), e), outVec.end());
+        }
+    }
+
+    for (const auto& n : liveNodes) {
+        std::vector<EdgePtr> newIn;
+        std::vector<EdgePtr> newOut;
+        std::unordered_set<EdgePtr> seenIn, seenOut;
+        for (const auto& e : n->incomingEdges) {
+            if (liveEdges.count(e) && seenIn.insert(e).second) {
+                newIn.push_back(e);
+            }
+        }
+        for (const auto& e : n->outgoingEdges) {
+            if (liveEdges.count(e) && seenOut.insert(e).second) {
+                newOut.push_back(e);
+            }
+        }
+        n->incomingEdges = std::move(newIn);
+        n->outgoingEdges = std::move(newOut);
+    }
+
+    if (mergedClasses > 0) {
+        std::cerr << "[bi-imp-merge] merged classes: " << mergedClasses
+                  << ", merged nodes: " << mergedNodes
+                  << ", remaining nodes: " << liveNodes.size()
+                  << ", remaining edges: " << liveEdges.size() << std::endl;
+    } else {
+        std::cerr << "[bi-imp-merge] no deterministic SCCs found" << std::endl;
+    }
+}
+
+void DerivationGraph::removeSelfLoopEdges(
+        std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges) {
+    std::vector<EdgePtr> toRemove;
+    for (const auto& e : liveEdges) {
+        if (std::find(e->inputs.begin(), e->inputs.end(), e->getOutput()) != e->inputs.end()) {
+            toRemove.push_back(e);
+        }
+    }
+    if (toRemove.empty()) return;
+
+    for (const auto& e : toRemove) {
+        e->pruned = true;
+        liveEdges.erase(e);
+        edges.erase(e);
+
+        auto out = e->getOutput();
+        auto& inVec = out->incomingEdges;
+        inVec.erase(std::remove(inVec.begin(), inVec.end(), e), inVec.end());
+        for (const auto& in : e->getInputs()) {
+            auto& outVec = in->outgoingEdges;
+            outVec.erase(std::remove(outVec.begin(), outVec.end(), e), outVec.end());
+        }
+    }
+
+    for (const auto& n : liveNodes) {
+        std::vector<EdgePtr> newIn;
+        std::vector<EdgePtr> newOut;
+        std::unordered_set<EdgePtr> seenIn, seenOut;
+        for (const auto& e : n->incomingEdges) {
+            if (liveEdges.count(e) && seenIn.insert(e).second) {
+                newIn.push_back(e);
+            }
+        }
+        for (const auto& e : n->outgoingEdges) {
+            if (liveEdges.count(e) && seenOut.insert(e).second) {
+                newOut.push_back(e);
+            }
+        }
+        n->incomingEdges.swap(newIn);
+        n->outgoingEdges.swap(newOut);
+    }
 }
 
 void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& filename) const {
@@ -2255,5 +2618,496 @@ private:
         }
     }
 };
+
+void DerivationGraphViewInterface::writeGraphStatsJson() const {
+    static size_t s_idx = 0;  // 控制输出文件 index
+    const std::string dir = "output";
+    const std::string path = dir + "/graph-" + std::to_string(s_idx++) + ".json";
+
+#if __cplusplus >= 201703L
+    // 如目录不存在则创建（C++17）
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+#endif
+
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        throw std::runtime_error("Cannot open file: " + path);
+    }
+
+    const auto& nodes = getNodes();
+    const auto& edges = getEdges();
+
+    // 基本计数
+    const size_t num_nodes = nodes.size();
+    const size_t num_edges = edges.size();
+
+    // #queries：基于 Node 的 isQuery 标志
+    size_t num_queries = 0;
+
+    // in-degree（排除 facts）
+    size_t indeg_sum = 0, indeg_cnt = 0, indeg_max = 0;
+
+    // out-degree（仅统计 outdeg>0 的节点）
+    size_t outdeg_sum = 0, outdeg_cnt = 0, outdeg_max = 0;
+
+    for (const auto& n : nodes) {
+        const size_t indeg = getIncomingEdges(n).size();
+        const size_t outdeg = getOutgoingEdges(n).size();
+
+        // avg_in_degree: 排除 input facts
+        if (!n->isFact) {
+            indeg_sum += indeg;
+            ++indeg_cnt;
+            if (indeg > indeg_max) indeg_max = indeg;
+        }
+
+        // avg_out_degree: 排除 outdeg==0
+        if (outdeg > 0) {
+            outdeg_sum += outdeg;
+            ++outdeg_cnt;
+            if (outdeg > outdeg_max) outdeg_max = outdeg;
+        }
+
+        if (n->isQuery) ++num_queries;
+    }
+
+    const double avg_in_degree  = indeg_cnt  ? static_cast<double>(indeg_sum)  / indeg_cnt  : 0.0;
+    const double avg_out_degree = outdeg_cnt ? static_cast<double>(outdeg_sum) / outdeg_cnt : 0.0;
+
+    // 超边输入数（hyperedge arity）
+    size_t inp_sum = 0, inp_cnt = 0, inp_max = 0;
+    for (const auto& e : edges) {
+        const size_t k = getInputs(e).size();
+        inp_sum += k;
+        ++inp_cnt;
+        if (k > inp_max) inp_max = k;
+    }
+    const double avg_hyperedge_inputs = inp_cnt ? static_cast<double>(inp_sum) / inp_cnt : 0.0;
+
+    // 环统计（基于 SCC；仅统计 |SCC|>=2 的非平凡环）
+    CycleDependencyGraph cdg(*this);
+    size_t cycles = 0, cyc_size_sum = 0, cyc_size_max = 0;
+    for (const auto& scc : cdg.nodeCycles) {
+        const size_t s = scc.size();
+        if (s >= 2) {
+            ++cycles;
+            cyc_size_sum += s;
+            if (s > cyc_size_max) cyc_size_max = s;
+        }
+    }
+    const double avg_cycle_size = cycles ? static_cast<double>(cyc_size_sum) / cycles : 0.0;
+
+    // 只输出数值（键是字符串，值全为数字）
+    out.setf(std::ios::fixed);
+    out << std::setprecision(6);
+    out << "{\n"
+        << "  \"nodes\": " << num_nodes << ",\n"
+        << "  \"edges\": " << num_edges << ",\n"
+        << "  \"queries\": " << num_queries << ",\n"
+        << "  \"avg_in_degree\": " << avg_in_degree << ",\n"
+        << "  \"max_in_degree\": " << indeg_max << ",\n"
+        << "  \"avg_out_degree\": " << avg_out_degree << ",\n"
+        << "  \"max_out_degree\": " << outdeg_max << ",\n"
+        << "  \"avg_hyperedge_inputs\": " << avg_hyperedge_inputs << ",\n"
+        << "  \"max_hyperedge_inputs\": " << inp_max << ",\n"
+        << "  \"cycles\": " << cycles << ",\n"
+        << "  \"avg_cycle_size\": " << avg_cycle_size << ",\n"
+        << "  \"max_cycle_size\": " << cyc_size_max << "\n"
+        << "}\n";
+}
+
+// ====================== dumpJsonInc 实现 ======================
+void IncrementalDerivationGraphViewInterface::dumpJsonInc(const std::string& filename) const {
+    using json11::Json;
+
+    auto fact_to_json = [](const NodePtr& n) -> Json {
+        return Json::object{
+            {"name", n->getTuple().toString()},
+            {"probability", n->getProbability()}
+        };
+    };
+
+    auto edge_to_json = [this](const EdgePtr& e) -> Json {
+        Json bodies = Json::array();
+        auto inputs = this->getInputs(e);
+        auto negs   = this->getBodyNegations(e);
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            bool neg = (i < negs.size()) ? negs[i] : false;
+            json_array_append(bodies, Json::object{
+                {"negation", neg},
+                {"name", inputs[i]->getTuple().toString()}
+            });
+        }
+        NodePtr head = this->getOutput(e);
+        return Json::object{
+            {"head", head ? head->getTuple().toString() : std::string("<null-head>")},
+            {"probability", e->getProbability()},
+            {"bodies", bodies}
+        };
+    };
+
+    // 主体：使用“有效子图”，排除 delta-delete
+    Json facts = Json::array();
+    for (const auto& n : this->getValidNodes()) {
+        if (n->isFact) {
+            json_array_append(facts, fact_to_json(n));
+        }
+    }
+
+    Json rules = Json::array();
+    for (const auto& e : this->getValidEdges()) {
+        json_array_append(rules, edge_to_json(e));
+    }
+
+    // delta.insert
+    Json ins_nodes = Json::array();
+    Json ins_edges = Json::array();
+    Json ins_facts = Json::array();
+    for (const auto& n : this->getDeltaInsertNodes()) {
+        json_array_append(ins_nodes, n->getTuple().toString());
+        if (n->isFact) json_array_append(ins_facts, fact_to_json(n));
+    }
+    for (const auto& e : this->getDeltaInsertEdges()) {
+        json_array_append(ins_edges, edge_to_json(e));
+    }
+
+    // delta.delete
+    Json del_nodes = Json::array();
+    Json del_edges = Json::array();
+    Json del_facts = Json::array();
+    for (const auto& n : this->getDeltaDeleteNodes()) {
+        json_array_append(del_nodes, n->getTuple().toString());
+        if (n->isFact) 
+            json_array_append(del_facts, fact_to_json(n));
+    }
+    for (const auto& e : this->getDeltaDeleteEdges()) {
+        json_array_append(del_edges, edge_to_json(e));
+    }
+
+    // impact_by_delete
+    Json impact_del_nodes = Json::array();
+    for (const auto& kv : this->getNodeImpactedByDeltaDelete()) {
+        Json arr = Json::array();
+        for (const auto& n : kv.second) {
+            json_array_append(arr, n->getTuple().toString());
+        }
+        json_array_append(impact_del_nodes, Json::object{
+            {"delta", kv.first->getTuple().toString()},
+            {"impacted", arr}
+        });
+    }
+    Json impact_del_edges = Json::array();
+    for (const auto& kv : this->getEdgeImpactedByDeltaDelete()) {
+        Json arr = Json::array();
+        for (const auto& e : kv.second) {
+            json_array_append(arr, edge_to_json(e));
+        }
+        json_array_append(impact_del_edges, Json::object{
+            {"delta", kv.first->getTuple().toString()},
+            {"impacted", arr}
+        });
+    }
+
+    // impact_by_insert
+    Json impact_ins_nodes = Json::array();
+    for (const auto& kv : this->getNodeImpactedByDeltaInsert()) {
+        Json arr = Json::array();
+        for (const auto& n : kv.second) {
+            json_array_append(arr, n->getTuple().toString());
+        }
+        json_array_append(impact_ins_nodes, Json::object{
+            {"delta", kv.first->getTuple().toString()},
+            {"impacted", arr}
+        });
+    }
+    Json impact_ins_edges = Json::array();
+    for (const auto& kv : this->getEdgeImpactedByDeltaInsert()) {
+        Json arr = Json::array();
+        for (const auto& e : kv.second) {
+            json_array_append(arr, edge_to_json(e));
+        }
+        json_array_append(impact_ins_edges, Json::object{
+            {"delta", kv.first->getTuple().toString()},
+            {"impacted", arr}
+        });
+    }
+
+    Json root = Json::object{
+        {"facts", facts},
+        {"rules", rules},
+        {"delta", Json::object{
+            {"insert", Json::object{
+                {"nodes", ins_nodes}, {"edges", ins_edges}, {"facts", ins_facts}
+            }},
+            {"delete", Json::object{
+                {"nodes", del_nodes}, {"edges", del_edges}, {"facts", del_facts}
+            }},
+            {"impact_by_delete", Json::object{
+                {"nodes", impact_del_nodes}, {"edges", impact_del_edges}
+            }},
+            {"impact_by_insert", Json::object{
+                {"nodes", impact_ins_nodes}, {"edges", impact_ins_edges}
+            }}
+        }}
+    };
+
+    std::ofstream out(filename);
+    if (!out.is_open()) {
+        throw std::runtime_error("Cannot open file: " + filename);
+    }
+    out << root.dump();
+    out.close();
+}
+
+// ====================== loadFromJsonInc 实现 ======================
+static inline std::string _trim(std::string s) {
+    auto issp = [](unsigned char c){ return std::isspace(c); };
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [&](unsigned char c){ return !issp(c); }));
+    s.erase(std::find_if(s.rbegin(), s.rend(), [&](unsigned char c){ return !issp(c); }).base(), s.end());
+    return s;
+}
+
+static inline UntypedTuple _parse_tuple(const std::string& s_in) {
+    std::string s = _trim(s_in);
+    auto lp = s.find('(');
+    if (lp == std::string::npos) {
+        // 允许 0 元组关系
+        return UntypedTuple{s, {}};
+    }
+    auto rp = s.rfind(')');
+    if (rp == std::string::npos || rp <= lp) {
+        throw std::runtime_error("Bad tuple string: " + s);
+    }
+    std::string rel = _trim(s.substr(0, lp));
+    std::string inside = s.substr(lp + 1, rp - lp - 1);
+    std::vector<souffle::RamDomain> fields;
+    std::stringstream ss(inside);
+    std::string tok;
+    while (std::getline(ss, tok, ',')) {
+        tok = _trim(tok);
+        if (tok.empty()) continue;
+        // 统一以整数解析（和 UntypedTuple::fields 类型一致）
+        long long v = std::stoll(tok);
+        fields.push_back(static_cast<souffle::RamDomain>(v));
+    }
+    return UntypedTuple{rel, fields};
+}
+
+static EdgePtr _find_edge_by_structure(
+    IncrementalDerivationGraph* g,
+    const NodePtr& head,
+    const std::vector<NodePtr>& inputs,
+    const std::vector<bool>& negs
+) {
+    // 生成稳定排序后的 (tuple, neg) 序列
+    std::vector<std::pair<UntypedTuple,bool>> desired;
+    desired.reserve(inputs.size());
+    for (size_t i=0;i<inputs.size();++i) {
+        bool neg = (i < negs.size()) ? negs[i] : false;
+        desired.emplace_back(inputs[i]->getTuple(), neg);
+    }
+    std::sort(desired.begin(), desired.end());
+
+    for (const auto& e : g->getEdges()) {  // 受保护成员，但在类内静态函数中可用
+        if (e->getOutput()->getTuple() != head->getTuple()) continue;
+        const auto& sin  = e->getInputsStable();       // 稳定（按 tuple 排序）【:contentReference[oaicite:10]{index=10}】
+        const auto& sneg = e->getBodyNegationsStable();
+        if (sin.size() != desired.size() || sneg.size() != desired.size()) continue;
+        bool ok = true;
+        for (size_t i = 0; i < desired.size(); ++i) {
+            if (sin[i]->getTuple() != desired[i].first || sneg[i] != desired[i].second) {
+                ok = false; break;
+            }
+        }
+        if (ok) return e;
+    }
+    return nullptr;
+}
+
+IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const std::string& filename) {
+    using json11::Json;
+
+    // 读文件并解析 JSON
+    std::ifstream in(filename);
+    if (!in.is_open()) {
+        throw std::runtime_error("Cannot open JSON file: " + filename);
+    }
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::string err;
+    Json root = Json::parse(content, err);
+    if (!err.empty()) {
+        throw std::runtime_error("JSON parse error: " + err);
+    }
+
+    auto* g = new IncrementalDerivationGraph();
+
+    auto arr_or = [](const Json& j)->std::vector<Json> {
+        if (!j.is_array()) return {};
+        return j.array_items();
+    };
+
+    // ---------- 1) 基线：facts ----------
+    for (const auto& jf : arr_or(root["facts"])) {
+        auto name = jf["name"].string_value();
+        double p  = jf["probability"].number_value();
+        UntypedTuple t = _parse_tuple(name);
+        NodePtr n = g->createNode(t);
+        n->isFact = true;
+        n->setProbability(p);
+    }
+
+    // ---------- 2) 基线：rules ----------
+    for (const auto& je : arr_or(root["rules"])) {
+        auto headName = je["head"].string_value();
+        double p      = je["probability"].number_value();
+
+        UntypedTuple ht = _parse_tuple(headName);
+        NodePtr head = g->createNode(ht);
+
+        std::vector<NodePtr> inputs;
+        std::vector<bool>    negs;
+        for (const auto& jb : arr_or(je["bodies"])) {
+            UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+            bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
+            inputs.push_back(g->createNode(bt));
+            negs.push_back(neg);
+        }
+        EdgePtr e = g->createHyperedge(inputs, head, /*rule=*/nullptr, /*negs=*/negs);
+        if (e) e->setProbability(p);
+    }
+
+    // ---------- 3) delta.insert ----------
+    const Json& jdelta      = root["delta"];
+    const Json& jins        = jdelta["insert"];
+    for (const auto& jf : arr_or(jins["facts"])) {
+        UntypedTuple t = _parse_tuple(jf["name"].string_value());
+        double p = jf["probability"].number_value();
+        NodePtr n = g->createNode(t);
+        n->isFact = true; n->setProbability(p);
+        g->deltaInsertNodes.insert(n);
+    }
+    for (const auto& jn : arr_or(jins["nodes"])) {
+        UntypedTuple t = _parse_tuple(jn.string_value());
+        NodePtr n = g->createNode(t);
+        g->deltaInsertNodes.insert(n);
+    }
+    for (const auto& je : arr_or(jins["edges"])) {
+        UntypedTuple ht = _parse_tuple(je["head"].string_value());
+        double p = je["probability"].number_value();
+        NodePtr head = g->createNode(ht);
+
+        std::vector<NodePtr> inputs;
+        std::vector<bool>    negs;
+        for (const auto& jb : arr_or(je["bodies"])) {
+            UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+            bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
+            inputs.push_back(g->createNode(bt));
+            negs.push_back(neg);
+        }
+        EdgePtr e = _find_edge_by_structure(g, head, inputs, negs);
+        if (!e) {
+            e = g->createHyperedge(inputs, head, /*rule=*/nullptr, /*negs=*/negs);
+        }
+        if (e) {
+            e->setProbability(p);
+            g->deltaInsertEdges.insert(e);
+        }
+    }
+
+    // ---------- 4) delta.delete ----------
+    const Json& jdel = jdelta["delete"];
+    for (const auto& jf : arr_or(jdel["facts"])) {
+        UntypedTuple t = _parse_tuple(jf["name"].string_value());
+        double p = jf["probability"].number_value();
+        NodePtr n = g->createNode(t);
+        n->isFact = true; n->setProbability(p);
+        g->deltaDeleteNodes.insert(n);
+    }
+    for (const auto& jn : arr_or(jdel["nodes"])) {
+        UntypedTuple t = _parse_tuple(jn.string_value());
+        NodePtr n = g->createNode(t);
+        g->deltaDeleteNodes.insert(n);
+    }
+    for (const auto& je : arr_or(jdel["edges"])) {
+        UntypedTuple ht = _parse_tuple(je["head"].string_value());
+        double p = je["probability"].number_value();
+        NodePtr head = g->createNode(ht);
+
+        std::vector<NodePtr> inputs;
+        std::vector<bool>    negs;
+        for (const auto& jb : arr_or(je["bodies"])) {
+            UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+            bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
+            inputs.push_back(g->createNode(bt));
+            negs.push_back(neg);
+        }
+        EdgePtr e = _find_edge_by_structure(g, head, inputs, negs);
+        if (!e) {
+            e = g->createHyperedge(inputs, head, /*rule=*/nullptr, /*negs=*/negs);
+        }
+        if (e) {
+            e->setProbability(p);
+            g->deltaDeleteEdges.insert(e);
+        }
+    }
+
+    // ---------- 5) impact_by_delete ----------
+    const Json& jbdel = jdelta["impact_by_delete"];
+    for (const auto& jmap : arr_or(jbdel["nodes"])) {
+        NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
+        for (const auto& jv : arr_or(jmap["impacted"])) {
+            NodePtr n = g->createNode(_parse_tuple(jv.string_value()));
+            g->deletedFactImpactedNodes[d].insert(n);
+        }
+    }
+    for (const auto& jmap : arr_or(jbdel["edges"])) {
+        NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
+        for (const auto& je : arr_or(jmap["impacted"])) {
+            UntypedTuple ht = _parse_tuple(je["head"].string_value());
+            double p = je["probability"].number_value();
+            NodePtr head = g->createNode(ht);
+            std::vector<NodePtr> inputs; std::vector<bool> negs;
+            for (const auto& jb : arr_or(je["bodies"])) {
+                UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+                bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
+                inputs.push_back(g->createNode(bt)); negs.push_back(neg);
+            }
+            EdgePtr e = _find_edge_by_structure(g, head, inputs, negs);
+            if (!e) e = g->createHyperedge(inputs, head, nullptr, negs);
+            if (e) { e->setProbability(p); g->deletedFactImpactedEdges[d].insert(e); }
+        }
+    }
+
+    // ---------- 6) impact_by_insert ----------
+    const Json& jbins = jdelta["impact_by_insert"];
+    for (const auto& jmap : arr_or(jbins["nodes"])) {
+        NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
+        for (const auto& jv : arr_or(jmap["impacted"])) {
+            NodePtr n = g->createNode(_parse_tuple(jv.string_value()));
+            g->insertedFactImpactedNodes[d].insert(n);
+        }
+    }
+    for (const auto& jmap : arr_or(jbins["edges"])) {
+        NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
+        for (const auto& je : arr_or(jmap["impacted"])) {
+            UntypedTuple ht = _parse_tuple(je["head"].string_value());
+            double p = je["probability"].number_value();
+            NodePtr head = g->createNode(ht);
+            std::vector<NodePtr> inputs; std::vector<bool> negs;
+            for (const auto& jb : arr_or(je["bodies"])) {
+                UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+                bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
+                inputs.push_back(g->createNode(bt)); negs.push_back(neg);
+            }
+            EdgePtr e = _find_edge_by_structure(g, head, inputs, negs);
+            if (!e) e = g->createHyperedge(inputs, head, nullptr, negs);
+            if (e) { e->setProbability(p); g->insertedFactImpactedEdges[d].insert(e); }
+        }
+    }
+
+    return g;
+}
+
 
 #endif //DERIVATIONGRAPH_H

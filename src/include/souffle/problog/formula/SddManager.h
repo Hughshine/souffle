@@ -11,7 +11,9 @@
 #include <cassert>
 #include <unordered_map>
 #include <fstream>
+#include <algorithm>
 #include "FormulaManager.h"
+#include "souffle/problog/formula/GraphHeuristics.h"
 
 using NodeRef = SddNode*;
 using Literal = int;
@@ -76,6 +78,7 @@ class SddFormulaManager : public DDManager<SddNodeRef> {
 public:
     explicit SddFormulaManager(int var_count = 1000 );
     ~SddFormulaManager() override = default;
+    void preConfig(DerivationGraphViewInterface& view) override;
 
     SddNodeRef createVar(int index) override;
     SddNodeRef createVar(int index, const Node& node) override;
@@ -113,24 +116,77 @@ private:
     std::unordered_map<int, std::pair<Weight, Weight>> weight_map_;
     std::unordered_map<int, const Node*> node_map_;
     std::unordered_map<int, const Hyperedge*> edge_map_;
+    BDDForceHeuristics heuristics_;
+    int var_count_;
+
+    void configureManagerLimits(SddManager* raw_mgr);
+    void rebuildManagerWithOrder(const std::vector<SddLiteral>& order);
+    std::vector<SddLiteral> buildLiteralOrder(const std::vector<int>& heuristicOrder) const;
+
     inline int mapNodeId(int rawId) {
         return rawId + 1;
     }
 };
 
 inline SddFormulaManager::SddFormulaManager(int var_count) {
-    Vtree* vtree = sdd_vtree_new(var_count, "balanced");
+    var_count_ = std::max(1, var_count);
+    Vtree* vtree = sdd_vtree_new(var_count_, "balanced");
     SddManager* raw_mgr = sdd_manager_new(vtree);
+    configureManagerLimits(raw_mgr);
+    manager_ = std::shared_ptr<SddManager>(raw_mgr, sdd_manager_free);
+    sdd_manager_garbage_collect(manager_.get());
+    sdd_manager_minimize_limited(manager_.get());
+}
+
+inline void SddFormulaManager::configureManagerLimits(SddManager* raw_mgr) {
     sdd_manager_set_vtree_apply_time_limit(5.0, raw_mgr);
     sdd_manager_set_vtree_cartesian_product_limit(1000000, raw_mgr);
     sdd_manager_set_vtree_operation_memory_limit(500, raw_mgr);
     sdd_manager_set_vtree_search_time_limit(2, raw_mgr);
-
     sdd_manager_auto_gc_and_minimize_on(raw_mgr);
+}
 
-    manager_ = std::shared_ptr<SddManager>(raw_mgr, sdd_manager_free);
+inline std::vector<SddLiteral> SddFormulaManager::buildLiteralOrder(
+        const std::vector<int>& heuristicOrder) const {
+    std::vector<SddLiteral> order;
+    order.reserve(var_count_);
+    std::vector<char> seen(var_count_, 0);
+
+    for (int var : heuristicOrder) {
+        int lit = var + 1;
+        if (lit <= 0 || lit > var_count_) continue;
+        if (seen[lit - 1]) continue;
+        order.push_back(lit);
+        seen[lit - 1] = 1;
+    }
+
+    for (int lit = 1; lit <= var_count_; ++lit) {
+        if (!seen[lit - 1]) order.push_back(lit);
+    }
+
+    return order;
+}
+
+inline void SddFormulaManager::rebuildManagerWithOrder(const std::vector<SddLiteral>& order) {
+    Vtree* vtree = nullptr;
+    if (!order.empty()) {
+        std::vector<SddLiteral> tmp(order);
+        vtree = sdd_vtree_new_with_var_order(var_count_, tmp.data(), "balanced");
+    } else {
+        vtree = sdd_vtree_new(var_count_, "balanced");
+    }
+
+    SddManager* raw_mgr = sdd_manager_new(vtree);
+    configureManagerLimits(raw_mgr);
+    manager_.reset(raw_mgr, sdd_manager_free);
     sdd_manager_garbage_collect(manager_.get());
     sdd_manager_minimize_limited(manager_.get());
+}
+
+inline void SddFormulaManager::preConfig(DerivationGraphViewInterface& view) {
+    heuristics_.compute(view);
+    auto literalOrder = buildLiteralOrder(heuristics_.getOrder());
+    rebuildManagerWithOrder(literalOrder);
 }
 
 
@@ -217,15 +273,40 @@ inline double SddFormulaManager::computeWeightedModelCount(const SddNodeRef& nod
     }
     int var_count = sdd_manager_var_count(manager_.get());
     for (int i = 1; i <= var_count; ++i) {
-      if (weight_map_.find(i) == weight_map_.end()) {
-          weight_map_[i] = {0.5, 0.5};
-       }
+        if (weight_map_.find(i) == weight_map_.end()) {
+            weight_map_[i] = {0.5, 0.5};
+        }
     }
     double result = wmc_propagate(wmc);
     if (!std::isfinite(result)) {
+        auto describeVar = [&](int literal) {
+            auto itNode = node_map_.find(literal);
+            if (itNode != node_map_.end() && itNode->second) {
+                std::cerr << "    literal " << literal << " -> node tuple="
+                          << itNode->second->getTuple().toString()
+                          << ", prob=" << itNode->second->getProbability() << "\n";
+                return;
+            }
+            auto itEdge = edge_map_.find(literal);
+            if (itEdge != edge_map_.end() && itEdge->second) {
+                std::cerr << "    literal " << literal << " -> edge " << itEdge->second->toString()
+                          << ", prob=" << itEdge->second->getProbability() << "\n";
+                return;
+            }
+            std::cerr << "    literal " << literal << " -> (unknown origin)" << "\n";
+        };
+
         std::cerr << "[Error] WMC result is not finite: " << result << "\n";
         for (const auto& [var, weights] : weight_map_) {
-            std::cerr << "  Var " << var << ": +=" << weights.first << ", -=" << weights.second << "\n";
+            bool invalid = (weights.first < 0 || weights.second < 0 ||
+                            weights.first > 1 || weights.second > 1);
+            double sum = weights.first + weights.second;
+            if (invalid || std::fabs(sum - 1.0) > 1e-9) {
+                std::cerr << "  Var " << var << ": +=" << weights.first
+                          << ", -=" << weights.second
+                          << " (sum=" << sum << ")\n";
+                describeVar(var);
+            }
         }
         assert(false && "WMC result is NaN or Inf");
     }
@@ -245,4 +326,3 @@ inline void SddFormulaManager::dumpProfilingStatistics() {
 }
 
 #endif // SDDMANAGER_H
-
