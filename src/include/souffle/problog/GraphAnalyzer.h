@@ -115,8 +115,17 @@ private:
         static const std::string LOGF = "siso_edge_dom_inputs.log";
         std::ofstream log(LOGF, std::ios::app);
         if (!log.is_open()) {
-            std::cerr << "ERROR: cannot open log file: " << LOGF << "\n";
-            return dpi;
+            // 尝试先创建再以追加方式重新打开，避免调试失败直接退出
+            std::ofstream create(LOGF, std::ios::out);
+            if (!create.is_open()) {
+                std::cerr << "ERROR: cannot open log file: " << LOGF << "\n";
+            } else {
+                create.close();
+                log.open(LOGF, std::ios::app);
+                if (!log.is_open()) {
+                    std::cerr << "ERROR: cannot open log file after creation: " << LOGF << "\n";
+                }
+            }
         }
 
         auto overlap = [](const NodeSet& a, const NodeSet& b) {
