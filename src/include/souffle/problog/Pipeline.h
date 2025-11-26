@@ -55,6 +55,7 @@ inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
     for (const auto& r : regions) {
         GraphAnalyzer::printSISOInfo(view, r);
     }
+    GraphAnalyzer::dumpAllRegionsAsDot(view, regions, "siso_regions.dot");
 }
 
 inline void runBddPipeline(

@@ -4,52 +4,95 @@
 #include "souffle/problog/DerivationGraph.h"
 
 #include <algorithm>
+#include <chrono>
 #include <climits>
+#include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <queue>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <array>
 
 struct SISORegionInfo {
-    std::vector<NodePtr> internalNodes;
-    std::vector<EdgePtr> internalEdges;
-    NodePtr entry = nullptr;
-    EdgePtr entryEdge = nullptr;
-    std::vector<NodePtr> entryPreds;
-    NodePtr exit = nullptr;
-    EdgePtr exitEdge = nullptr;
-    NodePtr exitSucc = nullptr;
+    std::vector<NodePtr> internalNodes;      // region 中所有节点（包含 SI / SO）
+    std::vector<EdgePtr> internalEdges;      // region 中所有边（SI→SO 所有路径上的边）
+    NodePtr entry = nullptr;                 // SI node（入口）
+    std::vector<NodePtr> entryPreds;         // SI 的外部前驱节点（可为空）
+    NodePtr exit = nullptr;                  // SO node（出口）
     bool valid = false;
-    bool prefixAllFactsRequired = false;
+    bool prefixAllFactsRequired = false;     // 先保留这个标志，后续如果要用 support 做更细分判断
 };
 
 class GraphAnalyzer {
 private:
-    using NodeSet = std::unordered_set<NodePtr>;
-    using EdgeSet = std::unordered_set<EdgePtr>;
-    using SupportMap = std::unordered_map<NodePtr, NodeSet>;
+    using NodeSet     = std::unordered_set<NodePtr>;
+    using EdgeSet     = std::unordered_set<EdgePtr>;
+    using SupportMap  = std::unordered_map<NodePtr, NodeSet>;
     using EdgeDomInputs = std::unordered_map<EdgePtr, std::vector<NodePtr>>;
 
+    // ======= 调试输出 =======
+    static std::ostream& dbg() {
+        static std::ofstream out("siso_debug.log", std::ios::app);
+        if (out.is_open()) return out;
+        return std::cerr;
+    }
+
+    static std::string ts() {
+        auto now = std::chrono::system_clock::now();
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+        std::tm tm{};
+#if defined(_MSC_VER)
+        localtime_s(&tm, &t);
+#else
+        if (auto* p = std::localtime(&t)) tm = *p;
+#endif
+        std::ostringstream ss;
+        ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+        return ss.str();
+    }
+
+    static void log(const std::string& msg) {
+        dbg() << "[" << ts() << "] " << msg << '\n';
+    }
+
+    static std::string escapeDot(const std::string& s) {
+        std::string r;
+        r.reserve(s.size());
+        for (char c : s) {
+            if (c == '"') r.push_back('\'');
+            else if (c == '\\') {
+                r.push_back('\\');
+                r.push_back('\\');
+            } else {
+                r.push_back(c);
+            }
+        }
+        return r;
+    }
+
+    // ======= 支配结构 & prefix 结构 =======
     struct DomGraph {
-        std::vector<NodePtr> nodes;                      // nodes in dom-graph
-        std::unordered_map<NodePtr, int> indexOf;        // node -> index
-        std::vector<std::vector<int>> preds;             // preds[i] = predecessor indices
-        int entryIndex = -1;                             // chosen root for dominance
+        std::vector<NodePtr>              nodes;    // nodes in dom-graph
+        std::unordered_map<NodePtr, int>  indexOf;  // node -> index
+        std::vector<std::vector<int>>     preds;    // preds[i] = predecessor indices
+        int entryIndex = -1;                        // chosen root for dominance
     };
 
     struct DomInfo {
-        std::vector<std::unordered_set<int>> domSets;    // domSets[i] = set of dominators of i
-        std::vector<int> idom;                           // immediate dominator of i
+        std::vector<std::unordered_set<int>> domSets;  // domSets[i] = set of dominators of i
+        std::vector<int>                     idom;     // immediate dominator of i
     };
 
     struct PrefixStructure {
-        SupportMap support;
+        SupportMap    support;
         EdgeDomInputs domInputs;
-        DomGraph dg;
-        DomInfo dom;
+        DomGraph      dg;
+        DomInfo       dom;
     };
 
     struct Region {
@@ -58,13 +101,11 @@ private:
     };
 
     struct Candidate {
-        NodePtr si = nullptr;
-        NodePtr so = nullptr;
-        EdgePtr exitEdge = nullptr;
-        NodePtr exitSucc = nullptr;
+        NodePtr si = nullptr;   // candidate SI
+        NodePtr so = nullptr;   // candidate SO
     };
 
-    // 找所有support input facts 所有backward能达到节点n的facts集合
+    // ========= support（反向收集所有能到达的 facts） =========
     static NodeSet backwardCollectFacts(
         const DerivationGraphViewInterface& g,
         NodePtr start)
@@ -104,29 +145,33 @@ private:
             if (!n) continue;
             mp[n] = backwardCollectFacts(g, n);
         }
+        log("Support map built for " + std::to_string(mp.size()) + " nodes");
         return mp;
     }
 
-    //计算超边的dominant input group 这里可能有问题？ 也有可能是后面合流点的计算问题 合流点全部是ai写的 他将图降维了不知道会有什么影响
-    static EdgeDomInputs computeEdgeDomInputs (const DerivationGraphViewInterface& g, const SupportMap& sup) {
+    // ========= 计算每条超边的 dominant input group =========
+    static EdgeDomInputs computeEdgeDomInputs(
+        const DerivationGraphViewInterface& g,
+        const SupportMap& sup)
+    {
         EdgeDomInputs dpi;
 
-        //调试
+        // 调试日志
         static const std::string LOGF = "siso_edge_dom_inputs.log";
-        std::ofstream log(LOGF, std::ios::app);
-        if (!log.is_open()) {
-            // 尝试先创建再以追加方式重新打开，避免调试失败直接退出
+        std::ofstream logf(LOGF, std::ios::app);
+        if (!logf.is_open()) {
             std::ofstream create(LOGF, std::ios::out);
             if (!create.is_open()) {
                 std::cerr << "ERROR: cannot open log file: " << LOGF << "\n";
             } else {
                 create.close();
-                log.open(LOGF, std::ios::app);
-                if (!log.is_open()) {
+                logf.open(LOGF, std::ios::app);
+                if (!logf.is_open()) {
                     std::cerr << "ERROR: cannot open log file after creation: " << LOGF << "\n";
                 }
             }
         }
+        GraphAnalyzer::log("computeEdgeDomInputs start");
 
         auto overlap = [](const NodeSet& a, const NodeSet& b) {
             if (a.size() < b.size()) {
@@ -147,34 +192,34 @@ private:
 
                 struct Group {
                     std::vector<NodePtr> members;
-                    NodeSet supUnion;
+                    NodeSet              supUnion;
                 };
                 std::vector<Group> groups;
 
-                log << "\n===========================================\n";
-                log << "Hyperedge e=" << e->getId()
-                    << " → " << g.getOutput(e)->toString()
-                    << "(id=" << g.getOutput(e)->getId() << ")\n";
+                logf << "\n===========================================\n";
+                logf << "Hyperedge e=" << e->getId()
+                     << " → " << g.getOutput(e)->toString()
+                     << "(id=" << g.getOutput(e)->getId() << ")\n";
 
-                log << "Inputs:\n";
+                logf << "Inputs:\n";
                 for (NodePtr v : inputs) {
-                    log << "  - " << v->toString()
-                        << "(id=" << v->getId() << ")\n";
+                    logf << "  - " << v->toString()
+                         << "(id=" << v->getId() << ")\n";
                 }
 
-                log << "\nSupport sets:\n";
+                logf << "\nSupport sets:\n";
                 for (NodePtr v : inputs) {
                     const NodeSet& sv = sup.at(v);
-                    log << "  Input " << v->toString()
-                        << "(id=" << v->getId() << ") supports: { ";
-
+                    logf << "  Input " << v->toString()
+                         << "(id=" << v->getId() << ") supports: { ";
                     for (NodePtr f : sv) {
-                        log << f->toString()
-                            << "(id=" << f->getId() << ") ";
+                        logf << f->toString()
+                             << "(id=" << f->getId() << ") ";
                     }
-                    log << "}\n";
+                    logf << "}\n";
                 }
 
+                // 按 support overlap 分组
                 for (NodePtr v : inputs) {
                     const NodeSet& sv = sup.at(v);
 
@@ -194,78 +239,81 @@ private:
                     }
                 }
 
-
-                log << "\nGroups formed:\n";
+                logf << "\nGroups formed:\n";
                 for (int gi = 0; gi < (int)groups.size(); gi++) {
-                    log << "  Group " << gi << " members: ";
+                    logf << "  Group " << gi << " members: ";
                     for (NodePtr m : groups[gi].members) {
-                        log << m->toString() << "(id=" << m->getId() << ") ";
+                        logf << m->toString() << "(id=" << m->getId() << ") ";
                     }
-                    log << "\n    supUnion: { ";
+                    logf << "\n    supUnion: { ";
                     for (NodePtr f : groups[gi].supUnion) {
-                        log << f->toString() << "(id=" << f->getId() << ") ";
+                        logf << f->toString() << "(id=" << f->getId() << ") ";
                     }
-                    log << "}\n";
+                    logf << "}\n";
                 }
 
                 if (groups.empty()) continue;
 
-
-                int best = 0;
+                // 选 supUnion 最大的 group 作为 dominant input group
+                int   best     = 0;
                 size_t bestSize = groups[0].supUnion.size();
                 for (int i = 1; i < (int)groups.size(); i++) {
                     if (groups[i].supUnion.size() > bestSize) {
-                        best = i;
+                        best     = i;
                         bestSize = groups[i].supUnion.size();
                     }
                 }
 
-
-                log << "\nDominant group = " << best
-                    << " (supUnion size=" << bestSize << ")\n";
-                log << "Dominant members: ";
-                for (NodePtr m : groups[best].members) {
-                    log << m->toString() << "(id=" << m->getId() << ") ";
-                }
-                log << "\n===========================================\n\n";
-
                 dpi[e] = groups[best].members;
+
+                logf << "\nChosen dominant group:\n  ";
+                for (NodePtr m : groups[best].members) {
+                    logf << m->toString() << "(id=" << m->getId() << ") ";
+                }
+                logf << "\n";
             }
         }
 
+        GraphAnalyzer::log("computeEdgeDomInputs done, edges=" + std::to_string(dpi.size()));
         return dpi;
-}
+    }
 
-    // ai说的将超边降维为普通边 只保留 dominant input -> output 暂且这样用 后面再说
-    static DomGraph buildDomGraph(const DerivationGraphViewInterface& g, const EdgeDomInputs& dpi) {
+    // ========= 构造 dom-graph =========
+    static DomGraph buildDomGraph(const DerivationGraphViewInterface& g) {
         DomGraph dg;
 
+        // 为所有节点分配 index
+        int idx = 0;
         for (NodePtr n : g.getNodes()) {
             if (!n) continue;
-            dg.indexOf[n] = (int)dg.nodes.size();
+            dg.indexOf[n] = idx++;
             dg.nodes.push_back(n);
         }
 
-        int N = dg.nodes.size();
+        const int N = (int)dg.nodes.size();
         dg.preds.assign(N, {});
 
-        for (auto& kv : dpi) {
-            EdgePtr e = kv.first;
+        // 根据超边把输入指向输出，构成有向图
+        for (EdgePtr e : g.getEdges()) {
             if (!e) continue;
             NodePtr out = g.getOutput(e);
             if (!out) continue;
 
             auto itOut = dg.indexOf.find(out);
             if (itOut == dg.indexOf.end()) continue;
-            int outId = itOut->second;
+            int outIdx = itOut->second;
 
-            for (NodePtr v : kv.second) {
-                auto itV = dg.indexOf.find(v);
-                if (itV == dg.indexOf.end()) continue;
-                dg.preds[outId].push_back(itV->second);
+            for (NodePtr in : g.getInputs(e)) {
+                if (!in) continue;
+                auto itIn = dg.indexOf.find(in);
+                if (itIn == dg.indexOf.end()) continue;
+                int inIdx = itIn->second;
+
+                dg.preds[outIdx].push_back(inIdx);
             }
         }
 
+        // 选一个无前驱节点作为支配树根；如果不存在，就选 0
         dg.entryIndex = -1;
         for (int i = 0; i < N; i++) {
             if (dg.preds[i].empty()) {
@@ -275,183 +323,167 @@ private:
         }
         if (dg.entryIndex < 0 && N > 0) dg.entryIndex = 0;
 
+        GraphAnalyzer::log("buildDomGraph: N=" + std::to_string(N) +
+                           " entryIndex=" + std::to_string(dg.entryIndex));
         return dg;
     }
 
+    // ========= 标准 dominator 算法 =========
     static DomInfo computeDominators(const DomGraph& dg) {
-        DomInfo df;
-        int N = dg.nodes.size();
-        df.domSets.assign(N, {});
-        df.idom.assign(N, -1);
+        DomInfo info;
+        const int N = (int)dg.nodes.size();
+        info.domSets.assign(N, {});
+        info.idom.assign(N, -1);
 
-        if (N == 0 || dg.entryIndex < 0) return df;
+        if (N == 0 || dg.entryIndex < 0) return info;
 
+        // 初始化：entry 的 dom 集 = {entry}，其余 = 全集
         for (int i = 0; i < N; i++) {
             if (i == dg.entryIndex) {
-                df.domSets[i].insert(i);
+                info.domSets[i] = {i};
             } else {
-                for (int j = 0; j < N; j++) df.domSets[i].insert(j);
+                for (int j = 0; j < N; j++) {
+                    info.domSets[i].insert(j);
+                }
             }
         }
 
         bool changed = true;
         while (changed) {
             changed = false;
-
             for (int n = 0; n < N; n++) {
                 if (n == dg.entryIndex) continue;
-                const auto& ps = dg.preds[n];
 
-                if (ps.empty()) {
-                    std::unordered_set<int> newS = {n};
-                    if (newS != df.domSets[n]) {
-                        df.domSets[n] = std::move(newS);
-                        changed = true;
+                std::unordered_set<int> newDom;
+                bool firstPred = true;
+
+                for (int p : dg.preds[n]) {
+                    if (firstPred) {
+                        newDom = info.domSets[p];
+                        firstPred = false;
+                    } else {
+                        std::unordered_set<int> tmp;
+                        for (int x : newDom) {
+                            if (info.domSets[p].count(x)) tmp.insert(x);
+                        }
+                        newDom.swap(tmp);
                     }
-                    continue;
                 }
 
-                std::unordered_set<int> newS = df.domSets[ps[0]];
-                for (int k = 1; k < (int)ps.size(); k++) {
-                    std::unordered_set<int> tmp;
-                    for (int x : newS) if (df.domSets[ps[k]].count(x)) tmp.insert(x);
-                    newS.swap(tmp);
-                }
+                newDom.insert(n);
 
-                newS.insert(n);
-
-                if (newS != df.domSets[n]) {
-                    df.domSets[n] = std::move(newS);
+                if (newDom != info.domSets[n]) {
+                    info.domSets[n].swap(newDom);
                     changed = true;
                 }
             }
         }
 
+        // 计算 immediate dominator
         for (int n = 0; n < N; n++) {
             if (n == dg.entryIndex) {
-                df.idom[n] = -1;
-                continue;
-            }
-            auto& ds = df.domSets[n];
-
-            std::vector<int> cand;
-            for (int d : ds) if (d != n) cand.push_back(d);
-            if (cand.empty()) {
-                df.idom[n] = -1;
+                info.idom[n] = -1;
                 continue;
             }
 
-            int best = -1;
-            for (int c : cand) {
-                bool dominatedByOther = false;
-                for (int o : cand) {
-                    if (o == c) continue;
-                    if (df.domSets[o].count(c)) {
-                        dominatedByOther = true;
+            int idom = -1;
+            for (int d : info.domSets[n]) {
+                if (d == n) continue;
+                bool isImm = true;
+                for (int other : info.domSets[n]) {
+                    if (other == n || other == d) continue;
+                    if (info.domSets[other].count(d) && info.domSets[n].count(other)) {
+                        isImm = false;
                         break;
                     }
                 }
-                if (!dominatedByOther) {
-                    best = c;
+                if (isImm) {
+                    idom = d;
                     break;
                 }
             }
-            if (best < 0) best = cand[0];
-            df.idom[n] = best;
+            info.idom[n] = idom;
         }
 
-        return df;
+        GraphAnalyzer::log("computeDominators done");
+        return info;
     }
 
     static PrefixStructure buildPrefixStructure(const DerivationGraphViewInterface& g) {
         PrefixStructure pre;
-        pre.support = buildSupportMap(g);
+        pre.support   = buildSupportMap(g);
         pre.domInputs = computeEdgeDomInputs(g, pre.support);
-        pre.dg = buildDomGraph(g, pre.domInputs);
-        pre.dom = computeDominators(pre.dg);
+        pre.dg        = buildDomGraph(g);
+        pre.dom       = computeDominators(pre.dg);
         return pre;
     }
 
+    // ========= 支配树上的 LCA / 合流点 =========
     static int lcaInDomTree(int a, int b, const std::vector<int>& idom) {
-        std::unordered_set<int> path;
-        int x = a;
-        while (x != -1) {
-            path.insert(x);
-            x = idom[x];
+        if (a < 0 || b < 0) return -1;
+        if (a == b) return a;
+
+        auto depth = [&](int x) {
+            int d = 0;
+            while (x >= 0) {
+                x = idom[x];
+                d++;
+            }
+            return d;
+        };
+
+        int da = depth(a);
+        int db = depth(b);
+
+        while (da > db) {
+            a = idom[a];
+            --da;
         }
-        int y = b;
-        while (y != -1) {
-            if (path.count(y)) return y;
-            y = idom[y];
+        while (db > da) {
+            b = idom[b];
+            --db;
         }
-        return -1;
+
+        while (a != b && a >= 0 && b >= 0) {
+            a = idom[a];
+            b = idom[b];
+        }
+        return (a == b ? a : -1);
     }
 
-    static int confluencePoint(const std::vector<int>& nodes,
-                               const std::vector<int>& idom) {
+    static int confluencePoint(
+        const std::vector<int>& nodes,
+        const std::vector<int>& idom)
+    {
         if (nodes.empty()) return -1;
-        int ans = nodes[0];
-        for (int i = 1; i < (int)nodes.size(); i++) {
-            ans = lcaInDomTree(ans, nodes[i], idom);
-            if (ans < 0) return -1;
+        int cur = nodes[0];
+        for (size_t i = 1; i < nodes.size(); i++) {
+            cur = lcaInDomTree(cur, nodes[i], idom);
+            if (cur < 0) break;
         }
-        return ans;
+        return cur;
     }
 
+    // ========= 从 candidate SO node 找 SI =========
     static Candidate findCandidate(
         const DerivationGraphViewInterface& g,
-        EdgePtr exitEdge,
+        NodePtr exitNode,
         const PrefixStructure& pre)
     {
         Candidate cand;
-        if (!exitEdge) return cand;
+        if (!exitNode) return cand;
 
-        // exitSucc：exitEdge 的输出点
-        NodePtr exitSucc = g.getOutput(exitEdge);
-        if (!exitSucc) return cand;
+        log("findCandidate: exitNode=" + exitNode->toString());
 
-        // 在 exitEdge 的所有 inputs 里找 SO：
-        //    唯一 outgoing edge 且就是 exitEdge 的那个点
-        // 这列没考虑exitNode同时有非exitEdge的outgoing edge到区域内部 这可能就是成环情况了？
-        std::vector<NodePtr> soCandidates;
-        auto inputs = g.getInputs(exitEdge);
-        for (NodePtr n : inputs) {
-            if (!n) continue;
-
-            bool ok = true;
-            for (EdgePtr oe : g.getOutgoingEdges(n)) {
-                if (!oe) continue;
-
-                if (oe == exitEdge) continue;
-
-                NodePtr out = g.getOutput(oe);
-                if (!out) {ok = false; break;}
-
-                if (out == exitSucc) continue;
-                if (out == n) continue;
-
-                ok = false;
-                break;
-            }
-
-            if (ok) {
-                soCandidates.push_back(n);
-            }
-        }
-
-        // 必须有且仅有一个 SO
-        if (soCandidates.size() != 1) return cand;
-        NodePtr exitNode = soCandidates[0];
-
-        // 在 dom-graph 里找 exitNode 的 index
         auto itExitIdx = pre.dg.indexOf.find(exitNode);
-        if (itExitIdx == pre.dg.indexOf.end()) return cand;
+        if (itExitIdx == pre.dg.indexOf.end()) {
+            log("findCandidate rejected: exitNode not in dom graph");
+            return cand;
+        }
         int exitIdx = itExitIdx->second;
 
-        // 收集 exitNode 所有 incoming hyperedge 的「dominant inputs」，
-        //    在支配树上求合流点 → entryNode
+        // 收集所有 incoming hyperedge 的 dominant inputs，在支配树上求合流点
         std::vector<int> srcIdx;
-
         for (EdgePtr eIn : g.getIncomingEdges(exitNode)) {
             if (!eIn) continue;
 
@@ -460,9 +492,9 @@ private:
 
             auto it = pre.domInputs.find(eIn);
             if (it != pre.domInputs.end()) {
-                domSet = &it->second;           // 已经选过的 dominant input group
+                domSet = &it->second;       // 已经选过的 dominant input group
             } else {
-                tmp = g.getInputs(eIn);         // 没有分组信息，就全部当 dominant
+                tmp = g.getInputs(eIn);     // 没有分组信息，就全部当 dominant
                 domSet = &tmp;
             }
 
@@ -474,24 +506,32 @@ private:
             }
         }
 
-        // 如果 exitNode 没有 incoming edge，就把它自己当 source
         if (srcIdx.empty()) {
-            srcIdx.push_back(exitIdx);
+            // 没有前驱，不能形成「从 SI 到 SO」的 region
+            log("findCandidate rejected: exitNode has no incoming edges");
+            return cand;
         }
 
         int entryIdx = confluencePoint(srcIdx, pre.dom.idom);
-        if (entryIdx < 0 || entryIdx == exitIdx) return cand;
+        if (entryIdx < 0 || entryIdx == exitIdx) {
+            log("findCandidate rejected: invalid entryIdx=" + std::to_string(entryIdx));
+            return cand;
+        }
 
         NodePtr entryNode = pre.dg.nodes[entryIdx];
-        if (!entryNode) return cand;
+        if (!entryNode) {
+            log("findCandidate rejected: entryNode null");
+            return cand;
+        }
 
         cand.si = entryNode;
         cand.so = exitNode;
-        cand.exitEdge = exitEdge;
-        cand.exitSucc = exitSucc;
+        log("findCandidate success: entry=" + entryNode->toString() +
+            " exit=" + exitNode->toString());
         return cand;
     }
 
+    // ========= 构建 strict / full region =========
     static Region buildStrictRegion(
         const DerivationGraphViewInterface& g,
         NodePtr entryNode,
@@ -544,6 +584,9 @@ private:
             reg.nodes.clear();
             reg.edges.clear();
         }
+        log("buildStrictRegion " + std::string(reachedEntry ? "reached" : "missed") +
+            " entry; nodes=" + std::to_string(reg.nodes.size()) +
+            " edges=" + std::to_string(reg.edges.size()));
         return reg;
     }
 
@@ -588,22 +631,25 @@ private:
             reg.nodes.clear();
             reg.edges.clear();
         }
+        log("buildFullRegion " + std::string(reachedEntry ? "reached" : "missed") +
+            " entry; nodes=" + std::to_string(reg.nodes.size()) +
+            " edges=" + std::to_string(reg.edges.size()));
         return reg;
     }
 
-    static bool selectEntryEdgeAndPreds(
-    const DerivationGraphViewInterface& g,
-    const Region& fullRegion,
-    NodePtr entryNode,
-    EdgePtr& entryEdge,
-    std::vector<NodePtr>& entryPreds)
+    // ========= 收集 SI 的外部前驱（不再作为合法性条件） =========
+    static bool selectEntryEdgeAndPreds(   // 现在永远返回 true，只作为收集信息
+        const DerivationGraphViewInterface& g,
+        const Region& fullRegion,
+        NodePtr entryNode,
+        EdgePtr& entryEdge,
+        std::vector<NodePtr>& entryPreds)
     {
         if (!entryNode) return false;
 
         entryPreds.clear();
         entryEdge = nullptr;
 
-        // 用 set 去重：同一个外部前驱可能通过多条边进来
         std::unordered_set<NodePtr> predSet;
 
         for (EdgePtr eIn : g.getIncomingEdges(entryNode)) {
@@ -616,95 +662,131 @@ private:
             for (NodePtr p : g.getInputs(eIn)) {
                 if (!p) continue;
 
-                // 只关心“从 region 外进来的”前驱
                 if (!fullRegion.nodes.count(p)) {
                     hasOutsidePred = true;
-
                     if (predSet.insert(p).second) {
                         entryPreds.push_back(p);
                     }
                 }
             }
 
-            // 记录一条真正跨 region 的 entryEdge（随便选一条，方便 dump/debug）
             if (hasOutsidePred && !entryEdge) {
-                entryEdge = eIn;
+                entryEdge = eIn;   // 仅调试用途
             }
         }
 
-        // 至少得有一个外部前驱，否则不算 SISO（纯 facts 前缀的特殊情况你以后要放开再改这里）
-        return !entryPreds.empty();
+        log("selectEntryEdgeAndPreds entry=" + entryNode->toString() +
+            " outsidePreds=" + std::to_string(entryPreds.size()));
+        return true;
     }
 
+    // ========= escape 检查：只看「内部节点」的 outgoing edge 是否连到 region 外 =========
     static bool checkNoEscape(
-    const DerivationGraphViewInterface& g,
-    const Region& fullRegion,
-    NodePtr exitNode,
-    EdgePtr exitEdge,
-    NodePtr exitSucc)
+        const DerivationGraphViewInterface& g,
+        const Region& fullRegion,
+        NodePtr entryNode,
+        NodePtr exitNode)
     {
         for (NodePtr n : fullRegion.nodes) {
             if (!n) continue;
+
+            // entry / exit 都是边界节点，不检查它们的 outgoing
+            if (n == entryNode || n == exitNode) continue;
 
             for (EdgePtr e : g.getOutgoingEdges(n)) {
                 if (!e) continue;
                 NodePtr out = g.getOutput(e);
 
-                // 唯一允许离开区域的边：exitEdge
-                // 不管是从哪个内部节点触发，都视为同一个出口
-                if (e == exitEdge) {
-                    continue;
-                }
-
                 bool outInside = (out && fullRegion.nodes.count(out));
-                bool edgeInside = fullRegion.edges.count(e);
 
-                // 任何指向区域外、或者不在 region edges 内的 outgoing edge，视为 escape
-                if (!outInside || !edgeInside) {
+                // 只要有 outgoing 指到了 region 之外，就是 escape
+                if (!outInside) {
+                    log("checkNoEscape fail: node=" + n->toString() +
+                        " edge=" + std::to_string(e ? e->getId() : -1) +
+                        " out=" + (out ? out->toString() : std::string("null")));
                     return false;
                 }
             }
         }
+        log("checkNoEscape ok");
         return true;
     }
 
+    // ========= 将 Region + 边界节点组装成 SISORegionInfo =========
     static SISORegionInfo assembleSISO(
         const Region& strictRegion,
         const Region& fullRegion,
         NodePtr entryNode,
-        EdgePtr entryEdge,
         const std::vector<NodePtr>& entryPreds,
-        NodePtr exitNode,
-        EdgePtr exitEdge,
-        NodePtr exitSucc)
+        NodePtr exitNode)
     {
+        (void)strictRegion;  // 目前没有单独用 strictRegion，可留着以后细分
         SISORegionInfo info;
 
-        if (fullRegion.nodes.size() < 3) {
-            return info;
-        }
+        // 至少要有 SI 和 SO 两个点
+        if (!entryNode || !exitNode) return info;
+        if (fullRegion.nodes.size() < 2)    return info;
 
         info.entry = entryNode;
-        info.entryEdge = entryEdge;
+        info.exit  = exitNode;
         info.entryPreds = entryPreds;
-        info.exit = exitNode;
-        info.exitEdge = exitEdge;
-        info.exitSucc = exitSucc;
 
         info.internalNodes.assign(fullRegion.nodes.begin(), fullRegion.nodes.end());
         info.internalEdges.assign(fullRegion.edges.begin(), fullRegion.edges.end());
 
-        // exitEdge 本身没有出现在 backward 收集里，需要手动加
-        if (!fullRegion.edges.count(exitEdge)) {
-            info.internalEdges.push_back(exitEdge);
-        }
-
         info.valid = true;
-        // prefixAllFactsRequired 暂时还是 false，看你后续是否要利用 support 做更细分判断
         info.prefixAllFactsRequired = false;
+
+        log("assembleSISO success nodes=" + std::to_string(info.internalNodes.size()) +
+            " edges=" + std::to_string(info.internalEdges.size()));
         return info;
     }
 
+    // ========= 从 candidate SO node 识别 SISO（核心 pipeline） =========
+    static SISORegionInfo detectSISOFromExitNodeWithPrefix(
+        const DerivationGraphViewInterface& g,
+        NodePtr exitNode,
+        const PrefixStructure& pre)
+    {
+        SISORegionInfo info;
+        if (!exitNode) return info;
+
+        Candidate cand = findCandidate(g, exitNode, pre);
+        if (!cand.si || !cand.so) {
+            log("detectSISOFromExitNodeWithPrefix: candidate failed for exitNode " +
+                exitNode->toString());
+            return info;
+        }
+
+        Region strictR = buildStrictRegion(g, cand.si, cand.so, pre.domInputs);
+        if (strictR.nodes.empty()) {
+            log("detectSISOFromExitNodeWithPrefix: strict region empty");
+            return info;
+        }
+
+        Region fullR = buildFullRegion(g, cand.si, cand.so);
+        if (fullR.nodes.empty()) {
+            log("detectSISOFromExitNodeWithPrefix: full region empty");
+            return info;
+        }
+
+        EdgePtr dummyEntryEdge = nullptr;
+        std::vector<NodePtr> entryPreds;
+        (void)dummyEntryEdge;
+        selectEntryEdgeAndPreds(g, fullR, cand.si, dummyEntryEdge, entryPreds);
+
+        if (!checkNoEscape(g, fullR, cand.si, cand.so)) {
+            log("detectSISOFromExitNodeWithPrefix: escape detected");
+            return info;
+        }
+
+        // TODO：这里可以加内部 evidence/query 节点过滤
+
+        info = assembleSISO(strictR, fullR, cand.si, entryPreds, cand.so);
+        return info;
+    }
+
+    // ========= 兼容旧接口：从 exitEdge 出发 =========
     static SISORegionInfo detectSISOStrictFromExitWithPrefix(
         const DerivationGraphViewInterface& g,
         EdgePtr exitEdge,
@@ -713,35 +795,19 @@ private:
         SISORegionInfo info;
         if (!exitEdge) return info;
 
-        Candidate cand = findCandidate(g, exitEdge, pre);
-        if (!cand.si || !cand.so || !cand.exitEdge || !cand.exitSucc) return info;
-
-        // strict region 仅沿 dominant input 回溯
-        Region strictR = buildStrictRegion(g, cand.si, cand.so, pre.domInputs);
-        if (strictR.nodes.empty()) return info;
-
-        // full region 沿所有 inputs 回溯，用来做 escape 检查
-        Region fullR = buildFullRegion(g, cand.si, cand.so);
-        if (fullR.nodes.empty()) return info;
-
-        EdgePtr entryEdge = nullptr;
-        std::vector<NodePtr> entryPreds;
-        if (!selectEntryEdgeAndPreds(g, fullR, cand.si, entryEdge, entryPreds)) {
+        NodePtr exitNode = g.getOutput(exitEdge);
+        if (!exitNode) {
+            log("detectSISOStrictFromExitWithPrefix: exitEdge has null output");
             return info;
         }
 
-        if (!checkNoEscape(g, fullR, cand.so, cand.exitEdge, cand.exitSucc)) {
-            return info;
-        }
-
-        // TODO: 在这里加 internalNodes evidence/query 过滤：
-
-        info = assembleSISO(strictR, fullR, cand.si, entryEdge, entryPreds,
-                            cand.so, cand.exitEdge, cand.exitSucc);
-        return info;
+        return detectSISOFromExitNodeWithPrefix(g, exitNode, pre);
     }
 
 public:
+    // ===================== 对外接口 =====================
+
+    // 保持旧接口：给定一个 exit edge，找它的 SISO（现在实际上是以 edge 的 output node 作为 SO）
     static inline SISORegionInfo detectSISOStrictFromExit(
         const DerivationGraphViewInterface& g,
         EdgePtr exitEdge)
@@ -750,28 +816,27 @@ public:
         return detectSISOStrictFromExitWithPrefix(g, exitEdge, pre);
     }
 
+    // 在整张图上寻找所有不重叠的 SISO 区域（以 node 为 candidate SO）
     static inline std::vector<SISORegionInfo> detectAllSISOStrictFromExit(
         const DerivationGraphViewInterface& g)
     {
         PrefixStructure pre = buildPrefixStructure(g);
 
         std::vector<SISORegionInfo> all;
-        std::unordered_set<EdgePtr> seenEdges;
 
         for (NodePtr n : g.getNodes()) {
             if (!n) continue;
-            for (EdgePtr e : g.getOutgoingEdges(n)) {
-                if (!e) continue;
-                if (!seenEdges.insert(e).second) continue;
-
-                SISORegionInfo r = detectSISOStrictFromExitWithPrefix(g, e, pre);
-                if (!r.valid) continue;
-                all.push_back(std::move(r));
-            }
+            SISORegionInfo r = detectSISOFromExitNodeWithPrefix(g, n, pre);
+            if (!r.valid) continue;
+            all.push_back(std::move(r));
         }
 
-        if (all.empty()) return all;
+        if (all.empty()) {
+            log("detectAllSISOStrictFromExit: none found");
+            return all;
+        }
 
+        // 小 region 在前，方便做 greedy 去重
         std::sort(all.begin(), all.end(),
                   [](const SISORegionInfo& a, const SISORegionInfo& b) {
                       return a.internalNodes.size() < b.internalNodes.size();
@@ -797,15 +862,194 @@ public:
             result.push_back(std::move(r));
         }
 
+        log("detectAllSISOStrictFromExit: found " +
+            std::to_string(result.size()) + " regions after overlap filter");
         return result;
     }
 
-    static inline void dumpRegionAsDot(const DerivationGraphViewInterface& g, const SISORegionInfo& r, const std::string& filename) {
+    // 输出完整图，并用不同颜色高亮一个 SISO 区域
+    static inline void dumpRegionAsDot(
+        const DerivationGraphViewInterface& g,
+        const SISORegionInfo& r,
+        const std::string& filename)
+    {
+        std::ofstream out(filename);
+        if (!out.is_open()) {
+            std::cerr << "Cannot open dot file: " << filename << "\n";
+            return;
+        }
 
+        NodeSet regionNodes(r.internalNodes.begin(), r.internalNodes.end());
+        EdgeSet regionEdges(r.internalEdges.begin(), r.internalEdges.end());
+
+        const auto& nodes = g.getNodes();
+        const auto& edges = g.getEdges();
+
+        out << "digraph DerivationGraphWithSISO {\n";
+        out << "  rankdir=LR;\n";
+
+        // 先输出节点：entry / exit / 其他 region / 非 region
+        out << "  node [shape=box, style=filled, fillcolor=lightblue];\n";
+        for (const auto& n : nodes) {
+            if (!n) continue;
+
+            std::string fill = "lightblue";
+            if (regionNodes.count(n)) {
+                if (r.entry && n == r.entry) {
+                    fill = "palegreen";   // SI
+                } else if (r.exit && n == r.exit) {
+                    fill = "lightcoral"; // SO
+                } else {
+                    fill = "khaki";      // region 内部其它节点
+                }
+            }
+
+            out << "  node" << n->getId()
+                << " [label=\""
+                << n->getTuple().toString()
+                << "\", fillcolor=" << fill << "];\n";
+        }
+
+        // 再输出 hyperedge（虚点），region 内的边用红色，其它用灰色
+        out << "  node [shape=point, width=0.2];\n";
+        for (const auto& e : edges) {
+            if (!e) continue;
+            if (e->pruned) continue;
+
+            NodePtr outNode = g.getOutput(e);
+            if (!outNode) continue;
+
+            auto inputs = g.getInputs(e);
+            if (std::find(inputs.begin(), inputs.end(), outNode) != inputs.end()) {
+                // 跳过 head∈body 的伪环
+                continue;
+            }
+
+            bool inRegion = regionEdges.count(e) > 0;
+
+            // 画 edge 点本身
+            out << "  edge" << e->getId()
+                << " ["
+                << "color=" << (inRegion ? "red" : "gray")
+                << "];\n";
+
+            // 输入到 edge
+            for (NodePtr in : inputs) {
+                if (!in) continue;
+                if (!nodes.count(in)) continue;
+                out << "  node" << in->getId()
+                    << " -> edge" << e->getId()
+                    << " [color=" << (inRegion ? "red" : "gray") << "];\n";
+            }
+
+            // edge 到输出
+            if (nodes.count(outNode)) {
+                out << "  edge" << e->getId()
+                    << " -> node" << outNode->getId()
+                    << " [color=" << (inRegion ? "red" : "gray") << "];\n";
+            }
+        }
+
+        out << "}\n";
+        out.close();
     }
 
-    static inline void printSISOInfo(const DerivationGraphViewInterface& g, const SISORegionInfo& r) {
-        (void)g; // g 目前没用到，留着以防以后想打印更多信息
+    // 输出完整图，同时用不同颜色标注所有 SISO 区域（非 SISO 节点/边用浅灰）
+    static inline void dumpAllRegionsAsDot(
+        const DerivationGraphViewInterface& g,
+        const std::vector<SISORegionInfo>& regions,
+        const std::string& filename)
+    {
+        std::ofstream out(filename);
+        if (!out.is_open()) {
+            std::cerr << "Cannot open dot file: " << filename << "\n";
+            return;
+        }
+        std::vector<std::string> palette = {
+            "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
+            "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
+            "#bcbd22", "#17becf"
+        };
+
+        // 记录节点/边的区域颜色（多区域时取第一个匹配色）以及 entry/exit 标记
+        std::unordered_map<NodePtr, std::string> nodeColor;
+        std::unordered_map<EdgePtr, std::string> edgeColor;
+        std::unordered_map<NodePtr, int> entryCount;
+        std::unordered_map<NodePtr, int> exitCount;
+        for (size_t i = 0; i < regions.size(); ++i) {
+            const auto& r = regions[i];
+            const std::string col = palette[i % palette.size()];
+            for (NodePtr n : r.internalNodes) {
+                if (!n) continue;
+                nodeColor.emplace(n, col);
+            }
+            for (EdgePtr e : r.internalEdges) {
+                if (!e) continue;
+                edgeColor.emplace(e, col);
+            }
+            if (r.entry) entryCount[r.entry]++;
+            if (r.exit) exitCount[r.exit]++;
+        }
+
+        out << "digraph SISO_All {\n";
+        out << "  rankdir=LR;\n";
+        out << "  node [shape=box, style=filled, fillcolor=lightgray, color=gray];\n";
+
+        // 所有节点：在 region 的染色，否则浅灰
+        for (const auto& n : g.getNodes()) {
+            if (!n) continue;
+            auto it = nodeColor.find(n);
+            const std::string col = (it != nodeColor.end()) ? it->second : "#dddddd";
+            int periph = 1;
+            bool isEntry = entryCount.count(n);
+            bool isExit  = exitCount.count(n);
+            if (isEntry && isExit) periph = 3;
+            else if (isEntry || isExit) periph = 2;
+            std::string role;
+            if (isEntry) role += "[SI]";
+            if (isExit) role += "[SO]";
+            out << "  node" << n->getId()
+                << " [label=\"" << escapeDot(n->getTuple().toString())
+                << "\\n(id=" << n->getId() << ")" << role << "\", fillcolor=\"" << col
+                << "\", color=\"" << col << "\", fontcolor=\"black\", peripheries=" << periph << "];\n";
+        }
+
+        // hyperedge 作为 point 节点
+        out << "  node [shape=point, width=0.2, height=0.2, style=filled];\n";
+        for (const auto& e : g.getEdges()) {
+            if (!e) continue;
+            if (e->pruned) continue;
+            NodePtr outNode = g.getOutput(e);
+            if (!outNode) continue;
+
+            std::string col = "#cccccc";
+            auto itCol = edgeColor.find(e);
+            if (itCol != edgeColor.end()) col = itCol->second;
+
+            out << "  edge" << e->getId()
+                << " [label=\"\", fillcolor=\"" << col << "\", color=\"" << col << "\"];\n";
+
+            for (NodePtr in : g.getInputs(e)) {
+                if (!in) continue;
+                out << "  node" << in->getId() << " -> edge" << e->getId()
+                    << " [color=\"" << col << "\"];\n";
+            }
+            if (outNode) {
+                out << "  edge" << e->getId() << " -> node" << outNode->getId()
+                    << " [color=\"" << col << "\"];\n";
+            }
+        }
+
+        out << "}\n";
+    }
+
+    // 简单 CSV 打印 SISO 信息（更新为 node-only 版本）
+    static inline void printSISOInfo(
+        const DerivationGraphViewInterface& g,
+        const SISORegionInfo& r)
+    {
+        (void)g; // 目前没用到 g，本函数只是 dump region 信息
+
         std::ofstream out("siso_info.csv", std::ios::app);
         if (!out.is_open()) {
             std::cout << "cannot open siso_info.csv\n";
@@ -817,17 +1061,11 @@ public:
             return;
         }
 
-        out << "entry_node,entry_edge,entry_preds,exit_node,exit_edge,exit_succ,internal_nodes,internal_edges\n";
+        out << "entry_node,entry_preds,exit_node,internal_nodes,internal_edges\n";
 
         // entry node
         out << "\"";
         if (r.entry) out << r.entry->toString() << "(id=" << r.entry->getId() << ")";
-        else out << "null";
-        out << "\",";
-
-        // entry edge
-        out << "\"";
-        if (r.entryEdge) out << "edge" << r.entryEdge->getId();
         else out << "null";
         out << "\",";
 
@@ -846,18 +1084,6 @@ public:
         // exit node
         out << "\"";
         if (r.exit) out << r.exit->toString() << "(id=" << r.exit->getId() << ")";
-        else out << "null";
-        out << "\",";
-
-        // exit edge
-        out << "\"";
-        if (r.exitEdge) out << "edge" << r.exitEdge->getId();
-        else out << "null";
-        out << "\",";
-
-        // exit succ
-        out << "\"";
-        if (r.exitSucc) out << r.exitSucc->toString() << "(id=" << r.exitSucc->getId() << ")";
         else out << "null";
         out << "\",";
 
