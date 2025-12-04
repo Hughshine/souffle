@@ -4062,6 +4062,8 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << ", \"log.txt\"";
     hook << ", " << (glb.config().has("derv-only") ? "true" : "false");
     hook << ",\"" << glb.config().get("setmode") << "\"";
+    hook << "," << (glb.config().has("merge-bi-imp") ? "true" : "false");
+    hook << "," << (glb.config().has("rewrite") ? "true" : "false");
     hook << ");\n";
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";

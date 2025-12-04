@@ -204,7 +204,9 @@ void buildFormulasCyclewise(
     SubgraphView& view,
     FormulaManager<FormulaNodeRef>& formulaManager,
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
-    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
+    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
+    const std::unordered_set<NodePtr>& seedTrueNodes = {},
+    std::vector<double>* roundTimingsMs = nullptr
 ) {
      FunctionTimer timer("Build Formulas Cyclewise using DAG + Depth");
      auto start = std::chrono::high_resolution_clock::now();
@@ -223,7 +225,11 @@ void buildFormulasCyclewise(
     size_t round = 0;
     // 1. 初始化公式
     for (const auto& node : view.getNodes()) {
-        if (node->isFact) {
+        if (seedTrueNodes.count(node)) {
+            FormulaNodeRef var = formulaManager.getTrue();
+            nodeFormulas[node] = var;
+            baseNodeFormulas[node] = var;
+        } else if (node->isFact) {
             FormulaNodeRef var = (node->getProbability() == 1.0)
                 ? formulaManager.getTrue()
 //                ? formulaManager.createVar(mapNodeId(node->getId()), *node)
@@ -255,6 +261,7 @@ void buildFormulasCyclewise(
     }
 
     while (!ready.empty()) {
+        auto cycleStart = std::chrono::steady_clock::now();
         size_t cid = ready.front(); ready.pop();
         if (visited[cid]) continue;
         visited[cid] = true;
@@ -272,7 +279,13 @@ void buildFormulasCyclewise(
             inWorklist.insert(edge);
         }
 
+        // Track repeated stalls to help diagnose infinite loops.
+        std::map<EdgePtr, size_t> stallCount;
+        constexpr size_t kMaxStall = 100000;  // defensive cap to avoid infinite requeue
+        std::set<EdgePtr> loggedFirstStall;
+
         while (!worklist.empty()) {
+            auto roundStart = std::chrono::steady_clock::now();
             round++;
             std::cout << "Round: " << round << std::endl;
             std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
@@ -295,6 +308,20 @@ void buildFormulasCyclewise(
                 if (!nodeFormulas.count(input)) {
 //                    std::cout << "Input node formula not available: " << input->getId() << " " << input->toString() << std::endl;
                     allAvailable = false;
+                    auto& sc = stallCount[edge];
+                    sc++;
+                    if (loggedFirstStall.insert(edge).second || sc == 100 || sc == 1000) {
+                        std::cout << "[buildFormulasCyclewise] stall edge " << edge->toString()
+                                  << " missing input formula for node " << input->toString()
+                                  << " (stall #" << sc << ")" << std::endl;
+                    }
+                    if (sc > kMaxStall) {
+                        std::cout << "[buildFormulasCyclewise] giving up on edge " << edge->toString()
+                                  << " after " << sc << " stalls; setting formula to False to continue."
+                                  << std::endl;
+                        edgeFormulas[edge] = formulaManager.getFalse();
+                        allAvailable = true;  // allow propagation of False to break the cycle
+                    }
                     break;
                 }
                 inputs.push_back(view.getBodyNegations(edge)[i]
@@ -337,6 +364,12 @@ void buildFormulasCyclewise(
                     }
                 }
             }
+
+            if (roundTimingsMs != nullptr) {
+                auto roundEnd = std::chrono::steady_clock::now();
+                double roundMs = std::chrono::duration<double, std::milli>(roundEnd - roundStart).count();
+                roundTimingsMs->push_back(roundMs);
+            }
         }
 
         for (auto succ : depGraph.reverseDependencies[cid]) {
@@ -344,6 +377,8 @@ void buildFormulasCyclewise(
                 ready.push(succ);
             }
         }
+
+        (void)cycleStart;  // silence unused warning if roundTimingsMs is null
     }
     end = std::chrono::high_resolution_clock::now();
     duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();

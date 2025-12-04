@@ -284,7 +284,9 @@ public:
 private:
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, RuleApplication ruleApp)
         : inputs(inputs), output(output), id(edgeId), rule(nullptr), ruleApp(ruleApp) {
-        // assert (false);
+        // Synthetic edges default to non-negated inputs with deterministic weight
+        bodyNegations = std::vector<bool>(this->inputs.size(), false);
+        probability = 1.0;
     }
     Hyperedge(const std::vector<NodePtr>& inputs, NodePtr output, size_t edgeId, const Rule* rule, const std::vector<bool>& bodyNegations, RuleApplication ruleApp)
         : inputs(inputs), output(output), id(edgeId), rule(rule), ruleApp(ruleApp) {
@@ -435,6 +437,11 @@ public:
 
     const std::unordered_set<NodePtr>& getNodes() const override { return nodes_; }
     const std::unordered_set<EdgePtr>& getEdges() const override { return edges_; }
+
+    // Allow callers (e.g., GraphRewriter) to mutate the working view in-place.
+    std::unordered_set<NodePtr>& mutableNodes() { return nodes_; }
+    std::unordered_set<EdgePtr>& mutableEdges() { return edges_; }
+
     void dumpStatistics(std::ostream& out) const {
         out << "DerivationGraph Statistics:" << std::endl;
         out << "  Number of nodes: " << nodes_.size() << std::endl;
@@ -626,6 +633,16 @@ public:
             }
         }
         return deletedNonDeterministicFacts_;
+    }
+
+    // Drop cached validity/adjacency info after structural rewrites.
+    void invalidateCaches() {
+        validNodes_.clear();
+        validEdges_.clear();
+        deletedFacts_.clear();
+        deletedDeterminsticFacts_.clear();
+        deletedNonDeterministicFacts_.clear();
+        cachedSortedIncomingEdges.clear();
     }
 
     // deletion impacted

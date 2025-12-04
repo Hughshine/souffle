@@ -100,10 +100,47 @@ private:
         EdgeSet edges;
     };
 
+    static std::size_t minRandomVars() {
+        // allow overriding the minimum via env for experiments; default 0 to allow deterministic simplifications
+        const char* env = std::getenv("SOUFFLE_SISO_MIN_RANDOM");
+        if (env) {
+            try {
+                return static_cast<std::size_t>(std::stoul(env));
+            } catch (...) {
+            }
+        }
+        return 0;
+    }
+
     struct Candidate {
         NodePtr si = nullptr;   // candidate SI
         NodePtr so = nullptr;   // candidate SO
     };
+
+    /**
+     * Count internal random variables (probability in (0,1)) in a region,
+     * excluding the boundary entry/exit nodes.
+     */
+    static size_t countRandomVariables(const Region& region, NodePtr entryNode, NodePtr exitNode) {
+        size_t randomCount = 0;
+        for (const auto& n : region.nodes) {
+            if (!n) continue;
+            if (n == entryNode || n == exitNode) continue;
+            if (!n->isFact) continue;
+            double p = n->getProbability();
+            if (p > 0.0 && p < 1.0) {
+                ++randomCount;
+            }
+        }
+        for (const auto& e : region.edges) {
+            if (!e) continue;
+            double p = e->getProbability();
+            if (p > 0.0 && p < 1.0) {
+                ++randomCount;
+            }
+        }
+        return randomCount;
+    }
 
     // ========= support（反向收集所有能到达的 facts） =========
     static NodeSet backwardCollectFacts(
@@ -727,6 +764,13 @@ private:
         if (!entryNode || !exitNode) return info;
         if (fullRegion.nodes.size() < 2)    return info;
 
+        // Skip trivial regions with too few internal random variables.
+        size_t randomVars = countRandomVariables(fullRegion, entryNode, exitNode);
+        if (randomVars < minRandomVars()) {
+            log("assembleSISO skip trivial region (randomVars=" + std::to_string(randomVars) + ")");
+            return info;
+        }
+
         info.entry = entryNode;
         info.exit  = exitNode;
         info.entryPreds = entryPreds;
@@ -823,10 +867,22 @@ public:
         PrefixStructure pre = buildPrefixStructure(g);
 
         std::vector<SISORegionInfo> all;
+        const bool profile = std::getenv("SOUFFLE_SISO_PROFILE") != nullptr;
 
         for (NodePtr n : g.getNodes()) {
             if (!n) continue;
+            auto candStart = std::chrono::steady_clock::now();
             SISORegionInfo r = detectSISOFromExitNodeWithPrefix(g, n, pre);
+            double candMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - candStart).count();
+            if (profile) {
+                std::cout << "[siso-detect] candidate node " << n->getId()
+                          << " " << n->getTuple().toString()
+                          << " : " << (r.valid ? "found" : "none")
+                          << " (nodes=" << r.internalNodes.size()
+                          << ", edges=" << r.internalEdges.size()
+                          << ") took " << candMs << " ms" << std::endl;
+            }
             if (!r.valid) continue;
             all.push_back(std::move(r));
         }

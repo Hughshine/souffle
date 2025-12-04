@@ -1,0 +1,538 @@
+#pragma once
+
+#include <algorithm>
+#include <chrono>
+#include <limits>
+#include <map>
+#include <sstream>
+#include <unordered_set>
+#include <vector>
+#include <iostream>
+
+#include "souffle/problog/DerivationGraph.h"
+#include "souffle/problog/ForwardCompilation.h"
+#include "souffle/problog/GraphAnalyzer.h"
+#include "souffle/problog/formula/CuddManager.h"  // WeightedBDDManager, BddNodeRef
+
+namespace souffle::problog {
+
+using SISORegionInfo = ::SISORegionInfo;
+
+/**
+ * Statistics collected during SISO-based graph rewriting.
+ *
+ * The numbers are informational only and do not affect semantics.
+ */
+struct GraphRewriteStats {
+    size_t numIterations = 0;          ///< Number of outer iterations
+    size_t numRegionsRewritten = 0;    ///< Total SISO regions rewritten
+    size_t numNodesRemoved = 0;        ///< Internal nodes removed from the view
+    size_t numEdgesRemoved = 0;        ///< Internal edges removed from the view
+    size_t numEdgesAdded = 0;          ///< Synthetic edges added
+    size_t totalRandomVars = 0;        ///< Sum of random vars across regions (facts + edges, excl. entry/exit facts)
+    size_t maxRandomVars = 0;          ///< Max random vars in a single region
+    size_t simpleFactRegions = 0;      ///< Count of simple fact-based regions rewritten
+};
+
+/**
+ * Implements SISO-based dependency decomposition.
+ *
+ * Repeatedly finds SISO regions in the working view, summarizes each region
+ * into a single probabilistic edge entry->exit with probability Pr(exit|entry),
+ * and updates the view in-place.
+ */
+class GraphRewriter {
+public:
+    /**
+    * Rewrite all non-trivial SISO regions until a fixpoint on the given view.
+    *
+    * @param graph   Underlying derivation graph. Only extended (new hyperedges).
+    * @param view    Working view mutated in-place (nodes/edges removed or added).
+    * @param debug   If true, emit per-region tracing to stdout.
+    */
+    GraphRewriteStats rewriteUntilFixpoint(IncrementalDerivationGraph& graph,
+                                           IncSubgraphView& view,
+                                           bool debug = false) const {
+        GraphRewriteStats stats;
+        view.invalidateCaches();
+        auto managerStart = std::chrono::steady_clock::now();
+        WeightedBDDManager bddManager;
+        auto managerEnd = std::chrono::steady_clock::now();
+        double managerInitMs = std::chrono::duration<double, std::milli>(managerEnd - managerStart).count();
+        if (debug) {
+            std::cout << "[GraphRewriter] CUDD manager init took " << managerInitMs << " ms" << std::endl;
+        }
+
+        // Only the first region should attribute manager init time; subsequent regions reuse the same manager.
+        bool firstRegionTiming = true;
+
+        while (true) {
+            ++stats.numIterations;
+
+            view.cachedSortedIncomingEdges.clear();
+            if (debug) {
+                std::ostringstream dotBefore;
+                dotBefore << "rewrite_iter" << stats.numIterations << "_before.dot";
+                view.dumpDot(dotBefore.str());
+            }
+            auto regions = GraphAnalyzer::detectAllSISOStrictFromExit(view);
+
+            if (regions.empty()) {
+                if (debug) {
+                    std::cout << "[GraphRewriter] No SISO regions found, stop at iteration "
+                              << stats.numIterations << std::endl;
+                }
+                break;
+            }
+
+            auto iterStart = std::chrono::steady_clock::now();
+
+            if (debug) {
+                std::cout << "[GraphRewriter] Iteration " << stats.numIterations
+                          << " : detected " << regions.size()
+                          << " SISO region(s)." << std::endl;
+                std::ostringstream sisoDot;
+                sisoDot << "siso_regions_iter" << stats.numIterations << ".dot";
+                GraphAnalyzer::dumpAllRegionsAsDot(view, regions, sisoDot.str());
+            }
+
+            size_t rewrittenThisRound = 0;
+
+            // Regions produced by GraphAnalyzer are non-overlapping.
+            for (const auto& region : regions) {
+                if (!region.valid) {
+                    continue;
+                }
+
+                auto regionStart = std::chrono::steady_clock::now();
+
+                if (!isRegionNonTrivial(region)) {
+                    if (debug) {
+                        std::cout << "[GraphRewriter]   Skip trivial SISO: "
+                                  << regionToString(region) << std::endl;
+                    }
+                    continue;
+                }
+
+                size_t regionRandomVars = countRandomVars(region);
+
+                std::unordered_set<NodePtr> regionNodes(region.internalNodes.begin(),
+                                                        region.internalNodes.end());
+                std::unordered_set<EdgePtr> regionEdges(region.internalEdges.begin(),
+                                                        region.internalEdges.end());
+                SubgraphView regionView(std::move(regionNodes), std::move(regionEdges));
+
+                RegionTiming timing;
+                double effectiveMgrInitMs = firstRegionTiming ? managerInitMs : 0.0;
+                double condProb = 0.0;
+
+                bool isSimple = isSimpleFactRegion(region);
+                EdgePtr oldSimpleEdge = nullptr;
+                if (isSimple && region.internalEdges.size() == 1) {
+                    oldSimpleEdge = region.internalEdges.front();
+                    if (oldSimpleEdge && simpleProcessedEdges_.count(oldSimpleEdge->getId()) > 0) {
+                        if (debug) {
+                            std::cout << "[GraphRewriter]   Skip already processed simple SISO "
+                                      << regionToString(region) << std::endl;
+                        }
+                        continue;
+                    }
+                }
+                if (isSimple) {
+                    // Fast path: entry fact -> single edge -> exit
+                    EdgePtr onlyEdge = region.internalEdges.front();
+                    double pEntry = region.entry->getProbability();
+                    double pEdge = onlyEdge->getProbability();
+                    if (pEdge < 0.0) pEdge = 0.0;
+                    if (pEdge > 1.0) pEdge = 1.0;
+                    condProb = pEntry * pEdge;
+                    if (debug) {
+                        std::cout << "[GraphRewriter]   Simple fact region "
+                                  << regionToString(region)
+                                  << " with pEntry=" << pEntry
+                                  << ", pEdge=" << pEdge
+                                  << " => newPr=" << condProb << std::endl;
+                    }
+                    timing.mgrInitMs = effectiveMgrInitMs;
+                    timing.buildMs = 0.0;
+                    timing.wmcMs = 0.0;
+                    timing.applyMs = 0.0;
+                } else {
+                    condProb = computeRegionConditionalProbability(
+                        bddManager, effectiveMgrInitMs, regionView, region.entry, region.exit, debug, &timing);
+                }
+                firstRegionTiming = false;
+
+                if (condProb <= 0.0) {
+                    if (debug) {
+                        std::cout << "[GraphRewriter]   Skip SISO with Pr(exit|entry)=0: "
+                                  << regionToString(region) << std::endl;
+                    }
+                    continue;
+                }
+
+                auto applyStart = std::chrono::steady_clock::now();
+                EdgePtr newEdge = applyRegionRewrite(graph, view, region, condProb, stats, debug, isSimple);
+                auto applyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - applyStart).count();
+                timing.applyMs = applyMs;
+
+                if (debug) {
+                    auto regionMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - regionStart).count();
+                    std::cout << "[GraphRewriter]   Region rewrite time: "
+                              << regionMs << " ms for " << regionToString(region)
+                              << " (apply=" << applyMs << " ms)"
+                              << std::endl;
+                    std::cout << "[GraphRewriter]     Steps: mgrInit=" << timing.mgrInitMs
+                              << " ms, build=" << timing.buildMs
+                              << " ms, WMC=" << timing.wmcMs
+                              << " ms, apply=" << timing.applyMs << " ms";
+                    if (!timing.roundTimingsMs.empty()) {
+                        std::cout << ", rounds(ms)=";
+                        for (size_t i = 0; i < timing.roundTimingsMs.size(); ++i) {
+                            std::cout << (i == 0 ? "[" : ", ") << timing.roundTimingsMs[i];
+                        }
+                        std::cout << "]";
+                    }
+                    std::cout << ", BDD live nodes=" << timing.liveNodes
+                              << ", mem=" << timing.memMb << " MB"
+                              << ", randomVars=" << regionRandomVars
+                              << ", kind=" << (isSimple ? "simple_fact" : "general")
+                              << std::endl;
+                }
+                ++rewrittenThisRound;
+                stats.totalRandomVars += regionRandomVars;
+                stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
+                if (isSimple) {
+                    ++stats.simpleFactRegions;
+                    if (oldSimpleEdge) {
+                        simpleProcessedEdges_.insert(oldSimpleEdge->getId());
+                    }
+                    if (newEdge) {
+                        simpleProcessedEdges_.insert(newEdge->getId());
+                    }
+                }
+            }
+
+            auto iterMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - iterStart).count();
+            if (rewrittenThisRound == 0) {
+                if (debug) {
+                    std::cout << "[GraphRewriter] No region rewritten in iteration "
+                              << stats.numIterations << " (fixpoint reached in "
+                              << iterMs << " ms)." << std::endl;
+                }
+                break;
+            }
+
+            stats.numRegionsRewritten += rewrittenThisRound;
+
+            if (debug) {
+                if (rewrittenThisRound > 0) {
+                    std::ostringstream dotAfter;
+                    dotAfter << "rewrite_iter" << stats.numIterations << "_after.dot";
+                    view.dumpDot(dotAfter.str());
+                }
+                std::cout << "[GraphRewriter]   Rewrote " << rewrittenThisRound
+                          << " region(s) in iteration " << stats.numIterations
+                          << " in " << iterMs << " ms. Current stats: "
+                          << "nodesRemoved=" << stats.numNodesRemoved
+                          << ", edgesRemoved=" << stats.numEdgesRemoved
+                          << ", edgesAdded=" << stats.numEdgesAdded
+                          << std::endl;
+            }
+        }
+
+        if (stats.numRegionsRewritten > 0) {
+            double avgRandomVars = static_cast<double>(stats.totalRandomVars) /
+                    static_cast<double>(stats.numRegionsRewritten);
+            std::cout << "[GraphRewriter] Avg random vars per region: "
+                      << avgRandomVars << " (max=" << stats.maxRandomVars << ")"
+                      << std::endl;
+        }
+
+        return stats;
+    }
+
+private:
+    struct RegionTiming {
+        double mgrInitMs = 0.0;
+        double buildMs = 0.0;
+        double wmcMs = 0.0;
+        double applyMs = 0.0;
+        std::vector<double> roundTimingsMs;
+        size_t liveNodes = 0;
+        double memMb = 0.0;
+    };
+
+    bool isRegionNonTrivial(const SISORegionInfo& region) const {
+        constexpr size_t kDefaultMaxEdges = 5;
+        size_t maxEdges = kDefaultMaxEdges;
+        if (const char* env = std::getenv("SOUFFLE_SISO_MAX_EDGES")) {
+            try {
+                maxEdges = std::stoul(env);
+            } catch (...) {
+                maxEdges = kDefaultMaxEdges;
+            }
+        }
+
+        size_t edgeCount = region.internalEdges.size();
+        size_t nodeCount = region.internalNodes.size();
+        if (isSimpleFactRegion(region)) {
+            return true;
+        }
+        if (edgeCount == 0 || nodeCount <= 2) {
+            return false;
+        }
+        if (edgeCount > maxEdges) {
+            return false;
+        }
+        return true;
+    }
+
+    size_t countRandomVars(const SISORegionInfo& region) const {
+        size_t randomCount = 0;
+
+        for (const auto& node : region.internalNodes) {
+            if (!node) continue;
+            if (node == region.entry || node == region.exit) {
+                continue;
+            }
+            if (!node->isFact) {
+                continue;
+            }
+            double p = node->getProbability();
+            if (p > 0.0 && p < 1.0) {
+                ++randomCount;
+            }
+        }
+
+        for (const auto& edge : region.internalEdges) {
+            if (!edge) continue;
+            double p = edge->getProbability();
+            if (p > 0.0 && p < 1.0) {
+                ++randomCount;
+            }
+        }
+
+        return randomCount;
+    }
+
+    static bool isSimpleFactRegion(const SISORegionInfo& region) {
+        // simple chain: entry fact -> exit (single edge), only two nodes and one edge
+        if (region.internalNodes.size() != 2) return false;
+        if (region.internalEdges.size() != 1) return false;
+        if (!region.entry || !region.exit) return false;
+        if (!region.entry->isFact) return false;
+        // ignore regions where entry==exit
+        if (region.entry == region.exit) return false;
+        return true;
+    }
+
+    static std::string regionToString(const SISORegionInfo& region) {
+        std::ostringstream oss;
+        oss << "[entry=";
+        if (region.entry) {
+            oss << region.entry->toString();
+        } else {
+            oss << "null";
+        }
+        oss << ", exit=";
+        if (region.exit) {
+            oss << region.exit->toString();
+        } else {
+            oss << "null";
+        }
+        oss << ", |nodes|=" << region.internalNodes.size()
+            << ", |edges|=" << region.internalEdges.size()
+            << "]";
+        return oss.str();
+    }
+
+    double computeRegionConditionalProbability(WeightedBDDManager& bddManager,
+                                               double managerInitMs,
+                                               SubgraphView& regionView,
+                                               NodePtr entry,
+                                               NodePtr exit,
+                                               bool debug,
+                                               RegionTiming* timingOut = nullptr) const {
+        if (!entry || !exit) {
+            return 0.0;
+        }
+
+        std::map<NodePtr, BddNodeRef> nodeFormulas;
+        std::map<EdgePtr, BddNodeRef> edgeFormulas;
+        std::unordered_set<NodePtr> seedTrue = { entry };
+        std::vector<double> roundTimings;
+
+        auto t0 = std::chrono::steady_clock::now();
+        buildFormulasCyclewise(regionView, bddManager, nodeFormulas, edgeFormulas, seedTrue,
+                               debug ? &roundTimings : nullptr);
+        auto t1 = std::chrono::steady_clock::now();
+        double buildMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+        auto itExit = nodeFormulas.find(exit);
+        if (itExit == nodeFormulas.end()) {
+            if (debug) {
+                std::cout << "[GraphRewriter]   WARNING: No formula for exit node "
+                          << exit->toString() << " in region." << std::endl;
+            }
+            return 0.0;
+        }
+
+        auto itEntry = nodeFormulas.find(entry);
+        if (itEntry == nodeFormulas.end()) {
+            double pExit = bddManager.computeWeightedModelCount(itExit->second);
+            if (debug) {
+                std::cout << "[GraphRewriter]   Entry has no local formula; use Pr(exit)="
+                          << pExit << " as conditional probability."
+                          << " [mgrInit " << managerInitMs
+                          << " ms, local build " << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
+                          << " ms]" << std::endl;
+            }
+            return pExit;
+        }
+
+        auto t2 = std::chrono::steady_clock::now();
+        double pExit  = bddManager.computeWeightedModelCount(itExit->second);
+        double pEntry = bddManager.computeWeightedModelCount(itEntry->second);
+        auto t3 = std::chrono::steady_clock::now();
+        double wmcMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
+
+        if (timingOut) {
+            timingOut->mgrInitMs = managerInitMs;
+            timingOut->buildMs = buildMs;
+            timingOut->wmcMs = wmcMs;
+            timingOut->roundTimingsMs = roundTimings;
+            timingOut->liveNodes = Cudd_ReadNodeCount(bddManager.getManager());
+            timingOut->memMb = Cudd_ReadMemoryInUse(bddManager.getManager()) / (1024.0 * 1024);
+        }
+        if (debug) {
+            if (!roundTimings.empty()) {
+                std::cout << "[GraphRewriter]   Forward compilation rounds (ms):";
+                for (size_t i = 0; i < roundTimings.size(); ++i) {
+                    std::cout << (i == 0 ? " " : ", ") << roundTimings[i];
+                }
+                std::cout << std::endl;
+            }
+
+            size_t liveNodes = Cudd_ReadNodeCount(bddManager.getManager());
+            double memMb = Cudd_ReadMemoryInUse(bddManager.getManager()) / (1024.0 * 1024);
+
+            std::cout << "[GraphRewriter]   Region "
+                      << exit->toString() << " <- " << entry->toString()
+                      << " : Pr(exit)=" << pExit
+                      << ", Pr(entry)=" << pEntry
+                      << " [mgrInit " << managerInitMs
+                      << " ms, build " << buildMs
+                      << " ms, WMC " << wmcMs
+                      << " ms]"
+                      << " ; BDD live nodes=" << liveNodes
+                      << ", mem=" << memMb << " MB";
+        }
+
+        if (pEntry <= std::numeric_limits<double>::epsilon()) {
+            if (debug) {
+                std::cout << " (entryProb≈0, treat as 0)" << std::endl;
+            }
+            return 0.0;
+        }
+
+        double pCond = pExit / pEntry;
+
+        if (pCond < 0.0) pCond = 0.0;
+        if (pCond > 1.0) pCond = 1.0;
+
+        if (debug) {
+            std::cout << ", Pr(exit|entry)=" << pCond << std::endl;
+        }
+
+        return pCond;
+    }
+
+    EdgePtr applyRegionRewrite(IncrementalDerivationGraph& graph,
+                               IncSubgraphView& view,
+                               const SISORegionInfo& region,
+                               double condProb,
+                               GraphRewriteStats& stats,
+                               bool debug,
+                               bool isSimpleFact = false) const {
+        if (!region.entry || !region.exit) {
+            return nullptr;
+        }
+
+        if (isSimpleFact && region.internalEdges.size() == 1) {
+            // Fold only when SI has no other outgoing edges and SO has no other incoming edges,
+            // and SO is not an output/query node; otherwise just update the edge prob.
+            EdgePtr oldEdge = region.internalEdges.front();
+            // Update the single edge probability (keep nodes/edge to preserve correlations).
+            if (oldEdge) {
+                oldEdge->setProbability(condProb);
+            }
+            if (debug) {
+                std::cout << "[GraphRewriter]   Updated simple fact region edge "
+                          << regionToString(region)
+                          << " with newPr=" << condProb << " (no node/edge removal)."
+                          << std::endl;
+            }
+            return oldEdge;
+        }
+
+        std::vector<NodePtr> inputs = { region.entry };
+        EdgePtr newEdge = graph.createHyperedge(inputs, region.exit);
+        if (!newEdge) {
+            if (debug) {
+                std::cout << "[GraphRewriter]   WARNING: createHyperedge failed for region "
+                          << regionToString(region) << std::endl;
+            }
+            return nullptr;
+        }
+
+        newEdge->setProbability(condProb);
+
+        SubgraphView& baseView = static_cast<SubgraphView&>(view);
+        auto& nodes = baseView.mutableNodes();
+        auto& edges = baseView.mutableEdges();
+
+        edges.insert(newEdge);
+        ++stats.numEdgesAdded;
+
+        size_t removedEdges = 0;
+        for (const auto& e : region.internalEdges) {
+            if (edges.erase(e) > 0) {
+                ++removedEdges;
+            }
+        }
+
+        size_t removedNodes = 0;
+        for (const auto& n : region.internalNodes) {
+            if (!n) continue;
+            if (n == region.entry || n == region.exit) {
+                continue;
+            }
+            if (nodes.erase(n) > 0) {
+                ++removedNodes;
+            }
+        }
+
+        stats.numEdgesRemoved += removedEdges;
+        stats.numNodesRemoved += removedNodes;
+
+        view.invalidateCaches();
+
+        if (debug) {
+            std::cout << "[GraphRewriter]   Rewrote region "
+                      << regionToString(region)
+                      << " -> new edge id=" << newEdge->getId()
+                      << " with Pr(exit|entry)=" << condProb
+                      << " ; removed " << removedNodes << " node(s), "
+                      << removedEdges << " edge(s)." << std::endl;
+        }
+        return newEdge;
+    }
+
+    mutable std::unordered_set<size_t> simpleProcessedEdges_;
+};
+
+}  // namespace souffle::problog

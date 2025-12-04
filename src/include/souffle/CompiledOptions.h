@@ -73,11 +73,12 @@ protected:
     */
     std::string knowledge_representation;  // bdd, sdd are supported
     bool merge_bi_imp = false;  // enable merging mutually implying deterministic nodes
+    bool enable_rewrite = false;  // enable SISO-based graph rewriting
 public:
     // all argument constructor
-    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc", bool merge_bi = false)
+    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc", bool merge_bi = false, bool rewrite = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
-    , incMode(mode), merge_bi_imp(merge_bi) {}
+    , incMode(mode), merge_bi_imp(merge_bi), enable_rewrite(rewrite) {}
 
     CmdOptions() {}
     /**
@@ -122,6 +123,9 @@ public:
     bool isMergeBiImpEnabled() const {
         return merge_bi_imp;
     }
+    bool isRewriteEnabled() const {
+        return enable_rewrite;
+    }
 
     /**
      * get filename of profile
@@ -161,7 +165,7 @@ public:
                 {"profile", true, nullptr, 'p'}, {"jobs", true, nullptr, 'j'}, {"index", true, nullptr, 'i'},
                 {"knowledge", true, nullptr, 'k'}, {"logfile", true, nullptr, 'l'},
                 {"derv-only", true, nullptr, 'd'}, {"setmode", true, nullptr, 'm'},
-                {"merge-bi-imp", false, nullptr, 'e'},
+                {"merge-bi-imp", false, nullptr, 'e'}, {"rewrite", false, nullptr, 'r'},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -169,7 +173,7 @@ public:
         bool ok = true;
         knowledge_representation = "bdd";  // default knowledge representation
         int c; /* command-line arguments processing */
-        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d:em:", longOptions, nullptr)) != EOF) {
+        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d:em:r", longOptions, nullptr)) != EOF) {
             switch (c) {
                 /* Fact directories */
                 case 'F':
@@ -251,6 +255,9 @@ public:
                 case 'e':
                     merge_bi_imp = true;
                     break;
+                case 'r':
+                    enable_rewrite = true;
+                    break;
                 default: printHelpPage(exec_name); return false;
             }
         }
@@ -285,6 +292,7 @@ private:
         std::cerr << "                                    (default: " << knowledge_representation << ")\n";
         std::cerr << "    -d, --derv-only              -- Only compute the derivation graph\n";
         std::cerr << "    -e, --merge-bi-imp           -- Enable merging mutually implying deterministic nodes during pruning\n";
+        std::cerr << "    -r, --rewrite                -- Enable SISO-based graph rewriting\n";
 #ifdef _OPENMP
         std::cerr << "    -j <NUM>, --jobs=<NUM>       -- Specify number of threads\n";
         if (num_jobs > 0) {
