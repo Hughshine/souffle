@@ -21,11 +21,10 @@
 enum class SISORegionKind {
     Unknown = 0,
     General,
-    PureTwoNode,  // two nodes + one edge (SI->SO) with no extra in/out edges
-    SingleHyperedge,  // single hyperedge from SI to SO (not counted as PureTwoNode)
+    SingleHyperedge,  // single hyperedge from SI to SO
     LinearTwoEdge,    // SI -> mid -> SO (two edges chain)
     ParallelTwoEdge,  // two parallel edges SI -> SO
-    AllFactsToSO,     // single edge, inputs all facts (no incoming edges), entry is the sole input
+    AllFactsToSO,     // single edge, inputs all facts (no incoming edges or evidence/output)
 };
 
 struct SISORegionInfo {
@@ -142,35 +141,13 @@ private:
             return !n || !n->isFact || n->hasEvidence() || n->needOutput;
         };
 
-        // 1) Pure two node (fact entry, single edge)
-        for (auto e : g.getEdges()) {
-            if (!e) continue;
-            auto inputs = g.getInputs(e);
-            if (inputs.size() != 1) continue;
-            NodePtr entry = inputs[0];
-            NodePtr exit = g.getOutput(e);
-            if (!entry || !exit) continue;
-            if (entry == exit) continue;
-            if (isBlockedFact(entry)) continue;
-            if (exit->hasEvidence() || exit->needOutput) continue;
-            auto entryOut = g.getOutgoingEdges(entry);
-            auto exitIn = g.getIncomingEdges(exit);
-            if (entryOut.size() != 1 || entryOut[0] != e) continue;
-            if (exitIn.size() != 1 || exitIn[0] != e) continue;
-            regions.push_back(makeRegion(entry, exit, {e}, SISORegionKind::PureTwoNode));
-        }
-
-        // 2) Single hyperedge: one edge exit, inputs.size()>=1, exactly one non-fact (SI), others are input facts
+        // 1) Single hyperedge: one edge exit, inputs.size()>=1, exactly one non-fact (SI), others are input facts
         for (auto e : g.getEdges()) {
             if (!e) continue;
             auto inputs = g.getInputs(e);
             if (inputs.empty()) continue;
             NodePtr exit = g.getOutput(e);
             if (!exit) continue;
-            if (inputs.size() == 1) {
-                // handled by pure-two-node branch
-                continue;
-            }
             size_t factInputs = 0;
             NodePtr si = nullptr;
             bool invalid = false;
@@ -190,6 +167,7 @@ private:
             }
             if (invalid) continue;
             if (!si) continue;  // all facts handled elsewhere
+            if (si->isFact) continue;  // force SI to be non-fact to avoid overlap with all-facts
             if (factInputs + 1 != inputs.size()) continue;
             if (si == exit) continue;
             auto region = makeRegion(si, exit, {e}, SISORegionKind::SingleHyperedge);
@@ -240,11 +218,11 @@ private:
             }
         }
 
-        // 5) All-facts single hyperedge: single edge with all fact inputs (<=2) and inputs have no incoming edges.
+        // 2) All-facts single hyperedge: single edge with all fact inputs and inputs have no incoming edges.
         for (auto e : g.getEdges()) {
             if (!e) continue;
             auto inputs = g.getInputs(e);
-            if (inputs.empty() || inputs.size() > 2) continue;
+            if (inputs.empty()) continue;
             bool allFacts = true;
             for (auto n : inputs) {
                 if (!n || !n->isFact || n->hasEvidence() || n->needOutput) {
@@ -1045,7 +1023,6 @@ public:
             }
             result.push_back(std::move(r));
         }
-        size_t pureTwoNodeCount = 0;
         size_t singleHyperedgeCount = 0;
         size_t linearTwoEdgeCount = 0;
         size_t parallelTwoEdgeCount = 0;
@@ -1054,7 +1031,6 @@ public:
         size_t unknownCount = 0;
         for (const auto& r : result) {
             switch (r.kind) {
-            case SISORegionKind::PureTwoNode: ++pureTwoNodeCount; break;
             case SISORegionKind::SingleHyperedge: ++singleHyperedgeCount; break;
             case SISORegionKind::LinearTwoEdge: ++linearTwoEdgeCount; break;
             case SISORegionKind::ParallelTwoEdge: ++parallelTwoEdgeCount; break;
@@ -1065,7 +1041,6 @@ public:
         }
         std::cout << "[siso-detect] fast-path regions " << result.size()
                   << " (candidates=" << regions.size()
-                  << ", pure-two-node=" << pureTwoNodeCount
                   << ", single-hyperedge=" << singleHyperedgeCount
                   << ", linear-two-edge=" << linearTwoEdgeCount
                   << ", parallel-two-edge=" << parallelTwoEdgeCount
