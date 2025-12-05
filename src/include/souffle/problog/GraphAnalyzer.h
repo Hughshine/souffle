@@ -138,6 +138,10 @@ private:
     // Fast-path detectors (<=2 edges)
     static std::vector<SISORegionInfo> detectFastPathRegions(const DerivationGraphViewInterface& g) {
         std::vector<SISORegionInfo> regions;
+        auto isBlockedFact = [](NodePtr n) {
+            return !n || !n->isFact || n->hasEvidence() || n->needOutput;
+        };
+
         // 1) Pure two node (fact entry, single edge)
         for (auto e : g.getEdges()) {
             if (!e) continue;
@@ -147,7 +151,8 @@ private:
             NodePtr exit = g.getOutput(e);
             if (!entry || !exit) continue;
             if (entry == exit) continue;
-            if (!entry->isFact) continue;
+            if (isBlockedFact(entry)) continue;
+            if (exit->hasEvidence() || exit->needOutput) continue;
             auto entryOut = g.getOutgoingEdges(entry);
             auto exitIn = g.getIncomingEdges(exit);
             if (entryOut.size() != 1 || entryOut[0] != e) continue;
@@ -155,17 +160,39 @@ private:
             regions.push_back(makeRegion(entry, exit, {e}, SISORegionKind::PureTwoNode));
         }
 
-        // 2) Single hyperedge (non-pure-two-node), single edge entry->exit
+        // 2) Single hyperedge: one edge exit, inputs.size()>=1, exactly one non-fact (SI), others are input facts
         for (auto e : g.getEdges()) {
             if (!e) continue;
             auto inputs = g.getInputs(e);
-            if (inputs.size() != 1) continue;
-            NodePtr entry = inputs[0];
+            if (inputs.empty()) continue;
             NodePtr exit = g.getOutput(e);
-            if (!entry || !exit) continue;
-            if (entry == exit) continue;
-            auto region = makeRegion(entry, exit, {e}, SISORegionKind::SingleHyperedge);
-            if (region.internalNodes.size() <= 2) continue;  // skip pure-two-node shape
+            if (!exit) continue;
+            if (inputs.size() == 1) {
+                // handled by pure-two-node branch
+                continue;
+            }
+            size_t factInputs = 0;
+            NodePtr si = nullptr;
+            bool invalid = false;
+            for (auto n : inputs) {
+                if (!n) {
+                    invalid = true;
+                    break;
+                }
+                if (n->isFact && n->getIncomingEdges().empty() && !n->hasEvidence() && !n->needOutput) {
+                    ++factInputs;
+                } else if (!si) {
+                    si = n;
+                } else {
+                    invalid = true;
+                    break;  // more than one non-fact
+                }
+            }
+            if (invalid) continue;
+            if (!si) continue;  // all facts handled elsewhere
+            if (factInputs + 1 != inputs.size()) continue;
+            if (si == exit) continue;
+            auto region = makeRegion(si, exit, {e}, SISORegionKind::SingleHyperedge);
             regions.push_back(std::move(region));
         }
 
@@ -220,7 +247,7 @@ private:
             if (inputs.empty() || inputs.size() > 2) continue;
             bool allFacts = true;
             for (auto n : inputs) {
-                if (!n || !n->isFact) {
+                if (!n || !n->isFact || n->hasEvidence() || n->needOutput) {
                     allFacts = false;
                     break;
                 }
