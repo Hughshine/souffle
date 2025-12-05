@@ -456,10 +456,33 @@ private:
 
     static PrefixStructure buildPrefixStructure(const DerivationGraphViewInterface& g) {
         PrefixStructure pre;
+        auto tSupportStart = std::chrono::steady_clock::now();
         pre.support   = buildSupportMap(g);
+        auto tSupportEnd = std::chrono::steady_clock::now();
+        std::cout << "[siso-detect] support map took "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(tSupportEnd - tSupportStart).count()
+                  << " ms" << std::endl;
+
+        auto tDomInputsStart = std::chrono::steady_clock::now();
         pre.domInputs = computeEdgeDomInputs(g, pre.support);
+        auto tDomInputsEnd = std::chrono::steady_clock::now();
+        std::cout << "[siso-detect] edge dom inputs took "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(tDomInputsEnd - tDomInputsStart).count()
+                  << " ms" << std::endl;
+
+        auto tDomGraphStart = std::chrono::steady_clock::now();
         pre.dg        = buildDomGraph(g);
+        auto tDomGraphEnd = std::chrono::steady_clock::now();
+        std::cout << "[siso-detect] dom graph build took "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(tDomGraphEnd - tDomGraphStart).count()
+                  << " ms" << std::endl;
+
+        auto tDomStart = std::chrono::steady_clock::now();
         pre.dom       = computeDominators(pre.dg);
+        auto tDomEnd = std::chrono::steady_clock::now();
+        std::cout << "[siso-detect] dominators took "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(tDomEnd - tDomStart).count()
+                  << " ms" << std::endl;
         return pre;
     }
 
@@ -937,10 +960,19 @@ public:
     static inline std::vector<SISORegionInfo> detectAllSISOStrictFromExit(
         const DerivationGraphViewInterface& g)
     {
+        auto tPrefixStart = std::chrono::steady_clock::now();
         PrefixStructure pre = buildPrefixStructure(g);
+        auto tPrefixEnd = std::chrono::steady_clock::now();
+        std::cout << "[siso-detect] prefix build took "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(tPrefixEnd - tPrefixStart).count()
+                  << " ms" << std::endl;
 
         std::vector<SISORegionInfo> all;
         const bool profile = std::getenv("SOUFFLE_SISO_PROFILE") != nullptr;
+        auto tDetectStart = std::chrono::steady_clock::now();
+        double totalCandMs = 0.0;
+        double totalValidMs = 0.0;
+        size_t validCount = 0;
 
         for (NodePtr n : g.getNodes()) {
             if (!n) continue;
@@ -948,6 +980,7 @@ public:
             SISORegionInfo r = detectSISOFromExitNodeWithPrefix(g, n, pre);
             double candMs = std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - candStart).count();
+            totalCandMs += candMs;
             if (profile) {
                 std::cout << "[siso-detect] candidate node " << n->getId()
                           << " " << n->getTuple().toString()
@@ -957,7 +990,20 @@ public:
                           << ") took " << candMs << " ms" << std::endl;
             }
             if (!r.valid) continue;
+            validCount++;
+            totalValidMs += candMs;
             all.push_back(std::move(r));
+        }
+        auto tDetectEnd = std::chrono::steady_clock::now();
+        std::cout << "[siso-detect] candidate detection took "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(tDetectEnd - tDetectStart).count()
+                  << " ms for " << all.size() << " candidates" << std::endl;
+        if (!g.getNodes().empty()) {
+            double avgCandMs = totalCandMs / static_cast<double>(g.getNodes().size());
+            std::cout << "[siso-detect] candidate avg time "
+                      << avgCandMs << " ms over " << g.getNodes().size() << " nodes"
+                      << ", valid avg " << (validCount ? totalValidMs / static_cast<double>(validCount) : 0.0)
+                      << " ms over " << validCount << " valid" << std::endl;
         }
 
         if (all.empty()) {
@@ -966,6 +1012,7 @@ public:
         }
 
         // 小 region 在前，方便做 greedy 去重
+        auto tFilterStart = std::chrono::steady_clock::now();
         std::sort(all.begin(), all.end(),
                   [](const SISORegionInfo& a, const SISORegionInfo& b) {
                       return a.internalNodes.size() < b.internalNodes.size();
@@ -990,6 +1037,11 @@ public:
             }
             result.push_back(std::move(r));
         }
+        auto tFilterEnd = std::chrono::steady_clock::now();
+        std::cout << "[siso-detect] overlap filter kept " << result.size()
+                  << " of " << all.size() << " in "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(tFilterEnd - tFilterStart).count()
+                  << " ms" << std::endl;
 
         log("detectAllSISOStrictFromExit: found " +
             std::to_string(result.size()) + " regions after overlap filter");
