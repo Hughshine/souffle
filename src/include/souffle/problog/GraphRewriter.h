@@ -57,13 +57,9 @@ public:
                                            bool debug = false) const {
         GraphRewriteStats stats;
         view.invalidateCaches();
-        auto managerStart = std::chrono::steady_clock::now();
-        WeightedBDDManager bddManager;
-        auto managerEnd = std::chrono::steady_clock::now();
-        double managerInitMs = std::chrono::duration<double, std::milli>(managerEnd - managerStart).count();
-        if (debug) {
-            std::cout << "[GraphRewriter] CUDD manager init took " << managerInitMs << " ms" << std::endl;
-        }
+        std::unique_ptr<WeightedBDDManager> bddManager;
+        double managerInitMs = 0.0;
+        bool managerInitialized = false;
 
         stats.randomVarsBefore = countRandomVarsInView(view);
         stats.randomVarsAfter = stats.randomVarsBefore;
@@ -137,7 +133,6 @@ public:
                 SubgraphView regionView(std::move(regionNodes), std::move(regionEdges));
 
                 RegionTiming timing;
-                double effectiveMgrInitMs = firstRegionTiming ? managerInitMs : 0.0;
                 double condProb = 0.0;
 
                 bool isSimple = isSimpleFactRegion(region);
@@ -167,13 +162,28 @@ public:
                                   << ", pEdge=" << pEdge
                                   << " => newPr=" << condProb << std::endl;
                     }
-                    timing.mgrInitMs = effectiveMgrInitMs;
+                    timing.mgrInitMs = 0.0;
                     timing.buildMs = 0.0;
                     timing.wmcMs = 0.0;
                     timing.applyMs = 0.0;
                 } else {
+                    // Lazy init BDD manager when first needed.
+                    if (!managerInitialized) {
+                        auto managerStart = std::chrono::steady_clock::now();
+                        bddManager = std::make_unique<WeightedBDDManager>();
+                        auto managerEnd = std::chrono::steady_clock::now();
+                        managerInitMs = std::chrono::duration<double, std::milli>(
+                                                managerEnd - managerStart)
+                                                .count();
+                        managerInitialized = true;
+                        if (debug) {
+                            std::cout << "[GraphRewriter] CUDD manager init took "
+                                      << managerInitMs << " ms" << std::endl;
+                        }
+                    }
+                    double effectiveMgrInitMs = managerInitialized ? managerInitMs : 0.0;
                     condProb = computeRegionConditionalProbability(
-                        bddManager, effectiveMgrInitMs, regionView, region.entry, region.exit, debug, &timing);
+                        *bddManager, effectiveMgrInitMs, regionView, region.entry, region.exit, debug, &timing);
                 }
                 firstRegionTiming = false;
 
