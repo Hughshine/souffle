@@ -52,13 +52,27 @@ inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
                        std::chrono::steady_clock::now() - start)
                        .count();
     size_t pureTwoNodeCount = 0;
+    size_t singleHyperedgeCount = 0;
+    size_t generalCount = 0;
     for (const auto& r : regions) {
-        if (r.kind == SISORegionKind::PureTwoNode) {
+        switch (r.kind) {
+        case SISORegionKind::PureTwoNode:
             ++pureTwoNodeCount;
+            break;
+        case SISORegionKind::SingleHyperedge:
+            ++singleHyperedgeCount;
+            break;
+        case SISORegionKind::General:
+            ++generalCount;
+            break;
+        default:
+            break;
         }
     }
     std::cout << "Found " << regions.size() << " SISO regions"
-              << " (pure-two-node=" << pureTwoNodeCount << ")" << std::endl;
+              << " (pure-two-node=" << pureTwoNodeCount
+              << ", single-hyperedge=" << singleHyperedgeCount
+              << ", general=" << generalCount << ")" << std::endl;
     std::cout << "[pipeline] SISO detection took " << dur << " ms\n";
     for (const auto& r : regions) {
         GraphAnalyzer::printSISOInfo(view, r);

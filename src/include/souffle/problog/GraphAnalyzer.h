@@ -22,6 +22,7 @@ enum class SISORegionKind {
     Unknown = 0,
     General,
     PureTwoNode,  // two nodes + one edge (SI->SO) with no extra in/out edges
+    SingleHyperedge,  // single hyperedge from SI to SO (not counted as PureTwoNode)
 };
 
 struct SISORegionInfo {
@@ -786,6 +787,30 @@ private:
         return true;
     }
 
+    // 单一 hyperedge 的 SISO：只有一条边从 SI 指向 SO（SI 在边输入中），不包含 pure-two-node。
+    static bool isSingleHyperedgeSISO(
+            const DerivationGraphViewInterface& g,
+            const Region& fullRegion,
+            NodePtr entryNode,
+            NodePtr exitNode) {
+        if (!entryNode || !exitNode) return false;
+        if (entryNode == exitNode) return false;
+        if (fullRegion.edges.size() != 1) return false;
+        // 排除已归类的 pure-two-node
+        if (fullRegion.nodes.size() == 2) return false;
+
+        EdgePtr e = *fullRegion.edges.begin();
+        if (!e) return false;
+        if (g.getOutput(e) != exitNode) return false;
+
+        auto inputs = g.getInputs(e);
+        if (inputs.empty()) return false;
+        bool entryInInputs = std::find(inputs.begin(), inputs.end(), entryNode) != inputs.end();
+        if (!entryInInputs) return false;
+
+        return true;
+    }
+
     // ========= 将 Region + 边界节点组装成 SISORegionInfo =========
     static SISORegionInfo assembleSISO(
         const Region& strictRegion,
@@ -851,6 +876,7 @@ private:
             return info;
         }
         bool isPureTwoNode = isPureTwoNodeSISO(g, fullR, cand.si, cand.so);
+        bool isSingleHyperedge = isSingleHyperedgeSISO(g, fullR, cand.si, cand.so);
 
         EdgePtr dummyEntryEdge = nullptr;
         std::vector<NodePtr> entryPreds;
@@ -866,7 +892,13 @@ private:
 
         info = assembleSISO(strictR, fullR, cand.si, entryPreds, cand.so);
         if (info.valid) {
-            info.kind = isPureTwoNode ? SISORegionKind::PureTwoNode : SISORegionKind::General;
+            if (isPureTwoNode) {
+                info.kind = SISORegionKind::PureTwoNode;
+            } else if (isSingleHyperedge) {
+                info.kind = SISORegionKind::SingleHyperedge;
+            } else {
+                info.kind = SISORegionKind::General;
+            }
         }
         return info;
     }
