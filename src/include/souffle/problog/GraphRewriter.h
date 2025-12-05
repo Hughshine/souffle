@@ -165,11 +165,12 @@ public:
                         auto& edges = view.mutableEdges();
                         auto& nodes = view.mutableNodes();
                         size_t removedEdges = edges.erase(edge);
+                        view.invalidateCaches();  // ensure degree queries reflect removal
                         size_t removedNodes = 0;
                         for (auto n : inputs) {
                             if (!n) continue;
                             // Drop isolated fact inputs to avoid keeping pruned nodes alive.
-                            if (n->getIncomingEdges().empty() && n->getOutgoingEdges().size() == 1) {
+                            if (view.getIncomingEdges(n).empty() && view.getOutgoingEdges(n).empty()) {
                                 if (nodes.erase(n) > 0) {
                                     ++removedNodes;
                                 }
@@ -194,7 +195,68 @@ public:
                         ++stats.numRegionsRewritten;
                         continue;
                     }
-                    case SISORegionKind::SingleHyperedge:
+                    case SISORegionKind::SingleHyperedge: {
+                        if (region.internalEdges.size() != 1) continue;
+                        EdgePtr edge = region.internalEdges.front();
+                        if (!edge) continue;
+                        if (!region.entry || !region.exit) continue;
+                        auto inputs = view.getInputs(edge);
+                        if (inputs.empty()) continue;
+                        double p = edge->getProbability();
+                        if (p < 0.0) p = 0.0;
+                        if (p > 1.0) p = 1.0;
+                        size_t regionRandomVars = 0;
+                        if (p > 0.0 && p < 1.0) ++regionRandomVars;
+                        for (auto n : inputs) {
+                            if (!n) continue;
+                            if (!n->isFact) continue;
+                            double np = n->getProbability();
+                            if (np < 0.0) np = 0.0;
+                            if (np > 1.0) np = 1.0;
+                            p *= np;
+                            if (np > 0.0 && np < 1.0) ++regionRandomVars;
+                        }
+                        std::vector<NodePtr> siInput = {region.entry};
+                        EdgePtr newEdge = graph.createHyperedge(siInput, region.exit);
+                        if (!newEdge) {
+                            continue;
+                        }
+                        newEdge->setProbability(p);
+
+                        auto& edges = view.mutableEdges();
+                        auto& nodes = view.mutableNodes();
+                        size_t removedEdges = edges.erase(edge);
+                        edges.insert(newEdge);
+                        view.invalidateCaches();  // update degree queries after edge replacement
+                        size_t removedNodes = 0;
+                        for (auto n : inputs) {
+                            if (!n) continue;
+                            if (view.getIncomingEdges(n).empty() && view.getOutgoingEdges(n).empty()) {
+                                if (nodes.erase(n) > 0) {
+                                    ++removedNodes;
+                                }
+                            }
+                        }
+                        stats.totalRandomVars += regionRandomVars;
+                        stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
+                        stats.numEdgesRemoved += removedEdges;
+                        stats.numEdgesAdded += 1;
+                        stats.numNodesRemoved += removedNodes;
+                        view.invalidateCaches();
+                        if (debug) {
+                            std::cout << "[GraphRewriter]   Fast-path single-hyperedge "
+                                      << regionToString(region)
+                                      << " -> new edge id=" << newEdge->getId()
+                                      << " prob=" << p
+                                      << " removedEdges=" << removedEdges
+                                      << " removedNodes=" << removedNodes
+                                      << " randomVars=" << regionRandomVars
+                                      << std::endl;
+                        }
+                        ++rewrittenThisRound;
+                        ++stats.numRegionsRewritten;
+                        continue;
+                    }
                     case SISORegionKind::LinearTwoEdge:
                     case SISORegionKind::ParallelTwoEdge:
                         if (debug) {

@@ -51,7 +51,6 @@ inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
     auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - start)
                        .count();
-    size_t pureTwoNodeCount = 0;
     size_t singleHyperedgeCount = 0;
     size_t linearTwoEdgeCount = 0;
     size_t parallelTwoEdgeCount = 0;
@@ -59,9 +58,6 @@ inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
     size_t generalCount = 0;
     for (const auto& r : regions) {
         switch (r.kind) {
-        case SISORegionKind::PureTwoNode:
-            ++pureTwoNodeCount;
-            break;
         case SISORegionKind::SingleHyperedge:
             ++singleHyperedgeCount;
             break;
@@ -82,8 +78,7 @@ inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
         }
     }
     std::cout << "Found " << regions.size() << " SISO regions"
-              << " (pure-two-node=" << pureTwoNodeCount
-              << ", single-hyperedge=" << singleHyperedgeCount
+              << " (single-hyperedge=" << singleHyperedgeCount
               << ", linear-two-edge=" << linearTwoEdgeCount
               << ", parallel-two-edge=" << parallelTwoEdgeCount
               << ", all-facts=" << allFactsToSOCount

@@ -17,6 +17,7 @@
 #include <unordered_set>
 #include <vector>
 #include <array>
+#include <cstdlib>
 
 enum class SISORegionKind {
     Unknown = 0,
@@ -137,6 +138,7 @@ private:
     // Fast-path detectors (<=2 edges)
     static std::vector<SISORegionInfo> detectFastPathRegions(const DerivationGraphViewInterface& g) {
         std::vector<SISORegionInfo> regions;
+        bool debug = std::getenv("SOUFFLE_SISO_FAST_DEBUG") != nullptr;
         auto isBlockedFact = [](NodePtr n) {
             return !n || !n->isFact || n->hasEvidence() || n->needOutput;
         };
@@ -145,33 +147,63 @@ private:
         for (auto e : g.getEdges()) {
             if (!e) continue;
             auto inputs = g.getInputs(e);
-            if (inputs.empty()) continue;
+            if (inputs.size() <= 1) {
+                if (debug && inputs.size() == 1) {
+                    std::cout << "[siso-fast] edge " << e->getId()
+                              << " -> " << (g.getOutput(e) ? g.getOutput(e)->toString() : "null")
+                              << " skip: single-input edge is trivial\n";
+                }
+                continue;
+            }
             NodePtr exit = g.getOutput(e);
             if (!exit) continue;
             size_t factInputs = 0;
             NodePtr si = nullptr;
             bool invalid = false;
+            if (debug) {
+                std::cout << "[siso-fast] edge " << e->getId() << " -> " << (exit ? exit->toString() : "null")
+                          << " as single-hyperedge candidate" << std::endl;
+            }
             for (auto n : inputs) {
                 if (!n) {
                     invalid = true;
+                    if (debug) std::cout << "  skip: null input\n";
                     break;
                 }
-                if (n->isFact && n->getIncomingEdges().empty() && !n->hasEvidence() && !n->needOutput) {
+                if (n->isFact && g.getIncomingEdges(n).empty() && !n->hasEvidence() && !n->needOutput) {
                     ++factInputs;
                 } else if (!si) {
                     si = n;
                 } else {
                     invalid = true;
+                    if (debug) std::cout << "  skip: more than one non-fact input\n";
                     break;  // more than one non-fact
                 }
             }
             if (invalid) continue;
-            if (!si) continue;  // all facts handled elsewhere
-            if (si->isFact) continue;  // force SI to be non-fact to avoid overlap with all-facts
-            if (factInputs + 1 != inputs.size()) continue;
-            if (si == exit) continue;
+            if (!si) {
+                if (debug) std::cout << "  skip: all inputs are facts (handled elsewhere)\n";
+                continue;  // all facts handled elsewhere
+            }
+            if (factInputs == 0) {
+                if (debug) std::cout << "  skip: no fact inputs to absorb\n";
+                continue;  // nothing to absorb; would loop after rewrite
+            }
+            if (si->isFact) {
+                if (debug) std::cout << "  skip: SI is fact (overlaps all-facts)\n";
+                continue;  // force SI to be non-fact to avoid overlap with all-facts
+            }
+            if (factInputs + 1 != inputs.size()) {
+                if (debug) std::cout << "  skip: inputs not exactly one non-fact + facts\n";
+                continue;
+            }
+            if (si == exit) {
+                if (debug) std::cout << "  skip: SI==SO\n";
+                continue;
+            }
             auto region = makeRegion(si, exit, {e}, SISORegionKind::SingleHyperedge);
             regions.push_back(std::move(region));
+            continue;
         }
 
         // 3) Linear two-edge: entry->mid->exit, each edge single input
@@ -223,14 +255,26 @@ private:
             if (!e) continue;
             auto inputs = g.getInputs(e);
             if (inputs.empty()) continue;
+            if (debug) {
+                std::cout << "[siso-fast] edge " << e->getId()
+                          << " -> " << (g.getOutput(e) ? g.getOutput(e)->toString() : "null")
+                          << " as all-facts candidate" << std::endl;
+            }
             bool allFacts = true;
             for (auto n : inputs) {
                 if (!n || !n->isFact || n->hasEvidence() || n->needOutput) {
                     allFacts = false;
+                    if (debug) {
+                        std::cout << "  skip: input not pure fact or evidence/output" << std::endl;
+                    }
                     break;
                 }
-                if (!n->getIncomingEdges().empty()) {
+                auto outs = g.getOutgoingEdges(n);
+                if (outs.size() != 1 || outs[0] != e) {
                     allFacts = false;
+                    if (debug) {
+                        std::cout << "  skip: input fact has outgoing edges not limited to this region" << std::endl;
+                    }
                     break;
                 }
             }
