@@ -103,10 +103,11 @@ public:
         return ss.str();
     }
     void setQuery() {
+        needOutput = true;
         isQuery = true;
     }
     bool isQueryNode() {
-        return isQuery;
+        return needOutput;
     }
     bool hasEvidence() const { return has_evidence; }
     bool getEvidenceValue() const { return evidenceValue; }
@@ -985,7 +986,7 @@ public:
 //                std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
                 reachableNodes.insert(node);
                 workQueue.push(node);
-                node->needOutput = true;
+                node->setQuery();
                 outputNodes.insert(node);
             }
             node->currentRefCount = 0;
@@ -1041,7 +1042,7 @@ public:
             if (reachableNodes.count(node)){
                 newNodes.insert(node);
             if (!reachableNodes.count(node)) {
-                node->needOutput = true;
+                node->setQuery();
             }
             }
         }
@@ -1679,12 +1680,12 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
             std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
             reachableNodes.insert(node);
             workQueue.push(node);
-            node->needOutput = true;
+            node->setQuery();
             outputNodes.insert(node);
         } else if (node -> isQueryNode()) {
             reachableNodes.insert(node);
             workQueue.push(node);
-            node->needOutput = true;
+            node->setQuery();
             outputNodes.insert(node);
         }
         node->currentRefCount = 0;
