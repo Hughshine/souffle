@@ -257,7 +257,81 @@ public:
                         ++stats.numRegionsRewritten;
                         continue;
                     }
-                    case SISORegionKind::LinearTwoEdge:
+                    case SISORegionKind::LinearTwoEdge: {
+                        if (region.internalEdges.size() != 2) continue;
+                        EdgePtr e1 = region.internalEdges[0];
+                        EdgePtr e2 = region.internalEdges[1];
+                        if (!e1 || !e2) continue;
+                        NodePtr mid = nullptr;
+                        EdgePtr intoMid = nullptr;
+                        EdgePtr outMid = nullptr;
+                        for (auto e : region.internalEdges) {
+                            if (!e) continue;
+                            NodePtr out = e->getOutput();
+                            if (out == region.entry || out == region.exit) {
+                                continue;
+                            }
+                            mid = out;
+                            intoMid = e;
+                            break;
+                        }
+                        if (!mid) continue;
+                        for (auto e : region.internalEdges) {
+                            if (!e || e == intoMid) continue;
+                            auto inputs = view.getInputs(e);
+                            if (inputs.size() == 1 && inputs[0] == mid) {
+                                outMid = e;
+                                break;
+                            }
+                        }
+                        if (!intoMid || !outMid) continue;
+                        double p1 = intoMid->getProbability();
+                        double p2 = outMid->getProbability();
+                        if (p1 < 0.0) p1 = 0.0;
+                        if (p1 > 1.0) p1 = 1.0;
+                        if (p2 < 0.0) p2 = 0.0;
+                        if (p2 > 1.0) p2 = 1.0;
+                        double p = p1 * p2;
+                        size_t regionRandomVars = 0;
+                        if (p1 > 0.0 && p1 < 1.0) ++regionRandomVars;
+                        if (p2 > 0.0 && p2 < 1.0) ++regionRandomVars;
+
+                        std::vector<NodePtr> inputsNew = {region.entry};
+                        EdgePtr newEdge = graph.createHyperedge(inputsNew, region.exit);
+                        if (!newEdge) continue;
+                        newEdge->setProbability(p);
+
+                        auto& edges = view.mutableEdges();
+                        auto& nodes = view.mutableNodes();
+                        size_t removedEdges = 0;
+                        removedEdges += edges.erase(intoMid);
+                        removedEdges += edges.erase(outMid);
+                        edges.insert(newEdge);
+                        size_t removedNodes = 0;
+                        if (nodes.erase(mid) > 0) {
+                            ++removedNodes;
+                        }
+                        stats.numEdgesRemoved += removedEdges;
+                        stats.numEdgesAdded += 1;
+                        stats.numNodesRemoved += removedNodes;
+                        stats.totalRandomVars += regionRandomVars;
+                        stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
+                        view.invalidateCaches();
+
+                        if (debug) {
+                            std::cout << "[GraphRewriter]   Fast-path linear-two-edge "
+                                      << regionToString(region)
+                                      << " -> new edge id=" << newEdge->getId()
+                                      << " prob=" << p
+                                      << " removedEdges=" << removedEdges
+                                      << " removedNodes=" << removedNodes
+                                      << " randomVars=" << regionRandomVars
+                                      << std::endl;
+                        }
+                        ++rewrittenThisRound;
+                        ++stats.numRegionsRewritten;
+                        continue;
+                    }
                     case SISORegionKind::ParallelTwoEdge:
                         if (debug) {
                             std::cout << "[GraphRewriter]   Fast-path placeholder for region "
@@ -419,6 +493,73 @@ public:
                       << ", after=" << iterRandomVarsAfter
                       << ", delta=" << iterDelta
                       << ", ratio=" << iterRatio << std::endl;
+
+            // After each SISO pass, compact edges by absorbing pure fact inputs into edge probability.
+            size_t compactedEdges = 0, compactRemovedEdges = 0, compactAddedEdges = 0, compactRemovedNodes = 0;
+            auto edgeList = view.getEdges();
+            for (auto edge : edgeList) {
+                if (!edge) continue;
+                auto inputs = view.getInputs(edge);
+                if (inputs.empty()) continue;
+                std::vector<NodePtr> keepInputs;
+                std::vector<NodePtr> factInputs;
+                double p = edge->getProbability();
+                if (p < 0.0) p = 0.0;
+                if (p > 1.0) p = 1.0;
+                bool changed = false;
+                for (auto n : inputs) {
+                    if (!n) continue;
+                    if (n->isFact && !n->hasEvidence() && !n->needOutput) {
+                        double np = n->getProbability();
+                        if (np < 0.0) np = 0.0;
+                        if (np > 1.0) np = 1.0;
+                        p *= np;
+                        factInputs.push_back(n);
+                        changed = true;
+                    } else {
+                        keepInputs.push_back(n);
+                    }
+                }
+                // If nothing to absorb or no non-fact inputs remain, skip.
+                if (!changed || keepInputs.empty()) continue;
+
+                EdgePtr newEdge = graph.createHyperedge(keepInputs, edge->getOutput());
+                if (!newEdge) continue;
+                newEdge->setProbability(p);
+
+                auto& edges = view.mutableEdges();
+                auto& nodes = view.mutableNodes();
+                if (edges.erase(edge) > 0) {
+                    ++compactRemovedEdges;
+                }
+                edges.insert(newEdge);
+                ++compactAddedEdges;
+
+                // Remove fact inputs that became isolated.
+                for (auto n : factInputs) {
+                    if (!n) continue;
+                    if (view.getIncomingEdges(n).empty() && view.getOutgoingEdges(n).empty()) {
+                        if (nodes.erase(n) > 0) {
+                            ++compactRemovedNodes;
+                        }
+                    }
+                }
+
+                ++compactedEdges;
+            }
+            if (compactedEdges > 0) {
+                stats.numEdgesRemoved += compactRemovedEdges;
+                stats.numEdgesAdded += compactAddedEdges;
+                stats.numNodesRemoved += compactRemovedNodes;
+                view.invalidateCaches();
+                if (debug) {
+                    std::cout << "[GraphRewriter]   Edge compaction: compacted=" << compactedEdges
+                              << " removedEdges=" << compactRemovedEdges
+                              << " addedEdges=" << compactAddedEdges
+                              << " removedNodes=" << compactRemovedNodes
+                              << std::endl;
+                }
+            }
 
             if (rewrittenThisRound == 0) {
                 if (debug) {

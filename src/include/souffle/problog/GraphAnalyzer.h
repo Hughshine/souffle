@@ -215,6 +215,7 @@ private:
             NodePtr mid = g.getOutput(e1);
             if (!entry || !mid) continue;
             if (entry == mid) continue;
+            if (mid->hasEvidence() || mid->needOutput) continue;  // mid cannot be query/evidence
             // mid should have exactly one outgoing edge for the chain
             auto midOut = g.getOutgoingEdges(mid);
             if (midOut.size() != 1) continue;
