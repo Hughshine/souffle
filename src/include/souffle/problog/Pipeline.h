@@ -53,7 +53,7 @@ inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
                        .count();
     size_t pureTwoNodeCount = 0;
     for (const auto& r : regions) {
-        if (r.isPureTwoNode) {
+        if (r.kind == SISORegionKind::PureTwoNode) {
             ++pureTwoNodeCount;
         }
     }

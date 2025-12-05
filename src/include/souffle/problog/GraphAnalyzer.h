@@ -18,6 +18,12 @@
 #include <vector>
 #include <array>
 
+enum class SISORegionKind {
+    Unknown = 0,
+    General,
+    PureTwoNode,  // two nodes + one edge (SI->SO) with no extra in/out edges
+};
+
 struct SISORegionInfo {
     std::vector<NodePtr> internalNodes;      // region 中所有节点（包含 SI / SO）
     std::vector<EdgePtr> internalEdges;      // region 中所有边（SI→SO 所有路径上的边）
@@ -26,7 +32,7 @@ struct SISORegionInfo {
     NodePtr exit = nullptr;                  // SO node（出口）
     bool valid = false;
     bool prefixAllFactsRequired = false;     // 先保留这个标志，后续如果要用 support 做更细分判断
-    bool isPureTwoNode = false;              // 标记最朴素的 2 节点 SISO（仅 SI、SO、一条 SI->SO 边且无其他入/出边）
+    SISORegionKind kind = SISORegionKind::Unknown;  // SISO 类别标记，便于快速路径处理
 };
 
 class GraphAnalyzer {
@@ -860,7 +866,7 @@ private:
 
         info = assembleSISO(strictR, fullR, cand.si, entryPreds, cand.so);
         if (info.valid) {
-            info.isPureTwoNode = isPureTwoNode;
+            info.kind = isPureTwoNode ? SISORegionKind::PureTwoNode : SISORegionKind::General;
         }
         return info;
     }
