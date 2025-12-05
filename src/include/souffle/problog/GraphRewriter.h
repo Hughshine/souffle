@@ -77,7 +77,13 @@ public:
                 dotBefore << "rewrite_iter" << stats.numIterations << "_before.dot";
                 view.dumpDot(dotBefore.str());
             }
+            auto detectStart = std::chrono::steady_clock::now();
             auto regions = GraphAnalyzer::detectAllSISOStrictFromExit(view);
+            auto detectMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - detectStart)
+                                    .count();
+            std::cout << "[GraphRewriter] SISO detection took "
+                      << detectMs << " ms" << std::endl;
 
             if (regions.empty()) {
                 stats.randomVarsAfter = iterRandomVarsBefore;
@@ -103,7 +109,13 @@ public:
                           << " SISO region(s)." << std::endl;
                 std::ostringstream sisoDot;
                 sisoDot << "siso_regions_iter" << stats.numIterations << ".dot";
+                auto dotStart = std::chrono::steady_clock::now();
                 GraphAnalyzer::dumpAllRegionsAsDot(view, regions, sisoDot.str());
+                auto dotMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - dotStart)
+                                     .count();
+                std::cout << "[GraphRewriter] dumpAllRegionsAsDot took "
+                          << dotMs << " ms" << std::endl;
             }
 
             size_t rewrittenThisRound = 0;
@@ -112,6 +124,20 @@ public:
             for (const auto& region : regions) {
                 if (!region.valid) {
                     continue;
+                }
+
+                // Fast-path by SISO kind (placeholder: insert specialized rewrites here).
+                switch (region.kind) {
+                    case SISORegionKind::PureTwoNode:
+                    case SISORegionKind::SingleHyperedge:
+                        if (debug) {
+                            std::cout << "[GraphRewriter]   Fast-path placeholder for region "
+                                      << regionToString(region) << " kind=" << static_cast<int>(region.kind)
+                                      << std::endl;
+                        }
+                        continue;  // skip default handling for now
+                    default:
+                        continue;
                 }
 
                 auto regionStart = std::chrono::steady_clock::now();

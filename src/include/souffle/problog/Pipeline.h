@@ -77,7 +77,12 @@ inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
     for (const auto& r : regions) {
         GraphAnalyzer::printSISOInfo(view, r);
     }
+    auto dotStart = std::chrono::steady_clock::now();
     GraphAnalyzer::dumpAllRegionsAsDot(view, regions, "siso_regions.dot");
+    auto dotMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - dotStart)
+                         .count();
+    std::cout << "[pipeline] dumpAllRegionsAsDot took " << dotMs << " ms\n";
 }
 
 inline void runBddPipeline(
@@ -259,9 +264,6 @@ inline void runPipeline(
 
     view.dumpDot("after_prune.dot");
     view.dumpJson("derivation.json");
-
-    dumpSisoRegions(view);
-
     if (opt.isRewriteEnabled()) {
         debugger.startStage(StageKind::PRECONFIG_FULL);
         auto rewriteStart = std::chrono::steady_clock::now();
