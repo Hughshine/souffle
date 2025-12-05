@@ -53,6 +53,9 @@ inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
                        .count();
     size_t pureTwoNodeCount = 0;
     size_t singleHyperedgeCount = 0;
+    size_t linearTwoEdgeCount = 0;
+    size_t parallelTwoEdgeCount = 0;
+    size_t allFactsToSOCount = 0;
     size_t generalCount = 0;
     for (const auto& r : regions) {
         switch (r.kind) {
@@ -61,6 +64,15 @@ inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
             break;
         case SISORegionKind::SingleHyperedge:
             ++singleHyperedgeCount;
+            break;
+        case SISORegionKind::LinearTwoEdge:
+            ++linearTwoEdgeCount;
+            break;
+        case SISORegionKind::ParallelTwoEdge:
+            ++parallelTwoEdgeCount;
+            break;
+        case SISORegionKind::AllFactsToSO:
+            ++allFactsToSOCount;
             break;
         case SISORegionKind::General:
             ++generalCount;
@@ -72,6 +84,9 @@ inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
     std::cout << "Found " << regions.size() << " SISO regions"
               << " (pure-two-node=" << pureTwoNodeCount
               << ", single-hyperedge=" << singleHyperedgeCount
+              << ", linear-two-edge=" << linearTwoEdgeCount
+              << ", parallel-two-edge=" << parallelTwoEdgeCount
+              << ", all-facts=" << allFactsToSOCount
               << ", general=" << generalCount << ")" << std::endl;
     std::cout << "[pipeline] SISO detection took " << dur << " ms\n";
     for (const auto& r : regions) {

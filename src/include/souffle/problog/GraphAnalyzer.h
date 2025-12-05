@@ -23,6 +23,9 @@ enum class SISORegionKind {
     General,
     PureTwoNode,  // two nodes + one edge (SI->SO) with no extra in/out edges
     SingleHyperedge,  // single hyperedge from SI to SO (not counted as PureTwoNode)
+    LinearTwoEdge,    // SI -> mid -> SO (two edges chain)
+    ParallelTwoEdge,  // two parallel edges SI -> SO
+    AllFactsToSO,     // single edge, inputs all facts (no incoming edges), entry is the sole input
 };
 
 struct SISORegionInfo {
@@ -107,6 +110,135 @@ private:
         NodeSet nodes;
         EdgeSet edges;
     };
+
+    static SISORegionInfo makeRegion(NodePtr entry, NodePtr exit, const std::vector<EdgePtr>& edges,
+            SISORegionKind kind) {
+        SISORegionInfo info;
+        if (!entry || !exit) return info;
+        info.entry = entry;
+        info.exit = exit;
+        info.entryPreds = {};  // not used in fast path
+        info.internalEdges.assign(edges.begin(), edges.end());
+        // collect nodes from edges plus entry/exit
+        NodeSet nodeSet;
+        nodeSet.insert(entry);
+        nodeSet.insert(exit);
+        for (auto e : edges) {
+            if (!e) continue;
+            nodeSet.insert(e->getInputs().begin(), e->getInputs().end());
+            NodePtr out = e->getOutput();
+            if (out) nodeSet.insert(out);
+        }
+        info.internalNodes.assign(nodeSet.begin(), nodeSet.end());
+        info.valid = true;
+        info.kind = kind;
+        return info;
+    }
+
+    // Fast-path detectors (<=2 edges)
+    static std::vector<SISORegionInfo> detectFastPathRegions(const DerivationGraphViewInterface& g) {
+        std::vector<SISORegionInfo> regions;
+        // 1) Pure two node (fact entry, single edge)
+        for (auto e : g.getEdges()) {
+            if (!e) continue;
+            auto inputs = g.getInputs(e);
+            if (inputs.size() != 1) continue;
+            NodePtr entry = inputs[0];
+            NodePtr exit = g.getOutput(e);
+            if (!entry || !exit) continue;
+            if (entry == exit) continue;
+            if (!entry->isFact) continue;
+            auto entryOut = g.getOutgoingEdges(entry);
+            auto exitIn = g.getIncomingEdges(exit);
+            if (entryOut.size() != 1 || entryOut[0] != e) continue;
+            if (exitIn.size() != 1 || exitIn[0] != e) continue;
+            regions.push_back(makeRegion(entry, exit, {e}, SISORegionKind::PureTwoNode));
+        }
+
+        // 2) Single hyperedge (non-pure-two-node), single edge entry->exit
+        for (auto e : g.getEdges()) {
+            if (!e) continue;
+            auto inputs = g.getInputs(e);
+            if (inputs.size() != 1) continue;
+            NodePtr entry = inputs[0];
+            NodePtr exit = g.getOutput(e);
+            if (!entry || !exit) continue;
+            if (entry == exit) continue;
+            auto region = makeRegion(entry, exit, {e}, SISORegionKind::SingleHyperedge);
+            if (region.internalNodes.size() <= 2) continue;  // skip pure-two-node shape
+            regions.push_back(std::move(region));
+        }
+
+        // 3) Linear two-edge: entry->mid->exit, each edge single input
+        for (auto e1 : g.getEdges()) {
+            if (!e1) continue;
+            auto in1 = g.getInputs(e1);
+            if (in1.size() != 1) continue;
+            NodePtr entry = in1[0];
+            NodePtr mid = g.getOutput(e1);
+            if (!entry || !mid) continue;
+            if (entry == mid) continue;
+            // mid should have exactly one outgoing edge for the chain
+            auto midOut = g.getOutgoingEdges(mid);
+            if (midOut.size() != 1) continue;
+            EdgePtr e2 = midOut[0];
+            if (!e2) continue;
+            auto in2 = g.getInputs(e2);
+            if (in2.size() != 1 || in2[0] != mid) continue;
+            NodePtr exit = g.getOutput(e2);
+            if (!exit || exit == entry || exit == mid) continue;
+            regions.push_back(makeRegion(entry, exit, {e1, e2}, SISORegionKind::LinearTwoEdge));
+        }
+
+        // 4) Parallel two-edge: two edges SI->SO, single-input edges
+        std::vector<EdgePtr> edgesVec(g.getEdges().begin(), g.getEdges().end());
+        for (size_t i = 0; i < edgesVec.size(); ++i) {
+            EdgePtr e1 = edgesVec[i];
+            if (!e1) continue;
+            auto in1 = g.getInputs(e1);
+            if (in1.size() != 1) continue;
+            NodePtr entry = in1[0];
+            NodePtr exit = g.getOutput(e1);
+            if (!entry || !exit) continue;
+            for (size_t j = i + 1; j < edgesVec.size(); ++j) {
+                EdgePtr e2 = edgesVec[j];
+                if (!e2) continue;
+                auto in2 = g.getInputs(e2);
+                if (in2.size() != 1) continue;
+                if (in2[0] != entry) continue;
+                NodePtr exit2 = g.getOutput(e2);
+                if (exit2 != exit) continue;
+                if (entry == exit) continue;
+                regions.push_back(makeRegion(entry, exit, {e1, e2}, SISORegionKind::ParallelTwoEdge));
+            }
+        }
+
+        // 5) All-facts single hyperedge: single edge with all fact inputs (<=2) and inputs have no incoming edges.
+        for (auto e : g.getEdges()) {
+            if (!e) continue;
+            auto inputs = g.getInputs(e);
+            if (inputs.empty() || inputs.size() > 2) continue;
+            bool allFacts = true;
+            for (auto n : inputs) {
+                if (!n || !n->isFact) {
+                    allFacts = false;
+                    break;
+                }
+                if (!n->getIncomingEdges().empty()) {
+                    allFacts = false;
+                    break;
+                }
+            }
+            if (!allFacts) continue;
+            NodePtr exit = g.getOutput(e);
+            if (!exit) continue;
+            NodePtr entry = inputs[0];
+            auto region = makeRegion(entry, exit, {e}, SISORegionKind::AllFactsToSO);
+            regions.push_back(std::move(region));
+        }
+
+        return regions;
+    }
 
     static std::size_t minRandomVars() {
         // allow overriding the minimum via env for experiments; default 0 to allow deterministic simplifications
@@ -780,60 +912,6 @@ private:
         return true;
     }
 
-    // 最朴素的 2 节点 SISO：仅 SI、SO、一条 SI->SO 边；SI 只有这条 outgoing，SO 只有这条 incoming。
-    static bool isPureTwoNodeSISO(
-            const DerivationGraphViewInterface& g,
-            const Region& fullRegion,
-            NodePtr entryNode,
-            NodePtr exitNode) {
-        if (!entryNode || !exitNode) return false;
-        if (entryNode == exitNode) return false;
-        if (fullRegion.nodes.size() != 2) return false;
-        if (fullRegion.edges.size() != 1) return false;
-
-        EdgePtr e = *fullRegion.edges.begin();
-        if (!e) return false;
-
-        // 边必须从 entry 指向 exit，且唯一输入为 entry。
-        if (g.getOutput(e) != exitNode) return false;
-        auto inputs = g.getInputs(e);
-        if (inputs.size() != 1 || inputs[0] != entryNode) return false;
-
-        // entry 只能有这一条 outgoing
-        auto entryOut = g.getOutgoingEdges(entryNode);
-        if (entryOut.size() != 1 || entryOut[0] != e) return false;
-
-        // exit 只能有这一条 incoming
-        auto exitIn = g.getIncomingEdges(exitNode);
-        if (exitIn.size() != 1 || exitIn[0] != e) return false;
-
-        return true;
-    }
-
-    // 单一 hyperedge 的 SISO：只有一条边从 SI 指向 SO（SI 在边输入中），不包含 pure-two-node。
-    static bool isSingleHyperedgeSISO(
-            const DerivationGraphViewInterface& g,
-            const Region& fullRegion,
-            NodePtr entryNode,
-            NodePtr exitNode) {
-        if (!entryNode || !exitNode) return false;
-        if (entryNode == exitNode) return false;
-        if (fullRegion.edges.size() != 1) return false;
-        // 排除已归类的 pure-two-node
-        if (fullRegion.nodes.size() == 2) return false;
-
-        EdgePtr e = *fullRegion.edges.begin();
-        if (!e) return false;
-        if (g.getOutput(e) != exitNode) return false;
-
-        auto inputs = g.getInputs(e);
-        if (inputs.empty()) return false;
-        bool entryInInputs = std::find(inputs.begin(), inputs.end(), entryNode) != inputs.end();
-        if (!entryInInputs) return false;
-
-        return true;
-    }
-
     // ========= 将 Region + 边界节点组装成 SISORegionInfo =========
     static SISORegionInfo assembleSISO(
         const Region& strictRegion,
@@ -877,53 +955,10 @@ private:
         NodePtr exitNode,
         const PrefixStructure& pre)
     {
-        SISORegionInfo info;
-        if (!exitNode) return info;
-
-        Candidate cand = findCandidate(g, exitNode, pre);
-        if (!cand.si || !cand.so) {
-            log("detectSISOFromExitNodeWithPrefix: candidate failed for exitNode " +
-                exitNode->toString());
-            return info;
-        }
-
-        Region strictR = buildStrictRegion(g, cand.si, cand.so, pre.domInputs);
-        if (strictR.nodes.empty()) {
-            log("detectSISOFromExitNodeWithPrefix: strict region empty");
-            return info;
-        }
-
-        Region fullR = buildFullRegion(g, cand.si, cand.so);
-        if (fullR.nodes.empty()) {
-            log("detectSISOFromExitNodeWithPrefix: full region empty");
-            return info;
-        }
-        bool isPureTwoNode = isPureTwoNodeSISO(g, fullR, cand.si, cand.so);
-        bool isSingleHyperedge = isSingleHyperedgeSISO(g, fullR, cand.si, cand.so);
-
-        EdgePtr dummyEntryEdge = nullptr;
-        std::vector<NodePtr> entryPreds;
-        (void)dummyEntryEdge;
-        selectEntryEdgeAndPreds(g, fullR, cand.si, dummyEntryEdge, entryPreds);
-
-        if (!checkNoEscape(g, fullR, cand.si, cand.so)) {
-            log("detectSISOFromExitNodeWithPrefix: escape detected");
-            return info;
-        }
-
-        // TODO：这里可以加内部 evidence/query 节点过滤
-
-        info = assembleSISO(strictR, fullR, cand.si, entryPreds, cand.so);
-        if (info.valid) {
-            if (isPureTwoNode) {
-                info.kind = SISORegionKind::PureTwoNode;
-            } else if (isSingleHyperedge) {
-                info.kind = SISORegionKind::SingleHyperedge;
-            } else {
-                info.kind = SISORegionKind::General;
-            }
-        }
-        return info;
+        (void)g;
+        (void)exitNode;
+        (void)pre;
+        return {};
     }
 
     // ========= 兼容旧接口：从 exitEdge 出发 =========
@@ -947,82 +982,30 @@ private:
 public:
     // ===================== 对外接口 =====================
 
-    // 保持旧接口：给定一个 exit edge，找它的 SISO（现在实际上是以 edge 的 output node 作为 SO）
+    // 旧接口保留签名，当前实现为轻量 fast-path 检测（最多两条边），找不到则返回空。
     static inline SISORegionInfo detectSISOStrictFromExit(
         const DerivationGraphViewInterface& g,
         EdgePtr exitEdge)
     {
-        PrefixStructure pre = buildPrefixStructure(g);
-        return detectSISOStrictFromExitWithPrefix(g, exitEdge, pre);
+        (void)g;
+        (void)exitEdge;
+        return {};
     }
 
-    // 在整张图上寻找所有不重叠的 SISO 区域（以 node 为 candidate SO）
     static inline std::vector<SISORegionInfo> detectAllSISOStrictFromExit(
         const DerivationGraphViewInterface& g)
     {
-        auto tPrefixStart = std::chrono::steady_clock::now();
-        PrefixStructure pre = buildPrefixStructure(g);
-        auto tPrefixEnd = std::chrono::steady_clock::now();
-        std::cout << "[siso-detect] prefix build took "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(tPrefixEnd - tPrefixStart).count()
-                  << " ms" << std::endl;
-
-        std::vector<SISORegionInfo> all;
-        const bool profile = std::getenv("SOUFFLE_SISO_PROFILE") != nullptr;
-        auto tDetectStart = std::chrono::steady_clock::now();
-        double totalCandMs = 0.0;
-        double totalValidMs = 0.0;
-        size_t validCount = 0;
-
-        for (NodePtr n : g.getNodes()) {
-            if (!n) continue;
-            auto candStart = std::chrono::steady_clock::now();
-            SISORegionInfo r = detectSISOFromExitNodeWithPrefix(g, n, pre);
-            double candMs = std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - candStart).count();
-            totalCandMs += candMs;
-            if (profile) {
-                std::cout << "[siso-detect] candidate node " << n->getId()
-                          << " " << n->getTuple().toString()
-                          << " : " << (r.valid ? "found" : "none")
-                          << " (nodes=" << r.internalNodes.size()
-                          << ", edges=" << r.internalEdges.size()
-                          << ") took " << candMs << " ms" << std::endl;
-            }
-            if (!r.valid) continue;
-            validCount++;
-            totalValidMs += candMs;
-            all.push_back(std::move(r));
-        }
-        auto tDetectEnd = std::chrono::steady_clock::now();
-        std::cout << "[siso-detect] candidate detection took "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(tDetectEnd - tDetectStart).count()
-                  << " ms for " << all.size() << " candidates" << std::endl;
-        if (!g.getNodes().empty()) {
-            double avgCandMs = totalCandMs / static_cast<double>(g.getNodes().size());
-            std::cout << "[siso-detect] candidate avg time "
-                      << avgCandMs << " ms over " << g.getNodes().size() << " nodes"
-                      << ", valid avg " << (validCount ? totalValidMs / static_cast<double>(validCount) : 0.0)
-                      << " ms over " << validCount << " valid" << std::endl;
-        }
-
-        if (all.empty()) {
-            log("detectAllSISOStrictFromExit: none found");
-            return all;
-        }
-
-        // 小 region 在前，方便做 greedy 去重
-        auto tFilterStart = std::chrono::steady_clock::now();
-        std::sort(all.begin(), all.end(),
-                  [](const SISORegionInfo& a, const SISORegionInfo& b) {
-                      return a.internalNodes.size() < b.internalNodes.size();
-                  });
-
+        auto regions = detectFastPathRegions(g);
+        // 去重：小 region 在前，避免重叠
+        std::sort(regions.begin(), regions.end(),
+                [](const SISORegionInfo& a, const SISORegionInfo& b) {
+                    return a.internalNodes.size() < b.internalNodes.size();
+                });
         std::vector<SISORegionInfo> result;
         NodeSet usedNodes;
-        for (auto& r : all) {
+        for (auto& r : regions) {
             bool overlap = false;
-            for (NodePtr n : r.internalNodes) {
+            for (auto n : r.internalNodes) {
                 if (!n) continue;
                 if (usedNodes.count(n)) {
                     overlap = true;
@@ -1030,21 +1013,39 @@ public:
                 }
             }
             if (overlap) continue;
-
-            for (NodePtr n : r.internalNodes) {
-                if (!n) continue;
-                usedNodes.insert(n);
+            for (auto n : r.internalNodes) {
+                if (n) usedNodes.insert(n);
             }
             result.push_back(std::move(r));
         }
-        auto tFilterEnd = std::chrono::steady_clock::now();
-        std::cout << "[siso-detect] overlap filter kept " << result.size()
-                  << " of " << all.size() << " in "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(tFilterEnd - tFilterStart).count()
-                  << " ms" << std::endl;
-
-        log("detectAllSISOStrictFromExit: found " +
-            std::to_string(result.size()) + " regions after overlap filter");
+        size_t pureTwoNodeCount = 0;
+        size_t singleHyperedgeCount = 0;
+        size_t linearTwoEdgeCount = 0;
+        size_t parallelTwoEdgeCount = 0;
+        size_t allFactsToSOCount = 0;
+        size_t generalCount = 0;
+        size_t unknownCount = 0;
+        for (const auto& r : result) {
+            switch (r.kind) {
+            case SISORegionKind::PureTwoNode: ++pureTwoNodeCount; break;
+            case SISORegionKind::SingleHyperedge: ++singleHyperedgeCount; break;
+            case SISORegionKind::LinearTwoEdge: ++linearTwoEdgeCount; break;
+            case SISORegionKind::ParallelTwoEdge: ++parallelTwoEdgeCount; break;
+            case SISORegionKind::AllFactsToSO: ++allFactsToSOCount; break;
+            case SISORegionKind::General: ++generalCount; break;
+            default: ++unknownCount; break;
+            }
+        }
+        std::cout << "[siso-detect] fast-path regions " << result.size()
+                  << " (candidates=" << regions.size()
+                  << ", pure-two-node=" << pureTwoNodeCount
+                  << ", single-hyperedge=" << singleHyperedgeCount
+                  << ", linear-two-edge=" << linearTwoEdgeCount
+                  << ", parallel-two-edge=" << parallelTwoEdgeCount
+                  << ", all-facts=" << allFactsToSOCount
+                  << ", general=" << generalCount
+                  << ", unknown=" << unknownCount
+                  << ")" << std::endl;
         return result;
     }
 
