@@ -1,48 +1,48 @@
-# Evaluation Plan for SISO Rewriter (P4–P9)
+# Evaluation Plan for SISO Rewriter (current commands)
 
-This describes how to exercise the SISO-based rewriting and pipeline on the benchmark instances under `problog-benchmark/side_channel_full/P4…P9`.
+This describes how to exercise the SISO-based rewriting on `side_channel_full` benchmarks (e.g., P4–P12).
 
 ## Prerequisites
-- Build the updated `souffle` binary (release build assumed): `cmake --build cmake-build-release --target souffle -j4`.
-- Ensure the benchmark directory is writable or run commands with sufficient permissions; logs and DOT files are written in-place.
+- Build `souffle` (release): `cmake --build cmake-build-release --target souffle -j4`.
+- Each benchmark dir must be writable (logs/DOT go in-place).
 
-## Per-case workflow (P4–P9)
+## Per-case workflow
 For each `P?/compute.souffle.dl`:
+
 1) **Build generated program**
    ```bash
    souffle_bin=/home/hugh/research/datalog/souffle/cmake-build-release/src/souffle
    "$souffle_bin" --online -F ./input -D ./output compute.souffle.dl -o compute_new > rebuild.log 2>&1
    ```
-2) **Run with SISO detection + rewriting enabled**
+2) **Run (no rewrite)**
    ```bash
-   timeout 150s ./compute_new --merge-bi-imp -F ./input -D ./output > run.log 2>&1
+   ./compute_new -F ./input -D ./output_no_rewrite > run_no_rewrite.log 2>&1
    ```
-   (Adjust flags if the rewriter is gated by a CLI option once implemented.)
-3) **Artifacts to check**
-   - `run.log`: contains `[pipeline] SISO detection took X ms` and rewriter stats if hooked; WMC timing lines.
-   - `siso_debug.log`: per-edge/candidate diagnostics.
-   - `siso_regions.dot`: full graph with SISO regions colored; SI/SO marked via peripheries.
-   - `siso_info.csv`: entries for each detected region.
-   - (If rewriter implemented) `rewrite.log`, `rewrite_final.dot`, `macros.dot` for collapsed graph.
+3) **Run (with rewrite)**
+   ```bash
+   ./compute_new -r -F ./input -D ./output_rewrite > run_rewrite.log 2>&1
+   ```
+4) **Compare outputs**
+   ```bash
+   diff output_no_rewrite/facts.prob output_rewrite/facts.prob
+   ```
+5) **Artifacts to check**
+   - `run_*.log`: `[pipeline]` timings (graph, pruning, SISO detection/rewrite, BDD init/build, WMC).
+   - `siso_regions*.dot`: graph with SISO regions highlighted.
+   - Optional: `rewrite*.dot` if rewrite is enabled.
 
-## Batch script (P4–P9)
+## Batch template
 ```bash
 souffle_bin=/home/hugh/research/datalog/souffle/cmake-build-release/src/souffle
-set -e
-for d in P4/ P5/ P6/ P7/ P8/ P9/; do
+for d in P4 P5 P6 P7 P8 P9 P10 P11 P12; do
   [ -f "$d/compute.souffle.dl" ] || continue
-  echo "===== [build] $d ====="
   (cd "$d" && "$souffle_bin" --online -F ./input -D ./output compute.souffle.dl -o compute_new > rebuild.log 2>&1)
-  echo "===== [run]   $d (timeout 150s) ====="
-  (cd "$d" && timeout 150s ./compute_new --merge-bi-imp -F ./input -D ./output > run.log 2>&1)
+  (cd "$d" && ./compute_new -F ./input -D ./output_no_rewrite > run_no_rewrite.log 2>&1)
+  (cd "$d" && ./compute_new -r -F ./input -D ./output_rewrite > run_rewrite.log 2>&1)
 done
 ```
 
 ## What to compare
-- **SISO counts and timings**: use `rg "SISO detection" P*/run.log`.
-- **Region overlays**: open `P*/siso_regions.dot` to confirm coverage and SI/SO markings.
-- **Rewrite impact (when available)**: compare node/edge counts before/after (`rewrite.log`, `rewrite_final.dot`), and WMC timing changes.
-
-## Notes
-- If permission issues arise in `problog-benchmark/side_channel_full`, run with elevated permissions or copy cases into a writable workspace.
-- The current pipeline prints SISO detection time even if no rewriter is invoked; hook rewriter stats into `run.log` once implemented.
+- SISO detection/rewrite timing vs BDD phases.
+- Node/edge and region counts in DOTs; confirm SI/SO highlighting.
+- Output equality (`facts.prob`).

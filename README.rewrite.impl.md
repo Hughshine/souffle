@@ -1,3 +1,5 @@
+> Note: This file is a running notebook of experiments/ideas, including aggressive versions that are **not** the current state. The active implementation is summarized in `README.rewrite.md`; use this file as historical context.
+
 目前graph rewrite pipeline的问题。
 
 1. siso detection:

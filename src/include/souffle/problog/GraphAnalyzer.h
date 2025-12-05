@@ -26,6 +26,7 @@ struct SISORegionInfo {
     NodePtr exit = nullptr;                  // SO node（出口）
     bool valid = false;
     bool prefixAllFactsRequired = false;     // 先保留这个标志，后续如果要用 support 做更细分判断
+    bool isPureTwoNode = false;              // 标记最朴素的 2 节点 SISO（仅 SI、SO、一条 SI->SO 边且无其他入/出边）
 };
 
 class GraphAnalyzer {
@@ -749,6 +750,36 @@ private:
         return true;
     }
 
+    // 最朴素的 2 节点 SISO：仅 SI、SO、一条 SI->SO 边；SI 只有这条 outgoing，SO 只有这条 incoming。
+    static bool isPureTwoNodeSISO(
+            const DerivationGraphViewInterface& g,
+            const Region& fullRegion,
+            NodePtr entryNode,
+            NodePtr exitNode) {
+        if (!entryNode || !exitNode) return false;
+        if (entryNode == exitNode) return false;
+        if (fullRegion.nodes.size() != 2) return false;
+        if (fullRegion.edges.size() != 1) return false;
+
+        EdgePtr e = *fullRegion.edges.begin();
+        if (!e) return false;
+
+        // 边必须从 entry 指向 exit，且唯一输入为 entry。
+        if (g.getOutput(e) != exitNode) return false;
+        auto inputs = g.getInputs(e);
+        if (inputs.size() != 1 || inputs[0] != entryNode) return false;
+
+        // entry 只能有这一条 outgoing
+        auto entryOut = g.getOutgoingEdges(entryNode);
+        if (entryOut.size() != 1 || entryOut[0] != e) return false;
+
+        // exit 只能有这一条 incoming
+        auto exitIn = g.getIncomingEdges(exitNode);
+        if (exitIn.size() != 1 || exitIn[0] != e) return false;
+
+        return true;
+    }
+
     // ========= 将 Region + 边界节点组装成 SISORegionInfo =========
     static SISORegionInfo assembleSISO(
         const Region& strictRegion,
@@ -813,6 +844,7 @@ private:
             log("detectSISOFromExitNodeWithPrefix: full region empty");
             return info;
         }
+        bool isPureTwoNode = isPureTwoNodeSISO(g, fullR, cand.si, cand.so);
 
         EdgePtr dummyEntryEdge = nullptr;
         std::vector<NodePtr> entryPreds;
@@ -827,6 +859,9 @@ private:
         // TODO：这里可以加内部 evidence/query 节点过滤
 
         info = assembleSISO(strictR, fullR, cand.si, entryPreds, cand.so);
+        if (info.valid) {
+            info.isPureTwoNode = isPureTwoNode;
+        }
         return info;
     }
 

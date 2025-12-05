@@ -7,6 +7,7 @@
 #include "souffle/problog/DerivationGraph.h"
 #include "souffle/problog/ForwardCompilation.h"
 #include "souffle/problog/GraphAnalyzer.h"
+#include "souffle/problog/GraphRewriter.h"
 #include "souffle/problog/QueryManager.h"
 #include "souffle/problog/RuleManager.h"
 #include "souffle/problog/debug/Debugger.h"
@@ -50,7 +51,14 @@ inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
     auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - start)
                        .count();
-    std::cout << "Found " << regions.size() << " SISO regions" << std::endl;
+    size_t pureTwoNodeCount = 0;
+    for (const auto& r : regions) {
+        if (r.isPureTwoNode) {
+            ++pureTwoNodeCount;
+        }
+    }
+    std::cout << "Found " << regions.size() << " SISO regions"
+              << " (pure-two-node=" << pureTwoNodeCount << ")" << std::endl;
     std::cout << "[pipeline] SISO detection took " << dur << " ms\n";
     for (const auto& r : regions) {
         GraphAnalyzer::printSISOInfo(view, r);
@@ -239,6 +247,35 @@ inline void runPipeline(
     view.dumpJson("derivation.json");
 
     dumpSisoRegions(view);
+
+    if (opt.isRewriteEnabled()) {
+        debugger.startStage(StageKind::PRECONFIG_FULL);
+        auto rewriteStart = std::chrono::steady_clock::now();
+        GraphRewriter rewriter;
+        auto rewriteStats = rewriter.rewriteUntilFixpoint(*graph, view, opt.isProfiling());
+        auto rewriteMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - rewriteStart)
+                                 .count();
+        auto randomVarsDelta = static_cast<long long>(rewriteStats.randomVarsBefore) -
+                static_cast<long long>(rewriteStats.randomVarsAfter);
+        double randomVarsRatio = rewriteStats.randomVarsBefore == 0
+                                         ? 0.0
+                                         : static_cast<double>(rewriteStats.randomVarsAfter) /
+                                                   static_cast<double>(rewriteStats.randomVarsBefore);
+        std::cout << "[pipeline] rewrite took " << rewriteMs << " ms; iterations="
+                  << rewriteStats.numIterations << ", regions=" << rewriteStats.numRegionsRewritten
+                  << ", nodesRemoved=" << rewriteStats.numNodesRemoved
+                  << ", edgesRemoved=" << rewriteStats.numEdgesRemoved
+                  << ", edgesAdded=" << rewriteStats.numEdgesAdded
+                  << ", randomVarsBefore=" << rewriteStats.randomVarsBefore
+                  << ", randomVarsAfter=" << rewriteStats.randomVarsAfter
+                  << ", randomVarsDelta=" << randomVarsDelta
+                  << ", randomVarsRatio=" << randomVarsRatio
+                  << ", randomVarsRemoved=" << rewriteStats.totalRandomVars
+                  << ", simpleFactRegions=" << rewriteStats.simpleFactRegions << std::endl;
+        view.dumpDot("rewrite_final.dot");
+        debugger.endStage();
+    }
 
     if (program.getKnowledge() == souffle::Knowledge::BDD) {
         runBddPipeline(opt, program, ruleManager, *graph, view, evidences, enableOnlineCli);

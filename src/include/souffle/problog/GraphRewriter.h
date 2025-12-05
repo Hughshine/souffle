@@ -32,6 +32,8 @@ struct GraphRewriteStats {
     size_t totalRandomVars = 0;        ///< Sum of random vars across regions (facts + edges, excl. entry/exit facts)
     size_t maxRandomVars = 0;          ///< Max random vars in a single region
     size_t simpleFactRegions = 0;      ///< Count of simple fact-based regions rewritten
+    size_t randomVarsBefore = 0;       ///< Random vars in the view before rewrite
+    size_t randomVarsAfter = 0;        ///< Random vars in the view after rewrite
 };
 
 /**
@@ -63,11 +65,15 @@ public:
             std::cout << "[GraphRewriter] CUDD manager init took " << managerInitMs << " ms" << std::endl;
         }
 
+        stats.randomVarsBefore = countRandomVarsInView(view);
+        stats.randomVarsAfter = stats.randomVarsBefore;
+
         // Only the first region should attribute manager init time; subsequent regions reuse the same manager.
         bool firstRegionTiming = true;
 
         while (true) {
             ++stats.numIterations;
+            size_t iterRandomVarsBefore = countRandomVarsInView(view);
 
             view.cachedSortedIncomingEdges.clear();
             if (debug) {
@@ -78,6 +84,14 @@ public:
             auto regions = GraphAnalyzer::detectAllSISOStrictFromExit(view);
 
             if (regions.empty()) {
+                stats.randomVarsAfter = iterRandomVarsBefore;
+                long long iterDelta = 0;
+                double iterRatio = iterRandomVarsBefore == 0 ? 0.0 : 1.0;
+                std::cout << "[GraphRewriter]   Iteration " << stats.numIterations
+                          << " random vars: before=" << iterRandomVarsBefore
+                          << ", after=" << stats.randomVarsAfter
+                          << ", delta=" << iterDelta
+                          << ", ratio=" << iterRatio << std::endl;
                 if (debug) {
                     std::cout << "[GraphRewriter] No SISO regions found, stop at iteration "
                               << stats.numIterations << std::endl;
@@ -217,6 +231,21 @@ public:
 
             auto iterMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - iterStart).count();
+
+            size_t iterRandomVarsAfter = countRandomVarsInView(view);
+            stats.randomVarsAfter = iterRandomVarsAfter;
+            auto iterDelta =
+                    static_cast<long long>(iterRandomVarsBefore) - static_cast<long long>(iterRandomVarsAfter);
+            double iterRatio = iterRandomVarsBefore == 0
+                                       ? 0.0
+                                       : static_cast<double>(iterRandomVarsAfter) /
+                                                 static_cast<double>(iterRandomVarsBefore);
+            std::cout << "[GraphRewriter]   Iteration " << stats.numIterations
+                      << " random vars: before=" << iterRandomVarsBefore
+                      << ", after=" << iterRandomVarsAfter
+                      << ", delta=" << iterDelta
+                      << ", ratio=" << iterRatio << std::endl;
+
             if (rewrittenThisRound == 0) {
                 if (debug) {
                     std::cout << "[GraphRewriter] No region rewritten in iteration "
@@ -309,6 +338,31 @@ private:
         }
 
         for (const auto& edge : region.internalEdges) {
+            if (!edge) continue;
+            double p = edge->getProbability();
+            if (p > 0.0 && p < 1.0) {
+                ++randomCount;
+            }
+        }
+
+        return randomCount;
+    }
+
+    size_t countRandomVarsInView(const DerivationGraphViewInterface& view) const {
+        size_t randomCount = 0;
+
+        for (const auto& node : view.getNodes()) {
+            if (!node) continue;
+            if (!node->isFact) {
+                continue;
+            }
+            double p = node->getProbability();
+            if (p > 0.0 && p < 1.0) {
+                ++randomCount;
+            }
+        }
+
+        for (const auto& edge : view.getEdges()) {
             if (!edge) continue;
             double p = edge->getProbability();
             if (p > 0.0 && p < 1.0) {

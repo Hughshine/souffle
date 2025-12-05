@@ -1,4 +1,6 @@
-# SISO Region Detection (GraphAnalyzer) [UPDATED with new logging]
+# SISO Region Detection (GraphAnalyzer)
+
+> The description here matches the conservative detector used by the current rewriter. For rewrite behavior and performance notes, see `README.rewrite.md`.
 
 This note explains what `src/include/souffle/problog/GraphAnalyzer.h` does, the major steps in its algorithm, and where the debug logs land. It is meant to help reason about why SISO regions may or may not be found on a given derivation graph.
 

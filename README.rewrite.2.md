@@ -1,3 +1,5 @@
+> Note (status): This document captures an **experimental/alternative plan** that included fact-prefix folding and node merges. The current codebase has been reverted to a conservative rewriter (see `README.rewrite.md` for the active behavior). Keep this file as a historical reference; do not assume its steps are implemented now.
+
 先说结论：
 
 GraphAnalyzer.h 这版可以继续沿用（不必大动），SISO detection 逻辑保持现在的“以点为中心”的设计。
