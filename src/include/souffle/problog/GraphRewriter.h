@@ -84,6 +84,17 @@ public:
                                     .count();
             std::cout << "[GraphRewriter] SISO detection took "
                       << detectMs << " ms" << std::endl;
+            size_t detectedSingle = 0, detectedLinear = 0, detectedParallel = 0, detectedAllFacts = 0, detectedGeneral = 0;
+            for (const auto& r : regions) {
+                switch (r.kind) {
+                    case SISORegionKind::SingleHyperedge: ++detectedSingle; break;
+                    case SISORegionKind::LinearTwoEdge: ++detectedLinear; break;
+                    case SISORegionKind::ParallelTwoEdge: ++detectedParallel; break;
+                    case SISORegionKind::AllFactsToSO: ++detectedAllFacts; break;
+                    case SISORegionKind::General: ++detectedGeneral; break;
+                    default: break;
+                }
+            }
 
             if (regions.empty()) {
                 stats.randomVarsAfter = iterRandomVarsBefore;
@@ -126,10 +137,66 @@ public:
                     continue;
                 }
 
-                // Fast-path by SISO kind (placeholder: insert specialized rewrites here).
+                // Fast-path by SISO kind.
                 switch (region.kind) {
-                    case SISORegionKind::PureTwoNode:
+                    case SISORegionKind::AllFactsToSO: {
+                        if (region.internalEdges.size() != 1) continue;
+                        EdgePtr edge = region.internalEdges.front();
+                        if (!edge) continue;
+                        NodePtr exit = region.exit;
+                        if (!exit) continue;
+                        auto inputs = view.getInputs(edge);
+                        double p = edge->getProbability();
+                        if (p < 0.0) p = 0.0;
+                        if (p > 1.0) p = 1.0;
+                        size_t regionRandomVars = 0;
+                        if (p > 0.0 && p < 1.0) ++regionRandomVars;
+                        for (auto n : inputs) {
+                            if (!n) continue;
+                            double np = n->getProbability();
+                            if (np < 0.0) np = 0.0;
+                            if (np > 1.0) np = 1.0;
+                            p *= np;
+                            if (np > 0.0 && np < 1.0) ++regionRandomVars;
+                        }
+                        exit->isFact = true;
+                        exit->setProbability(p);
+
+                        auto& edges = view.mutableEdges();
+                        auto& nodes = view.mutableNodes();
+                        size_t removedEdges = edges.erase(edge);
+                        size_t removedNodes = 0;
+                        for (auto n : inputs) {
+                            if (!n) continue;
+                            // Drop isolated fact inputs to avoid keeping pruned nodes alive.
+                            if (n->getIncomingEdges().empty() && n->getOutgoingEdges().size() == 1) {
+                                if (nodes.erase(n) > 0) {
+                                    ++removedNodes;
+                                }
+                            }
+                        }
+                        stats.numEdgesRemoved += removedEdges;
+                        stats.numNodesRemoved += removedNodes;
+                        stats.totalRandomVars += regionRandomVars;
+                        stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
+                        view.invalidateCaches();
+
+                        if (debug) {
+                            std::cout << "[GraphRewriter]   Fast-path all-facts "
+                                      << regionToString(region)
+                                      << " -> exit prob=" << p
+                                      << " removedEdges=" << removedEdges
+                                      << " removedNodes=" << removedNodes
+                                      << " randomVars=" << regionRandomVars
+                                      << std::endl;
+                        }
+                        ++rewrittenThisRound;
+                        ++stats.numRegionsRewritten;
+                        continue;
+                    }
                     case SISORegionKind::SingleHyperedge:
+                    case SISORegionKind::LinearTwoEdge:
+                    case SISORegionKind::ParallelTwoEdge:
                         if (debug) {
                             std::cout << "[GraphRewriter]   Fast-path placeholder for region "
                                       << regionToString(region) << " kind=" << static_cast<int>(region.kind)
@@ -267,6 +334,15 @@ public:
 
             auto iterMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - iterStart).count();
+
+            std::cout << "[GraphRewriter] Iteration " << stats.numIterations
+                      << " detected(single=" << detectedSingle
+                      << ", linear=" << detectedLinear
+                      << ", parallel=" << detectedParallel
+                      << ", all-facts=" << detectedAllFacts
+                      << ", general=" << detectedGeneral
+                      << "), rewritten(total=" << rewrittenThisRound
+                      << ") in " << iterMs << " ms" << std::endl;
 
             size_t iterRandomVarsAfter = countRandomVarsInView(view);
             stats.randomVarsAfter = iterRandomVarsAfter;
