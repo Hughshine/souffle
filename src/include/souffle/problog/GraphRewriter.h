@@ -37,6 +37,20 @@ struct GraphRewriteStats {
 };
 
 /**
+ * Feature switches for SISO detection / rewrite passes.
+ * All flags default to true to preserve current behavior.
+ */
+struct RewriteFeatureFlags {
+    bool enableSingleHyperedge  = true;
+    bool enableAllFactsToSO     = true;
+    bool enableLinearTwoEdge    = true;
+    bool enableParallelEdge     = true;   ///< detection only; rewrite is still placeholder
+    bool enableFanOutConverge   = true;
+    bool enableGeneral          = true;   ///< fallback BDD-based rewrite
+    bool enableCompaction       = true;   ///< edge compaction after each SISO pass
+};
+
+/**
  * Implements SISO-based dependency decomposition.
  *
  * Repeatedly finds SISO regions in the working view, summarizes each region
@@ -51,10 +65,12 @@ public:
     * @param graph   Underlying derivation graph. Only extended (new hyperedges).
     * @param view    Working view mutated in-place (nodes/edges removed or added).
     * @param debug   If true, emit per-region tracing to stdout.
+    * @param flags   Feature switches controlling which SISO kinds / passes are enabled.
     */
     GraphRewriteStats rewriteUntilFixpoint(IncrementalDerivationGraph& graph,
                                            IncSubgraphView& view,
-                                           bool debug = false) const {
+                                           bool debug = false,
+                                           const RewriteFeatureFlags& flags = RewriteFeatureFlags{}) const {
         GraphRewriteStats stats;
         view.invalidateCaches();
         std::unique_ptr<WeightedBDDManager> bddManager;
@@ -93,6 +109,39 @@ public:
             }
             auto detectStart = std::chrono::steady_clock::now();
             auto regions = GraphAnalyzer::detectAllSISOStrictFromExit(view);
+            // Filter by enabled flags.
+            if (!flags.enableSingleHyperedge || !flags.enableAllFactsToSO ||
+                    !flags.enableLinearTwoEdge || !flags.enableParallelEdge ||
+                    !flags.enableFanOutConverge || !flags.enableGeneral) {
+                std::vector<SISORegionInfo> filtered;
+                filtered.reserve(regions.size());
+                for (const auto& r : regions) {
+                    switch (r.kind) {
+                        case SISORegionKind::SingleHyperedge:
+                            if (!flags.enableSingleHyperedge) continue;
+                            break;
+                        case SISORegionKind::AllFactsToSO:
+                            if (!flags.enableAllFactsToSO) continue;
+                            break;
+                        case SISORegionKind::LinearTwoEdge:
+                            if (!flags.enableLinearTwoEdge) continue;
+                            break;
+                        case SISORegionKind::ParallelEdge:
+                            if (!flags.enableParallelEdge) continue;
+                            break;
+                        case SISORegionKind::FanOutConverge:
+                            if (!flags.enableFanOutConverge) continue;
+                            break;
+                        case SISORegionKind::General:
+                            if (!flags.enableGeneral) continue;
+                            break;
+                        default:
+                            break;
+                    }
+                    filtered.push_back(r);
+                }
+                regions.swap(filtered);
+            }
             double detectMs = toMs(std::chrono::steady_clock::now() - detectStart);
             std::cout << "[GraphRewriter] SISO detection took "
                       << detectMs << " ms" << std::endl;
@@ -467,6 +516,9 @@ public:
                         continue;
                     }
                     default:
+                        if (!flags.enableGeneral) {
+                            continue;
+                        }
                         continue;
                 }
 
@@ -603,84 +655,88 @@ public:
             if (loopSkipMs < 0) loopSkipMs = 0.0;
 
             // After each SISO pass, compact edges by absorbing pure fact inputs into edge probability.
-            auto compactStart = std::chrono::steady_clock::now();
+            double compactMs = 0.0;
+            double edgeListMs = 0.0;
             size_t compactedEdges = 0, compactRemovedEdges = 0, compactAddedEdges = 0, compactRemovedNodes = 0;
-            auto edgeListStart = std::chrono::steady_clock::now();
-            auto edgeList = view.getEdges();
-            double edgeListMs = toMs(std::chrono::steady_clock::now() - edgeListStart);
-            for (auto edge : edgeList) {
-                if (!edge) continue;
-                auto inputs = view.getInputs(edge);
-                if (inputs.empty()) continue;
-                std::vector<NodePtr> keepInputs;
-                std::vector<NodePtr> factInputs;
-                auto negs = view.getBodyNegations(edge);
-                double p = edge->getProbability();
-                if (p < 0.0) p = 0.0;
-                if (p > 1.0) p = 1.0;
-                bool changed = false;
-                for (size_t idx = 0; idx < inputs.size(); ++idx) {
-                    auto n = inputs[idx];
-                    if (!n) continue;
-                    if (n->isFact && !n->hasEvidence() && !n->needOutput) {
-                        // absorb only if fact has exactly one outgoing edge (this edge)
-                        auto outs = view.getOutgoingEdges(n);
-                        if (outs.size() != 1 || outs[0] != edge) {
+            if (flags.enableCompaction) {
+                auto compactStart = std::chrono::steady_clock::now();
+                auto edgeListStart = std::chrono::steady_clock::now();
+                auto edgeList = view.getEdges();
+                edgeListMs = toMs(std::chrono::steady_clock::now() - edgeListStart);
+                for (auto edge : edgeList) {
+                    if (!edge) continue;
+                    auto inputs = view.getInputs(edge);
+                    if (inputs.empty()) continue;
+                    std::vector<NodePtr> keepInputs;
+                    std::vector<NodePtr> factInputs;
+                    auto negs = view.getBodyNegations(edge);
+                    double p = edge->getProbability();
+                    if (p < 0.0) p = 0.0;
+                    if (p > 1.0) p = 1.0;
+                    bool changed = false;
+                    for (size_t idx = 0; idx < inputs.size(); ++idx) {
+                        auto n = inputs[idx];
+                        if (!n) continue;
+                        if (n->isFact && !n->hasEvidence() && !n->needOutput) {
+                            // absorb only if fact has exactly one outgoing edge (this edge)
+                            auto outs = view.getOutgoingEdges(n);
+                            if (outs.size() != 1 || outs[0] != edge) {
+                                keepInputs.push_back(n);
+                                continue;
+                            }
+                            double np = n->getProbability();
+                            if (np < 0.0) np = 0.0;
+                            if (np > 1.0) np = 1.0;
+                            bool isNeg = (idx < negs.size() ? negs[idx] : false);
+                            p *= isNeg ? (1.0 - np) : np;
+                            factInputs.push_back(n);
+                            changed = true;
+                        } else {
                             keepInputs.push_back(n);
-                            continue;
-                        }
-                        double np = n->getProbability();
-                        if (np < 0.0) np = 0.0;
-                        if (np > 1.0) np = 1.0;
-                        bool isNeg = (idx < negs.size() ? negs[idx] : false);
-                        p *= isNeg ? (1.0 - np) : np;
-                        factInputs.push_back(n);
-                        changed = true;
-                    } else {
-                        keepInputs.push_back(n);
-                    }
-                }
-                // If nothing to absorb or no non-fact inputs remain, skip.
-                if (!changed || keepInputs.empty()) continue;
-
-                EdgePtr newEdge = graph.createHyperedge(keepInputs, edge->getOutput());
-                if (!newEdge) continue;
-                newEdge->setProbability(p);
-
-                auto& edges = view.mutableEdges();
-                auto& nodes = view.mutableNodes();
-                if (edges.erase(edge) > 0) {
-                    ++compactRemovedEdges;
-                }
-                edges.insert(newEdge);
-                ++compactAddedEdges;
-
-                // Remove fact inputs that became isolated.
-                for (auto n : factInputs) {
-                    if (!n) continue;
-                    if (view.getIncomingEdges(n).empty() && view.getOutgoingEdges(n).empty()) {
-                        if (nodes.erase(n) > 0) {
-                            ++compactRemovedNodes;
                         }
                     }
+                    // If nothing to absorb or no non-fact inputs remain, skip.
+                    if (!changed || keepInputs.empty()) continue;
+
+                    EdgePtr newEdge = graph.createHyperedge(keepInputs, edge->getOutput());
+                    if (!newEdge) continue;
+                    newEdge->setProbability(p);
+
+                    auto& edges = view.mutableEdges();
+                    auto& nodes = view.mutableNodes();
+                    if (edges.erase(edge) > 0) {
+                        ++compactRemovedEdges;
+                    }
+                    edges.insert(newEdge);
+                    ++compactAddedEdges;
+
+                    // Remove fact inputs that became isolated.
+                    for (auto n : factInputs) {
+                        if (!n) continue;
+                        if (view.getIncomingEdges(n).empty() && view.getOutgoingEdges(n).empty()) {
+                            if (nodes.erase(n) > 0) {
+                                ++compactRemovedNodes;
+                            }
+                        }
+                    }
+
+                    ++compactedEdges;
                 }
+                compactMs = toMs(std::chrono::steady_clock::now() - compactStart);
 
-                ++compactedEdges;
-            }
-            double compactMs = toMs(std::chrono::steady_clock::now() - compactStart);
-
-            if (compactedEdges > 0) {
-                stats.numEdgesRemoved += compactRemovedEdges;
-                stats.numEdgesAdded += compactAddedEdges;
-                stats.numNodesRemoved += compactRemovedNodes;
-                view.invalidateCaches();
-                if (debug) {
-                    std::cout << "[GraphRewriter]   Edge compaction: compacted=" << compactedEdges
-                              << " removedEdges=" << compactRemovedEdges
-                              << " addedEdges=" << compactAddedEdges
-                              << " removedNodes=" << compactRemovedNodes
-                              << " time=" << compactMs << " ms"
-                              << std::endl;
+                if (compactedEdges > 0) {
+                    stats.numEdgesRemoved += compactRemovedEdges;
+                    stats.numEdgesAdded += compactAddedEdges;
+                    stats.numNodesRemoved += compactRemovedNodes;
+                    view.invalidateCaches();
+                    if (debug) {
+                        std::cout << "[GraphRewriter]   Edge compaction: compacted=" << compactedEdges
+                                  << " removedEdges=" << compactRemovedEdges
+                                  << " addedEdges=" << compactAddedEdges
+                                  << " removedNodes=" << compactRemovedNodes
+                                  << " time=" << compactMs << " ms"
+                                  << std::endl;
+                    }
                 }
             }
 
