@@ -193,7 +193,7 @@ inline void runSddPipeline(
 
     std::map<NodePtr, SddNodeRef> nodeFormulas;
     std::map<EdgePtr, SddNodeRef> edgeFormulas;
-    SddFormulaManager sddManager(view.getNodes().size() + view.getEdges().size());
+    SddFormulaManager sddManager;
     const bool computeProbabilities = !opt.isDerivationOnly();
 
     if (computeProbabilities) {
@@ -212,6 +212,7 @@ inline void runSddPipeline(
         for (const auto& [node, sdd] : nodeFormulas) {
             probResult[node] = sddManager.computeWeightedModelCount(sdd);
         }
+        view.dumpStatistics(std::cout);
         auto t3 = std::chrono::steady_clock::now();
         std::cout << "[pipeline] SDD WMC took "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()

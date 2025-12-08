@@ -317,8 +317,7 @@ void buildFormulasCyclewise(
             round++;
             std::cout << "Round: " << round << std::endl;
             std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
-
-//            formulaManager.dumpProfilingStatistics();
+            formulaManager.dumpProfilingStatistics();
 
             EdgePtr edge = worklist.top().edge;
             size_t depth = worklist.top().priority;

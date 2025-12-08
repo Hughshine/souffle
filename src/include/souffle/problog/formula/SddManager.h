@@ -4,115 +4,213 @@
 #ifndef SDDMANAGER_H
 #define SDDMANAGER_H
 
-#include <vector>
-#include <string>
 #include <sdd/sdd.h>
-#include <iostream>
-#include <cassert>
+#include <memory>
+#include <string>
+#include <vector>
 #include <unordered_map>
-#include <fstream>
-#include <algorithm>
-#include "FormulaManager.h"
-#include "souffle/problog/formula/GraphHeuristics.h"
+#include <stdexcept>
+#include <iostream>
+#include <cmath>
+#include <optional>
+#include <cstdint>
 
-using NodeRef = SddNode*;
-using Literal = int;
-using Weight = double;
+#include "souffle/problog/formula/FormulaManager.h"
+#include "souffle/problog/DerivationGraph.h"
+#include "souffle/problog/debug/Debugger.h"
 
 class SddNodeRef {
     friend class SddFormulaManager;
-
 public:
-    SddNodeRef() : manager_(nullptr), node_(nullptr) {}
+    SddNodeRef() : ptr_(nullptr), mgr_(nullptr) {}
 
-    SddNodeRef(std::shared_ptr<SddManager> m, SddNode* n)
-        : manager_(std::move(m)), node_(n) {
-        if (node_) sdd_ref(node_, manager_.get());
+    SddNodeRef(SddManager* m, SddNode* n) : ptr_(n), mgr_(m) {
+        if (ptr_) sdd_ref(ptr_, mgr_);
+    }
+
+    SddNodeRef(SddManager* m, SddNode* n, const Node& node)
+        : ptr_(n), mgr_(m), node(&node) {
+        if (ptr_) sdd_ref(ptr_, mgr_);
+    }
+
+    SddNodeRef(SddManager* m, SddNode* n, const Hyperedge& edge)
+        : ptr_(n), mgr_(m), edge(&edge) {
+        if (ptr_) sdd_ref(ptr_, mgr_);
     }
 
     SddNodeRef(const SddNodeRef& other)
-        : manager_(other.manager_), node_(other.node_) {
-        if (node_) sdd_ref(node_, manager_.get());
+        : ptr_(other.ptr_), mgr_(other.mgr_), node(other.node), edge(other.edge) {
+        if (ptr_) sdd_ref(ptr_, mgr_);
     }
 
     SddNodeRef& operator=(const SddNodeRef& other) {
         if (this != &other) {
-            if (node_ && manager_) sdd_deref(node_, manager_.get());
-            manager_ = other.manager_;
-            node_ = other.node_;
-            if (node_) sdd_ref(node_, manager_.get());
+            if (ptr_ && mgr_) sdd_deref(ptr_, mgr_);
+            ptr_ = other.ptr_;
+            mgr_ = other.mgr_;
+            node = other.node;
+            edge = other.edge;
+            if (ptr_) sdd_ref(ptr_, mgr_);
         }
         return *this;
     }
 
     SddNodeRef(SddNodeRef&& other) noexcept
-        : manager_(std::move(other.manager_)), node_(other.node_) {
-        other.node_ = nullptr;
+        : ptr_(other.ptr_), mgr_(other.mgr_),
+          node(other.node), edge(other.edge) {
+        other.ptr_ = nullptr;
     }
 
     SddNodeRef& operator=(SddNodeRef&& other) noexcept {
         if (this != &other) {
-            if (node_ && manager_) sdd_deref(node_, manager_.get());
-            manager_ = std::move(other.manager_);
-            node_ = other.node_;
-            other.node_ = nullptr;
+            if (ptr_ && mgr_) sdd_deref(ptr_, mgr_);
+            ptr_ = other.ptr_;
+            mgr_ = other.mgr_;
+            node = other.node;
+            edge = other.edge;
+            other.ptr_ = nullptr;
         }
         return *this;
     }
 
     ~SddNodeRef() {
-        if (node_ && manager_) sdd_deref(node_, manager_.get());
+        if (ptr_ && mgr_) sdd_deref(ptr_, mgr_);
     }
 
-    SddNode* get() const { return node_; }
-    operator bool() const { return node_ != nullptr; }
-    bool operator==(const SddNodeRef& other) const { return node_ == other.node_; }
-    bool operator!=(const SddNodeRef& other) const { return node_ != other.node_; }
+    SddNode* get() const { return ptr_; }
 
 private:
-    std::shared_ptr<SddManager> manager_;
-    SddNode* node_;
+    SddNode* ptr_;
+    SddManager* mgr_;
+    std::optional<const Node*> node;
+    std::optional<const Hyperedge*> edge;
 };
+
+struct SddVariableWeight {
+    double posWeight;  // Weight when variable is true
+    double negWeight;  // Weight when variable is false
+};
+
+// PySDD 包装了这个 先留个位置 以后对vtree操作可能要用
+class VtreeWrapper {
+private:
+    Vtree* vtree_;
+    bool is_ref_;
+public:
+    explicit VtreeWrapper(const std::string& filename) : is_ref_(false) {
+        vtree_ = sdd_vtree_read(filename.c_str());
+        if (!vtree_) {
+            throw std::runtime_error("sdd_vtree_read failed: " + filename);
+        }
+    }
+
+    VtreeWrapper(
+            SddLiteral var_count,
+            const std::vector<SddLiteral>& var_order = {},
+            const std::string& type = "balanced",
+            const std::vector<SddLiteral>& is_X_var = {}
+    ) : is_ref_(false) {
+        std::vector<SddLiteral> order = var_order;
+        if (order.empty()) {
+            order.resize(var_count);
+            for (SddLiteral i = 1; i <= var_count; ++i) {
+                order[i - 1] = i;
+            }
+        }
+
+        if (!is_X_var.empty()) {
+            vtree_ = sdd_vtree_new_X_constrained(
+                    var_count,
+                    const_cast<SddLiteral*>(is_X_var.data()),
+                    type.c_str());
+        } else {
+            vtree_ = sdd_vtree_new_with_var_order(
+                    var_count,
+                    order.data(),
+                    type.c_str());
+        }
+
+        if (!vtree_) {
+            throw std::runtime_error(
+                    "Failed to construct vtree with var_count:" +
+                    std::to_string(var_count));
+        }
+    }
+
+    VtreeWrapper(VtreeWrapper&& other) noexcept
+        : vtree_(other.vtree_), is_ref_(other.is_ref_) {
+        other.vtree_ = nullptr;
+        other.is_ref_ = false;
+    }
+
+    VtreeWrapper& operator=(VtreeWrapper&& other) noexcept {
+        if (this != &other) {
+            if (vtree_ && !is_ref_) sdd_vtree_free(vtree_);
+            vtree_ = other.vtree_;
+            is_ref_ = other.is_ref_;
+            other.vtree_ = nullptr;
+            other.is_ref_ = false;
+        }
+        return *this;
+    }
+
+    ~VtreeWrapper() {
+        if (vtree_ && !is_ref_) sdd_vtree_free(vtree_);
+    }
+
+    // For subtree reference case (internal use)
+    VtreeWrapper(::Vtree* raw_ptr, bool is_ref)
+        : vtree_(raw_ptr), is_ref_(is_ref) {}
+
+    SddLiteral var() const { return sdd_vtree_var(vtree_); }
+    bool is_leaf() const { return sdd_vtree_is_leaf(vtree_); }
+
+    VtreeWrapper left() const {
+        return VtreeWrapper(sdd_vtree_left(vtree_), true);
+    }
+
+    VtreeWrapper right() const {
+        return VtreeWrapper(sdd_vtree_right(vtree_), true);
+    }
+
+    Vtree* getVtree() const { return vtree_; }
+};
+
 
 class SddFormulaManager : public DDManager<SddNodeRef> {
 public:
-    explicit SddFormulaManager(int var_count = 1000 );
-    ~SddFormulaManager() override = default;
-    void preConfig(DerivationGraphViewInterface& view) override;
-
-    int getVarIndex(const Node& node) override {
-        auto it = nodeIndex_.find(&node);
-        if (it != nodeIndex_.end()) return it->second;
-        int idx = nextVarIndex_++;  // SDD literals start from 1
-        nodeIndex_[&node] = idx;
-        return idx;
-    }
-    int getVarIndex(const Hyperedge& edge) override {
-        auto it = edgeIndex_.find(&edge);
-        if (it != edgeIndex_.end()) return it->second;
-        int idx = nextVarIndex_++;
-        edgeIndex_[&edge] = idx;
-        return idx;
-    }
+    SddFormulaManager(
+            SddLiteral var_count = 0,
+            bool auto_gc_and_minimize = false
+            );
+    ~SddFormulaManager() override;
 
     SddNodeRef createVar(int index) override;
     SddNodeRef createVar(int index, const Node& node) override;
     SddNodeRef createVar(int index, const Hyperedge& edge) override;
-
     SddNodeRef makeAnd(const SddNodeRef& a, const SddNodeRef& b) override;
     SddNodeRef makeAnd(const std::vector<SddNodeRef>& nodes) override;
     SddNodeRef makeOr(const SddNodeRef& a, const SddNodeRef& b) override;
     SddNodeRef makeOr(const std::vector<SddNodeRef>& nodes) override;
     SddNodeRef makeNot(const SddNodeRef& a) override;
-    SddNodeRef makeCondition(const SddNodeRef& f,
-        const std::vector<int>& trueIndexes, const std::vector<int>& falseIndexes) override;
+    SddNodeRef makeCondition(
+            const SddNodeRef& f,
+            const std::vector<int>& trueIndexes,
+            const std::vector<int>& falseIndexes) override;
 
     SddNodeRef getTrue() override;
     SddNodeRef getFalse() override;
 
     bool isSame(const SddNodeRef& a, const SddNodeRef& b) override;
 
-    void setVariableWeight(int varIndex, Weight posWeight, Weight negWeight) override;
+    std::vector<double> buildWeightArray() const;
+    void setLiteralWeightsFromArray(
+            const std::vector<double>& weights,
+            WmcManager* wmc_);
+    void setVariableWeight(
+            int varIndex,
+            double posWeight,
+            double negWeight) override;
     double computeWeightedModelCount(const SddNodeRef& node) override;
 
     void printInfo(const SddNodeRef& node, const std::string& name) override;
@@ -123,109 +221,196 @@ public:
     }
 
     std::string toString(const SddNodeRef& node) override {
-        return "[SDD node@" + std::to_string(reinterpret_cast<std::uintptr_t>(node.get())) + "]";
+        return "[SDD node@" +
+               std::to_string(
+                       reinterpret_cast<std::uintptr_t>(node.get())) + "]";
     }
 
 private:
-    std::shared_ptr<SddManager> manager_;
-    std::unordered_map<int, std::pair<Weight, Weight>> weight_map_;
-    std::unordered_map<int, const Node*> node_map_;
-    std::unordered_map<int, const Hyperedge*> edge_map_;
-    BDDForceHeuristics heuristics_;
-    int var_count_;
-    int nextVarIndex_ = 1;  // SDD uses 1-based literals
-    std::unordered_map<const Node*, int> nodeIndex_;
-    std::unordered_map<const Hyperedge*, int> edgeIndex_;
+    SddManager* manager_;
+    bool auto_gc_;
+    std::shared_ptr<VtreeWrapper> vtree_;
+    Debugger& debugger_;
 
-    void configureManagerLimits(SddManager* raw_mgr);
-    void rebuildManagerWithOrder(const std::vector<SddLiteral>& order);
-    std::vector<SddLiteral> buildLiteralOrder(const std::vector<int>& heuristicOrder) const;
+    // rawId -> internalId 映射
+    std::unordered_map<int,int> rawToInternal;
 
+    // 当前 manager 中已经分配的 internal 变量个数 (1..nextInternalVar)
+    int nextInternalVar = 0;
+
+    // 权重：internalId -> weight
+    std::unordered_map<int, SddVariableWeight> weight_map_;
+
+    // internalId -> SddNodeRef（literal 缓存）
+    std::unordered_map<int, SddNodeRef> variableRegistry;
+    std::unordered_map<int, SddLiteral> atom2var;
+    std::unordered_map<int, SddLiteral> var2atom;
+    // 对应 ProbLog weights[0]：True 的全局权重
+    bool hasGlobalTrueWeight_ = false;
+    double globalTrueWeight_ = 1.0;
 };
 
-inline SddFormulaManager::SddFormulaManager(int var_count) {
-    var_count_ = std::max(1, var_count);
-    Vtree* vtree = sdd_vtree_new(var_count_, "balanced");
-    SddManager* raw_mgr = sdd_manager_new(vtree);
-    configureManagerLimits(raw_mgr);
-    manager_ = std::shared_ptr<SddManager>(raw_mgr, sdd_manager_free);
-    sdd_manager_garbage_collect(manager_.get());
-    sdd_manager_minimize_limited(manager_.get());
-}
 
-inline void SddFormulaManager::configureManagerLimits(SddManager* raw_mgr) {
-    sdd_manager_set_vtree_apply_time_limit(5.0, raw_mgr);
-    sdd_manager_set_vtree_cartesian_product_limit(1000000, raw_mgr);
-    sdd_manager_set_vtree_operation_memory_limit(500, raw_mgr);
-    sdd_manager_set_vtree_search_time_limit(2, raw_mgr);
-    sdd_manager_auto_gc_and_minimize_on(raw_mgr);
-}
+// ======================= 构造 / 析构 =======================
 
-inline std::vector<SddLiteral> SddFormulaManager::buildLiteralOrder(
-        const std::vector<int>& heuristicOrder) const {
-    std::vector<SddLiteral> order;
-    order.reserve(var_count_);
-    std::vector<char> seen(var_count_, 0);
+inline SddFormulaManager::SddFormulaManager(
+        SddLiteral var_count,
+        bool auto_gc_and_minimize
+        )
+    : manager_(nullptr),
+      auto_gc_(auto_gc_and_minimize),
+      debugger_(Debugger::getInstance()) {
 
-    for (int var : heuristicOrder) {
-        int lit = var + 1;
-        if (lit <= 0 || lit > var_count_) continue;
-        if (seen[lit - 1]) continue;
-        order.push_back(lit);
-        seen[lit - 1] = 1;
+    if (var_count <= 0) {var_count = 1;}
+    vtree_ = nullptr;
+    std::cout << "using vtree: " << vtree_ << std::endl;
+    manager_ = sdd_manager_create(var_count, 0);
+
+        std::cout << "[SDD][Init] var_count=" << var_count
+                  << " auto_gc=" << auto_gc_and_minimize
+                  << " vtree=" << (vtree_ ? "YES" : "NO")
+                  << std::endl;
+
+        std::cout << "[SDD][Init] manager var_count = "
+                  << sdd_manager_var_count(manager_) << std::endl;
+
+
+        nextInternalVar = static_cast<int>(sdd_manager_var_count(manager_));
     }
 
-    for (int lit = 1; lit <= var_count_; ++lit) {
-        if (!seen[lit - 1]) order.push_back(lit);
+inline SddFormulaManager::~SddFormulaManager() {
+    if (manager_) {
+        sdd_manager_free(manager_);
+        manager_ = nullptr;
     }
-
-    return order;
 }
 
-inline void SddFormulaManager::rebuildManagerWithOrder(const std::vector<SddLiteral>& order) {
-    Vtree* vtree = nullptr;
-    if (!order.empty()) {
-        std::vector<SddLiteral> tmp(order);
-        vtree = sdd_vtree_new_with_var_order(var_count_, tmp.data(), "balanced");
+
+// =============== rawIndex -> internalIndex 统一映射 ===============
+
+inline SddNodeRef SddFormulaManager::createVar(int rawIndex) {
+    if (rawIndex <= 0) {
+        throw std::runtime_error("SDD variable index must be >= 1");
+    }
+
+    int internal;
+    auto it = rawToInternal.find(rawIndex);
+    if (it == rawToInternal.end()) {
+        internal = ++nextInternalVar;
+        rawToInternal[rawIndex] = internal;
+
+        int varCount = sdd_manager_var_count(manager_);
+        if (varCount < internal) {
+            sdd_manager_add_var_after_last(manager_);
+        }
     } else {
-        vtree = sdd_vtree_new(var_count_, "balanced");
+        internal = it->second;
     }
 
-    SddManager* raw_mgr = sdd_manager_new(vtree);
-    configureManagerLimits(raw_mgr);
-    manager_.reset(raw_mgr, sdd_manager_free);
-    sdd_manager_garbage_collect(manager_.get());
-    sdd_manager_minimize_limited(manager_.get());
+    auto litIt = variableRegistry.find(internal);
+    if (litIt != variableRegistry.end()) {
+        return litIt->second;
+    }
+
+    SddNode* var = sdd_manager_literal(internal, manager_);
+    if (!var) {
+        throw std::runtime_error("Failed to create SDD literal");
+    }
+
+    SddNodeRef ref(manager_, var);
+    variableRegistry[internal] = ref;
+    return ref;
 }
 
-inline void SddFormulaManager::preConfig(DerivationGraphViewInterface& view) {
-    heuristics_.compute(view);
-    auto literalOrder = buildLiteralOrder(heuristics_.getOrder());
-    rebuildManagerWithOrder(literalOrder);
+inline SddNodeRef SddFormulaManager::createVar(int rawIndex, const Node& node) {
+    if (rawIndex <= 0) {
+        throw std::runtime_error("SDD variable index must be >= 1");
+    }
+
+    int internal;
+    auto it = rawToInternal.find(rawIndex);
+    if (it == rawToInternal.end()) {
+        internal = ++nextInternalVar;
+        rawToInternal[rawIndex] = internal;
+
+        int varCount = sdd_manager_var_count(manager_);
+        if (varCount < internal) {
+            sdd_manager_add_var_after_last(manager_);
+        }
+    } else {
+        internal = it->second;
+    }
+
+    auto rit = variableRegistry.find(internal);
+    if (rit != variableRegistry.end()) {
+        return rit->second;
+    }
+
+    SddNode* lit = sdd_manager_literal(internal, manager_);
+    if (!lit) {
+        throw std::runtime_error("Failed to create SDD literal");
+    }
+
+    SddNodeRef ref(manager_, lit, node);
+    variableRegistry[internal] = ref;
+
+
+    return ref;
+}
+
+inline SddNodeRef SddFormulaManager::createVar(int rawIndex, const Hyperedge& edge) {
+    if (rawIndex <= 0) {
+        throw std::runtime_error("SDD variable index must be >= 1");
+    }
+
+    int internal;
+    auto it = rawToInternal.find(rawIndex);
+    if (it == rawToInternal.end()) {
+        internal = ++nextInternalVar;
+        rawToInternal[rawIndex] = internal;
+
+        int varCount = sdd_manager_var_count(manager_);
+        if (varCount < internal) {
+            sdd_manager_add_var_after_last(manager_);
+        }
+    } else {
+        internal = it->second;
+    }
+
+    auto rit = variableRegistry.find(internal);
+    if (rit != variableRegistry.end()) {
+        return rit->second;
+    }
+
+    SddNode* lit = sdd_manager_literal(internal, manager_);
+    if (!lit) {
+        throw std::runtime_error("Failed to create SDD literal");
+    }
+
+    SddNodeRef ref(manager_, lit, edge);
+    variableRegistry[internal] = ref;
+
+
+    return ref;
 }
 
 
+// ========================= 布尔操作 =========================
 
-SddNodeRef SddFormulaManager::createVar(int rawId) {
-    int index = rawId;
-    assert(index > 0 && "SDD literals are 1-based");
-    return SddNodeRef(manager_, sdd_manager_literal(index, manager_.get()));
+inline SddNodeRef SddFormulaManager::makeAnd(
+        const SddNodeRef& a, const SddNodeRef& b) {
+    if (!a.get() || !b.get()) {
+        throw std::runtime_error("makeAnd received null SDD node");
+    }
+    SddNode* res = sdd_conjoin(a.get(), b.get(), manager_);
+    if (!res) {
+        throw std::runtime_error("sdd_conjoin failed");
+    }
+    return SddNodeRef(manager_, res);
 }
 
-SddNodeRef SddFormulaManager::createVar(int index, const Node& node) {
-    node_map_[index] = &node;
-    return createVar(index);
-}
-SddNodeRef SddFormulaManager::createVar(int index, const Hyperedge& edge) {
-    edge_map_[index] = &edge;
-    return createVar(index);
-}
-
-inline SddNodeRef SddFormulaManager::makeAnd(const SddNodeRef& a, const SddNodeRef& b) {
-    return SddNodeRef(manager_, sdd_conjoin(a.get(), b.get(), manager_.get()));
-}
-
-inline SddNodeRef SddFormulaManager::makeAnd(const std::vector<SddNodeRef>& nodes) {
+inline SddNodeRef SddFormulaManager::makeAnd(
+        const std::vector<SddNodeRef>& nodes) {
     if (nodes.empty()) return getTrue();
     SddNodeRef result = nodes[0];
     for (size_t i = 1; i < nodes.size(); ++i) {
@@ -234,11 +419,16 @@ inline SddNodeRef SddFormulaManager::makeAnd(const std::vector<SddNodeRef>& node
     return result;
 }
 
-inline SddNodeRef SddFormulaManager::makeOr(const SddNodeRef& a, const SddNodeRef& b) {
-    return SddNodeRef(manager_, sdd_disjoin(a.get(), b.get(), manager_.get()));
+inline SddNodeRef SddFormulaManager::makeOr(
+        const SddNodeRef& a, const SddNodeRef& b) {
+    if (!a.get() || !b.get()) {
+        throw std::runtime_error("makeOr received null SDD node");
+    }
+    return SddNodeRef(manager_, sdd_disjoin(a.get(), b.get(), manager_));
 }
 
-inline SddNodeRef SddFormulaManager::makeOr(const std::vector<SddNodeRef>& nodes) {
+inline SddNodeRef SddFormulaManager::makeOr(
+        const std::vector<SddNodeRef>& nodes) {
     if (nodes.empty()) return getFalse();
     SddNodeRef result = nodes[0];
     for (size_t i = 1; i < nodes.size(); ++i) {
@@ -248,96 +438,222 @@ inline SddNodeRef SddFormulaManager::makeOr(const std::vector<SddNodeRef>& nodes
 }
 
 inline SddNodeRef SddFormulaManager::makeNot(const SddNodeRef& a) {
-    return SddNodeRef(manager_, sdd_negate(a.get(), manager_.get()));
+    return SddNodeRef(manager_, sdd_negate(a.get(), manager_));
 }
 
 inline SddNodeRef SddFormulaManager::getTrue() {
-    return SddNodeRef(manager_, sdd_manager_true(manager_.get()));
+    return SddNodeRef(manager_, sdd_manager_true(manager_));
 }
 
 inline SddNodeRef SddFormulaManager::getFalse() {
-    return SddNodeRef(manager_, sdd_manager_false(manager_.get()));
+    return SddNodeRef(manager_, sdd_manager_false(manager_));
 }
 
-inline SddNodeRef SddFormulaManager::makeCondition(const SddNodeRef& f,
-        const std::vector<int>& trueIndexes, const std::vector<int>& falseIndexes) {
-    SddNodeRef result;
-    for (int index : trueIndexes) {
-        result = SddNodeRef(manager_, sdd_condition(index, f.get(), manager_.get()));
+
+// ========================= 条件化 =========================
+
+inline SddNodeRef SddFormulaManager::makeCondition(
+        const SddNodeRef& f,
+        const std::vector<int>& trueIndexes,
+        const std::vector<int>& falseIndexes) {
+    if (!f.get()) return f;
+
+    SddNodeRef result = f;
+
+    // 正 literal
+    for (int rawIdx : trueIndexes) {
+        if (rawIdx <= 0) {
+            throw std::runtime_error("SDD condition index must be >= 1");
+        }
+
+        int internal;
+        auto it = rawToInternal.find(rawIdx);
+        if (it == rawToInternal.end()) {
+            internal = ++nextInternalVar;
+            rawToInternal[rawIdx] = internal;
+
+            int varCount = sdd_manager_var_count(manager_);
+            while (varCount < internal) {
+                sdd_manager_add_var_after_last(manager_);
+                varCount = sdd_manager_var_count(manager_);
+            }
+        } else {
+            internal = it->second;
+        }
+
+        SddNode* conditioned =
+                sdd_condition(static_cast<SddLiteral>(internal),
+                              result.get(),
+                              manager_);
+        result = SddNodeRef(manager_, conditioned);
     }
-    for (int index : falseIndexes) {
-        result = SddNodeRef(manager_, sdd_condition(-index, f.get(), manager_.get()));
+
+    // 负 literal
+    for (int rawIdx : falseIndexes) {
+        if (rawIdx <= 0) {
+            throw std::runtime_error("SDD condition index must be >= 1");
+        }
+
+        int internal;
+        auto it = rawToInternal.find(rawIdx);
+        if (it == rawToInternal.end()) {
+            internal = ++nextInternalVar;
+            rawToInternal[rawIdx] = internal;
+
+            int varCount = sdd_manager_var_count(manager_);
+            while (varCount < internal) {
+                sdd_manager_add_var_after_last(manager_);
+                varCount = sdd_manager_var_count(manager_);
+            }
+        } else {
+            internal = it->second;
+        }
+
+        SddNode* conditioned =
+                sdd_condition(static_cast<SddLiteral>(-internal),
+                              result.get(),
+                              manager_);
+        result = SddNodeRef(manager_, conditioned);
     }
+
     return result;
 }
 
-inline bool SddFormulaManager::isSame(const SddNodeRef& a, const SddNodeRef& b) {
+
+// ========================= 权重 & WMC =========================
+
+inline bool SddFormulaManager::isSame(
+        const SddNodeRef& a, const SddNodeRef& b) {
     return a.get() == b.get();
 }
 
-void SddFormulaManager::setVariableWeight(int rawId, Weight posWeight, Weight negWeight) {
-    int index = rawId;
-    weight_map_[index] = { posWeight, negWeight };
+// rawIndex：0 特殊表示 True 权重，其余映射到 internalId
+inline void SddFormulaManager::setVariableWeight(
+        int rawIndex, double posWeight, double negWeight) {
+    // 0 -> 全局 True 权重，只用正项
+    if (rawIndex == 0) {
+        hasGlobalTrueWeight_ = true;
+        globalTrueWeight_ = posWeight;
+        return;
+    }
+
+    if (rawIndex < 0) {
+        throw std::runtime_error("SDD weight index must be >= 0");
+    }
+    if (rawIndex == 0) {
+        // 已在上面处理，这里只是防御
+        return;
+    }
+
+    int internal;
+    auto it = rawToInternal.find(rawIndex);
+    if (it == rawToInternal.end()) {
+        internal = ++nextInternalVar;
+        rawToInternal[rawIndex] = internal;
+
+        int varCount = sdd_manager_var_count(manager_);
+        while (varCount < internal) {
+            sdd_manager_add_var_after_last(manager_);
+            varCount = sdd_manager_var_count(manager_);
+        }
+    } else {
+        internal = it->second;
+    }
+
+    weight_map_[internal] = {posWeight, negWeight};
 }
 
-inline double SddFormulaManager::computeWeightedModelCount(const SddNodeRef& node) {
-    WmcManager* wmc = wmc_manager_new(node.get(), 0, manager_.get());
-    for (const auto& [var, weights] : weight_map_) {
-        wmc_set_literal_weight(var, weights.first, wmc);
-        wmc_set_literal_weight(-var, weights.second, wmc);
-    }
-    int var_count = sdd_manager_var_count(manager_.get());
-    for (int i = 1; i <= var_count; ++i) {
-        if (weight_map_.find(i) == weight_map_.end()) {
-            weight_map_[i] = {0.5, 0.5};
-        }
-    }
-    double result = wmc_propagate(wmc);
-    if (!std::isfinite(result)) {
-        auto describeVar = [&](int literal) {
-            auto itNode = node_map_.find(literal);
-            if (itNode != node_map_.end() && itNode->second) {
-                std::cerr << "    literal " << literal << " -> node tuple="
-                          << itNode->second->getTuple().toString()
-                          << ", prob=" << itNode->second->getProbability() << "\n";
-                return;
-            }
-            auto itEdge = edge_map_.find(literal);
-            if (itEdge != edge_map_.end() && itEdge->second) {
-                std::cerr << "    literal " << literal << " -> edge " << itEdge->second->toString()
-                          << ", prob=" << itEdge->second->getProbability() << "\n";
-                return;
-            }
-            std::cerr << "    literal " << literal << " -> (unknown origin)" << "\n";
-        };
+inline std::vector<double> SddFormulaManager::buildWeightArray() const {
+    int varCount = sdd_manager_var_count(manager_);
 
-        std::cerr << "[Error] WMC result is not finite: " << result << "\n";
-        for (const auto& [var, weights] : weight_map_) {
-            bool invalid = (weights.first < 0 || weights.second < 0 ||
-                            weights.first > 1 || weights.second > 1);
-            double sum = weights.first + weights.second;
-            if (invalid || std::fabs(sum - 1.0) > 1e-9) {
-                std::cerr << "  Var " << var << ": +=" << weights.first
-                          << ", -=" << weights.second
-                          << " (sum=" << sum << ")\n";
-                describeVar(var);
-            }
+    // layout:
+    //   weights[i]           = negWeight for var = i+1
+    //   weights[i+varCount]  = posWeight for var = i+1
+    std::vector<double> weights(varCount * 2, 0.0);
+
+    for (int i = 0; i < varCount; ++i) {
+        int internal = i + 1;
+
+        auto it = weight_map_.find(internal);
+        if (it != weight_map_.end()) {
+            weights[i] = it->second.negWeight;            // -internal
+            weights[i + varCount] = it->second.posWeight; // +internal
+        } else {
+            // 默认：neg = 0, pos = 1
+            weights[i] = 0.0;
+            weights[i + varCount] = 1.0;
         }
-        assert(false && "WMC result is NaN or Inf");
     }
+    return weights;
+}
+
+inline void SddFormulaManager::setLiteralWeightsFromArray(
+        const std::vector<double>& weights,
+        WmcManager* wmc_) {
+
+    int varCount = sdd_manager_var_count(manager_);
+    if (weights.size() != static_cast<size_t>(varCount * 2)) {
+        throw std::runtime_error(
+                "Weight array size mismatch: expected 2*varCount.");
+    }
+
+    for (int i = 0; i < varCount; ++i) {
+        int var = i + 1;
+        double neg = weights[i];
+        double pos = weights[i + varCount];
+        wmc_set_literal_weight(-var, neg, wmc_);
+        wmc_set_literal_weight( var, pos, wmc_);
+    }
+}
+
+inline double SddFormulaManager::computeWeightedModelCount(
+        const SddNodeRef& node) {
+    if (!node.get()) {
+        return 0.0;
+    }
+    WmcManager* wmc = wmc_manager_new(node.get(), 0, manager_);
+    auto weights = buildWeightArray();
+    setLiteralWeightsFromArray(weights, wmc);
+    double result = wmc_propagate(wmc);
     wmc_manager_free(wmc);
+
+    // 对应 ProbLog: 如果 weights[0] 存在，就乘上 True 的权重
+    if (hasGlobalTrueWeight_) {
+        result *= globalTrueWeight_;
+    }
+
     return result;
 }
 
-inline void SddFormulaManager::printInfo(const SddNodeRef& node, const std::string& name) {
+
+// ========================= Debug 输出 =========================
+
+inline void SddFormulaManager::printInfo(
+        const SddNodeRef& node, const std::string& name) {
     std::cout << "=== Info for: " << name << " ===\n";
     std::cout << "Size: " << sdd_size(node.get()) << "\n";
-    std::cout << "Model Count: " << sdd_model_count(node.get(), manager_.get()) << "\n";
+    std::cout << "Model Count: " << sdd_model_count(node.get(), manager_) << "\n";
 }
 
 inline void SddFormulaManager::dumpProfilingStatistics() {
-    std::cout << "Live nodes: " << sdd_manager_live_size(manager_.get()) << "\n";
-    std::cout << "Dead nodes: " << sdd_manager_dead_size(manager_.get()) << "\n";
+
+    auto n = sdd_manager_var_count(manager_);
+    auto approx = 2LL * n - 1;
+
+    auto v = sdd_manager_vtree(manager_);
+    std::cout << "[SDD][Chk] var_count=" << n
+          << " vtree_count=" << sdd_vtree_count(v)
+          << " expected~=" << approx
+          << "\n";
+    std::cout << "Vtree size:        " << sdd_vtree_size(v) << "\n";
+    std::cout << "Vtree live size:   " << sdd_vtree_live_size(v) << "\n";
+    std::cout << "Vtree dead size:   " << sdd_vtree_dead_size(v) << "\n";
+    std::cout << "Vtree count:       " << sdd_vtree_count(v) << "\n";
+    std::cout << "Vtree live count:  " << sdd_vtree_live_count(v) << "\n";
+    std::cout << "Vtree dead count:  " << sdd_vtree_dead_count(v) << "\n";
+
+    std::cout << "Live nodes: " << sdd_manager_live_size(manager_) << "\n";
+    std::cout << "Dead nodes: " << sdd_manager_dead_size(manager_) << "\n";
 }
 
 #endif // SDDMANAGER_H
