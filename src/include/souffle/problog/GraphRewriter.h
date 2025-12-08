@@ -614,17 +614,26 @@ public:
                 if (inputs.empty()) continue;
                 std::vector<NodePtr> keepInputs;
                 std::vector<NodePtr> factInputs;
+                auto negs = view.getBodyNegations(edge);
                 double p = edge->getProbability();
                 if (p < 0.0) p = 0.0;
                 if (p > 1.0) p = 1.0;
                 bool changed = false;
-                for (auto n : inputs) {
+                for (size_t idx = 0; idx < inputs.size(); ++idx) {
+                    auto n = inputs[idx];
                     if (!n) continue;
                     if (n->isFact && !n->hasEvidence() && !n->needOutput) {
+                        // absorb only if fact has exactly one outgoing edge (this edge)
+                        auto outs = view.getOutgoingEdges(n);
+                        if (outs.size() != 1 || outs[0] != edge) {
+                            keepInputs.push_back(n);
+                            continue;
+                        }
                         double np = n->getProbability();
                         if (np < 0.0) np = 0.0;
                         if (np > 1.0) np = 1.0;
-                        p *= np;
+                        bool isNeg = (idx < negs.size() ? negs[idx] : false);
+                        p *= isNeg ? (1.0 - np) : np;
                         factInputs.push_back(n);
                         changed = true;
                     } else {
