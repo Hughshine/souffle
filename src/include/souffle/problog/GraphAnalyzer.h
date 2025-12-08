@@ -26,6 +26,7 @@ enum class SISORegionKind {
     LinearTwoEdge,    // SI -> mid -> SO (two edges chain)
     ParallelEdge,  // >=2 parallel single-input edges SI -> SO
     AllFactsToSO,     // single edge, inputs all facts (no incoming edges or evidence/output)
+    FanOutConverge,   // SI fan-out to xi, then single AND edge xi... -> SO (polarity-aware)
 };
 
 struct SISORegionInfo {
@@ -140,10 +141,12 @@ private:
         long linearTwoEdgeMs   = 0;
         long parallelTwoEdgeMs = 0;
         long allFactsToSOMs    = 0;
+        long fanOutConvergeMs  = 0;
         size_t singleHyperedgeCount = 0;
         size_t linearTwoEdgeCount   = 0;
         size_t parallelTwoEdgeCount = 0;
         size_t allFactsToSOCount    = 0;
+        size_t fanOutConvergeCount  = 0;
     };
 
     // Fast-path detectors (<=2 edges)
@@ -306,6 +309,74 @@ private:
         if (stats) {
             stats->parallelTwoEdgeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                     tParallelEnd - tParallelStart)
+                                              .count();
+        }
+
+        // 2) Fan-out converge (SI fact fan-out to xi, xi converge to SO via one multi-input edge)
+        auto tFanStart = std::chrono::steady_clock::now();
+        for (NodePtr si : g.getNodes()) {
+            if (!si) continue;
+            if (!si->isFact || si->hasEvidence() || si->needOutput) continue;
+            auto outsSi = g.getOutgoingEdges(si);
+            if (outsSi.size() < 2) continue;  // need fan-out
+            bool bad = false;
+            std::vector<EdgePtr> fanEdges;
+            std::vector<NodePtr> xiNodes;
+            for (EdgePtr e : outsSi) {
+                if (!e) continue;
+                auto ins = g.getInputs(e);
+                if (ins.size() != 1 || ins[0] != si) {
+                    bad = true; break;
+                }
+                fanEdges.push_back(e);
+                xiNodes.push_back(g.getOutput(e));
+            }
+            if (bad || fanEdges.size() < 2) continue;
+            // ensure xi nodes are unique and only used here
+            std::unordered_set<NodePtr> xiSet;
+            for (NodePtr x : xiNodes) {
+                if (!x) { bad = true; break; }
+                if (!xiSet.insert(x).second) { bad = true; break; }
+                auto inX = g.getIncomingEdges(x);
+                auto outX = g.getOutgoingEdges(x);
+                if (inX.size() != 1 || outX.size() != 1) { bad = true; break; }
+            }
+            if (bad) continue;
+            // all xi must share the same convergence edge
+            EdgePtr conv = nullptr;
+            for (NodePtr x : xiSet) {
+                auto outX = g.getOutgoingEdges(x);
+                if (outX.empty()) { bad = true; break; }
+                if (!conv) {
+                    conv = outX[0];
+                } else if (conv != outX[0]) {
+                    bad = true; break;
+                }
+            }
+            if (bad || !conv) continue;
+            auto convInputs = g.getInputs(conv);
+            if (convInputs.size() != xiSet.size()) continue;
+            // inputs of conv must be exactly xi and all positive
+            auto convNeg = g.getBodyNegationsStable(conv);
+            if (!convNeg.empty()) {
+                bool allFalse = std::all_of(convNeg.begin(), convNeg.end(), [](bool b){return !b;});
+                if (!allFalse) continue;
+            }
+            std::unordered_set<NodePtr> convInSet(convInputs.begin(), convInputs.end());
+            if (convInSet != xiSet) continue;
+            NodePtr so = g.getOutput(conv);
+            if (!so || so == si) continue;
+            // build region: all fan edges + conv edge
+            std::vector<EdgePtr> regEdges = fanEdges;
+            regEdges.push_back(conv);
+            auto region = makeRegion(si, so, regEdges, SISORegionKind::FanOutConverge);
+            regions.push_back(std::move(region));
+            if (stats) stats->fanOutConvergeCount++;
+        }
+        auto tFanEnd = std::chrono::steady_clock::now();
+        if (stats) {
+            stats->fanOutConvergeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    tFanEnd - tFanStart)
                                               .count();
         }
 
@@ -1121,6 +1192,7 @@ public:
             size_t linearTwoEdgeCount = 0;
             size_t parallelTwoEdgeCount = 0;
             size_t allFactsToSOCount = 0;
+            size_t fanOutConvergeCount = 0;
             size_t generalCount = 0;
             size_t unknownCount = 0;
             for (const auto& r : vec) {
@@ -1129,13 +1201,14 @@ public:
                 case SISORegionKind::LinearTwoEdge: ++linearTwoEdgeCount; break;
                 case SISORegionKind::ParallelEdge: ++parallelTwoEdgeCount; break;
                 case SISORegionKind::AllFactsToSO: ++allFactsToSOCount; break;
+                case SISORegionKind::FanOutConverge: ++fanOutConvergeCount; break;
                 case SISORegionKind::General: ++generalCount; break;
                 default: ++unknownCount; break;
                 }
             }
-            return std::array<size_t, 6>{
+            return std::array<size_t, 7>{
                 singleHyperedgeCount, linearTwoEdgeCount, parallelTwoEdgeCount,
-                allFactsToSOCount, generalCount, unknownCount};
+                allFactsToSOCount, fanOutConvergeCount, generalCount, unknownCount};
         };
         auto candidatesByKind = countKinds(regions);
 
@@ -1176,21 +1249,24 @@ public:
                   << ", linear-two-edge=" << keptByKind[1]
                   << ", parallel-two-edge=" << keptByKind[2]
                   << ", all-facts=" << keptByKind[3]
-                  << ", general=" << keptByKind[4]
-                  << ", unknown=" << keptByKind[5]
+                  << ", fan-out-converge=" << keptByKind[4]
+                  << ", general=" << keptByKind[5]
+                  << ", unknown=" << keptByKind[6]
                   << ")" << std::endl;
         std::cout << "[siso-prof] fast-detect breakdown: "
                   << "single=" << fastStats.singleHyperedgeMs << " ms (" << fastStats.singleHyperedgeCount << ") "
                   << "linear=" << fastStats.linearTwoEdgeMs << " ms (" << fastStats.linearTwoEdgeCount << ") "
                   << "parallel=" << fastStats.parallelTwoEdgeMs << " ms (" << fastStats.parallelTwoEdgeCount << ") "
-                  << "all-facts=" << fastStats.allFactsToSOMs << " ms (" << fastStats.allFactsToSOCount << ")"
+                  << "all-facts=" << fastStats.allFactsToSOMs << " ms (" << fastStats.allFactsToSOCount << ") "
+                  << "fan-out-conv=" << fastStats.fanOutConvergeMs << " ms (" << fastStats.fanOutConvergeCount << ")"
                   << std::endl;
         std::cout << "[siso-prof] detect=" << detectMs << " ms"
                   << " sort=" << sortMs << " ms"
                   << " filter=" << filterMs << " ms"
-                  << " candidates(kind:sh/lin/par/all/gen/unk)="
+                  << " candidates(kind:sh/lin/par/all/fan/gen/unk)="
                   << candidatesByKind[0] << "/" << candidatesByKind[1] << "/" << candidatesByKind[2] << "/"
-                  << candidatesByKind[3] << "/" << candidatesByKind[4] << "/" << candidatesByKind[5]
+                  << candidatesByKind[3] << "/" << candidatesByKind[4] << "/" << candidatesByKind[5] << "/"
+                  << candidatesByKind[6]
                   << " kept=" << result.size()
                   << std::endl;
         return result;

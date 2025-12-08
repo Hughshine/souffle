@@ -351,6 +351,121 @@ public:
                             // Fast-path placeholder logging elided to reduce overhead.
                         }
                         continue;  // skip default handling for now
+                    case SISORegionKind::FanOutConverge: {
+                        if (region.internalEdges.size() < 3) continue;
+                        if (!region.entry || !region.exit) continue;
+                        NodePtr entryNode = region.entry;
+                        NodePtr exitNode = region.exit;
+                        // Separate fan edges (inputs=entry) and convergence edge
+                        std::vector<EdgePtr> fanEdges;
+                        EdgePtr convEdge = nullptr;
+                        for (auto e : region.internalEdges) {
+                            if (!e) continue;
+                            auto ins = view.getInputs(e);
+                            if (ins.size() == 1 && ins[0] == entryNode) {
+                                fanEdges.push_back(e);
+                            } else {
+                                convEdge = e;
+                            }
+                        }
+                        if (!convEdge || fanEdges.size() < 2) continue;
+                        auto convInputs = view.getInputs(convEdge);
+                        if (convInputs.size() != fanEdges.size()) continue;
+                        std::unordered_set<NodePtr> fanOutputs;
+                        for (auto fe : fanEdges) {
+                            if (!fe) continue;
+                            fanOutputs.insert(view.getOutput(fe));
+                        }
+                        std::unordered_set<NodePtr> convSet(convInputs.begin(), convInputs.end());
+                        if (convSet != fanOutputs) continue;
+                        auto convNegs = view.getBodyNegations(convEdge);
+                        bool convAllPos = std::all_of(convNegs.begin(), convNegs.end(), [](bool b){return !b;});
+                        if (!convNegs.empty() && !convAllPos) continue;
+                        bool firstNeg = false;
+                        bool hasNegFlag = false;
+                        bool mixedPolarity = false;
+                        for (auto fe : fanEdges) {
+                            if (!fe) continue;
+                            auto negs = view.getBodyNegations(fe);
+                            bool neg = (!negs.empty() && negs[0]);
+                            if (!hasNegFlag) {
+                                firstNeg = neg;
+                                hasNegFlag = true;
+                            } else if (firstNeg != neg) {
+                                mixedPolarity = true;
+                                break;
+                            }
+                        }
+                        auto& edges = view.mutableEdges();
+                        auto& nodes = view.mutableNodes();
+                        size_t removedEdges = 0;
+                        size_t removedNodes = 0;
+                        auto removeFanAndConv = [&]() {
+                            for (auto fe : fanEdges) {
+                                if (!fe) continue;
+                                removedEdges += edges.erase(fe);
+                                NodePtr out = view.getOutput(fe);
+                                if (out && view.getIncomingEdges(out).size() <= 1 && view.getOutgoingEdges(out).size() <= 1) {
+                                    if (nodes.erase(out) > 0) ++removedNodes;
+                                }
+                            }
+                            removedEdges += edges.erase(convEdge);
+                        };
+                        if (mixedPolarity) {
+                            removeFanAndConv();
+                            if (view.getIncomingEdges(entryNode).empty() && view.getOutgoingEdges(entryNode).empty()) {
+                                if (nodes.erase(entryNode) > 0) ++removedNodes;
+                            }
+                            stats.numEdgesRemoved += removedEdges;
+                            stats.numNodesRemoved += removedNodes;
+                            view.invalidateCaches();
+                            ++rewrittenThisRound;
+                            ++stats.numRegionsRewritten;
+                            continue;
+                        }
+                        double pEntry = entryNode->getProbability();
+                        if (pEntry < 0.0) pEntry = 0.0;
+                        if (pEntry > 1.0) pEntry = 1.0;
+                        double p = firstNeg ? (1.0 - pEntry) : pEntry;
+                        size_t regionRandomVars = 0;
+                        if (pEntry > 0.0 && pEntry < 1.0) ++regionRandomVars;
+                        for (auto fe : fanEdges) {
+                            if (!fe) continue;
+                            double pf = fe->getProbability();
+                            if (pf < 0.0) pf = 0.0;
+                            if (pf > 1.0) pf = 1.0;
+                            p *= pf;
+                            if (pf > 0.0 && pf < 1.0) ++regionRandomVars;
+                        }
+                        double pc = convEdge->getProbability();
+                        if (pc < 0.0) pc = 0.0;
+                        if (pc > 1.0) pc = 1.0;
+                        p *= pc;
+                        if (pc > 0.0 && pc < 1.0) ++regionRandomVars;
+
+                        removeFanAndConv();
+
+                        std::vector<NodePtr> newInputs = {entryNode};
+                        std::vector<bool> newNeg = {firstNeg};
+                        EdgePtr newEdge = graph.createHyperedge(newInputs, exitNode, nullptr, newNeg);
+                        if (newEdge) {
+                            newEdge->setProbability(1.0);
+                            edges.insert(newEdge);
+                            stats.numEdgesAdded += 1;
+                        }
+                        entryNode->isFact = true;
+                        entryNode->setProbability(p);
+
+                        stats.totalRandomVars += regionRandomVars;
+                        stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
+                        stats.numEdgesRemoved += removedEdges;
+                        stats.numNodesRemoved += removedNodes;
+                        view.invalidateCaches();
+
+                        ++rewrittenThisRound;
+                        ++stats.numRegionsRewritten;
+                        continue;
+                    }
                     default:
                         continue;
                 }
