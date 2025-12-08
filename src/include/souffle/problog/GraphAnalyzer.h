@@ -24,7 +24,7 @@ enum class SISORegionKind {
     General,
     SingleHyperedge,  // single hyperedge from SI to SO
     LinearTwoEdge,    // SI -> mid -> SO (two edges chain)
-    ParallelTwoEdge,  // two parallel edges SI -> SO
+    ParallelEdge,  // >=2 parallel single-input edges SI -> SO
     AllFactsToSO,     // single edge, inputs all facts (no incoming edges or evidence/output)
 };
 
@@ -135,8 +135,20 @@ private:
         return info;
     }
 
+    struct FastPathDetectStats {
+        long singleHyperedgeMs = 0;
+        long linearTwoEdgeMs   = 0;
+        long parallelTwoEdgeMs = 0;
+        long allFactsToSOMs    = 0;
+        size_t singleHyperedgeCount = 0;
+        size_t linearTwoEdgeCount   = 0;
+        size_t parallelTwoEdgeCount = 0;
+        size_t allFactsToSOCount    = 0;
+    };
+
     // Fast-path detectors (<=2 edges)
-    static std::vector<SISORegionInfo> detectFastPathRegions(const DerivationGraphViewInterface& g) {
+    static std::vector<SISORegionInfo> detectFastPathRegions(
+            const DerivationGraphViewInterface& g, FastPathDetectStats* stats = nullptr) {
         std::vector<SISORegionInfo> regions;
         bool debug = std::getenv("SOUFFLE_SISO_FAST_DEBUG") != nullptr;
         auto isBlockedFact = [](NodePtr n) {
@@ -144,6 +156,7 @@ private:
         };
 
         // 1) Single hyperedge: one edge exit, inputs.size()>=1, exactly one non-fact (SI), others are input facts
+        auto tSingleStart = std::chrono::steady_clock::now();
         for (auto e : g.getEdges()) {
             if (!e) continue;
             auto inputs = g.getInputs(e);
@@ -203,10 +216,18 @@ private:
             }
             auto region = makeRegion(si, exit, {e}, SISORegionKind::SingleHyperedge);
             regions.push_back(std::move(region));
+            if (stats) stats->singleHyperedgeCount++;
             continue;
+        }
+        auto tSingleEnd = std::chrono::steady_clock::now();
+        if (stats) {
+            stats->singleHyperedgeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    tSingleEnd - tSingleStart)
+                                               .count();
         }
 
         // 3) Linear two-edge: entry->mid->exit, each edge single input
+        auto tLinearStart = std::chrono::steady_clock::now();
         for (auto e1 : g.getEdges()) {
             if (!e1) continue;
             auto in1 = g.getInputs(e1);
@@ -226,32 +247,50 @@ private:
             NodePtr exit = g.getOutput(e2);
             if (!exit || exit == entry || exit == mid) continue;
             regions.push_back(makeRegion(entry, exit, {e1, e2}, SISORegionKind::LinearTwoEdge));
+            if (stats) stats->linearTwoEdgeCount++;
+        }
+        auto tLinearEnd = std::chrono::steady_clock::now();
+        if (stats) {
+            stats->linearTwoEdgeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    tLinearEnd - tLinearStart)
+                                            .count();
         }
 
-        // 4) Parallel two-edge: two edges SI->SO, single-input edges
-        std::vector<EdgePtr> edgesVec(g.getEdges().begin(), g.getEdges().end());
-        for (size_t i = 0; i < edgesVec.size(); ++i) {
-            EdgePtr e1 = edgesVec[i];
-            if (!e1) continue;
-            auto in1 = g.getInputs(e1);
-            if (in1.size() != 1) continue;
-            NodePtr entry = in1[0];
-            NodePtr exit = g.getOutput(e1);
-            if (!entry || !exit) continue;
-            for (size_t j = i + 1; j < edgesVec.size(); ++j) {
-                EdgePtr e2 = edgesVec[j];
-                if (!e2) continue;
-                auto in2 = g.getInputs(e2);
-                if (in2.size() != 1) continue;
-                if (in2[0] != entry) continue;
-                NodePtr exit2 = g.getOutput(e2);
-                if (exit2 != exit) continue;
-                if (entry == exit) continue;
-                regions.push_back(makeRegion(entry, exit, {e1, e2}, SISORegionKind::ParallelTwoEdge));
+        // 4) Parallel edges: same SI -> same SO, each edge has exactly one input.
+        // Linear-time grouping by SO and then SI to avoid O(m^2).
+        auto tParallelStart = std::chrono::steady_clock::now();
+        for (NodePtr so : g.getNodes()) {
+            if (!so) continue;
+            auto incoming = g.getIncomingEdges(so);
+            if (incoming.size() < 2) continue;  // need at least two edges to form parallel region
+            // group single-input edges by their sole input (SI)
+            std::unordered_map<NodePtr, std::vector<EdgePtr>> bySi;
+            for (EdgePtr e : incoming) {
+                if (!e) continue;
+                auto ins = g.getInputs(e);
+                if (ins.size() != 1) continue;
+                NodePtr si = ins[0];
+                if (!si) continue;
+                bySi[si].push_back(e);
             }
+            for (auto& kv : bySi) {
+                NodePtr si = kv.first;
+                auto& edges = kv.second;
+                if (edges.size() < 2) continue;
+                if (si == so) continue;
+                regions.push_back(makeRegion(si, so, edges, SISORegionKind::ParallelEdge));
+                if (stats) stats->parallelTwoEdgeCount++;
+            }
+        }
+        auto tParallelEnd = std::chrono::steady_clock::now();
+        if (stats) {
+            stats->parallelTwoEdgeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    tParallelEnd - tParallelStart)
+                                              .count();
         }
 
         // 2) All-facts single hyperedge: single edge with all fact inputs and inputs have no incoming edges.
+        auto tAllFactsStart = std::chrono::steady_clock::now();
         for (auto e : g.getEdges()) {
             if (!e) continue;
             auto inputs = g.getInputs(e);
@@ -285,6 +324,13 @@ private:
             NodePtr entry = inputs[0];
             auto region = makeRegion(entry, exit, {e}, SISORegionKind::AllFactsToSO);
             regions.push_back(std::move(region));
+            if (stats) stats->allFactsToSOCount++;
+        }
+        auto tAllFactsEnd = std::chrono::steady_clock::now();
+        if (stats) {
+            stats->allFactsToSOMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    tAllFactsEnd - tAllFactsStart)
+                                           .count();
         }
 
         return regions;
@@ -1045,14 +1091,43 @@ public:
     static inline std::vector<SISORegionInfo> detectAllSISOStrictFromExit(
         const DerivationGraphViewInterface& g)
     {
-        auto regions = detectFastPathRegions(g);
+        auto t0 = std::chrono::steady_clock::now();
+        FastPathDetectStats fastStats;
+        auto regions = detectFastPathRegions(g, &fastStats);
+        auto t1 = std::chrono::steady_clock::now();
         // 去重：小 region 在前，避免重叠
+        auto countKinds = [](const std::vector<SISORegionInfo>& vec) {
+            size_t singleHyperedgeCount = 0;
+            size_t linearTwoEdgeCount = 0;
+            size_t parallelTwoEdgeCount = 0;
+            size_t allFactsToSOCount = 0;
+            size_t generalCount = 0;
+            size_t unknownCount = 0;
+            for (const auto& r : vec) {
+                switch (r.kind) {
+                case SISORegionKind::SingleHyperedge: ++singleHyperedgeCount; break;
+                case SISORegionKind::LinearTwoEdge: ++linearTwoEdgeCount; break;
+                case SISORegionKind::ParallelEdge: ++parallelTwoEdgeCount; break;
+                case SISORegionKind::AllFactsToSO: ++allFactsToSOCount; break;
+                case SISORegionKind::General: ++generalCount; break;
+                default: ++unknownCount; break;
+                }
+            }
+            return std::array<size_t, 6>{
+                singleHyperedgeCount, linearTwoEdgeCount, parallelTwoEdgeCount,
+                allFactsToSOCount, generalCount, unknownCount};
+        };
+        auto candidatesByKind = countKinds(regions);
+
+        auto tSortStart = std::chrono::steady_clock::now();
         std::sort(regions.begin(), regions.end(),
                 [](const SISORegionInfo& a, const SISORegionInfo& b) {
                     return a.internalNodes.size() < b.internalNodes.size();
                 });
+        auto tSortEnd = std::chrono::steady_clock::now();
         std::vector<SISORegionInfo> result;
         NodeSet usedNodes;
+        auto tFilterStart = std::chrono::steady_clock::now();
         for (auto& r : regions) {
             bool overlap = false;
             for (auto n : r.internalNodes) {
@@ -1068,31 +1143,36 @@ public:
             }
             result.push_back(std::move(r));
         }
-        size_t singleHyperedgeCount = 0;
-        size_t linearTwoEdgeCount = 0;
-        size_t parallelTwoEdgeCount = 0;
-        size_t allFactsToSOCount = 0;
-        size_t generalCount = 0;
-        size_t unknownCount = 0;
-        for (const auto& r : result) {
-            switch (r.kind) {
-            case SISORegionKind::SingleHyperedge: ++singleHyperedgeCount; break;
-            case SISORegionKind::LinearTwoEdge: ++linearTwoEdgeCount; break;
-            case SISORegionKind::ParallelTwoEdge: ++parallelTwoEdgeCount; break;
-            case SISORegionKind::AllFactsToSO: ++allFactsToSOCount; break;
-            case SISORegionKind::General: ++generalCount; break;
-            default: ++unknownCount; break;
-            }
-        }
+        auto tFilterEnd = std::chrono::steady_clock::now();
+        auto keptByKind = countKinds(result);
+
+        auto detectMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+        auto sortMs = std::chrono::duration_cast<std::chrono::milliseconds>(tSortEnd - tSortStart).count();
+        auto filterMs = std::chrono::duration_cast<std::chrono::milliseconds>(tFilterEnd - tFilterStart).count();
+
         std::cout << "[siso-detect] fast-path regions " << result.size()
                   << " (candidates=" << regions.size()
-                  << ", single-hyperedge=" << singleHyperedgeCount
-                  << ", linear-two-edge=" << linearTwoEdgeCount
-                  << ", parallel-two-edge=" << parallelTwoEdgeCount
-                  << ", all-facts=" << allFactsToSOCount
-                  << ", general=" << generalCount
-                  << ", unknown=" << unknownCount
+                  << ", single-hyperedge=" << keptByKind[0]
+                  << ", linear-two-edge=" << keptByKind[1]
+                  << ", parallel-two-edge=" << keptByKind[2]
+                  << ", all-facts=" << keptByKind[3]
+                  << ", general=" << keptByKind[4]
+                  << ", unknown=" << keptByKind[5]
                   << ")" << std::endl;
+        std::cout << "[siso-prof] fast-detect breakdown: "
+                  << "single=" << fastStats.singleHyperedgeMs << " ms (" << fastStats.singleHyperedgeCount << ") "
+                  << "linear=" << fastStats.linearTwoEdgeMs << " ms (" << fastStats.linearTwoEdgeCount << ") "
+                  << "parallel=" << fastStats.parallelTwoEdgeMs << " ms (" << fastStats.parallelTwoEdgeCount << ") "
+                  << "all-facts=" << fastStats.allFactsToSOMs << " ms (" << fastStats.allFactsToSOCount << ")"
+                  << std::endl;
+        std::cout << "[siso-prof] detect=" << detectMs << " ms"
+                  << " sort=" << sortMs << " ms"
+                  << " filter=" << filterMs << " ms"
+                  << " candidates(kind:sh/lin/par/all/gen/unk)="
+                  << candidatesByKind[0] << "/" << candidatesByKind[1] << "/" << candidatesByKind[2] << "/"
+                  << candidatesByKind[3] << "/" << candidatesByKind[4] << "/" << candidatesByKind[5]
+                  << " kept=" << result.size()
+                  << std::endl;
         return result;
     }
 

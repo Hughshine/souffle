@@ -64,7 +64,7 @@ inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
         case SISORegionKind::LinearTwoEdge:
             ++linearTwoEdgeCount;
             break;
-        case SISORegionKind::ParallelTwoEdge:
+        case SISORegionKind::ParallelEdge:
             ++parallelTwoEdgeCount;
             break;
         case SISORegionKind::AllFactsToSO:

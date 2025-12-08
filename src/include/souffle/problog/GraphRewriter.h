@@ -61,27 +61,39 @@ public:
         double managerInitMs = 0.0;
         bool managerInitialized = false;
 
+        auto toMs = [](auto duration) {
+            return std::chrono::duration<double, std::milli>(duration).count();
+        };
+
         stats.randomVarsBefore = countRandomVarsInView(view);
         stats.randomVarsAfter = stats.randomVarsBefore;
 
         // Only the first region should attribute manager init time; subsequent regions reuse the same manager.
         bool firstRegionTiming = true;
 
+        auto rewriteStart = std::chrono::steady_clock::now();
+
         while (true) {
+            auto iterStart = std::chrono::steady_clock::now();
             ++stats.numIterations;
+            auto countBeforeStart = std::chrono::steady_clock::now();
             size_t iterRandomVarsBefore = countRandomVarsInView(view);
+            double countBeforeMs = toMs(std::chrono::steady_clock::now() - countBeforeStart);
 
             view.cachedSortedIncomingEdges.clear();
+            double dumpBeforeDotMs = 0.0;
             if (debug) {
                 std::ostringstream dotBefore;
                 dotBefore << "rewrite_iter" << stats.numIterations << "_before.dot";
+                auto dotBeforeStart = std::chrono::steady_clock::now();
                 view.dumpDot(dotBefore.str());
+                dumpBeforeDotMs = toMs(std::chrono::steady_clock::now() - dotBeforeStart);
+                std::cout << "[GraphRewriter] dumpDot(before) took "
+                          << dumpBeforeDotMs << " ms" << std::endl;
             }
             auto detectStart = std::chrono::steady_clock::now();
             auto regions = GraphAnalyzer::detectAllSISOStrictFromExit(view);
-            auto detectMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    std::chrono::steady_clock::now() - detectStart)
-                                    .count();
+            double detectMs = toMs(std::chrono::steady_clock::now() - detectStart);
             std::cout << "[GraphRewriter] SISO detection took "
                       << detectMs << " ms" << std::endl;
             size_t detectedSingle = 0, detectedLinear = 0, detectedParallel = 0, detectedAllFacts = 0, detectedGeneral = 0;
@@ -89,7 +101,7 @@ public:
                 switch (r.kind) {
                     case SISORegionKind::SingleHyperedge: ++detectedSingle; break;
                     case SISORegionKind::LinearTwoEdge: ++detectedLinear; break;
-                    case SISORegionKind::ParallelTwoEdge: ++detectedParallel; break;
+                    case SISORegionKind::ParallelEdge: ++detectedParallel; break;
                     case SISORegionKind::AllFactsToSO: ++detectedAllFacts; break;
                     case SISORegionKind::General: ++detectedGeneral; break;
                     default: break;
@@ -112,8 +124,7 @@ public:
                 break;
             }
 
-            auto iterStart = std::chrono::steady_clock::now();
-
+            double dumpRegionsMs = 0.0;
             if (debug) {
                 std::cout << "[GraphRewriter] Iteration " << stats.numIterations
                           << " : detected " << regions.size()
@@ -122,14 +133,15 @@ public:
                 sisoDot << "siso_regions_iter" << stats.numIterations << ".dot";
                 auto dotStart = std::chrono::steady_clock::now();
                 GraphAnalyzer::dumpAllRegionsAsDot(view, regions, sisoDot.str());
-                auto dotMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                     std::chrono::steady_clock::now() - dotStart)
-                                     .count();
+                dumpRegionsMs = toMs(std::chrono::steady_clock::now() - dotStart);
                 std::cout << "[GraphRewriter] dumpAllRegionsAsDot took "
-                          << dotMs << " ms" << std::endl;
+                          << dumpRegionsMs << " ms" << std::endl;
             }
 
             size_t rewrittenThisRound = 0;
+            auto loopStart = std::chrono::steady_clock::now();
+            double loopRewrittenMs = 0.0;
+            double loopCondMs = 0.0;
 
             // Regions produced by GraphAnalyzer are non-overlapping.
             for (const auto& region : regions) {
@@ -183,13 +195,7 @@ public:
                         view.invalidateCaches();
 
                         if (debug) {
-                            std::cout << "[GraphRewriter]   Fast-path all-facts "
-                                      << regionToString(region)
-                                      << " -> exit prob=" << p
-                                      << " removedEdges=" << removedEdges
-                                      << " removedNodes=" << removedNodes
-                                      << " randomVars=" << regionRandomVars
-                                      << std::endl;
+                            // Fast-path all-facts debug logging elided to reduce overhead.
                         }
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
@@ -244,14 +250,7 @@ public:
                         stats.numNodesRemoved += removedNodes;
                         view.invalidateCaches();
                         if (debug) {
-                            std::cout << "[GraphRewriter]   Fast-path single-hyperedge "
-                                      << regionToString(region)
-                                      << " -> new edge id=" << newEdge->getId()
-                                      << " prob=" << p
-                                      << " removedEdges=" << removedEdges
-                                      << " removedNodes=" << removedNodes
-                                      << " randomVars=" << regionRandomVars
-                                      << std::endl;
+                            // Fast-path single-hyperedge debug logging elided to reduce overhead.
                         }
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
@@ -319,24 +318,15 @@ public:
                         view.invalidateCaches();
 
                         if (debug) {
-                            std::cout << "[GraphRewriter]   Fast-path linear-two-edge "
-                                      << regionToString(region)
-                                      << " -> new edge id=" << newEdge->getId()
-                                      << " prob=" << p
-                                      << " removedEdges=" << removedEdges
-                                      << " removedNodes=" << removedNodes
-                                      << " randomVars=" << regionRandomVars
-                                      << std::endl;
+                            // Fast-path linear-two-edge debug logging elided to reduce overhead.
                         }
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
                         continue;
                     }
-                    case SISORegionKind::ParallelTwoEdge:
+                    case SISORegionKind::ParallelEdge:
                         if (debug) {
-                            std::cout << "[GraphRewriter]   Fast-path placeholder for region "
-                                      << regionToString(region) << " kind=" << static_cast<int>(region.kind)
-                                      << std::endl;
+                            // Fast-path placeholder logging elided to reduce overhead.
                         }
                         continue;  // skip default handling for now
                     default:
@@ -363,6 +353,7 @@ public:
 
                 RegionTiming timing;
                 double condProb = 0.0;
+                auto condStart = std::chrono::steady_clock::now();
 
                 bool isSimple = isSimpleFactRegion(region);
                 EdgePtr oldSimpleEdge = nullptr;
@@ -414,6 +405,8 @@ public:
                     condProb = computeRegionConditionalProbability(
                         *bddManager, effectiveMgrInitMs, regionView, region.entry, region.exit, debug, &timing);
                 }
+                double condMs = toMs(std::chrono::steady_clock::now() - condStart);
+                loopCondMs += condMs;
                 firstRegionTiming = false;
 
                 if (condProb <= 0.0) {
@@ -426,9 +419,9 @@ public:
 
                 auto applyStart = std::chrono::steady_clock::now();
                 EdgePtr newEdge = applyRegionRewrite(graph, view, region, condProb, stats, debug, isSimple);
-                auto applyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - applyStart).count();
+                double applyMs = toMs(std::chrono::steady_clock::now() - applyStart);
                 timing.applyMs = applyMs;
+                loopRewrittenMs += applyMs;
 
                 if (debug) {
                     auto regionMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -468,35 +461,16 @@ public:
                 }
             }
 
-            auto iterMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - iterStart).count();
-
-            std::cout << "[GraphRewriter] Iteration " << stats.numIterations
-                      << " detected(single=" << detectedSingle
-                      << ", linear=" << detectedLinear
-                      << ", parallel=" << detectedParallel
-                      << ", all-facts=" << detectedAllFacts
-                      << ", general=" << detectedGeneral
-                      << "), rewritten(total=" << rewrittenThisRound
-                      << ") in " << iterMs << " ms" << std::endl;
-
-            size_t iterRandomVarsAfter = countRandomVarsInView(view);
-            stats.randomVarsAfter = iterRandomVarsAfter;
-            auto iterDelta =
-                    static_cast<long long>(iterRandomVarsBefore) - static_cast<long long>(iterRandomVarsAfter);
-            double iterRatio = iterRandomVarsBefore == 0
-                                       ? 0.0
-                                       : static_cast<double>(iterRandomVarsAfter) /
-                                                 static_cast<double>(iterRandomVarsBefore);
-            std::cout << "[GraphRewriter]   Iteration " << stats.numIterations
-                      << " random vars: before=" << iterRandomVarsBefore
-                      << ", after=" << iterRandomVarsAfter
-                      << ", delta=" << iterDelta
-                      << ", ratio=" << iterRatio << std::endl;
+            double loopMs = toMs(std::chrono::steady_clock::now() - loopStart);
+            double loopSkipMs = loopMs - loopRewrittenMs;
+            if (loopSkipMs < 0) loopSkipMs = 0.0;
 
             // After each SISO pass, compact edges by absorbing pure fact inputs into edge probability.
+            auto compactStart = std::chrono::steady_clock::now();
             size_t compactedEdges = 0, compactRemovedEdges = 0, compactAddedEdges = 0, compactRemovedNodes = 0;
+            auto edgeListStart = std::chrono::steady_clock::now();
             auto edgeList = view.getEdges();
+            double edgeListMs = toMs(std::chrono::steady_clock::now() - edgeListStart);
             for (auto edge : edgeList) {
                 if (!edge) continue;
                 auto inputs = view.getInputs(edge);
@@ -547,6 +521,8 @@ public:
 
                 ++compactedEdges;
             }
+            double compactMs = toMs(std::chrono::steady_clock::now() - compactStart);
+
             if (compactedEdges > 0) {
                 stats.numEdgesRemoved += compactRemovedEdges;
                 stats.numEdgesAdded += compactAddedEdges;
@@ -557,9 +533,71 @@ public:
                               << " removedEdges=" << compactRemovedEdges
                               << " addedEdges=" << compactAddedEdges
                               << " removedNodes=" << compactRemovedNodes
+                              << " time=" << compactMs << " ms"
                               << std::endl;
                 }
             }
+
+            auto countAfterStart = std::chrono::steady_clock::now();
+            size_t iterRandomVarsAfter = countRandomVarsInView(view);
+            double countAfterMs = toMs(std::chrono::steady_clock::now() - countAfterStart);
+
+            auto preLogStart = std::chrono::steady_clock::now();
+
+            stats.randomVarsAfter = iterRandomVarsAfter;
+            auto iterDelta =
+                    static_cast<long long>(iterRandomVarsBefore) - static_cast<long long>(iterRandomVarsAfter);
+            double iterRatio = iterRandomVarsBefore == 0
+                                       ? 0.0
+                                       : static_cast<double>(iterRandomVarsAfter) /
+                                                 static_cast<double>(iterRandomVarsBefore);
+
+            double iterMs = toMs(std::chrono::steady_clock::now() - iterStart);
+
+            double dumpAfterDotMs = 0.0;
+            double preLogPrepMs = toMs(std::chrono::steady_clock::now() - preLogStart);
+            auto logStart = std::chrono::steady_clock::now();
+
+            std::cout << "[GraphRewriter] Iteration " << stats.numIterations
+                      << " detected(single=" << detectedSingle
+                      << ", linear=" << detectedLinear
+                      << ", parallel=" << detectedParallel
+                      << ", all-facts=" << detectedAllFacts
+                      << ", general=" << detectedGeneral
+                      << "), rewritten(total=" << rewrittenThisRound
+                      << ") in " << iterMs << " ms" << std::endl;
+            std::cout << "[GraphRewriter]   timings(ms): total=" << iterMs
+                      << " countBefore=" << countBeforeMs
+                      << " detect=" << detectMs
+                      << " loop=" << loopMs
+                      << " loopCond=" << loopCondMs
+                      << " loopRewritten=" << loopRewrittenMs
+                      << " loopSkip=" << loopSkipMs
+                      << " edgeList=" << edgeListMs
+                      << " compact=" << compactMs
+                      << " countAfter=" << countAfterMs
+                      << " preLog=" << preLogPrepMs
+                      << " dumpRegions=" << dumpRegionsMs;
+            double logMs = toMs(std::chrono::steady_clock::now() - logStart);
+            double remainderMs = iterMs - countBeforeMs
+                    - detectMs
+                    - loopMs
+                    - dumpRegionsMs
+                    - dumpBeforeDotMs
+                    - dumpAfterDotMs
+                    - edgeListMs
+                    - compactMs
+                    - countAfterMs
+                    - preLogPrepMs
+                    - logMs;
+            if (remainderMs < 0) remainderMs = 0.0;
+            std::cout << " log=" << logMs
+                      << " other=" << remainderMs
+                      << " (apply includes dot if debug)" << std::endl;
+            std::cout << "[GraphRewriter]   random vars: before=" << iterRandomVarsBefore
+                      << ", after=" << iterRandomVarsAfter
+                      << ", delta=" << iterDelta
+                      << ", ratio=" << iterRatio << std::endl;
 
             if (rewrittenThisRound == 0) {
                 if (debug) {
@@ -576,7 +614,11 @@ public:
                 if (rewrittenThisRound > 0) {
                     std::ostringstream dotAfter;
                     dotAfter << "rewrite_iter" << stats.numIterations << "_after.dot";
+                    auto dotAfterStart = std::chrono::steady_clock::now();
                     view.dumpDot(dotAfter.str());
+                    dumpAfterDotMs = toMs(std::chrono::steady_clock::now() - dotAfterStart);
+                    std::cout << "[GraphRewriter]   dumpDot(after) took "
+                              << dumpAfterDotMs << " ms" << std::endl;
                 }
                 std::cout << "[GraphRewriter]   Rewrote " << rewrittenThisRound
                           << " region(s) in iteration " << stats.numIterations
@@ -595,6 +637,14 @@ public:
                       << avgRandomVars << " (max=" << stats.maxRandomVars << ")"
                       << std::endl;
         }
+
+        auto rewriteTotalMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - rewriteStart)
+                                      .count();
+        std::cout << "[GraphRewriter] Rewrite total: " << rewriteTotalMs
+                  << " ms over " << stats.numIterations << " iterations"
+                  << " (randomVars " << stats.randomVarsBefore << " -> " << stats.randomVarsAfter << ")"
+                  << std::endl;
 
         return stats;
     }
