@@ -158,17 +158,20 @@ public:
                         NodePtr exit = region.exit;
                         if (!exit) continue;
                         auto inputs = view.getInputs(edge);
+                        auto negs   = view.getBodyNegations(edge);
                         double p = edge->getProbability();
                         if (p < 0.0) p = 0.0;
                         if (p > 1.0) p = 1.0;
                         size_t regionRandomVars = 0;
                         if (p > 0.0 && p < 1.0) ++regionRandomVars;
-                        for (auto n : inputs) {
+                        for (size_t i = 0; i < inputs.size(); ++i) {
+                            NodePtr n = inputs[i];
                             if (!n) continue;
+                            bool isNegated = i < negs.size() ? negs[i] : false;
                             double np = n->getProbability();
                             if (np < 0.0) np = 0.0;
                             if (np > 1.0) np = 1.0;
-                            p *= np;
+                            p *= isNegated ? (1.0 - np) : np;
                             if (np > 0.0 && np < 1.0) ++regionRandomVars;
                         }
                         exit->isFact = true;
@@ -207,23 +210,35 @@ public:
                         if (!edge) continue;
                         if (!region.entry || !region.exit) continue;
                         auto inputs = view.getInputs(edge);
+                        auto negs   = view.getBodyNegations(edge);
                         if (inputs.empty()) continue;
                         double p = edge->getProbability();
                         if (p < 0.0) p = 0.0;
                         if (p > 1.0) p = 1.0;
                         size_t regionRandomVars = 0;
                         if (p > 0.0 && p < 1.0) ++regionRandomVars;
-                        for (auto n : inputs) {
+                        for (size_t i = 0; i < inputs.size(); ++i) {
+                            NodePtr n = inputs[i];
                             if (!n) continue;
+                            bool isNegated = i < negs.size() ? negs[i] : false;
                             if (!n->isFact) continue;
                             double np = n->getProbability();
                             if (np < 0.0) np = 0.0;
                             if (np > 1.0) np = 1.0;
-                            p *= np;
+                            p *= isNegated ? (1.0 - np) : np;
                             if (np > 0.0 && np < 1.0) ++regionRandomVars;
                         }
                         std::vector<NodePtr> siInput = {region.entry};
-                        EdgePtr newEdge = graph.createHyperedge(siInput, region.exit);
+                        // Preserve the negation flag (if any) on the entry input.
+                        bool entryNeg = false;
+                        for (size_t i = 0; i < inputs.size(); ++i) {
+                            if (inputs[i] == region.entry) {
+                                entryNeg = i < negs.size() ? negs[i] : false;
+                                break;
+                            }
+                        }
+                        std::vector<bool> newNegs = {entryNeg};
+                        EdgePtr newEdge = graph.createHyperedge(siInput, region.exit, nullptr, newNegs);
                         if (!newEdge) {
                             continue;
                         }

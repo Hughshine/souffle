@@ -184,6 +184,15 @@ private:
                     break;
                 }
                 if (n->isFact && g.getIncomingEdges(n).empty() && !n->hasEvidence() && !n->needOutput) {
+                    auto outs = g.getOutgoingEdges(n);
+                    if (outs.size() != 1) {
+                        invalid = true;
+                        if (debug) {
+                            std::cout << "  skip: fact input has " << outs.size()
+                                      << " outgoing edges (must be exactly 1)" << std::endl;
+                        }
+                        break;
+                    }
                     ++factInputs;
                 } else if (!si) {
                     si = n;
