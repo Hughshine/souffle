@@ -185,6 +185,7 @@ public:
             );
     ~SddFormulaManager() override;
 
+
     SddNodeRef createVar(int index) override;
     SddNodeRef createVar(int index, const Node& node) override;
     SddNodeRef createVar(int index, const Hyperedge& edge) override;
@@ -226,6 +227,9 @@ public:
                        reinterpret_cast<std::uintptr_t>(node.get())) + "]";
     }
 
+    int getVarIndex(const Node& node) override;
+    int getVarIndex(const Hyperedge& edge) override;
+
 private:
     SddManager* manager_;
     bool auto_gc_;
@@ -234,7 +238,8 @@ private:
 
     // rawId -> internalId 映射
     std::unordered_map<int,int> rawToInternal;
-
+    std::unordered_map<const Node*, int> nodeToRawIndex_;
+    std::unordered_map<const Hyperedge*, int> edgeToRawIndex_;
     // 当前 manager 中已经分配的 internal 变量个数 (1..nextInternalVar)
     int nextInternalVar = 0;
 
@@ -341,6 +346,8 @@ inline SddNodeRef SddFormulaManager::createVar(int rawIndex, const Node& node) {
         internal = it->second;
     }
 
+    nodeToRawIndex_[&node] = rawIndex;
+
     auto rit = variableRegistry.find(internal);
     if (rit != variableRegistry.end()) {
         return rit->second;
@@ -377,6 +384,8 @@ inline SddNodeRef SddFormulaManager::createVar(int rawIndex, const Hyperedge& ed
         internal = it->second;
     }
 
+    edgeToRawIndex_[&edge] = rawIndex;
+
     auto rit = variableRegistry.find(internal);
     if (rit != variableRegistry.end()) {
         return rit->second;
@@ -394,6 +403,21 @@ inline SddNodeRef SddFormulaManager::createVar(int rawIndex, const Hyperedge& ed
     return ref;
 }
 
+inline int SddFormulaManager::getVarIndex(const Node& node) {
+    auto it = nodeToRawIndex_.find(&node);
+    if (it == nodeToRawIndex_.end()) {
+        throw std::runtime_error("Node not registered in SddFormulaManager::getVarIndex");
+    }
+    return it->second;  // 返回 rawIndex
+}
+
+inline int SddFormulaManager::getVarIndex(const Hyperedge& edge) {
+    auto it = edgeToRawIndex_.find(&edge);
+    if (it == edgeToRawIndex_.end()) {
+        throw std::runtime_error("Hyperedge not registered in SddFormulaManager::getVarIndex");
+    }
+    return it->second;  // 返回 rawIndex
+}
 
 // ========================= 布尔操作 =========================
 
