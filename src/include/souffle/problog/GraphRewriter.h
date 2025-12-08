@@ -4,6 +4,7 @@
 #include <chrono>
 #include <limits>
 #include <map>
+#include <queue>
 #include <sstream>
 #include <unordered_set>
 #include <vector>
@@ -48,6 +49,8 @@ struct RewriteFeatureFlags {
     bool enableFanOutConverge   = true;
     bool enableGeneral          = true;   ///< fallback BDD-based rewrite
     bool enableCompaction       = true;   ///< edge compaction after each SISO pass
+    bool enableSplitFanout      = true;   ///< split disjoint fan-out branches into shadow facts
+    bool enableCleanupIsolated  = true;   ///< drop isolated fact/shadow nodes at end of iteration
 };
 
 /**
@@ -740,6 +743,178 @@ public:
                 }
             }
 
+            // Optional post-pass: split a fact's fan-out when some outgoing branches are disjoint.
+            double splitMs = 0.0;
+            size_t splitNodes = 0, splitEdges = 0;
+            if (flags.enableSplitFanout) {
+                auto splitStart = std::chrono::steady_clock::now();
+                // Max reachable nodes per branch; if exceeded, skip splitting this fact.
+                size_t maxReachable = 50;
+                if (const char* env = std::getenv("SOUFFLE_SPLIT_MAX_REACH")) {
+                    try {
+                        maxReachable = std::stoul(env);
+                    } catch (...) {
+                        maxReachable = 50;
+                    }
+                }
+                auto nodesList = view.getNodes();
+                for (auto fact : nodesList) {
+                    if (!fact || !fact->isFact || fact->hasEvidence() || fact->needOutput) continue;
+                    auto outs = view.getOutgoingEdges(fact);
+                    if (outs.size() < 2) continue;
+
+                    // Compute reachable sets for each outgoing edge's output.
+                    std::vector<std::unordered_set<NodePtr>> reachSets;
+                    reachSets.reserve(outs.size());
+                    bool skipFact = false;
+                    for (auto e : outs) {
+                        if (!e) {
+                            skipFact = true;
+                            break;
+                        }
+                        NodePtr start = view.getOutput(e);
+                        if (!start) {
+                            skipFact = true;
+                            break;
+                        }
+                        std::unordered_set<NodePtr> visited;
+                        std::queue<NodePtr> q;
+                        visited.insert(start);
+                        q.push(start);
+                        while (!q.empty()) {
+                            NodePtr cur = q.front();
+                            q.pop();
+                            auto nextEdges = view.getOutgoingEdges(cur);
+                            for (auto ne : nextEdges) {
+                                if (!ne) continue;
+                                NodePtr outNode = view.getOutput(ne);
+                                if (!outNode) continue;
+                                if (visited.insert(outNode).second) {
+                                    if (visited.size() > maxReachable) {
+                                        skipFact = true;
+                                        break;
+                                    }
+                                    q.push(outNode);
+                                }
+                            }
+                            if (skipFact) break;
+                        }
+                        if (skipFact) break;
+                        reachSets.push_back(std::move(visited));
+                    }
+                    if (skipFact || reachSets.size() != outs.size()) continue;
+
+                    // Identify branches disjoint from all others.
+                    std::vector<size_t> independentIdx;
+                    for (size_t i = 0; i < reachSets.size(); ++i) {
+                        bool disjoint = true;
+                        for (size_t j = 0; j < reachSets.size(); ++j) {
+                            if (i == j) continue;
+                            const auto& a = reachSets[i];
+                            const auto& b = reachSets[j];
+                            // Check intersection (iterate smaller set).
+                            const auto& small = (a.size() < b.size()) ? a : b;
+                            const auto& large = (a.size() < b.size()) ? b : a;
+                            for (auto n : small) {
+                                if (large.count(n)) {
+                                    disjoint = false;
+                                    break;
+                                }
+                            }
+                            if (!disjoint) break;
+                        }
+                        if (disjoint) independentIdx.push_back(i);
+                    }
+                    if (independentIdx.empty()) continue;
+
+                    auto& edges = view.mutableEdges();
+                    auto& nodes = view.mutableNodes();
+
+                    for (size_t idx : independentIdx) {
+                        EdgePtr edge = outs[idx];
+                        if (!edge) continue;
+                        auto inputs = view.getInputs(edge);
+                        if (inputs.empty()) continue;
+                        auto negs = view.getBodyNegations(edge);
+
+                        // Create a shadow fact node (unique tuple to bypass tuple-based interning).
+                        UntypedTuple shadowTuple;
+                        const auto& origTuple = fact->getTuple();
+                        shadowTuple.relation_name =
+                                "Shadow_" + origTuple.relation_name + "_" +
+                                std::to_string(fact->getId()) + "_" + std::to_string(edge->getId());
+                        shadowTuple.fields = origTuple.fields;
+                        NodePtr shadow = graph.createNode(shadowTuple);
+                        if (!shadow) continue;
+                        shadow->setProbability(fact->getProbability());
+                        shadow->isFact = true;
+                        shadow->needOutput = false;
+                        shadow->isShadow = true;
+
+                        std::vector<NodePtr> newInputs = inputs;
+                        bool replaced = false;
+                        for (size_t k = 0; k < newInputs.size(); ++k) {
+                            if (newInputs[k] == fact) {
+                                newInputs[k] = shadow;
+                                replaced = true;
+                            }
+                        }
+                        if (!replaced) continue;
+
+                        EdgePtr newEdge = graph.createHyperedge(
+                                newInputs, edge->getOutput(), edge->getRule(), negs, edge->getRuleApp());
+                        if (!newEdge) continue;
+                        newEdge->setProbability(edge->getProbability());
+
+                        if (edges.erase(edge) > 0) {
+                            ++splitEdges;
+                            ++stats.numEdgesRemoved;
+                        }
+                        edges.insert(newEdge);
+                        ++stats.numEdgesAdded;
+                        nodes.insert(shadow);
+                        ++splitNodes;
+                    }
+                    if (splitNodes > 0 || splitEdges > 0) {
+                        view.invalidateCaches();
+                    }
+                }
+                splitMs = toMs(std::chrono::steady_clock::now() - splitStart);
+                if (debug && (splitNodes > 0 || splitEdges > 0)) {
+                    std::cout << "[GraphRewriter]   Fan-out split: newNodes=" << splitNodes
+                              << " edgesRewritten=" << splitEdges
+                              << " time=" << splitMs << " ms"
+                              << std::endl;
+                }
+            }
+
+            // Cleanup isolated fact/shadow nodes at end of iteration.
+            double cleanupMs = 0.0;
+            size_t cleanupRemovedNodes = 0;
+            if (flags.enableCleanupIsolated) {
+                auto cleanupStart = std::chrono::steady_clock::now();
+                auto nodesList = view.getNodes();
+                auto& nodes = view.mutableNodes();
+                for (auto n : nodesList) {
+                    if (!n) continue;
+                    if (!n->isFact) continue;
+                    if (n->needOutput || n->hasEvidence()) continue;
+                    if (!view.getIncomingEdges(n).empty() || !view.getOutgoingEdges(n).empty()) continue;
+                    nodes.erase(n);
+                    ++cleanupRemovedNodes;
+                }
+                if (cleanupRemovedNodes > 0) {
+                    stats.numNodesRemoved += cleanupRemovedNodes;
+                    view.invalidateCaches();
+                }
+                cleanupMs = toMs(std::chrono::steady_clock::now() - cleanupStart);
+                if (debug && cleanupRemovedNodes > 0) {
+                    std::cout << "[GraphRewriter]   Cleanup isolated nodes: removed="
+                              << cleanupRemovedNodes << " time=" << cleanupMs << " ms"
+                              << std::endl;
+                }
+            }
+
             auto countAfterStart = std::chrono::steady_clock::now();
             size_t iterRandomVarsAfter = countRandomVarsInView(view);
             double countAfterMs = toMs(std::chrono::steady_clock::now() - countAfterStart);
@@ -777,6 +952,8 @@ public:
                       << " loopSkip=" << loopSkipMs
                       << " edgeList=" << edgeListMs
                       << " compact=" << compactMs
+                      << " split=" << splitMs
+                      << " cleanup=" << cleanupMs
                       << " countAfter=" << countAfterMs
                       << " preLog=" << preLogPrepMs
                       << " dumpRegions=" << dumpRegionsMs;
@@ -789,6 +966,8 @@ public:
                     - dumpAfterDotMs
                     - edgeListMs
                     - compactMs
+                    - splitMs
+                    - cleanupMs
                     - countAfterMs
                     - preLogPrepMs
                     - logMs;

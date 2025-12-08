@@ -106,6 +106,7 @@ public:
         needOutput = true;
         isQuery = true;
     }
+    bool isShadow = false;  // synthetic alias node (not part of original tuple space)
     bool isQueryNode() {
         return needOutput;
     }
