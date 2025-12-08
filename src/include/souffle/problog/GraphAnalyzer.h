@@ -272,23 +272,29 @@ private:
             if (!so) continue;
             auto incoming = g.getIncomingEdges(so);
             if (incoming.size() < 2) continue;  // need at least two edges to form parallel region
-            // group single-input edges by their sole input (SI)
-            std::unordered_map<NodePtr, std::vector<EdgePtr>> bySi;
+            // group single-input edges by their sole input (SI) and negation flag
+            std::unordered_map<NodePtr, std::array<std::vector<EdgePtr>, 2>> bySiNeg;
             for (EdgePtr e : incoming) {
                 if (!e) continue;
                 auto ins = g.getInputs(e);
                 if (ins.size() != 1) continue;
+                const auto& negs = g.getBodyNegationsStable(e);
+                if (!negs.empty() && negs.size() != 1) continue;  // keep only single-input with aligned neg flag
+                bool isNeg = (!negs.empty() && negs[0]);
                 NodePtr si = ins[0];
                 if (!si) continue;
-                bySi[si].push_back(e);
+                bySiNeg[si][isNeg ? 1 : 0].push_back(e);
             }
-            for (auto& kv : bySi) {
+            for (auto& kv : bySiNeg) {
                 NodePtr si = kv.first;
-                auto& edges = kv.second;
-                if (edges.size() < 2) continue;
                 if (si == so) continue;
-                regions.push_back(makeRegion(si, so, edges, SISORegionKind::ParallelEdge));
-                if (stats) stats->parallelTwoEdgeCount++;
+                auto& groups = kv.second;
+                for (int idx = 0; idx < 2; ++idx) {
+                    auto& edges = groups[idx];
+                    if (edges.size() < 2) continue;
+                    regions.push_back(makeRegion(si, so, edges, SISORegionKind::ParallelEdge));
+                    if (stats) stats->parallelTwoEdgeCount++;
+                }
             }
         }
         auto tParallelEnd = std::chrono::steady_clock::now();
