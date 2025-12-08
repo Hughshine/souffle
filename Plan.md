@@ -48,3 +48,8 @@ on-the-fly analyze + rewrite 是否会有收益？
 避免最终的forward comp，直接求query node的公式和概率的优化
 
 detect and rewrite on the fly. 
+
+
+## negation的处理
+
+对于Linear Two Edge，我认为如果是连着si的那条边是negation，还是可以处理的：新的边的bodynegation对si设置为negated，因为本质融合的是中间的两条边变量，而非si，si没有被touch。但如果第二条边是negated，就不行。

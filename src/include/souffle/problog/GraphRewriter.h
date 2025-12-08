@@ -299,6 +299,12 @@ public:
                             }
                         }
                         if (!intoMid || !outMid) continue;
+                        auto negInto = view.getBodyNegations(intoMid);
+                        if (negInto.size() > 1) continue;  // expect single-input edge
+                        bool entryNeg = (!negInto.empty() && negInto[0]);
+                        auto negOut = view.getBodyNegations(outMid);
+                        if (negOut.size() > 1) continue;   // expect single-input edge
+                        if (!negOut.empty() && negOut[0]) continue;  // do not fast-path if mid->exit is negated
                         double p1 = intoMid->getProbability();
                         double p2 = outMid->getProbability();
                         if (p1 < 0.0) p1 = 0.0;
@@ -311,7 +317,8 @@ public:
                         if (p2 > 0.0 && p2 < 1.0) ++regionRandomVars;
 
                         std::vector<NodePtr> inputsNew = {region.entry};
-                        EdgePtr newEdge = graph.createHyperedge(inputsNew, region.exit);
+                        std::vector<bool> negsNew = {entryNeg};
+                        EdgePtr newEdge = graph.createHyperedge(inputsNew, region.exit, nullptr, negsNew);
                         if (!newEdge) continue;
                         newEdge->setProbability(p);
 

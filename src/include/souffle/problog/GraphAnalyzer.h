@@ -241,6 +241,8 @@ private:
             if (!e1) continue;
             auto in1 = g.getInputs(e1);
             if (in1.size() != 1) continue;
+            auto neg1 = g.getBodyNegationsStable(e1);
+            if (neg1.size() > 1) continue;  // expect single-input edge
             NodePtr entry = in1[0];
             NodePtr mid = g.getOutput(e1);
             if (!entry || !mid) continue;
@@ -253,6 +255,9 @@ private:
             if (!e2) continue;
             auto in2 = g.getInputs(e2);
             if (in2.size() != 1 || in2[0] != mid) continue;
+            auto neg2 = g.getBodyNegationsStable(e2);
+            if (neg2.size() > 1) continue;  // expect single-input edge
+            if (!neg2.empty() && neg2[0]) continue;  // do not fast-path if mid->exit is negated
             NodePtr exit = g.getOutput(e2);
             if (!exit || exit == entry || exit == mid) continue;
             regions.push_back(makeRegion(entry, exit, {e1, e2}, SISORegionKind::LinearTwoEdge));
