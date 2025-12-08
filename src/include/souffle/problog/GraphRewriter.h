@@ -17,6 +17,14 @@
 
 namespace souffle::problog {
 
+inline void assertRewriteProbability(double p, const std::string& ctx) {
+    if (p < 0.0 || p > 1.0) {
+        std::cerr << "[GraphRewriter] Probability out of [0,1]: " << p
+                  << " at " << ctx << std::endl;
+        assert(false && "rewrite probability out of range");
+    }
+}
+
 using SISORegionInfo = ::SISORegionInfo;
 
 /**
@@ -674,8 +682,7 @@ public:
                     std::vector<NodePtr> factInputs;
                     auto negs = view.getBodyNegations(edge);
                     double p = edge->getProbability();
-                    if (p < 0.0) p = 0.0;
-                    if (p > 1.0) p = 1.0;
+                    assertRewriteProbability(p, "edge compaction base edge id=" + std::to_string(edge->getId()));
                     bool changed = false;
                     for (size_t idx = 0; idx < inputs.size(); ++idx) {
                         auto n = inputs[idx];
@@ -688,8 +695,7 @@ public:
                                 continue;
                             }
                             double np = n->getProbability();
-                            if (np < 0.0) np = 0.0;
-                            if (np > 1.0) np = 1.0;
+                            assertRewriteProbability(np, "edge compaction input fact id=" + std::to_string(n->getId()));
                             bool isNeg = (idx < negs.size() ? negs[idx] : false);
                             p *= isNeg ? (1.0 - np) : np;
                             factInputs.push_back(n);
@@ -703,6 +709,7 @@ public:
 
                     EdgePtr newEdge = graph.createHyperedge(keepInputs, edge->getOutput());
                     if (!newEdge) continue;
+                    assertRewriteProbability(p, "edge compaction new edge id=" + std::to_string(newEdge->getId()));
                     newEdge->setProbability(p);
 
                     auto& edges = view.mutableEdges();

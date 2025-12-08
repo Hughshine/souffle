@@ -22,12 +22,22 @@
 #include <algorithm>
 #include <optional>
 #include "souffle/utility/json11.h"
+#include <cassert>
 
 int nextFormulaNodeId = 0;
 std::unordered_map<size_t, int> nodeIdMap;
 std::unordered_map<int, size_t> idNodeMap;
 std::unordered_map<size_t, int> edgeIdMap;
 std::unordered_map<int, size_t> idEdgeMap;
+
+inline void resetFormulaIdMapping() {
+    nextFormulaNodeId = 0;
+    nodeIdMap.clear();
+    idNodeMap.clear();
+    edgeIdMap.clear();
+    idEdgeMap.clear();
+}
+
 int mapNodeId(size_t id) {
     if (nodeIdMap.find(id) == nodeIdMap.end()) {
         nodeIdMap[id] = nextFormulaNodeId++;
@@ -92,7 +102,14 @@ public:
     const std::vector<EdgePtr>& getOutgoingEdges() const { return outgoingEdges; }
     std::vector<EdgePtr>& getOutgoingEdges() { return outgoingEdges; }
     size_t getId() const { return id; }
-    void setProbability(double prob) { probability = prob; }
+    void setProbability(double prob) {
+        if (prob < 0.0 || prob > 1.0) {
+            std::cerr << "[DerivationGraph] Node probability out of range: " << prob
+                      << " for tuple=" << tuple.toString() << " id=" << id << std::endl;
+            assert(false && "Node probability out of [0,1]");
+        }
+        probability = prob;
+    }
     double getProbability() const { return probability; }
     std::string toString() const {
         std::stringstream ss;
@@ -194,6 +211,12 @@ public:
         if (rule) {
             this->probability = rule->getProbability();
         } else {
+            if (probability < 0.0 || probability > 1.0) {
+                std::cerr << "[DerivationGraph] Edge probability out of range: " << probability
+                          << " for edge id=" << id << " output=" << output->toString()
+                          << std::endl;
+                assert(false && "Edge probability out of [0,1]");
+            }
             this->probability = probability;
         }
     }

@@ -72,6 +72,19 @@ public:
 
     void compute(const DerivationGraphViewInterface& view) {
         view_ = &view;
+        vars_.clear();
+        idx_of_.clear();
+        fact_var_to_tuple_.clear();
+        rule_var_to_key_.clear();
+        events_.clear();
+        order_.clear();
+        final_order_.clear();
+        node_support_.clear();
+        edge_support_.clear();
+        node_scc_.clear();
+        node_id_map_.clear();
+        edge_id_map_.clear();
+        next_var_id_ = 0;
         buildVariables();
         computeSCCs();
         computeSupports();
@@ -124,6 +137,26 @@ private:
     std::unordered_map<size_t, std::vector<int>> node_support_;
     std::unordered_map<size_t, std::vector<int>> edge_support_;
     std::unordered_map<size_t, int> node_scc_;
+
+    mutable std::unordered_map<size_t, int> node_id_map_;
+    mutable std::unordered_map<size_t, int> edge_id_map_;
+    mutable int next_var_id_ = 0;
+
+    int stableNodeId(size_t rawId) const {
+        auto it = node_id_map_.find(rawId);
+        if (it != node_id_map_.end()) return it->second;
+        int id = next_var_id_++;
+        node_id_map_[rawId] = id;
+        return id;
+    }
+
+    int stableEdgeId(size_t rawId) const {
+        auto it = edge_id_map_.find(rawId);
+        if (it != edge_id_map_.end()) return it->second;
+        int id = next_var_id_++;
+        edge_id_map_[rawId] = id;
+        return id;
+    }
 
     void buildBlocks() {
         if (P_.force_person_blocks) {
@@ -345,13 +378,13 @@ private:
             const bool neg = (i < negs.size()) ? negs[i] : false;
             if (!b || neg) continue;
             if (b->isFact && !b->pruned && b->getProbability() < 1.0) {
-                vars.push_back(mapNodeId(b->getId()));
+                vars.push_back(stableNodeId(b->getId()));
             }
             const auto parents = view_->getIncomingEdgesStable(b);
             for (const auto& parent : parents) {
                 if (!parent || parent->pruned) continue;
                 if (parent->getProbability() < 1.0) {
-                    vars.push_back(mapEdgeId(parent->getId()));
+                    vars.push_back(stableEdgeId(parent->getId()));
                 }
             }
         }
@@ -512,7 +545,7 @@ private:
             if (!n->isFact) continue;
             if (n->pruned) continue;
             if (!(n->getProbability() < 1.0)) continue;
-            const int vid = mapNodeId(n->getId());
+            const int vid = stableNodeId(n->getId());
             if (!idx_of_.count(vid)) {
                 idx_of_[vid] = static_cast<int>(vars_.size());
                 vars_.push_back(Var{vid, Var::FACT, {n->getTuple()}});
@@ -531,7 +564,7 @@ private:
         for (const auto& e : edges) {
             if (e->pruned) continue;
             if (!(e->getProbability() < 1.0)) continue;
-            const int vid = mapEdgeId(e->getId());
+            const int vid = stableEdgeId(e->getId());
             if (!idx_of_.count(vid)) {
                 idx_of_[vid] = static_cast<int>(vars_.size());
                 vars_.push_back(Var{vid, Var::RULE, {e->getEdgeKey()}});
@@ -624,7 +657,7 @@ private:
             if (!n) continue;
             std::vector<int> supp;
             if (n->isFact && !n->pruned && n->getProbability() < 1.0) {
-                const int vid = mapNodeId(n->getId());
+                const int vid = stableNodeId(n->getId());
                 if (idx_of_.count(vid)) supp.push_back(vid);
             }
             node_support_[n->getId()] = std::move(supp);
@@ -634,7 +667,7 @@ private:
             if (!e) continue;
             std::vector<int> supp;
             if (!e->pruned && e->getProbability() < 1.0) {
-                const int vid = mapEdgeId(e->getId());
+                const int vid = stableEdgeId(e->getId());
                 if (idx_of_.count(vid)) supp.push_back(vid);
             }
             edge_support_[e->getId()] = std::move(supp);

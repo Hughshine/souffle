@@ -130,6 +130,22 @@ public:
     WeightedBDDManager();
     ~WeightedBDDManager() override = default;
 
+    int getVarIndex(const Node& node) override {
+        auto it = nodeIndex_.find(&node);
+        if (it != nodeIndex_.end()) return it->second;
+        int idx = nextVarIndex_++;
+        nodeIndex_[&node] = idx;
+        return idx;
+    }
+
+    int getVarIndex(const Hyperedge& edge) override {
+        auto it = edgeIndex_.find(&edge);
+        if (it != edgeIndex_.end()) return it->second;
+        int idx = nextVarIndex_++;
+        edgeIndex_[&edge] = idx;
+        return idx;
+    }
+
     void tryGarbageCollection() {
         Cudd_ReduceHeap(manager.get(), CUDD_REORDER_NONE, 0);
     }
@@ -139,53 +155,58 @@ public:
 
     BDDForceHeuristics heuristics;
     Debugger& debugger = Debugger::getInstance();
+    int nextVarIndex_ = 0;
+    std::unordered_map<const Node*, int> nodeIndex_;
+    std::unordered_map<const Hyperedge*, int> edgeIndex_;
     void preConfig(DerivationGraphViewInterface& view) override {
         static size_t iteration = 0;
         using namespace std::chrono;
-        auto start = high_resolution_clock::now();
-        auto end = high_resolution_clock::now();
-        auto duration = duration_cast<milliseconds>(end - start).count();
+        auto toMs = [](auto d) { return duration<double, std::milli>(d).count(); };
 
         auto oldCuddVarSize = Cudd_ReadSize(manager.get());
-        size_t numVarsToAdd = 0;
-        start = high_resolution_clock::now();
+        size_t factVars = 0;
+        size_t edgeVars = 0;
+
+        auto factStart = steady_clock::now();
         for (const auto& node : view.getNodes()) {
             if (node->isFact && node->getProbability() < 1.0) {
-                // Create a variable for each fact node if haven't been created yet
-                createVar(mapNodeId(node->getId()), *node);
-                numVarsToAdd ++;
+                int idx = getVarIndex(*node);
+                auto cvStart = steady_clock::now();
+                createVar(idx, *node);
+                double cvMs = toMs(steady_clock::now() - cvStart);
+                std::cout << "[CUDD] createVar(fact " << node->getId()
+                          << " -> idx " << idx << ") took "
+                          << cvMs << " ms" << std::endl;
+                ++factVars;
             }
         }
+        double factMs = toMs(steady_clock::now() - factStart);
+
+        auto edgeStart = steady_clock::now();
         for (const auto& edge : view.getEdges()) {
             if (!edge->isDeterministic()) {
-                // Create a variable for each non-deterministic edge
-                createVar(mapEdgeId(edge->getId()), *edge);
-                numVarsToAdd ++;
+                int idx = getVarIndex(*edge);
+                auto cvStart = steady_clock::now();
+                createVar(idx, *edge);
+                double cvMs = toMs(steady_clock::now() - cvStart);
+                std::cout << "[CUDD] createVar(edge " << edge->getId()
+                          << " -> idx " << idx << ") took "
+                          << cvMs << " ms" << std::endl;
+                ++edgeVars;
             }
         }
-        end = high_resolution_clock::now();
-        duration = duration_cast<milliseconds>(end - start).count();
-        debugger.logMessage(Level::INFO, "CUDD nodes created in " + std::to_string(duration) + " ms");
-        if (numVarsToAdd < 20) {
-            debugger.logMessage(Level::INFO, "Number of variables to add is small (" + std::to_string(numVarsToAdd) + "), skip static ordering");
-            return;
-        }
-        start = high_resolution_clock::now();
-        heuristics.compute(view);
-        std::vector<int> order = heuristics.getOrder();
-        end = high_resolution_clock::now();
-        duration = duration_cast<milliseconds>(end - start).count();
-        debugger.logMessage(Level::INFO, "Heuristic ordering computed in " + std::to_string(duration) + " ms");
+        double edgeMs = toMs(steady_clock::now() - edgeStart);
+        size_t totalVarsAdded = factVars + edgeVars;
+        std::cout << "[CUDD] vars created: facts=" << factVars
+                  << " edges=" << edgeVars
+                  << " total=" << totalVarsAdded
+                  << " (facts " << factMs << " ms, edges " << edgeMs << " ms)"
+                  << std::endl;
 
-        std::cout << "Pure variable ordering: ";
-        for (int v : order) {
-            std::cout << getVariableName(v) << " ";
-        }
-        std::cout << std::endl;
-
-        debugger.logMessage(Level::INFO, "Enabling adaptive dynamic reordering");
+        // Rely on CUDD adaptive dynamic reordering; skip heavy static heuristic ordering.
+        std::cout << "[CUDD] Enabling adaptive dynamic reordering (skip static ordering)" << std::endl;
         adaptiveReorder(manager.get());
-        debugger.logMessage(Level::INFO, "Adaptive reordering initialized");
+        std::cout << "[CUDD] Adaptive reordering initialized" << std::endl;
     }
 
     // Basic BDD operations
@@ -283,6 +304,7 @@ double getCacheHitRate(DdManager* manager) {
 using Clock = std::chrono::steady_clock;
 using Duration = std::chrono::duration<double>;
 Cudd_ReorderingType currentReorderingType = CUDD_REORDER_SAME;
+static constexpr bool kCuddVerbose = false;
 void adaptiveReorder(DdManager* manager) {
     size_t node_count = Cudd_ReadNodeCount(manager);
     Cudd_ReorderingType next = CUDD_REORDER_NONE;
@@ -299,7 +321,9 @@ void adaptiveReorder(DdManager* manager) {
     if (next != currentReorderingType) {
         Cudd_AutodynEnable(manager, next);
         currentReorderingType = next;
-        std::cout << "Switched reordering to " << next << " at node count " << node_count << std::endl;
+        if (kCuddVerbose) {
+            std::cout << "Switched reordering to " << next << " at node count " << node_count << std::endl;
+        }
     }
 }
 
@@ -317,7 +341,9 @@ void adaptiveReorder2(DdManager* manager) {
     if (next != currentReorderingType) {
         Cudd_AutodynEnable(manager, next);
         currentReorderingType = next;
-        std::cout << "Switched reordering to " << next << " at node count " << node_count << std::endl;
+        if (kCuddVerbose) {
+            std::cout << "Switched reordering to " << next << " at node count " << node_count << std::endl;
+        }
     }
 }
 
@@ -327,20 +353,24 @@ std::chrono::time_point<Clock> _cudd_gc_end_time;
 int _cudd_gc_count = 0;
 bool gc_begin = true;
 int myGCFunc(DdManager* dd, const char* str, void* data) {
-    std::cout << "[GC] current error code = " << Cudd_ReadErrorCode(dd) << "\n";
-    fprintf(stdout, "[GC] Dead = %u, Keys = %u, Mem = %zu\n",
-            Cudd_ReadDead(dd), Cudd_ReadKeys(dd), Cudd_ReadMemoryInUse(dd));
-    fprintf(stdout, "[GC] Recursive calls = %.2f, Cache Used = %.2f, Cache hits = %.0f, lookups = %.0f, hit rate = %.2f%%\n",
-            Cudd_ReadRecursiveCalls(dd), Cudd_ReadUsedSlots(dd), Cudd_ReadCacheHits(dd), Cudd_ReadCacheLookUps(dd),
-            getCacheHitRate(dd) * 100.0);
+    if (kCuddVerbose) {
+        std::cout << "[GC] current error code = " << Cudd_ReadErrorCode(dd) << "\n";
+        fprintf(stdout, "[GC] Dead = %u, Keys = %u, Mem = %zu\n",
+                Cudd_ReadDead(dd), Cudd_ReadKeys(dd), Cudd_ReadMemoryInUse(dd));
+        fprintf(stdout, "[GC] Recursive calls = %.2f, Cache Used = %.2f, Cache hits = %.0f, lookups = %.0f, hit rate = %.2f%%\n",
+                Cudd_ReadRecursiveCalls(dd), Cudd_ReadUsedSlots(dd), Cudd_ReadCacheHits(dd), Cudd_ReadCacheLookUps(dd),
+                getCacheHitRate(dd) * 100.0);
+    }
     if (gc_begin) {
-        fprintf(stdout, "[GC] Starting GC: %d\n", ++_cudd_gc_count);
+        if (kCuddVerbose) fprintf(stdout, "[GC] Starting GC: %d\n", ++_cudd_gc_count);
         _cudd_gc_start_time = Clock::now();
         gc_begin = false;
     } else {
         _cudd_gc_end_time = Clock::now();
         Duration duration = _cudd_gc_end_time - _cudd_gc_start_time;
-        std::cout << "[GC] Time taken: " << duration.count() << " seconds" << std::endl;
+        if (kCuddVerbose) {
+            std::cout << "[GC] Time taken: " << duration.count() << " seconds" << std::endl;
+        }
         gc_begin = true;
 //        if (Cudd_ReadNodeCount(dd) >= 50000) {
 //            adaptiveReorder2(dd);
@@ -358,15 +388,15 @@ std::chrono::time_point<Clock> _cudd_reordering_start_time;
 std::chrono::time_point<Clock> _cudd_reordering_end_time;
 bool reordering_begin = true;
 int myVRFunc(DdManager* dd, const char* str, void* data) {
-    std::cout << "[VR] current error code = " << Cudd_ReadErrorCode(dd) << "\n";
+    if (kCuddVerbose) std::cout << "[VR] current error code = " << Cudd_ReadErrorCode(dd) << "\n";
     if (reordering_begin) {
         _cudd_reordering_start_time = Clock::now();
         reordering_begin = false;
-        std::cout << "[VR] Starting reordering " << ++_cudd_reordering_count << "..." << std::endl;
+        if (kCuddVerbose) std::cout << "[VR] Starting reordering " << ++_cudd_reordering_count << "..." << std::endl;
     } else {
         _cudd_reordering_end_time = Clock::now();
         Duration duration = _cudd_reordering_end_time - _cudd_reordering_start_time;
-        std::cout << "[VR] Time taken: " << duration.count() << " seconds" << std::endl;
+        if (kCuddVerbose) std::cout << "[VR] Time taken: " << duration.count() << " seconds" << std::endl;
         reordering_begin = true;
         // set next reordering threshold
         adaptiveReorder(dd);
@@ -380,7 +410,8 @@ WeightedBDDManager::WeightedBDDManager() {
     // 这些参数对性能的影响很复杂。memory设置太大会减少gc=>reordering，reordering不频繁不好，太频繁也不好.
 //    DdManager* m = Cudd_Init(0, 0, 4096, 1 << 24, 32UL * 1024 * 1024 * 1024);
 //    Cudd_SetMaxCacheHard(m, 10000000);
-    DdManager* m = Cudd_Init(0, 0, 4096, 1 << 24, 32UL * 1024 * 1024 * 1024);
+    // Preallocate ~1000 BDD vars to reduce ithVar expansions.
+    DdManager* m = Cudd_Init(1000, 0, 4096, 1 << 24, 32UL * 1024 * 1024 * 1024);
 
 //    Cudd_EnableGarbageCollection(m);
 //    Cudd_DisableGarbageCollection(m);
@@ -388,7 +419,7 @@ WeightedBDDManager::WeightedBDDManager() {
 //    currentReorderingType = CUDD_REORDER_WINDOW4;
 //    currentReorderingType = CUDD_REORDER_NONE;
 //    Cudd_AutodynEnable(m, currentReorderingType);
-    Cudd_AutodynDisable(m);
+    // Cudd_AutodynDisable(m);
 //    Cudd_SetLooseUpTo(m, 4);  // Set loose up to 4
 //    Cudd_SetNextReordering(m, 4);
 //    Cudd_SetMaxCacheHard(m, 1 << 28);
@@ -411,9 +442,19 @@ BddNodeRef WeightedBDDManager::createVar(int index) {
     if (variableRegistry.find(index) != variableRegistry.end()) {
         return variableRegistry[index];
     }
+    auto start = std::chrono::steady_clock::now();
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
+    double ithMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+    start = std::chrono::steady_clock::now();
     BddNodeRef ref(manager, var);
+    double wrapMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
     variableRegistry[index] = ref;
+    if (kCuddVerbose) {
+        std::cout << "[CUDD] createVar(index=" << index << ") ithVar=" << ithMs
+                  << " ms wrap=" << wrapMs << " ms" << std::endl;
+    }
     return ref;
 //    BddNodeRef(manager, var);
 }
@@ -422,12 +463,23 @@ BddNodeRef WeightedBDDManager::createVar(int index, const Node& node) {
     if (variableRegistry.find(index) != variableRegistry.end()) {
         return variableRegistry[index];
     }
+    auto start = std::chrono::steady_clock::now();
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
+    double ithMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
     if (var == nullptr) {
         throw std::runtime_error("Failed to create BDD variable");
     }
+    start = std::chrono::steady_clock::now();
     BddNodeRef ref(manager, var, node);
+    double wrapMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
     variableRegistry[index] = ref;
+    if (kCuddVerbose) {
+        std::cout << "[CUDD] createVar(fact " << node.getId()
+                  << ") ithVar=" << ithMs << " ms wrap=" << wrapMs << " ms"
+                  << std::endl;
+    }
     return ref;
 }
 
@@ -435,12 +487,23 @@ BddNodeRef WeightedBDDManager::createVar(int index, const Hyperedge& edge) {
     if (variableRegistry.find(index) != variableRegistry.end()) {
         return variableRegistry[index];
     }
+    auto start = std::chrono::steady_clock::now();
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
+    double ithMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
     if (var == nullptr) {
         throw std::runtime_error("Failed to create BDD variable");
     }
+    start = std::chrono::steady_clock::now();
     BddNodeRef ref(manager, var, edge);
+    double wrapMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
     variableRegistry[index] = ref;
+    if (kCuddVerbose) {
+        std::cout << "[CUDD] createVar(edge " << edge.getId()
+                  << ") ithVar=" << ithMs << " ms wrap=" << wrapMs << " ms"
+                  << std::endl;
+    }
 //    return BddNodeRef(manager, var, edge);
     return ref;
 }
@@ -619,7 +682,6 @@ void WeightedBDDManager::postprocessUselessVariables(const std::set<int>& condVa
     if (result != 1) {
         throw std::runtime_error("Cudd_ShuffleHeap failed to reorder variables");
     }
-    std::cout << "6" << std::endl;
 }
 
 bool WeightedBDDManager::isSame(const BddNodeRef& a, const BddNodeRef& b) {

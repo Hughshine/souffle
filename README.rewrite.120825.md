@@ -43,10 +43,18 @@
 - P13（最新代码）：rewrite 端到端 ~105 ms；BDD build 731 ms（no-rewrite 2705 ms）；facts.prob 一致；fan-out-converge 0 次；parallel 检测分桶但未重写。
 - 旧测 P14–P17（未包含最新 compaction/negation 处理）：rewrite 相对 no-rewrite 端到端加速约 4.7×–9.6×，主要来自 BDD 节点下降；需在最新版本重新跑以更新统计。
 
-## 性能与一致性（近期观测）
-- P13（最新代码）：rewrite ≈105 ms，BDD build 731 ms；no-rewrite BDD build 2705 ms；facts.prob 一致。
-- P14–P17（之前版本）：rewrite 相对 no-rewrite 端到端加速约 4.7×–9.6×，主要因 BDD 节点下降（需注意本次新增逻辑尚未重测）。
-- Fast-detect 耗时在 ms 级；开启 debug（dot 输出）会引入 10–20 ms 的 I/O 开销。
+## 性能与一致性（最新观测，BDD）
+- P13：rewrite 163 ms；BDD build 13 ms（no-rewrite 2626 ms，per-node WMC 1642 ms）；RV 6142→650（ratio 0.106）；facts.prob 一致。debug dot 每轮 ~15–20 ms I/O。
+- P14：rewrite 227 ms；build 236 ms（no-rewrite 3557 ms，per-node WMC 3850 ms）；RV 9017→1592（ratio 0.177）；facts.prob 一致。
+- P15：rewrite 484 ms；build 1041 ms（no-rewrite 13532 ms，per-node WMC 17286 ms）；RV 18130→4233（ratio 0.233）；facts.prob 一致。
+- P16：rewrite 980 ms；build 1978 ms（no-rewrite 53678 ms，per-node WMC 63277 ms）；RV 32011→7700（ratio 0.241）；facts.prob 一致。
+- P17：rewrite 1484 ms；build 3587 ms（no-rewrite 96263 ms）；per-node WMC 2008 ms；RV 43529→10500（ratio 0.241）；facts.prob 一致。
+- P18：rewrite 2589 ms；build 6724 ms；per-node WMC 3504 ms；RV 55051→13286（ratio 0.241）；只跑 rewrite。
+- P19：rewrite 3092 ms；build 8577 ms；per-node WMC 5403 ms；RV 69446→16800（ratio 0.242）；只跑 rewrite。
+- Fast-detect 耗时 ms 级；开启 debug（dot 输出）会引入 10–20 ms/轮 I/O。
+
+## SDD 状态
+- P13 SDD 路径 WMC 异常：`KEY_SENSITIVE(20)` 溢出到 `8.1854755e+127`（BDD 0.944704），初始权重正常，疑似 SddFormulaManager var 索引/权重映射或 var_count 不匹配；暂不使用 SDD。
 
 ## 调试/日志
 - `-p` 运行输出 `[pipeline]` 计时；rewrite 行含迭代数、region 数、RV 变化等。
@@ -55,11 +63,13 @@
 
 ## 仍需注意/待办
 - ParallelEdge 尚未实现重写；检测已按极性分桶。
-- 需要重新在 P14–P17 上跑最新 build，更新速度/BDD 节点/各阶段耗时与 siso 分布。
-- 放宽 SingleHyperedge 为 SI 可为 fact 的方案曾导致事实差异，当前保持 SI 非 fact；如需放宽，须加 escape 检查并重新验证。
-- negation 全面支持仍未完成；仅局部处理的路径请保持回退到 BDD 的策略。
+- 若需继续改进，优先排查 SddFormulaManager 的 var 映射/var_count 以修正 SDD。
+- negation 全面支持尚未完成；含 not 的区域应回退 BDD。
+- 修改 SingleHyperedge 放宽 SI 为 fact 曾导致事实差异（外部 escape）；目前保持 SI 非 fact。
+- 运行前清理旧产物（输出、dot），避免混用旧结果。
 
 ## 注意事项/风险
 - negation 全局未彻底支持：除明确处理的场景外，含 `not` 的区域应回退 BDD。
-- 修改 SingleHyperedge 放宽 SI 为 fact 时曾引发事实概率差异（原因：外部 escape）；现已保持 SI 必须非 fact。若需再次放宽需加 escape 检查和严格验证。
+- SingleHyperedge SI 目前要求非 fact（放宽曾导致概率差异）。
+- SDD 目前结果不可信（P13 溢出），默认用 BDD。
 - 运行前清理旧产物（输出、dot），避免混用旧结果。

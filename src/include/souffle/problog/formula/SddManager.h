@@ -80,6 +80,21 @@ public:
     ~SddFormulaManager() override = default;
     void preConfig(DerivationGraphViewInterface& view) override;
 
+    int getVarIndex(const Node& node) override {
+        auto it = nodeIndex_.find(&node);
+        if (it != nodeIndex_.end()) return it->second;
+        int idx = nextVarIndex_++;  // SDD literals start from 1
+        nodeIndex_[&node] = idx;
+        return idx;
+    }
+    int getVarIndex(const Hyperedge& edge) override {
+        auto it = edgeIndex_.find(&edge);
+        if (it != edgeIndex_.end()) return it->second;
+        int idx = nextVarIndex_++;
+        edgeIndex_[&edge] = idx;
+        return idx;
+    }
+
     SddNodeRef createVar(int index) override;
     SddNodeRef createVar(int index, const Node& node) override;
     SddNodeRef createVar(int index, const Hyperedge& edge) override;
@@ -118,14 +133,14 @@ private:
     std::unordered_map<int, const Hyperedge*> edge_map_;
     BDDForceHeuristics heuristics_;
     int var_count_;
+    int nextVarIndex_ = 1;  // SDD uses 1-based literals
+    std::unordered_map<const Node*, int> nodeIndex_;
+    std::unordered_map<const Hyperedge*, int> edgeIndex_;
 
     void configureManagerLimits(SddManager* raw_mgr);
     void rebuildManagerWithOrder(const std::vector<SddLiteral>& order);
     std::vector<SddLiteral> buildLiteralOrder(const std::vector<int>& heuristicOrder) const;
 
-    inline int mapNodeId(int rawId) {
-        return rawId + 1;
-    }
 };
 
 inline SddFormulaManager::SddFormulaManager(int var_count) {
@@ -192,7 +207,7 @@ inline void SddFormulaManager::preConfig(DerivationGraphViewInterface& view) {
 
 
 SddNodeRef SddFormulaManager::createVar(int rawId) {
-    int index = mapNodeId(rawId);
+    int index = rawId;
     assert(index > 0 && "SDD literals are 1-based");
     return SddNodeRef(manager_, sdd_manager_literal(index, manager_.get()));
 }
@@ -261,7 +276,7 @@ inline bool SddFormulaManager::isSame(const SddNodeRef& a, const SddNodeRef& b) 
 }
 
 void SddFormulaManager::setVariableWeight(int rawId, Weight posWeight, Weight negWeight) {
-    int index = mapNodeId(rawId);
+    int index = rawId;
     weight_map_[index] = { posWeight, negWeight };
 }
 
