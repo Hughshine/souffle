@@ -250,6 +250,7 @@ inline void runPipeline(
         bool enableOnlineCli = false) {
     std::cout << std::fixed << std::setprecision(8);
     Debugger& debugger = Debugger::getInstance();
+    bool rewritePerformed = false;
 
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);
     auto t0 = std::chrono::steady_clock::now();
@@ -302,12 +303,18 @@ inline void runPipeline(
                   << ", simpleFactRegions=" << rewriteStats.simpleFactRegions << std::endl;
         view.dumpDot("rewrite_final.dot");
         debugger.endStage();
+        rewritePerformed = true;
+    }
+
+    bool allowOnlineCli = enableOnlineCli && !rewritePerformed;
+    if (enableOnlineCli && rewritePerformed) {
+        std::cout << "[pipeline] rewrite performed in full run; skip incremental CLI" << std::endl;
     }
 
     if (program.getKnowledge() == souffle::Knowledge::BDD) {
-        runBddPipeline(opt, program, ruleManager, *graph, view, evidences, enableOnlineCli);
+        runBddPipeline(opt, program, ruleManager, *graph, view, evidences, allowOnlineCli);
     } else if (program.getKnowledge() == souffle::Knowledge::SDD) {
-        runSddPipeline(opt, program, ruleManager, *graph, view, enableOnlineCli);
+        runSddPipeline(opt, program, ruleManager, *graph, view, allowOnlineCli);
     } else {
         std::cerr << "Unknown knowledge representation" << std::endl;
     }
