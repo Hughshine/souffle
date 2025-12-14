@@ -245,13 +245,6 @@ public:
             std::cout << "Current live nodes: " << Cudd_ReadNodeCount(manager.get()) << std::endl;
             std::cout << "Memory usage: " << Cudd_ReadMemoryInUse(manager.get()) / (1024.0 * 1024) << " MB" << std::endl;
             std::cout << "current error code = " << Cudd_ReadErrorCode(manager.get()) << "\n";
-            // current variable ordering
-            std::cout << "Current variable ordering: ";
-            for (int i = 0; i < Cudd_ReadSize(manager.get()); ++i) {
-                int index = Cudd_ReadPerm(manager.get(), i);
-                std::cout << getVariableName(index) << " ";
-            }
-            std::cout << std::endl;
 //            Cudd_PrintInfo(manager.get(), stdout);
     };
     std::map<std::string, std::string> getProfilingStatistics() override {

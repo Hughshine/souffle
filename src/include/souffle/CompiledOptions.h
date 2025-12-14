@@ -72,11 +72,11 @@ protected:
     * knowledge representation
     */
     std::string knowledge_representation;  // bdd, sdd are supported
-    bool merge_bi_imp = false;  // enable merging mutually implying deterministic nodes
+    bool merge_bi_imp = true;  // enable merging mutually implying deterministic nodes
     bool enable_rewrite = false;  // enable SISO-based graph rewriting
 public:
     // all argument constructor
-    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc", bool merge_bi = false, bool rewrite = false)
+    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc", bool merge_bi = true, bool rewrite = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
     , incMode(mode), merge_bi_imp(merge_bi), enable_rewrite(rewrite) {}
 

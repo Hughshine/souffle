@@ -99,6 +99,7 @@ inline void runBddPipeline(
         const CmdOptions& opt,
         SouffleProgram& program,
         RuleManager& ruleManager,
+        QueryManager& queryManager,
         IncrementalDerivationGraph& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
@@ -176,7 +177,8 @@ inline void runBddPipeline(
 
     if (enableOnlineCli) {
         IncrementalCLI<BddNodeRef> cli(
-                &program, &graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas, false);
+                &program, &graph, &ruleManager, &queryManager, &bddManager, &nodeFormulas,
+                &edgeFormulas, false);
         cli.setCmdOptions(opt);
         cli.run();
     }
@@ -186,6 +188,7 @@ inline void runSddPipeline(
         const CmdOptions& opt,
         SouffleProgram& program,
         RuleManager& ruleManager,
+        QueryManager& queryManager,
         IncrementalDerivationGraph& graph,
         SubgraphView& view,
         bool enableOnlineCli) {
@@ -234,7 +237,8 @@ inline void runSddPipeline(
 
     if (enableOnlineCli) {
         IncrementalCLI<SddNodeRef> cli(
-                &program, &graph, &ruleManager, &sddManager, &nodeFormulas, &edgeFormulas);
+                &program, &graph, &ruleManager, &queryManager, &sddManager, &nodeFormulas,
+                &edgeFormulas);
         cli.setCmdOptions(opt);
         cli.run();
     }
@@ -312,9 +316,10 @@ inline void runPipeline(
     }
 
     if (program.getKnowledge() == souffle::Knowledge::BDD) {
-        runBddPipeline(opt, program, ruleManager, *graph, view, evidences, allowOnlineCli);
+        runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences,
+                allowOnlineCli);
     } else if (program.getKnowledge() == souffle::Knowledge::SDD) {
-        runSddPipeline(opt, program, ruleManager, *graph, view, allowOnlineCli);
+        runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, allowOnlineCli);
     } else {
         std::cerr << "Unknown knowledge representation" << std::endl;
     }

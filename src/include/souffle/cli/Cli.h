@@ -189,13 +189,23 @@ public:
     IncrementalCLI(souffle::SouffleProgram* prog = nullptr,
             IncrementalDerivationGraph* graph = nullptr,
             RuleManager* rm = nullptr,
+            QueryManager* qm = nullptr,
             DDManager<NodeRef>* ddManager = nullptr,
             std::map<NodePtr, NodeRef>* nodeFormulas = {},
             std::map<EdgePtr, NodeRef>* edgeFormulas = {},
             bool isGround = false,
             PreDerivationGraph* preDG = nullptr
             )
-            : program(prog), graph(graph), ruleManager(rm), ddManager(ddManager), nodeFormulas(nodeFormulas), edgeFormulas(edgeFormulas), changedNodes(), isGround(isGround), preDG(preDG) {
+            : program(prog),
+              graph(graph),
+              ruleManager(rm),
+              queryManager(qm),
+              ddManager(ddManager),
+              nodeFormulas(nodeFormulas),
+              edgeFormulas(edgeFormulas),
+              changedNodes(),
+              isGround(isGround),
+              preDG(preDG) {
         // Initialize readline
         using_history();
     }

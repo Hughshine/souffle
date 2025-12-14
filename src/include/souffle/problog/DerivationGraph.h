@@ -1166,7 +1166,7 @@ protected:
     size_t nextNodeId;
     size_t nextEdgeId;
     const RuleManager* ruleManager;
-    static inline bool mergeBiImpEnabled = false;
+    static inline bool mergeBiImpEnabled = true;
     // map original node id to its current representative after merges
     std::unordered_map<size_t, NodePtr> nodeRepMap;
 
@@ -1940,6 +1940,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
 
 void DerivationGraph::mergeBiImpEquivalences(
         std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges) {
+    std::cout << "[bi-imp] mergeBiImpEquivalences: enabled=" << std::boolalpha << mergeBiImpEnabled
+              << ", liveNodes=" << liveNodes.size() << ", liveEdges=" << liveEdges.size()
+              << std::endl;
     if (!mergeBiImpEnabled || liveNodes.size() < 2) {
         return;
     }
@@ -2004,6 +2007,7 @@ void DerivationGraph::mergeBiImpEquivalences(
             strongConnect(node);
         }
     }
+    std::cout << "[bi-imp] detected SCCs=" << sccs.size() << std::endl;
 
     auto hasSelfLoop = [&](NodePtr n) {
         auto it = adj.find(n);
@@ -2041,6 +2045,9 @@ void DerivationGraph::mergeBiImpEquivalences(
 
         std::cerr << "[bi-imp-merge] merging class (size=" << comp.size()
                   << ") -> rep " << rep->toString() << "_" << rep->getId() << std::endl;
+        for (const auto& n : comp) {
+            std::cerr << "    member: " << n->toString() << "_" << n->getId() << std::endl;
+        }
 
         for (const auto& n : comp) {
             setRepresentative(n, rep);
