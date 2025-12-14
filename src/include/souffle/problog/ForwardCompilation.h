@@ -1078,22 +1078,49 @@ void buildFormulasIncCyclewise(
                 if (!allAvailable) {
                     worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
                     inWorklist.insert(edge);
+                    std::cout << "    [REQUEUE] Missing input for edge " << edge->toString()
+                              << ", back to worklist (cycle " << cid
+                              << ", new worklist size=" << worklist.size() << ")\n";
 //                    debugger.endIteration();
                     continue;
                 }
 
                 FormulaNodeRef newEdge = formulaManager.makeAnd(inputFormulas);
+                if (!edgeFormulas[edge].get()) {
+                    std::cout << "    [EDGE-OLD-NULL] " << edge->toString() << " old formula is null\n";
+                }
+                if (!newEdge.get()) {
+                    std::cout << "    [EDGE-NEW-NULL] " << edge->toString() << " new formula is null\n";
+                }
                 if (formulaManager.isSame(edgeFormulas[edge], newEdge)) {
+                    std::cout << "    [SKIP] Edge formula unchanged for " << edge->toString()
+                              << " (cycle " << cid << ")\n";
     //                std::cout << "    [SKIP] No change\n";
 //                    debugger.endIteration();
                     continue;
                 }
 
     //            std::cout << "    [CHANGE] Edge formula changed\n";
+                std::cout << "    [EDGE-UPDATE] Formula changed for " << edge->toString()
+                          << " (cycle " << cid << ")"
+                          << " var=" << formulaManager.getVarIndex(*edge);
+                std::cout << " inputs{";
+                for (size_t i = 0; i < inputs.size(); ++i) {
+                    if (i) std::cout << ",";
+                    std::cout << formulaManager.getVarIndex(*inputs[i]);
+                }
+                std::cout << "} newPtr=" << reinterpret_cast<const void*>(newEdge.get()) << "\n";
                 edgeFormulas[edge] = newEdge;
+                if (formulaManager.isSame(newEdge, formulaManager.getFalse())) {
+                    std::cout << "    [EDGE-FALSE] " << edge->toString() << " became False\n";
+                } else if (formulaManager.isSame(newEdge, formulaManager.getTrue())) {
+                    std::cout << "    [EDGE-TRUE] " << edge->toString() << " became True\n";
+                }
 
                 NodePtr output = view.getOutput(edge);
                 if (!output || output->isFact) {
+                    std::cout << "    [IGNORE] Output missing or fact for " << edge->toString()
+                              << " (cycle " << cid << ")\n";
 //                    debugger.endIteration();
                     continue;
                 }
@@ -1106,9 +1133,22 @@ void buildFormulasIncCyclewise(
                 }
 
                 FormulaNodeRef newNode = formulaManager.makeOr(incoming);
+                if (!nodeFormulas[output].get()) {
+                    std::cout << "    [NODE-OLD-NULL] " << output->toString() << " old formula is null\n";
+                }
+                if (!newNode.get()) {
+                    std::cout << "    [NODE-NEW-NULL] " << output->toString() << " new formula is null\n";
+                }
                 if (!formulaManager.isSame(nodeFormulas[output], newNode)) {
     //                std::cout << "    [UPDATE] Node formula changed: " << output->toString() << std::endl;
                     nodeFormulas[output] = newNode;
+                    std::cout << "    [NODE-UPDATE] " << output->toString()
+                              << " newPtr=" << reinterpret_cast<const void*>(newNode.get()) << "\n";
+                    if (formulaManager.isSame(newNode, formulaManager.getFalse())) {
+                        std::cout << "    [NODE-FALSE] " << output->toString() << " became False\n";
+                    } else if (formulaManager.isSame(newNode, formulaManager.getTrue())) {
+                        std::cout << "    [NODE-TRUE] " << output->toString() << " became True\n";
+                    }
                     changedNodes.insert(output);
                     for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
                         auto it = depGraph.edgeToCycleIndex.find(outEdge);
@@ -1117,8 +1157,25 @@ void buildFormulasIncCyclewise(
                         if (!cycleInWorklists[outCid].count(outEdge)) {
                             cycleWorklists[outCid].push({outEdge, depGraph.edgeDepthsGlobal[outEdge], _seqId++});
                             cycleInWorklists[outCid].insert(outEdge);
+                            std::cout << "    [ENQUEUE] Node formula changed for "
+                                      << output->toString()
+                                      << " → enqueue outgoing edge " << outEdge->toString()
+                                      << " (cycle " << outCid
+                                      << ", new worklist size=" << cycleWorklists[outCid].size()
+                                      << ")\n";
+                        } else {
+                            std::cout << "    [ENQUEUE-SKIP] Outgoing edge already queued: "
+                                      << outEdge->toString()
+                                      << " (cycle " << outCid
+                                      << ", worklist size=" << cycleWorklists[outCid].size()
+                                      << ")\n";
                         }
                     }
+                } else {
+                    std::cout << "    [NODE-UNCHANGED] " << output->toString()
+                              << " formula unchanged (cycle " << cid
+                              << ", outgoing edges=" << view.getOutgoingEdges(output).size()
+                              << ")\n";
                 }
             }
 

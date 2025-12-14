@@ -539,6 +539,8 @@ public:
             dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter" + std::to_string(iteration) + ".txt");
             if (incMode == IncMode::INC) {
                 debugger.startStage(StageKind::PRUNING_INC);
+                std::cout << "[prune-inc] pre-applyDelta statistics:\n";
+                graph->dumpStatisticsInc(std::cout);
                 graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
                 auto view = graph->prune(this->outputRelations);
                 debugger.endStage();
@@ -582,11 +584,22 @@ public:
                 iteration++;
             } else if (incMode == IncMode::FULL) {
                 debugger.startStage(StageKind::PRUNING_FULL);
-                graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
-                auto view = graph->prune(this->outputRelations);
-                debugger.endStage();
-                view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
-                view.dumpJsonInc(makeTimestampedFilename("derivation-full-after-prune", iteration, ".json"));
+                {
+                    FunctionTimer timer("PRUNING_FULL: dumpDot-before-prune");
+                    graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
+                }
+                IncSubgraphView view = [&] {
+                    FunctionTimer timer("PRUNING_FULL: prune");
+                    return graph->prune(this->outputRelations);
+                }();
+                {
+                    FunctionTimer timer("PRUNING_FULL: dumpDot-after-prune");
+                    view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
+                }
+                {
+                    FunctionTimer timer("PRUNING_FULL: dumpJson-after-prune");
+                    view.dumpJsonInc(makeTimestampedFilename("derivation-full-after-prune", iteration, ".json"));
+                }
                 debugger.endStage();
 
                 if (derivationOnly) {
@@ -716,18 +729,35 @@ public:
                     debugger.endStage();
                 }
                 debugger.startStage(StageKind::PRUNING_INC);
-                graph->applyDelta(
-                    DerivationManager::untypedTuple2DeltaInsertRuleApplications,
-                    DerivationManager::untypedTuple2DeltaDeleteRuleApplications,
-                    *ruleManager,
-                    getFactProbInc(),// fact_prob_inc; cli should collect this
-                    getDeletedFacts() // deletedFacts; cli should collect this
-                );
-                graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
-                auto view = graph->prune(program->getOutputRelations());
+                std::cout << "[prune-inc] pre-applyDelta statistics:\n";
+                graph->dumpStatisticsInc(std::cout);
+                {
+                    FunctionTimer timer("PRUNING_INC: applyDelta");
+                    graph->applyDelta(
+                        DerivationManager::untypedTuple2DeltaInsertRuleApplications,
+                        DerivationManager::untypedTuple2DeltaDeleteRuleApplications,
+                        *ruleManager,
+                        getFactProbInc(),// fact_prob_inc; cli should collect this
+                        getDeletedFacts() // deletedFacts; cli should collect this
+                    );
+                }
+                {
+                    FunctionTimer timer("PRUNING_INC: dumpDot-before-prune");
+                    graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
+                }
+                IncSubgraphView view = [&] {
+                    FunctionTimer timer("PRUNING_INC: prune");
+                    return graph->prune(program->getOutputRelations());
+                }();  // will be assigned below
+                {
+                    FunctionTimer timer("PRUNING_INC: dumpDot-after-prune");
+                    view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                }
+                {
+                    FunctionTimer timer("PRUNING_INC: dumpJson-after-prune");
+                    view.dumpJsonInc(makeTimestampedFilename("derivation-inc-after-prune", iteration, ".json"));
+                }
                 debugger.endStage();
-                view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
-                view.dumpJsonInc(makeTimestampedFilename("derivation-inc-after-prune", iteration, ".json"));
                 changedNodes.clear();
                 if (derivationOnly) {
                     debugger.endTurn();
@@ -769,12 +799,24 @@ public:
                 program->runAll(opt.getInputFileDir(), opt.getOutputFileDir(), false);
                 graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, *ruleManager, *queryManager, fact_prob);
                 debugger.endStage();
-                graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
+                {
+                    FunctionTimer timer("PRUNING_FULL: dumpDot-before-prune");
+                    graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
+                }
                 debugger.startStage(StageKind::PRUNING_FULL);
-                auto view = graph->prune(program->getOutputRelations());
+                IncSubgraphView view = [&] {
+                    FunctionTimer timer("PRUNING_FULL: prune");
+                    return graph->prune(program->getOutputRelations());
+                }();
+                {
+                    FunctionTimer timer("PRUNING_FULL: dumpDot-after-prune");
+                    view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
+                }
+                {
+                    FunctionTimer timer("PRUNING_FULL: dumpJson-after-prune");
+                    view.dumpJsonInc(makeTimestampedFilename("derivation-full-after-prune", iteration, ".json"));
+                }
                 debugger.endStage();
-                view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
-                view.dumpJsonInc(makeTimestampedFilename("derivation-full-after-prune", iteration, ".json"));
                 if (derivationOnly) {
                     debugger.endTurn();
                     iteration++;

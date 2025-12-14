@@ -23,6 +23,7 @@
 #include <optional>
 #include "souffle/utility/json11.h"
 #include <cassert>
+#include <chrono>
 
 int nextFormulaNodeId = 0;
 std::unordered_map<size_t, int> nodeIdMap;
@@ -683,68 +684,10 @@ public:
         out << "  Number of delta insert edges: " << getDeltaInsertEdges().size() << std::endl;
         out << "  Number of delta delete nodes: " << getDeltaDeleteNodes().size() << std::endl;
         out << "  Number of delta delete edges: " << getDeltaDeleteEdges().size() << std::endl;
-        std::set<NodePtr> impactedNodes;
-        std::set<EdgePtr> impactedEdges;
-        for (const auto& [deletedFact, impactedFact]: getNodeImpactedByDeltaDelete()) {
-            out << "  Deleted fact " << deletedFact->getTuple().toString() + "_" + std::to_string(deletedFact->getId()) << " impacts visible nodes: ";
-            for (const auto& fact : impactedFact) {
-                out << fact->toString() << " ";
-                impactedNodes.insert(fact);
-            }
-            out << std::endl;
-        }
-        for (const auto& [deletedEdge, impactedEdge]: getEdgeImpactedByDeltaDelete()) {
-            out << "  Deleted fact " << deletedEdge->getTuple().toString() + "_" + std::to_string(deletedEdge->getId()) << " impacts visible edges: ";
-            for (const auto& edge : impactedEdge) {
-                out << edge->toString() << " ";
-                impactedEdges.insert(edge);
-            }
-            out << std::endl;
-        }
-        for (const auto& [insertedFact, impactedFact]: getNodeImpactedByDeltaInsert()) {
-            out << "  Node " << insertedFact->getId() << " impacted by delta insert: ";
-            for (const auto& fact : impactedFact) {
-                out << fact->toString() << " ";
-                impactedNodes.insert(fact);
-            }
-            out << std::endl;
-        }
-        for (const auto& [insertedEdge, impactedEdge]: getEdgeImpactedByDeltaInsert()) {
-            out << "  Edge " << insertedEdge->getId() << " impacted by delta insert: ";
-            for (const auto& edge : impactedEdge) {
-                out << edge->getId() << " ";
-                impactedEdges.insert(edge);
-            }
-            out << std::endl;
-        }
-        for (const auto& node : getValidNodes()) {
-            out << "  Valid node: " << node->toString() << "_" << node->getId() << "_" << mapNodeId(node->getId()) << std::endl;
-        }
-        for (const auto& node : getDeletedFacts()) {
-            out << "  Deleted fact: " << node->toString() << "_" << node->getId() << "_" << mapNodeId(node->getId())  << std::endl;
-        }
-        for (const auto& node : getDeletedDeterminsticFacts()) {
-            out << "  Deleted deterministic fact: " << node->toString() << "_" << node->getId() << std::endl;
-        }
-        for (const auto& node : getDeletedNonDeterministicFacts()) {
-            out << "  Deleted non-deterministic fact: " << node->toString() << "_" << node->getId() << "_" << mapNodeId(node->getId()) << std::endl;
-        }
-        std::set<NodePtr> uselessValidNodes;
-        for (const auto& node : getValidNodes()) {
-            if (impactedNodes.count(node) == 0) {
-                bool used = false;
-                for (const auto& edge : getOutgoingEdges(node)) {
-                    if (impactedEdges.count(edge) > 0) {
-                        used = true;
-                        break;
-                    }
-                }
-                if (!used)
-                    uselessValidNodes.insert(node);
-            }
-        }
-        out << " percentage of useless valid nodes: " << (double)uselessValidNodes.size() / (double)getValidNodes().size() << std::endl;
-         // ===== JSON 数字统计输出（新增，不影响原有日志） =====
+        out << "  Impact (del nodes): " << getNodeImpactedByDeltaDelete().size() << std::endl;
+        out << "  Impact (del edges): " << getEdgeImpactedByDeltaDelete().size() << std::endl;
+        out << "  Impact (ins nodes): " << getNodeImpactedByDeltaInsert().size() << std::endl;
+        out << "  Impact (ins edges): " << getEdgeImpactedByDeltaInsert().size() << std::endl;
         this->writeGraphStatsJson();
     }
 protected:
@@ -1297,15 +1240,32 @@ public:
         const std::unordered_map<UntypedTuple, double>& fact_prob = {},
         const std::vector<UntypedTuple>& deletedFacts = {}
     ) {
-        this->deltaInsertNodes.clear();
-        this->deltaInsertEdges.clear();
-        this->deltaDeleteNodes.clear();
-        this->deltaDeleteEdges.clear();
+        auto countRuleApps = [](const auto& m) {
+            size_t total = 0;
+            for (const auto& [_, s] : m) {
+                total += s ? s->size() : 0;
+            }
+            return total;
+        };
+        std::cout << "[applyDelta] delTuples=" << deltaDeleteRuleApps.size()
+                  << " delRuleApps=" << countRuleApps(deltaDeleteRuleApps)
+                  << " delFacts=" << deletedFacts.size()
+                  << " insTuples=" << deltaInsertRuleApps.size()
+                  << " insRuleApps=" << countRuleApps(deltaInsertRuleApps)
+                  << " insFacts=" << fact_prob.size()
+                  << std::endl;
+        {
+            FunctionTimer timer("applyDelta: clear state");
+            this->deltaInsertNodes.clear();
+            this->deltaInsertEdges.clear();
+            this->deltaDeleteNodes.clear();
+            this->deltaDeleteEdges.clear();
 
-        this->deletedFactImpactedNodes.clear();
-        this->deletedFactImpactedEdges.clear();
-        this->insertedFactImpactedNodes.clear();
-        this->insertedFactImpactedEdges.clear();
+            this->deletedFactImpactedNodes.clear();
+            this->deletedFactImpactedEdges.clear();
+            this->insertedFactImpactedNodes.clear();
+            this->insertedFactImpactedEdges.clear();
+        }
 
 //        for (auto& insertedRuleApp : deltaInsertRuleApps) {
 //            std::cout << "For tuple: " << insertedRuleApp.first.toString() << std::endl;
@@ -1320,8 +1280,14 @@ public:
 //            }
 //        }
         // 先应用删除，再应用插入
-        applyDeltaDeletes(deltaDeleteRuleApps, ruleManager, deletedFacts);
-        applyDeltaInserts(deltaInsertRuleApps, ruleManager, fact_prob);
+        {
+            FunctionTimer timer("applyDelta: deletes");
+            applyDeltaDeletes(deltaDeleteRuleApps, ruleManager, deletedFacts);
+        }
+        {
+            FunctionTimer timer("applyDelta: inserts");
+            applyDeltaInserts(deltaInsertRuleApps, ruleManager, fact_prob);
+        }
     }
 
     // 用于跟踪增量变化的节点和边的集合
@@ -1399,83 +1365,59 @@ void IncrementalDerivationGraph::applyDeltaInserts(
     FunctionTimer timer("applying delta inserts");
 
     // all facts
-    for (const auto& [tuple, prob] : fact_prob) {
-        auto node = this->findNode(tuple);
-        if (node == nullptr) {
-            node = createNode(tuple);
-            deltaInsertNodes.insert(node);
-//            std::cout << "new fact inserted: " << node->toString() << std::endl;
-        }
-        node->setProbability(prob);
-        node->isFact = true;
-    }
-
-    for (const auto& [tuple, ruleAppSet] : deltaInsertRuleApps) {
-        // 处理与该元组关联的每个规则应用
-        for (const auto& ruleApp : *ruleAppSet) {
-            // 检查这个规则应用的边是否已经存在
-            const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
-            EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, rule->getVars());
-            if (existingEdge != nullptr) {
-                std::cout << existingEdge->toString() << std::endl;
+    {
+        FunctionTimer scope("applyDeltaInserts: upsert facts");
+        for (const auto& [tuple, prob] : fact_prob) {
+            auto node = this->findNode(tuple);
+            if (node == nullptr) {
+                node = createNode(tuple);
+                deltaInsertNodes.insert(node);
+//                std::cout << "new fact inserted: " << node->toString() << std::endl;
             }
-            assert(existingEdge == nullptr && "Delta insert edge already exists in the graph");
-
-            // 创建规则应用对应的超边
-            EdgePtr newEdge = createHyperedgeFromRuleApp(ruleApp, ruleManager);
-
-            // 将边标记为增量插入
-            deltaInsertEdges.insert(newEdge);
-
-            // 获取输出节点
-            NodePtr outputNode = newEdge->getOutput();
-
-            // 如果这是一个重新插入的节点（之前被标记为删除）
-            if (deltaDeleteNodes.find(outputNode) != deltaDeleteNodes.end()) {
-                // 从删除集合中移除
-                deltaDeleteNodes.erase(outputNode);
-            } else {
-                // 否则，将其添加到插入集合中（如果尚未添加）
-//                std::cout << "Inserting new node: " << outputNode->toString() << std::endl;
-//                std::cout << "Incoming edge count: " << outputNode->getIncomingEdges().size() << std::endl;
-                if (!outputNode->isFact && (outputNode->pruned || outputNode->getIncomingEdges().size() == 1))
-                    deltaInsertNodes.insert(outputNode);
-            }
+            node->setProbability(prob);
+            node->isFact = true;
         }
     }
 
-    for (const auto& [insertedFact, _]: fact_prob) {
-        auto node = this->findNode(insertedFact);
-        assert (node != nullptr && "Inserted fact node not found in the graph");
-        if (node != nullptr) {
-            // 记录被插入的事实影响的节点和边
-            std::queue<EdgePtr> impactedEdgesQueue;
-            std::set<EdgePtr> impactedEdges;
-            std::set<NodePtr> impactedNodes;
-            impactedNodes.insert(node);
-            for (const auto& edge : node->getOutgoingEdges()) {
-                impactedEdges.insert(edge);
-                impactedEdgesQueue.push(edge);
-            }
-            while (!impactedEdgesQueue.empty()) {
-                EdgePtr edge = impactedEdgesQueue.front();
-                impactedEdgesQueue.pop();
-                NodePtr outputNode = edge->getOutput();
-                if (impactedNodes.find(outputNode) == impactedNodes.end()) {
-                    impactedNodes.insert(outputNode);
-                    for (const auto& edge: outputNode->getOutgoingEdges()) {
-                        impactedEdges.insert(edge);
-                        impactedEdgesQueue.push(edge);
-                    }
+    {
+        FunctionTimer scope("applyDeltaInserts: add rule edges");
+        for (const auto& [tuple, ruleAppSet] : deltaInsertRuleApps) {
+            // 处理与该元组关联的每个规则应用
+            for (const auto& ruleApp : *ruleAppSet) {
+                // 检查这个规则应用的边是否已经存在
+                const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
+                EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, rule->getVars());
+                if (existingEdge != nullptr) {
+                    std::cout << existingEdge->toString() << std::endl;
+                }
+                assert(existingEdge == nullptr && "Delta insert edge already exists in the graph");
+
+                // 创建规则应用对应的超边
+                EdgePtr newEdge = createHyperedgeFromRuleApp(ruleApp, ruleManager);
+
+                // 将边标记为增量插入
+                deltaInsertEdges.insert(newEdge);
+
+                // 获取输出节点
+                NodePtr outputNode = newEdge->getOutput();
+
+                // 如果这是一个重新插入的节点（之前被标记为删除）
+                if (deltaDeleteNodes.find(outputNode) != deltaDeleteNodes.end()) {
+                    // 从删除集合中移除
+                    deltaDeleteNodes.erase(outputNode);
+                } else {
+                    // 否则，将其添加到插入集合中（如果尚未添加）
+//                    std::cout << "Inserting new node: " << outputNode->toString() << std::endl;
+//                    std::cout << "Incoming edge count: " << outputNode->getIncomingEdges().size() << std::endl;
+                    if (!outputNode->isFact && (outputNode->pruned || outputNode->getIncomingEdges().size() == 1))
+                        deltaInsertNodes.insert(outputNode);
                 }
             }
-            for (const auto& edge : impactedEdges) {
-                insertedFactImpactedEdges[node].insert(edge);
-            }
-            for (const auto& impactedNode : impactedNodes) {
-                insertedFactImpactedNodes[node].insert(impactedNode);
-            }
         }
+    }
+
+    {
+        // impacted 信息改在 prune 后小图里重建，此处不做传播。
     }
 
     // For debugging
@@ -1498,179 +1440,205 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
         return;
     }
     FunctionTimer timer("applying delta deletes");
+    using Clock = std::chrono::steady_clock;
+    auto elapsedMs = [](Clock::time_point start) {
+        return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+    };
+    double tFindEdgeMs = 0.0;
+    double tEraseVecMs = 0.0;
+    double tEraseEdgeSetMs = 0.0;
+    double tEraseKeyMs = 0.0;
+    double tOutputDecisionMs = 0.0;
+    size_t totalInVecScan = 0;
+    size_t totalOutVecScan = 0;
+    size_t removedEdgeCount = 0;
+    std::vector<EdgePtr> edgesToRemoveList;
+    std::vector<std::string> edgeKeysToRemove;
+    std::unordered_set<EdgePtr> edgesToRemoveSet;
+    std::unordered_set<NodePtr> outputsToFix;
+    std::unordered_set<NodePtr> inputsToFix;
     std::set<UntypedTuple> deletedFactsSet(deletedFacts.begin(), deletedFacts.end());
     {
-        // update impact information
-        for (auto deletedFact : deletedFacts) {
-            auto node = this->findNode(deletedFact);
-            assert (node != nullptr && "Deleted fact node not found in the graph");
-            if (node != nullptr) {
-                // 记录被删除的事实影响的节点和边
-                std::queue<EdgePtr> impactedEdgesQueue;
-                std::set<EdgePtr> impactedEdges;
-                std::set<NodePtr> impactedNodes;
-                impactedNodes.insert(node);
-                for (const auto& edge : node->getOutgoingEdges()) {
-                    impactedEdges.insert(edge);
-                    impactedEdgesQueue.push(edge);
-                }
-                while (!impactedEdgesQueue.empty()) {
-                    EdgePtr edge = impactedEdgesQueue.front();
-                    impactedEdgesQueue.pop();
-                    NodePtr outputNode = edge->getOutput();
-                    if (impactedNodes.find(outputNode) == impactedNodes.end()) {
-//                        std::cout << "Impacting node: " << outputNode->toString() << std::endl;
-                        impactedNodes.insert(outputNode);
-                        for (const auto& edge: outputNode->getOutgoingEdges()) {
-                            impactedEdges.insert(edge);
-                            impactedEdgesQueue.push(edge);
-                        }
-                    }
-                }
-                for (const auto& edge : impactedEdges) {
-                    deletedFactImpactedEdges[node].insert(edge);
-                }
-                for (const auto& impactedNode : impactedNodes) {
-                    deletedFactImpactedNodes[node].insert(impactedNode);
-                }
-            }
-        }
+        FunctionTimer scope("applyDeltaDeletes: collect impact of deleted facts");
+        // 旧逻辑在 prune 后重建 impacted maps，这里仅保留接口，占位以保持最小开销。
     }
 
     // 跟踪需要删除的节点
     std::vector<NodePtr> nodesToRemove;
 
-    for (const auto& [tuple, ruleAppSet] : deltaDeleteRuleApps) {
-        for (const auto& ruleApp : *ruleAppSet) {
-            // 查找要删除的边 - 直接使用map查找
-            const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
-            const std::vector<std::string>& vars = rule->getVars();
-            EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, vars);
-            if (existingEdge == nullptr) {
-                std::cout << "Did not find the edge to delete: "
-                          << createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure) << std::endl;
+    {
+        FunctionTimer scope("applyDeltaDeletes: remove rule applications");
+        for (const auto& [tuple, ruleAppSet] : deltaDeleteRuleApps) {
+            for (const auto& ruleApp : *ruleAppSet) {
+                // 查找要删除的边 - 直接使用map查找
+                const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
+                const std::vector<std::string>& vars = rule->getVars();
+                auto t0 = Clock::now();
+                EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, vars);
+                tFindEdgeMs += elapsedMs(t0);
+                if (existingEdge == nullptr) {
+                    std::cout << "Did not find the edge to delete: "
+                              << createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure) << std::endl;
 //                continue;
-                assert(false && "Did not find the edge to delete");
-            }
-
-            // 将边标记为增量删除
-            deltaDeleteEdges.insert(existingEdge);
-
-            // 获取输出节点和输入节点
-            NodePtr outputNode = existingEdge->getOutput();
-            const std::vector<NodePtr>& inputNodes = existingEdge->getInputs();
-
-            // 从输出节点的入边列表中移除这条边
-            auto& inEdges = outputNode->getIncomingEdges();
-            inEdges.erase(std::remove(inEdges.begin(), inEdges.end(), existingEdge), inEdges.end());
-
-            // 从每个输入节点的出边列表中移除这条边
-            for (const auto& inputNode : inputNodes) {
-                // 检查节点是否还在图中 - 使用map直接查找
-                if (tupleToNodeMap.find(inputNode->getTuple()) != tupleToNodeMap.end()) {
-                    auto& outEdges = inputNode->getOutgoingEdges();
-                    outEdges.erase(std::remove(outEdges.begin(), outEdges.end(), existingEdge), outEdges.end());
+                    assert(false && "Did not find the edge to delete");
                 }
+
+                // 将边标记为增量删除
+                deltaDeleteEdges.insert(existingEdge);
+
+                // 获取输出节点和输入节点
+                NodePtr outputNode = existingEdge->getOutput();
+                const std::vector<NodePtr>& inputNodes = existingEdge->getInputs();
+
+                edgesToRemoveList.push_back(existingEdge);
+                edgesToRemoveSet.insert(existingEdge);
+                outputsToFix.insert(outputNode);
+                for (const auto& inputNode : inputNodes) {
+                    if (tupleToNodeMap.find(inputNode->getTuple()) != tupleToNodeMap.end()) {
+                        inputsToFix.insert(inputNode);
+                    }
+                }
+                std::string edgeKey = createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure);
+                edgeKeysToRemove.push_back(edgeKey);
+                removedEdgeCount++;
             }
+        }
 
-            // 从图的边列表中移除这条边
-            edges.erase(existingEdge);
-//            auto& allEdges = edges;
-//            allEdges.erase(std::remove(allEdges.begin(), allEdges.end(), existingEdge), allEdges.end());
+        // 批量从受影响节点中移除待删边
+        auto t0 = Clock::now();
+        for (const auto& head : outputsToFix) {
+            auto& inEdges = head->getIncomingEdges();
+            totalInVecScan += inEdges.size();
+            inEdges.erase(std::remove_if(inEdges.begin(), inEdges.end(), [&](const EdgePtr& e) {
+                return edgesToRemoveSet.count(e) > 0;
+            }), inEdges.end());
+        }
+        for (const auto& tail : inputsToFix) {
+            auto& outEdges = tail->getOutgoingEdges();
+            totalOutVecScan += outEdges.size();
+            outEdges.erase(std::remove_if(outEdges.begin(), outEdges.end(), [&](const EdgePtr& e) {
+                return edgesToRemoveSet.count(e) > 0;
+            }), outEdges.end());
+        }
+        tEraseVecMs += elapsedMs(t0);
 
-            // 从edgeKeyToEdgeMap中移除这条边
-            std::string edgeKey = createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure);
-            edgeKeyToEdgeMap.erase(edgeKey);
+        // 从全局边集合中移除
+        t0 = Clock::now();
+        for (const auto& edge : edgesToRemoveList) {
+            edges.erase(edge);
+        }
+        tEraseEdgeSetMs += elapsedMs(t0);
 
-            // 检查输出节点是否还有其他导出路径
-            // check whether the output node is a deleted fact
-//            std::cout << "Trying to delete output node: " << outputNode->toString() << std::endl;
+        // 从edgeKeyToEdgeMap中移除
+        t0 = Clock::now();
+        for (const auto& key : edgeKeysToRemove) {
+            edgeKeyToEdgeMap.erase(key);
+        }
+        tEraseKeyMs += elapsedMs(t0);
+
+        // 检查输出节点是否还有其他导出路径
+        t0 = Clock::now();
+        for (const auto& outputNode : outputsToFix) {
             if ((!outputNode->isFact || deletedFactsSet.count(outputNode->getTuple())) && outputNode->getIncomingEdges().empty()) {
-//                std::cout << "Removing output node with no incoming edges: " << outputNode->toString() << std::endl;
-                // 对于派生节点，如果没有入边，应该从图中删除
-                // 如果这是一个新插入的节点被删除
                 if (deltaInsertNodes.find(outputNode) != deltaInsertNodes.end()) {
-                    // 从插入集合中移除
                     deltaInsertNodes.erase(outputNode);
                 } else {
-                    // 添加到删除集合中
                     deltaDeleteNodes.insert(outputNode);
                     nodesToRemove.push_back(outputNode);
                 }
             }
+        }
+        tOutputDecisionMs += elapsedMs(t0);
+    }
 
+    {
+        FunctionTimer scope("applyDeltaDeletes: remove dangling nodes");
+        // 最后，从图中删除没有入边的派生节点
+        for (const auto& nodeToRemove : nodesToRemove) {
+            // 从映射中移除
+            tupleToNodeMap.erase(nodeToRemove->getTuple());
+//        std::cout << "removing node " << nodeToRemove->toString() << std::endl;
+            // 从节点列表中移除
+//        nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeToRemove), nodes.end());
+            nodes.erase(nodeToRemove);
         }
     }
 
-    // 最后，从图中删除没有入边的派生节点
-    for (const auto& nodeToRemove : nodesToRemove) {
-        // 从映射中移除
-        tupleToNodeMap.erase(nodeToRemove->getTuple());
-//        std::cout << "removing node " << nodeToRemove->toString() << std::endl;
-        // 从节点列表中移除
-//        nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeToRemove), nodes.end());
-        nodes.erase(nodeToRemove);
-    }
-
-    for (const auto& tuple : deletedFacts) {
-        auto node = this->findNode(tuple);
-        // it's possible that a deleted fact has deleted derivation...
-        if (node != nullptr) {
-            // 从映射中移除
+    {
+        FunctionTimer scope("applyDeltaDeletes: remove fact nodes");
+        for (const auto& tuple : deletedFacts) {
+            auto node = this->findNode(tuple);
+            // it's possible that a deleted fact has deleted derivation...
+            if (node != nullptr) {
+                // 从映射中移除
 
 //            node->isFact = false;
-            tupleToNodeMap.erase(node->getTuple());
-            deltaDeleteNodes.insert(node);
-            if (!node->getIncomingEdges().empty()) {
-                // the node changes from an input fact to a derived node
-                node->isFact = false;
-                node->pruned = true; // pretend to be pruned
-                deltaInsertNodes.insert(node); // but still keep it in the graph
-                for (auto edge: node->getIncomingEdges()) {
-                    if (deltaDeleteEdges.find(edge) == deltaDeleteEdges.end()) {
-                        deltaInsertEdges.insert(edge);
+                tupleToNodeMap.erase(node->getTuple());
+                deltaDeleteNodes.insert(node);
+                if (!node->getIncomingEdges().empty()) {
+                    // the node changes from an input fact to a derived node
+                    node->isFact = false;
+                    node->pruned = true; // pretend to be pruned
+                    deltaInsertNodes.insert(node); // but still keep it in the graph
+                    for (auto edge: node->getIncomingEdges()) {
+                        if (deltaDeleteEdges.find(edge) == deltaDeleteEdges.end()) {
+                            deltaInsertEdges.insert(edge);
+                        }
                     }
+                } else {
+                    nodes.erase(node);
+                    nodesToRemove.push_back(node);
                 }
+                // 从节点列表中移除
+
             } else {
-                nodes.erase(node);
-                nodesToRemove.push_back(node);
+                // It's possible that the deleted fact has been removed from the graph; but it has to be with deleted derivations
+                std::cout << "deleted fact not found: " << tuple.toString() << std::endl;
+                // assert (false && "deleted fact not found");
             }
-            // 从节点列表中移除
-
-        } else {
-            // It's possible that the deleted fact has been removed from the graph; but it has to be with deleted derivations
-            std::cout << "deleted fact not found: " << tuple.toString() << std::endl;
-            // assert (false && "deleted fact not found");
         }
     }
 
-    for (auto& [fact, impactedEdges]: deletedFactImpactedEdges) {
-        std::set<EdgePtr> newImpactedEdges;
-        for (const auto& impactedEdge : impactedEdges) {
-            // 如果这个边已经被标记为删除，则不需要再次添加
-            if (deltaDeleteEdges.find(impactedEdge) != deltaDeleteEdges.end()) {
-                continue;
+    {
+        FunctionTimer scope("applyDeltaDeletes: cleanup impacted sets");
+        for (auto& [fact, impactedEdges]: deletedFactImpactedEdges) {
+            std::set<EdgePtr> newImpactedEdges;
+            for (const auto& impactedEdge : impactedEdges) {
+                // 如果这个边已经被标记为删除，则不需要再次添加
+                if (deltaDeleteEdges.find(impactedEdge) != deltaDeleteEdges.end()) {
+                    continue;
+                }
+                // 否则，将其添加到新的影响边集合中
+                newImpactedEdges.insert(impactedEdge);
             }
-            // 否则，将其添加到新的影响边集合中
-            newImpactedEdges.insert(impactedEdge);
+            // 更新影响边集合
+            impactedEdges = std::move(newImpactedEdges);
         }
-        // 更新影响边集合
-        impactedEdges = std::move(newImpactedEdges);
-    }
-    for (auto& [fact, impactedNodes]: deletedFactImpactedNodes) {
-        std::set<NodePtr> newImpactedNodes;
-        for (const auto& impactedNode : impactedNodes) {
-            // 如果这个节点已经被标记为删除，则不需要再次添加
-            if (deltaDeleteNodes.find(impactedNode) != deltaDeleteNodes.end()) {
-                continue;
-            }
-            // 否则，将其添加到新的影响节点集合中
-            newImpactedNodes.insert(impactedNode);
+        for (auto& [fact, impactedNodes]: deletedFactImpactedNodes) {
+            std::set<NodePtr> newImpactedNodes;
+            for (const auto& impactedNode : impactedNodes) {
+                // 如果这个节点已经被标记为删除，则不需要再次添加
+                if (deltaDeleteNodes.find(impactedNode) != deltaDeleteNodes.end()) {
+                    continue;
+                }
+                // 否则，将其添加到新的影响节点集合中
+                newImpactedNodes.insert(impactedNode);
 //            std::cout << "Deleted fact: " << fact->toString() << " impacts node: " << impactedNode->toString() << std::endl;
+            }
+            // 更新影响节点集合
+            impactedNodes = newImpactedNodes;
         }
-        // 更新影响节点集合
-        impactedNodes = newImpactedNodes;
     }
+    std::cout << "[applyDeltaDeletes] detailed: "
+              << "findEdge=" << tFindEdgeMs << "ms, "
+              << "eraseVec=" << tEraseVecMs << "ms, "
+              << "eraseEdgeSet=" << tEraseEdgeSetMs << "ms, "
+              << "eraseKey=" << tEraseKeyMs << "ms, "
+              << "outputDecision=" << tOutputDecisionMs << "ms, "
+              << "removedEdges=" << removedEdgeCount
+              << ", inVecScan=" << totalInVecScan
+              << ", outVecScan=" << totalOutVecScan
+              << std::endl;
 //    for (const auto& [deletedFact, impactedNodes] : deletedFactImpactedNodes) {
 //        std::cout << "Deleted fact: " << deletedFact->toString() << " impacts nodes: ";
 //        for (const auto& impactedNode : impactedNodes) {
@@ -1690,6 +1658,18 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
 
 // pruning is not incremental for now
 IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>& outputRelations) {
+    FunctionTimer totalTimer("prune-inc total");
+    // std::cout << "[prune-inc] pre-prune graph nodes=" << nodes.size()
+    //           << " edges=" << edges.size()
+    //           << " deltaInsertNodes=" << deltaInsertNodes.size()
+    //           << " deltaInsertEdges=" << deltaInsertEdges.size()
+    //           << " deltaDeleteNodes=" << deltaDeleteNodes.size()
+    //           << " deltaDeleteEdges=" << deltaDeleteEdges.size()
+    //           << std::endl;
+    {
+        FunctionTimer scopeTimer("prune-inc: dumpStatisticsInc");
+        dumpStatisticsInc(std::cout);
+    }
     std::unordered_set outputRelationNames(outputRelations.begin(), outputRelations.end());
     // 标记可达的节点和边
     std::unordered_set<NodePtr> reachableNodes;
@@ -1698,142 +1678,157 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
 
     std::unordered_set<NodePtr> outputNodes;
 
-    // 初始化：从所有输出 relation 的节点出发
-    for (const auto& node : nodes) {
-        if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
-            std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
-            reachableNodes.insert(node);
-            workQueue.push(node);
-            node->setQuery();
-            outputNodes.insert(node);
-        } else if (node -> isQueryNode()) {
-            reachableNodes.insert(node);
-            workQueue.push(node);
-            node->setQuery();
-            outputNodes.insert(node);
+    {
+        FunctionTimer scopeTimer("prune-inc: init outputs + refcount");
+        // 初始化：从所有输出 relation 的节点出发
+        for (const auto& node : nodes) {
+            if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
+                std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
+                reachableNodes.insert(node);
+                workQueue.push(node);
+                node->setQuery();
+                outputNodes.insert(node);
+            } else if (node -> isQueryNode()) {
+                reachableNodes.insert(node);
+                workQueue.push(node);
+                node->setQuery();
+                outputNodes.insert(node);
+            }
+            node->currentRefCount = 0;
         }
-        node->currentRefCount = 0;
-    }
 
-    for (const auto& edge : edges) {
-        edge->currentRefCount = 0;
-    }
+        for (const auto& edge : edges) {
+            edge->currentRefCount = 0;
+        }
 
-    // register reference count
-    for (const auto& node : outputNodes) {
-        std::queue<NodePtr> q;
-        std::unordered_set<NodePtr> visited;
-        q.push(node);
-        while (!q.empty()) {
-            NodePtr n = q.front(); q.pop();
-            visited.insert(n);
-            n->currentRefCount += 1;
-            for (const auto& edge : n->getIncomingEdges()) {
-                edge->currentRefCount += 1;
-                for (const auto& inputNode : edge->getInputs()) {
-                    if (visited.count(inputNode) == 0) {
-                        q.push(inputNode);
+        // register reference count
+        for (const auto& node : outputNodes) {
+            std::queue<NodePtr> q;
+            std::unordered_set<NodePtr> visited;
+            q.push(node);
+            while (!q.empty()) {
+                NodePtr n = q.front(); q.pop();
+                visited.insert(n);
+                n->currentRefCount += 1;
+                for (const auto& edge : n->getIncomingEdges()) {
+                    edge->currentRefCount += 1;
+                    for (const auto& inputNode : edge->getInputs()) {
+                        if (visited.count(inputNode) == 0) {
+                            q.push(inputNode);
+                        }
                     }
                 }
             }
         }
     }
 
-    // TODO
-    for (const auto& node : nodes) {
-        if (node->hasEvidence() && reachableNodes.insert(node).second) {
-            std::cout << "Found evidence node: " << node->toString()
-                      << " with value " << (node->getEvidenceValue() ? "true" : "false")
-                      << std::endl;
-            workQueue.push(node);
-        }
-    }
-
-    // 反向 BFS 遍历
-    while (!workQueue.empty()) {
-        NodePtr current = workQueue.front();
-        workQueue.pop();
-        if (current->isFact) {
-            continue;  // currently skip input facts
-        }
-        for (const auto& edge : current->getIncomingEdges()) {
-            if (std::find(edge->getInputs().begin(), edge->getInputs().end(), current) != edge->getInputs().end()) {
-                continue;  // if the edge reports self-dependency, then it is redundant
+    {
+        FunctionTimer scopeTimer("prune-inc: evidence + backward BFS");
+        // TODO
+        for (const auto& node : nodes) {
+            if (node->hasEvidence() && reachableNodes.insert(node).second) {
+                std::cout << "Found evidence node: " << node->toString()
+                          << " with value " << (node->getEvidenceValue() ? "true" : "false")
+                          << std::endl;
+                workQueue.push(node);
             }
-            reachableEdges.insert(edge);
-            for (const auto& inputNode : edge->getInputs()) {
-                if (reachableNodes.insert(inputNode).second) {
-                    workQueue.push(inputNode);
+        }
+
+        // 反向 BFS 遍历
+        while (!workQueue.empty()) {
+            NodePtr current = workQueue.front();
+            workQueue.pop();
+            if (current->isFact) {
+                continue;  // currently skip input facts
+            }
+            for (const auto& edge : current->getIncomingEdges()) {
+                if (std::find(edge->getInputs().begin(), edge->getInputs().end(), current) != edge->getInputs().end()) {
+                    continue;  // if the edge reports self-dependency, then it is redundant
+                }
+                reachableEdges.insert(edge);
+                for (const auto& inputNode : edge->getInputs()) {
+                    if (reachableNodes.insert(inputNode).second) {
+                        workQueue.push(inputNode);
+                    }
                 }
             }
         }
     }
 
     std::unordered_set<NodePtr> newNodes;
-    for (const auto& node : nodes) {
-        if (reachableNodes.count(node)){
-            newNodes.insert(node);
-            if (node->pruned) {
-//                std::cout << "reusing a pruned node: " << node->getTuple().toString() << std::endl;
-                deltaInsertNodes.insert(node);
-            }
-            node->pruned = false;  // reset pruned flag
-        } else {
-            node->pruned = true;
-        }
-    }
-
     std::unordered_set<EdgePtr> newEdges;
-    for (const auto& edge : edges) {
-        if (reachableEdges.count(edge)) {
-            newEdges.insert(edge);
-            if (edge->pruned) {
-//                std::cout << "reusing a pruned edge: " << edge->toString() << std::endl;
-                deltaInsertEdges.insert(edge);
+    {
+        FunctionTimer scopeTimer("prune-inc: mark live/pruned nodes+edges");
+        for (const auto& node : nodes) {
+            if (reachableNodes.count(node)){
+                newNodes.insert(node);
+                if (node->pruned) {
+//                std::cout << "reusing a pruned node: " << node->getTuple().toString() << std::endl;
+                    deltaInsertNodes.insert(node);
+                }
+                node->pruned = false;  // reset pruned flag
+            } else {
+                node->pruned = true;
             }
-            edge->pruned = false;  // reset pruned flag
-        } else {
-            edge->pruned = true;
+        }
+
+        for (const auto& edge : edges) {
+            if (reachableEdges.count(edge)) {
+                newEdges.insert(edge);
+                if (edge->pruned) {
+//                std::cout << "reusing a pruned edge: " << edge->toString() << std::endl;
+                    deltaInsertEdges.insert(edge);
+                }
+                edge->pruned = false;  // reset pruned flag
+            } else {
+                edge->pruned = true;
+            }
         }
     }
 
     // 过滤节点和边
     std::set<NodePtr> newDeltaDeletedNodes;
     std::set<EdgePtr> newDeltaDeletedEdges;
-    for (const auto& deletedNode : deltaDeleteNodes) {
-        if (!deletedNode->pruned) {
-            newDeltaDeletedNodes.insert(deletedNode);
+    {
+        FunctionTimer scopeTimer("prune-inc: filter delta-deleted");
+        for (const auto& deletedNode : deltaDeleteNodes) {
+            if (!deletedNode->pruned) {
+                newDeltaDeletedNodes.insert(deletedNode);
+            }
         }
-    }
-    for (const auto& deletedEdge : deltaDeleteEdges) {
-        if (!deletedEdge->pruned) {
-            newDeltaDeletedEdges.insert(deletedEdge);
+        for (const auto& deletedEdge : deltaDeleteEdges) {
+            if (!deletedEdge->pruned) {
+                newDeltaDeletedEdges.insert(deletedEdge);
+            }
         }
     }
 
     // eqrel merge (if enabled) and cleanup
-    mergeBiImpEquivalences(newNodes, newEdges);
-    removeSelfLoopEdges(newNodes, newEdges);
+    {
+        FunctionTimer scopeTimer("prune-inc: mergeBiImp + cleanup");
+        mergeBiImpEquivalences(newNodes, newEdges);
+        removeSelfLoopEdges(newNodes, newEdges);
+    }
 
     // Canonicalise delta-deleted sets after merging.
     {
-        std::set<NodePtr> filtered;
+        FunctionTimer scopeTimer("prune-inc: canonicalise delta-deleted");
+        std::set<NodePtr> filteredNodes;
         for (const auto& n : newDeltaDeletedNodes) {
             auto rep = findRepresentative(n);
             if (newNodes.count(rep)) {
-                filtered.insert(rep);
+                filteredNodes.insert(rep);
             }
         }
-        newDeltaDeletedNodes.swap(filtered);
-    }
-    {
-        std::set<EdgePtr> filtered;
+        newDeltaDeletedNodes.swap(filteredNodes);
+
+        std::set<EdgePtr> filteredEdges;
         for (const auto& e : newDeltaDeletedEdges) {
             if (newEdges.count(e)) {
-                filtered.insert(e);
+                filteredEdges.insert(e);
             }
         }
-        newDeltaDeletedEdges.swap(filtered);
+        newDeltaDeletedEdges.swap(filteredEdges);
     }
 
 
@@ -1873,68 +1868,94 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
 
     std::unordered_map<NodePtr, std::set<NodePtr>> newInsertedFactImpactedNodes;
     std::unordered_map<NodePtr, std::set<EdgePtr>> newInsertedFactImpactedEdges;
-    for (const auto& [fact, impactedNodes] : insertedFactImpactedNodes) {
-        if (!reachableNodes.count(fact)) {
-            continue;
-        }
-        std::set<NodePtr> newImpactedNodes;
-        for (const auto& impactedNode : impactedNodes) {
-            if (reachableNodes.count(impactedNode)) {
-                newImpactedNodes.insert(impactedNode);
-            }
-        }
-        newInsertedFactImpactedNodes[fact] = std::move(newImpactedNodes);
-    }
-    for (const auto& [fact, impactedEdges] : insertedFactImpactedEdges) {
-        if (!reachableNodes.count(fact)) {
-            continue;
-        }
-        std::set<EdgePtr> newImpactedEdges;
-        for (const auto& impactedEdge : impactedEdges) {
-            if (reachableEdges.count(impactedEdge)) {
-                newImpactedEdges.insert(impactedEdge);
-            }
-        }
-        newInsertedFactImpactedEdges[fact] = std::move(newImpactedEdges);
-    }
     std::unordered_map<NodePtr, std::set<NodePtr>> newDeletedFactImpactedNodes;
     std::unordered_map<NodePtr, std::set<EdgePtr>> newDeletedFactImpactedEdges;
-    for (const auto& [fact, impactedNodes] : deletedFactImpactedNodes) {
-        if (!reachableNodes.count(fact)) {
-            continue;
-        }
-        std::set<NodePtr> newImpactedNodes;
-        for (const auto& impactedNode : impactedNodes) {
-            if (reachableNodes.count(impactedNode)) {
-                newImpactedNodes.insert(impactedNode);
+    {
+        FunctionTimer scopeTimer("prune-inc: rebuild impacted maps");
+        using Clock = std::chrono::steady_clock;
+        double insImpactMs = 0.0, delImpactMs = 0.0;
+        size_t insImpactNodes = 0, insImpactEdges = 0, insSources = 0;
+        size_t delImpactNodes = 0, delImpactEdges = 0, delSources = 0;
+        auto computeImpact = [&](const NodePtr& src, std::set<NodePtr>& outNodes, std::set<EdgePtr>& outEdges) -> std::pair<size_t, size_t> {
+            std::queue<NodePtr> q;
+            std::unordered_set<NodePtr> visited;
+            if (!src || !newNodes.count(src)) {
+                return {0, 0};
+            }
+            q.push(src);
+            visited.insert(src);
+            outNodes.insert(src);
+            while (!q.empty()) {
+                NodePtr cur = q.front();
+                q.pop();
+                for (const auto& e : cur->getOutgoingEdges()) {
+                    if (!newEdges.count(e)) {
+                        continue;
+                    }
+                    outEdges.insert(e);
+                    NodePtr nxt = e->getOutput();
+                    if (nxt && newNodes.count(nxt) && visited.insert(nxt).second) {
+                        outNodes.insert(nxt);
+                        q.push(nxt);
+                    }
+                }
+            }
+            return {outNodes.size(), outEdges.size()};
+        };
+
+        for (const auto& fact : newDeltaInsertedNodes) {
+            std::set<NodePtr> impactedNodes;
+            std::set<EdgePtr> impactedEdges;
+            auto t0 = Clock::now();
+            auto counts = computeImpact(fact, impactedNodes, impactedEdges);
+            insImpactMs += std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+            if (!impactedNodes.empty() || !impactedEdges.empty()) {
+                newInsertedFactImpactedNodes[fact] = std::move(impactedNodes);
+                newInsertedFactImpactedEdges[fact] = std::move(impactedEdges);
+                insImpactNodes += counts.first;
+                insImpactEdges += counts.second;
+                insSources++;
             }
         }
-        newDeletedFactImpactedNodes[fact] = std::move(newImpactedNodes);
-    }
-    for (const auto& [fact, impactedEdges] : deletedFactImpactedEdges) {
-        if (!reachableNodes.count(fact)) {
-            continue;
-        }
-        std::set<EdgePtr> newImpactedEdges;
-        for (const auto& impactedEdge : impactedEdges) {
-            if (reachableEdges.count(impactedEdge)) {
-                newImpactedEdges.insert(impactedEdge);
+        for (const auto& fact : newDeltaDeletedNodes) {
+            std::set<NodePtr> impactedNodes;
+            std::set<EdgePtr> impactedEdges;
+            auto t0 = Clock::now();
+            auto counts = computeImpact(fact, impactedNodes, impactedEdges);
+            delImpactMs += std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+            if (!impactedNodes.empty() || !impactedEdges.empty()) {
+                newDeletedFactImpactedNodes[fact] = std::move(impactedNodes);
+                newDeletedFactImpactedEdges[fact] = std::move(impactedEdges);
+                delImpactNodes += counts.first;
+                delImpactEdges += counts.second;
+                delSources++;
             }
         }
-        newDeletedFactImpactedEdges[fact] = std::move(newImpactedEdges);
+        std::cout << "[prune-inc impact] insSources=" << insSources
+                  << " insNodes=" << insImpactNodes << " insEdges=" << insImpactEdges
+                  << " insTimeMs=" << insImpactMs
+                  << " delSources=" << delSources
+                  << " delNodes=" << delImpactNodes << " delEdges=" << delImpactEdges
+                  << " delTimeMs=" << delImpactMs
+                  << std::endl;
     }
 
-    auto view = IncSubgraphView(std::move(newNodes), std::move(newEdges),
-                           std::move(newDeltaInsertedNodes),
-                           std::move(newDeltaInsertedEdges),
-                           std::move(newDeltaDeletedNodes),
-                           std::move(newDeltaDeletedEdges),
-                            std::move(newDeletedFactImpactedNodes),
-                            std::move(newDeletedFactImpactedEdges),
-                            std::move(newInsertedFactImpactedNodes),
-                            std::move(newInsertedFactImpactedEdges)
-            );
-    view.dumpStatisticsInc(std::cout);
+    IncSubgraphView view = [&]() {
+        FunctionTimer scopeTimer("prune-inc: build view");
+        return IncSubgraphView(std::move(newNodes), std::move(newEdges),
+                               std::move(newDeltaInsertedNodes),
+                               std::move(newDeltaInsertedEdges),
+                               std::move(newDeltaDeletedNodes),
+                               std::move(newDeltaDeletedEdges),
+                               std::move(newDeletedFactImpactedNodes),
+                               std::move(newDeletedFactImpactedEdges),
+                               std::move(newInsertedFactImpactedNodes),
+                               std::move(newInsertedFactImpactedEdges));
+    }();
+    {
+        FunctionTimer scopeTimer("prune-inc: dumpStatisticsInc(view)");
+        view.dumpStatisticsInc(std::cout);
+    }
     return view;
 }
 
