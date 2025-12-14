@@ -54,3 +54,30 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
 ## Notes
 - Do not commit anything under `experiments/`; keep it local.
 - If you edit delta files manually (`delta/inc10_*.txt`), rerun compile+run so probabilities match.
+
+## How I run the inc experiments (exact commands)
+From repo root, with release Soufflé on PATH:
+```bash
+export PATH="/home/hugh/research/datalog/souffle/cmake-build-release/src:$PATH"
+
+# Generate cases P4–P13 (skip P1/P3 due to current inc loop issue)
+python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_eval generate --cases 4-13 --cleanup
+
+# Generate deltas (overwrite delta/)
+python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_eval delta --cases 4-13 --cleanup
+
+# Compile compute for each case using online CLI support
+python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_eval compile --cases 4-13 --timeout 300
+
+# Run baseline (full+inc) and one sample of inc10 per case, timeout 30s
+python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_eval run \
+  --cases 4-13 --delta-labels inc10 --delta-samples 1 --timeout 30
+```
+Artifacts per case:
+- Stage logs: `log_P*_inc10_1_inc_*.json`, `log_P*_inc10_1_full_*.json`.
+- Consistency + paths: `output/delta-inc10-1.json` (contains base/iter comparisons, `max|Δ|`, etc).
+- Prob outputs: `output/delta-inc10-1-{inc,full}-fact-iter*.prob`, `output/facts.{inc,full}.prob`.
