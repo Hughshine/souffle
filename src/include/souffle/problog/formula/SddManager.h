@@ -91,7 +91,7 @@ struct SddVariableWeight {
     double negWeight;  // Weight when variable is false
 };
 
-// PySDD 包装了这个 先留个位置 以后对vtree操作可能要用
+
 class VtreeWrapper {
 private:
     Vtree* vtree_;
@@ -183,7 +183,7 @@ public:
             SddLiteral var_count = 0,
             bool auto_gc_and_minimize = false
             );
-    ~SddFormulaManager() override;
+    ~SddFormulaManager() override = default;
 
 
     SddNodeRef createVar(int index) override;
@@ -240,23 +240,23 @@ private:
     std::unordered_map<int,int> rawToInternal;
     std::unordered_map<const Node*, int> nodeToRawIndex_;
     std::unordered_map<const Hyperedge*, int> edgeToRawIndex_;
-    // 当前 manager 中已经分配的 internal 变量个数 (1..nextInternalVar)
+
+    int nextRawVar = 0;
     int nextInternalVar = 0;
 
-    // 权重：internalId -> weight
+
     std::unordered_map<int, SddVariableWeight> weight_map_;
 
-    // internalId -> SddNodeRef（literal 缓存）
+
     std::unordered_map<int, SddNodeRef> variableRegistry;
     std::unordered_map<int, SddLiteral> atom2var;
     std::unordered_map<int, SddLiteral> var2atom;
-    // 对应 ProbLog weights[0]：True 的全局权重
+
     bool hasGlobalTrueWeight_ = false;
     double globalTrueWeight_ = 1.0;
 };
 
 
-// ======================= 构造 / 析构 =======================
 
 inline SddFormulaManager::SddFormulaManager(
         SddLiteral var_count,
@@ -281,17 +281,8 @@ inline SddFormulaManager::SddFormulaManager(
 
 
         nextInternalVar = static_cast<int>(sdd_manager_var_count(manager_));
+        nextRawVar = 0;
     }
-
-inline SddFormulaManager::~SddFormulaManager() {
-    if (manager_) {
-        sdd_manager_free(manager_);
-        manager_ = nullptr;
-    }
-}
-
-
-// =============== rawIndex -> internalIndex 统一映射 ===============
 
 inline SddNodeRef SddFormulaManager::createVar(int rawIndex) {
     if (rawIndex <= 0) {
@@ -405,21 +396,20 @@ inline SddNodeRef SddFormulaManager::createVar(int rawIndex, const Hyperedge& ed
 
 inline int SddFormulaManager::getVarIndex(const Node& node) {
     auto it = nodeToRawIndex_.find(&node);
-    if (it == nodeToRawIndex_.end()) {
-        throw std::runtime_error("Node not registered in SddFormulaManager::getVarIndex");
-    }
-    return it->second;  // 返回 rawIndex
+    if (it != nodeToRawIndex_.end()) return it->second;
+    int idx = nextRawVar++;
+    nodeToRawIndex_[&node] = idx;
+    return idx;
 }
 
 inline int SddFormulaManager::getVarIndex(const Hyperedge& edge) {
     auto it = edgeToRawIndex_.find(&edge);
-    if (it == edgeToRawIndex_.end()) {
-        throw std::runtime_error("Hyperedge not registered in SddFormulaManager::getVarIndex");
-    }
-    return it->second;  // 返回 rawIndex
+    if (it != edgeToRawIndex_.end()) return it->second;
+    int idx = nextRawVar++;
+    edgeToRawIndex_[&edge] = idx;
+    return idx;
 }
 
-// ========================= 布尔操作 =========================
 
 inline SddNodeRef SddFormulaManager::makeAnd(
         const SddNodeRef& a, const SddNodeRef& b) {
@@ -474,8 +464,6 @@ inline SddNodeRef SddFormulaManager::getFalse() {
 }
 
 
-// ========================= 条件化 =========================
-
 inline SddNodeRef SddFormulaManager::makeCondition(
         const SddNodeRef& f,
         const std::vector<int>& trueIndexes,
@@ -512,7 +500,6 @@ inline SddNodeRef SddFormulaManager::makeCondition(
         result = SddNodeRef(manager_, conditioned);
     }
 
-    // 负 literal
     for (int rawIdx : falseIndexes) {
         if (rawIdx <= 0) {
             throw std::runtime_error("SDD condition index must be >= 1");
@@ -544,17 +531,15 @@ inline SddNodeRef SddFormulaManager::makeCondition(
 }
 
 
-// ========================= 权重 & WMC =========================
 
 inline bool SddFormulaManager::isSame(
         const SddNodeRef& a, const SddNodeRef& b) {
     return a.get() == b.get();
 }
 
-// rawIndex：0 特殊表示 True 权重，其余映射到 internalId
 inline void SddFormulaManager::setVariableWeight(
         int rawIndex, double posWeight, double negWeight) {
-    // 0 -> 全局 True 权重，只用正项
+
     if (rawIndex == 0) {
         hasGlobalTrueWeight_ = true;
         globalTrueWeight_ = posWeight;
@@ -565,7 +550,6 @@ inline void SddFormulaManager::setVariableWeight(
         throw std::runtime_error("SDD weight index must be >= 0");
     }
     if (rawIndex == 0) {
-        // 已在上面处理，这里只是防御
         return;
     }
 
@@ -590,9 +574,6 @@ inline void SddFormulaManager::setVariableWeight(
 inline std::vector<double> SddFormulaManager::buildWeightArray() const {
     int varCount = sdd_manager_var_count(manager_);
 
-    // layout:
-    //   weights[i]           = negWeight for var = i+1
-    //   weights[i+varCount]  = posWeight for var = i+1
     std::vector<double> weights(varCount * 2, 0.0);
 
     for (int i = 0; i < varCount; ++i) {
@@ -600,8 +581,8 @@ inline std::vector<double> SddFormulaManager::buildWeightArray() const {
 
         auto it = weight_map_.find(internal);
         if (it != weight_map_.end()) {
-            weights[i] = it->second.negWeight;            // -internal
-            weights[i + varCount] = it->second.posWeight; // +internal
+            weights[i] = it->second.negWeight;
+            weights[i + varCount] = it->second.posWeight;
         } else {
             // 默认：neg = 0, pos = 1
             weights[i] = 0.0;
@@ -641,16 +622,12 @@ inline double SddFormulaManager::computeWeightedModelCount(
     double result = wmc_propagate(wmc);
     wmc_manager_free(wmc);
 
-    // 对应 ProbLog: 如果 weights[0] 存在，就乘上 True 的权重
     if (hasGlobalTrueWeight_) {
         result *= globalTrueWeight_;
     }
 
     return result;
 }
-
-
-// ========================= Debug 输出 =========================
 
 inline void SddFormulaManager::printInfo(
         const SddNodeRef& node, const std::string& name) {
