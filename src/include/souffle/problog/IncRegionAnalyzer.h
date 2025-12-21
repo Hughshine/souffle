@@ -119,7 +119,7 @@ public:
         if (current_delta_sources_.empty()) {
             current_delta_sources_ = last_delta_nodes_;
         }
-        reach_filter_ = reachFromSources_(current_delta_sources_);
+        reach_filter_ = reachFromCache_(current_delta_sources_);
         auto t3 = now();
 
         // Initial region + boundaries + expansion
@@ -502,32 +502,17 @@ private:
     }
 
     struct ReachInfo {
-        std::set<NodePtr> nodes;
-        std::set<EdgePtr> edges;
+        std::unordered_set<NodePtr> nodes;
+        std::unordered_set<EdgePtr> edges;
     };
 
-    ReachInfo reachFromSources_(const std::set<NodePtr>& sources) {
+    ReachInfo reachFromCache_(const std::set<NodePtr>& sources) {
         ReachInfo info;
-        std::queue<NodePtr> q;
-        for (auto& src : sources) {
-            if (!src) continue;
-            if (info.nodes.insert(src).second) {
-                q.push(src);
-            }
-        }
-        while (!q.empty()) {
-            auto cur = q.front();
-            q.pop();
-            auto oit = outgoing_edges_map_.find(cur);
-            if (oit == outgoing_edges_map_.end()) continue;
-            for (auto& e : oit->second) {
-                info.edges.insert(e);
-                auto head = view_.getOutput(e);
-                if (head && info.nodes.insert(head).second) {
-                    q.push(head);
-                }
-            }
-        }
+        (void)sources;  // No patching needed; delta-reachable cache is assumed complete.
+        const auto& cacheNodes = view_.getDeltaInsertReachableNodes();
+        const auto& cacheEdges = view_.getDeltaInsertReachableEdges();
+        info.nodes.insert(cacheNodes.begin(), cacheNodes.end());
+        info.edges.insert(cacheEdges.begin(), cacheEdges.end());
         return info;
     }
 

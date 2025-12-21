@@ -72,7 +72,8 @@ Mergeable anchor 判定（`mergeableEdgeAtHead_`）：
 `deltaReachable_()` 的优先级：
 1) 使用 union cache（最快）  
 2) 若为空，fallback 到 impacted maps  
-3) 始终加入 delta insert nodes/edges 本身
+
+`reach_filter_` 直接使用 delta-reachable cache（不再额外补丁）。
 
 ---
 

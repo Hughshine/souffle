@@ -117,3 +117,10 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
   - Wall times (real seconds): inc-naive 3.61, inc-regional 4.06, full 2.99.
   - Analyze timing (inc-regional): `deltaReach≈0.591 ms`, `total≈23.283 ms` (from `run_inc_regional.profile5.stdout`).
   - Rebuild timing (inc-regional): `rebuildLoop≈1014.395 ms`, `total≈1026.708 ms`.
+- Execution log (2025-12-20, P12 delta `inc10_1`, profile8):
+  - Code change: `reach_filter_` now uses only delta-reachable cache (no patching), and `ReachInfo` stores `unordered_set`.
+  - Build: `cmake --build cmake-build-release --target souffle -j4`
+  - Compile P12: `python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py --base-dir experiments/side_channel_inc_eval compile --cases 12 --timeout 300`
+  - Run P12 (inc10_1): `--setmode inc-regional` with `--logfile log_P12_inc10_1_inc_regional_profile8`
+    - stdout: `experiments/side_channel_inc_eval/P12/run_inc_regional.profile8.stdout`
+  - Analyze timing (inc-regional): `reach≈0.586 ms`, `total≈23.841 ms` (from `run_inc_regional.profile8.stdout`).
