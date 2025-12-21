@@ -8,6 +8,8 @@
 #include <vector>
 #include <regex>
 #include <iomanip>
+#include <fstream>
+#include <unordered_map>
 #include <readline/readline.h>
 #include <readline/history.h>
 #include "souffle/SouffleInterface.h"
@@ -55,7 +57,8 @@ std::string getIncDeltaTupleInsertRelationName(const std::string& name) {
 
 enum IncMode {
   FULL,
-  INC,
+  INC_NAIVE,
+  INC_REGIONAL,
   ELASTIC
 };
 
@@ -182,7 +185,7 @@ private:
     std::set<NodePtr> changedNodes;
 
 
-    IncMode incMode = IncMode::INC;
+    IncMode incMode = IncMode::INC_NAIVE;
     bool derivationOnly = false;
     bool isGround = false;
 public:
@@ -229,13 +232,15 @@ public:
         auto& mode = options.getIncMode();
         if (mode == "full") {
             setIncMode(IncMode::FULL);
-        } else if (mode == "inc" || mode == "incremental" || mode == "incr" ) {
-            setIncMode(IncMode::INC);
+        } else if (mode == "inc" || mode == "incremental" || mode == "incr" || mode == "inc-naive") {
+            setIncMode(IncMode::INC_NAIVE);
+        } else if (mode == "inc-regional" || mode == "regional") {
+            setIncMode(IncMode::INC_REGIONAL);
         } else if (mode == "elastic") {
             setIncMode(IncMode::ELASTIC);
         } else {
-            std::cerr << "Unknown incremental mode: " << mode << ", defaulting to INCREMENTAL." << std::endl;
-            setIncMode(IncMode::INC);
+            std::cerr << "Unknown incremental mode: " << mode << ", defaulting to INC-NAIVE." << std::endl;
+            setIncMode(IncMode::INC_NAIVE);
         }
     }
     void setIncMode(IncMode mode) {
@@ -365,9 +370,12 @@ public:
         } else if (cmd == "setmode") {
             std::string mode;
             iss >> mode;
-            if (mode == "incremental" || mode == "incr") {
-                incMode = IncMode::INC;
-                std::cout << "Set incremental mode to INCREMENTAL" << std::endl;
+            if (mode == "incremental" || mode == "incr" || mode == "inc-naive" || mode == "inc") {
+                incMode = IncMode::INC_NAIVE;
+                std::cout << "Set incremental mode to INC-NAIVE" << std::endl;
+            } else if (mode == "inc-regional" || mode == "regional") {
+                incMode = IncMode::INC_REGIONAL;
+                std::cout << "Set incremental mode to INC-REGIONAL" << std::endl;
             } else if (mode == "full") {
                 incMode = IncMode::FULL;
                 std::cout << "Set incremental mode to FULL" << std::endl;
@@ -382,7 +390,7 @@ public:
 //            }
             else {
                 std::cout << "Unknown mode: " << mode << std::endl;
-                std::cout << "Available modes: incremental (incr), full, elastic" << std::endl;
+                std::cout << "Available modes: inc-naive (inc/incr), inc-regional, full, elastic" << std::endl;
                 std::cout << "Current mode unchanged." << std::endl;
             }
         } else if (cmd == "commit") {
@@ -537,7 +545,8 @@ public:
             debugger.endStage();
             // TODO should maintain initialInputRelations and fact_prob
             dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter" + std::to_string(iteration) + ".txt");
-            if (incMode == IncMode::INC) {
+            bool useRegional = incMode == IncMode::INC_REGIONAL;
+            if (incMode == IncMode::INC_NAIVE || useRegional) {
                 debugger.startStage(StageKind::PRUNING_INC);
                 std::cout << "[prune-inc] pre-applyDelta statistics:\n";
                 graph->dumpStatisticsInc(std::cout);
@@ -560,7 +569,11 @@ public:
                 }
                 // knowledge representation
                 debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
-                buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
+                if (useRegional) {
+                    buildFormulasIncRegionalCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);
+                } else {
+                    buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
+                }
                 debugger.endStage();
 
                 {
@@ -580,7 +593,9 @@ public:
                 }
 
                 debugger.endTurn();
-                dumpProbabilities(probResult,"./output/","fact-iter" + std::to_string(iteration) + "-inc");
+                std::string incTag = useRegional ? "-inc-regional" : "-inc-naive";
+                std::string incPrefix = "fact-iter" + std::to_string(iteration) + incTag;
+                dumpProbabilities(probResult, opt.getOutputFileDir() + "/", incPrefix);
                 iteration++;
             } else if (incMode == IncMode::FULL) {
                 debugger.startStage(StageKind::PRUNING_FULL);
@@ -620,7 +635,8 @@ public:
                 }
                 debugger.endStage();
                 debugger.startStage(StageKind::IO_DUMP_FULL);
-                dumpProbabilities(probResult,"./output/","fact-iter" + std::to_string(iteration) + "-full");
+                std::string basePrefix = "fact-iter" + std::to_string(iteration);
+                dumpProbabilities(probResult, opt.getOutputFileDir() + "/", basePrefix + "-full");
                 debugger.endStage();
                 debugger.endTurn();
                 iteration++;
@@ -721,7 +737,8 @@ public:
                 }
             }
             dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter" + std::to_string(iteration) + ".txt");
-            if (incMode == IncMode::INC) {
+            bool useRegional = incMode == IncMode::INC_REGIONAL;
+            if (incMode == IncMode::INC_NAIVE || useRegional) {
                 {
                     debugger.startTurn();
                     debugger.startStage(StageKind::SEMINAIVE_INC);
@@ -766,7 +783,11 @@ public:
                     return;
                 }
                 debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
-                buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
+                if (useRegional) {
+                    buildFormulasIncRegionalCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);
+                } else {
+                    buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
+                }
                 debugger.endStage();
                 {
                     debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
@@ -784,7 +805,9 @@ public:
                     debugger.endStage();
                 }
                 debugger.endTurn();
-                dumpProbabilities(probResult,"./output/","fact-iter" + std::to_string(iteration) + "-inc");
+                std::string incTag = useRegional ? "-inc-regional" : "-inc-naive";
+                std::string incPrefix = "fact-iter" + std::to_string(iteration) + incTag;
+                dumpProbabilities(probResult, opt.getOutputFileDir() + "/", incPrefix);
                 iteration++;
             } else if (incMode == IncMode::FULL) {
                 debugger.startTurn();
@@ -836,7 +859,8 @@ public:
                 }
                 debugger.endStage();
                 debugger.startStage(StageKind::IO_DUMP_FULL);
-                dumpProbabilities(probResult,"./output/","fact-iter" + std::to_string(iteration) + "-full");
+                std::string basePrefix = "fact-iter" + std::to_string(iteration);
+                dumpProbabilities(probResult, opt.getOutputFileDir() + "/", basePrefix + "-full");
                 debugger.endStage();
                 debugger.endTurn();
                 iteration++;

@@ -105,7 +105,7 @@ public:
         return log_file_name;
     }
 
-    std::string incMode;
+    std::string incMode = "inc-naive";
     const std::string& getIncMode() const {
         return incMode;
     }
@@ -243,15 +243,19 @@ public:
                         ok = false;
                     }
                     break;
-                case 'm':
-                    if (std::string(optarg) == "inc" || std::string(optarg) == "incremental" || std::string(optarg) == "incr" ||
-                            std::string(optarg) == "full" || std::string(optarg) == "elastic") {
-                        incMode = optarg;
+                case 'm': {
+                    std::string modeArg(optarg);
+                    if (modeArg == "inc" || modeArg == "incremental" || modeArg == "incr") {
+                        incMode = "inc-naive";
+                    } else if (modeArg == "inc-naive" || modeArg == "inc-regional" ||
+                               modeArg == "full" || modeArg == "elastic") {
+                        incMode = modeArg;
                     } else {
                         std::cerr << "Invalid incremental mode [-m]: " << optarg << "\n";
                         ok = false;
                     }
                     break;
+                }
                 case 'e':
                     merge_bi_imp = true;
                     break;

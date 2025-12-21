@@ -212,6 +212,18 @@ public:
             int varIndex,
             double posWeight,
             double negWeight) override;
+    FormulaManager<SddNodeRef>::VariableWeight getVariableWeight(int varIndex) const override {
+        int internal = rawToInternalIndex(varIndex);
+        auto it = weight_map_.find(internal);
+        if (it == weight_map_.end()) {
+            return FormulaManager<SddNodeRef>::VariableWeight{1.0, 0.0};
+        }
+        return FormulaManager<SddNodeRef>::VariableWeight{it->second.posWeight, it->second.negWeight};
+    }
+    bool hasVariableWeight(int varIndex) const override {
+        int internal = rawToInternalIndex(varIndex);
+        return weight_map_.find(internal) != weight_map_.end();
+    }
     double computeWeightedModelCount(const SddNodeRef& node) override;
 
     void printInfo(const SddNodeRef& node, const std::string& name) override;
@@ -254,6 +266,15 @@ private:
 
     bool hasGlobalTrueWeight_ = false;
     double globalTrueWeight_ = 1.0;
+
+    int rawToInternalIndex(int rawIndex) const {
+        auto it = rawToInternal.find(rawIndex);
+        if (it == rawToInternal.end()) {
+            throw std::runtime_error("SDD variable not registered for raw index " +
+                                     std::to_string(rawIndex));
+        }
+        return it->second;
+    }
 };
 
 

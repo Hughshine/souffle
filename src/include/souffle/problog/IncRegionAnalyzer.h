@@ -24,6 +24,7 @@
 #include <vector>
 #include <climits>
 #include <initializer_list>
+#include <chrono>
 
 // The user's request: include the graph API like this
 #include "souffle/problog/DerivationGraph.h"
@@ -53,14 +54,20 @@ static inline std::string edge_id(const EdgePtr& e, DGView& view) {
 }
 
 struct Region {
-    std::set<NodePtr> nodes;
-    std::set<EdgePtr> edges;
+    std::unordered_set<NodePtr> nodes;
+    std::unordered_set<EdgePtr> edges;
 };
 
 struct Boundaries {
     std::set<NodePtr> out_induced;   // region nodes whose outgoing edges received new inputs
     std::set<NodePtr> scope_induced; // region nodes that are least parents of delta scopes
     std::set<NodePtr> residual;      // remaining boundary nodes
+};
+
+struct IncRegionAnalysis {
+    Region region;
+    Boundaries boundaries;
+    std::unordered_map<NodePtr, std::vector<EdgePtr>> mergeableAnchorsByHead;
 };
 
 struct Stats {
@@ -87,13 +94,19 @@ public:
     Stats analyze(const std::vector<NodePtr>& delta_input_facts,
                   const std::string& json_out_path = "",
                   const std::string& csv_out_path  = "") {
+        auto now = [] { return std::chrono::steady_clock::now(); };
+        auto toMs = [](auto dur) { return std::chrono::duration<double, std::milli>(dur).count(); };
+        auto t0 = now();
+
         // Build "least-parents" and "scopes". Pre- and post- ignoring insert edges is supported,
         // but we focus on "now" for region computation.
         buildLeastParents_();
         debugPrintLeastParents_();
+        auto t1 = now();
         computeScopes_();
         debugPrintNodeScopes_();
         debugPrintEdgeScopes_();
+        auto t2 = now();
 
         last_delta_inputs_.clear();
         last_delta_inputs_.insert(delta_input_facts.begin(), delta_input_facts.end());
@@ -107,20 +120,52 @@ public:
             current_delta_sources_ = last_delta_nodes_;
         }
         reach_filter_ = reachFromSources_(current_delta_sources_);
+        auto t3 = now();
 
         // Initial region + boundaries + expansion
         Region region = initialRegion_(delta_input_facts);
+        auto t4 = now();
         Boundaries B  = classifyBoundaries_(region);
+        auto t5 = now();
         expandToFixpoint_(region, B);
+        auto t6 = now();
+
+        // Upstream closure: include ancestors (within reach_filter_) feeding region nodes,
+        // then re-classify boundaries and re-run expansion to stabilize.
+        double reclass_ms = 0.0;
+        double reexpand_ms = 0.0;
+        auto upstream_start = now();
+        bool upstreamExpanded = upstreamClose_(region);
+        auto upstream_end = now();
+        double upstream_ms = toMs(upstream_end - t6);
+        auto t7 = upstream_end;
+        if (upstreamExpanded) {
+            auto tr1 = now();
+            B = classifyBoundaries_(region);
+            auto tr2 = now();
+            expandToFixpoint_(region, B);
+            auto tr3 = now();
+            reclass_ms = toMs(tr2 - tr1);
+            reexpand_ms = toMs(tr3 - tr2);
+            t7 = tr3;
+        }
 
         // Final safeguard: region must be a subset of delta-reachable
         auto dr = deltaReachable_(delta_input_facts);
+        auto t8 = now();
         intersectWithDeltaReachable_(region, dr);
+        auto t9 = now();
+
+        auto mergeAnchors = computeMergeableAnchors_(region, B);
+        auto t10 = now();
 
         // Save last state for toDot()
         last_region_     = region;
         last_boundaries_ = B;
         dr_              = dr;
+        last_analysis_.region = region;
+        last_analysis_.boundaries = B;
+        last_analysis_.mergeableAnchorsByHead = std::move(mergeAnchors);
         have_last_       = true;
 
         // Count stats
@@ -133,6 +178,21 @@ public:
         for (const auto& n : dr.nodes)     if (!n->isFact) stats.naive_recomputed++;
 
         // Emit
+        std::cout << "[inc-analyze] timing(ms): "
+                  << "leastParents=" << toMs(t1 - t0)
+                  << " scopes=" << toMs(t2 - t1)
+                  << " reach=" << toMs(t3 - t2)
+                  << " initRegion=" << toMs(t4 - t3)
+                  << " classify=" << toMs(t5 - t4)
+                  << " expand=" << toMs(t6 - t5)
+                  << " upstreamClose=" << upstream_ms
+                  << " reclassify=" << reclass_ms
+                  << " reexpand=" << reexpand_ms
+                  << " deltaReach=" << toMs(t8 - t7)
+                  << " intersect=" << toMs(t9 - t8)
+                  << " mergeable=" << toMs(t10 - t9)
+                  << " total=" << toMs(t10 - t0)
+                  << "\n";
         emitConsole_(stats, region);
         if (!json_out_path.empty()) emitJSON_(stats, region, json_out_path);
         if (!csv_out_path.empty())  emitCSV_(stats, region, csv_out_path);
@@ -216,6 +276,12 @@ public:
     const Region&     lastRegion()    const { return last_region_; }
     const Boundaries& lastBoundaries()const { return last_boundaries_; }
     const Region&     lastDeltaReachable() const { return dr_; }
+    const IncRegionAnalysis& getLastAnalysis() const { return last_analysis_; }
+    const std::vector<EdgePtr>& getMergeableAnchors(NodePtr v) const {
+        static const std::vector<EdgePtr> kEmpty;
+        auto it = last_analysis_.mergeableAnchorsByHead.find(v);
+        return it == last_analysis_.mergeableAnchorsByHead.end() ? kEmpty : it->second;
+    }
 
 private:
     // ---- helpers ----
@@ -486,6 +552,7 @@ private:
 
     bool mergeableEdgeAtHead_(const NodePtr& head, const EdgePtr& edge) {
         if (!head || !edge) return false;
+        if (edge->isDeterministic()) return false;
         if (delta_insert_edges_cache_.count(edge)) return false;
         if (!edgeRespectsScopes_(head, edge)) return false;
         if (!edgeNonSubsumed_(head, edge)) return false;
@@ -620,6 +687,54 @@ private:
         return false;
     }
 
+    std::unordered_map<NodePtr, std::vector<EdgePtr>> computeMergeableAnchors_(const Region& R, const Boundaries& B) {
+        std::unordered_map<NodePtr, std::vector<EdgePtr>> anchors;
+        std::set<NodePtr> boundary_nodes;
+        boundary_nodes.insert(B.out_induced.begin(), B.out_induced.end());
+        boundary_nodes.insert(B.scope_induced.begin(), B.scope_induced.end());
+        boundary_nodes.insert(B.residual.begin(), B.residual.end());
+        for (auto& head : boundary_nodes) {
+            auto inEs = view_.getIncomingEdges(head);
+            for (auto& e : inEs) {
+                if (mergeableEdgeAtHead_(head, e)) {
+                    anchors[head].push_back(e);
+                }
+            }
+        }
+        return anchors;
+    }
+
+    // Upstream closure: include ancestors (limited by reach_filter_) feeding any region node.
+    bool upstreamClose_(Region& R) {
+        bool changed = false;
+        std::queue<NodePtr> q;
+        for (auto n : R.nodes) q.push(n);
+        std::unordered_set<NodePtr> seen(R.nodes.begin(), R.nodes.end());
+        auto inFilterNode = [&](NodePtr n) {
+            return reach_filter_.nodes.empty() || reach_filter_.nodes.count(n);
+        };
+        auto inFilterEdge = [&](EdgePtr e) {
+            return reach_filter_.edges.empty() || reach_filter_.edges.count(e);
+        };
+        while (!q.empty()) {
+            NodePtr cur = q.front();
+            q.pop();
+            for (auto e : view_.getIncomingEdges(cur)) {
+                if (!inFilterEdge(e)) continue;
+                if (R.edges.insert(e).second) changed = true;
+                for (auto in : view_.getInputs(e)) {
+                    if (!inFilterNode(in)) continue;
+                    if (seen.insert(in).second) {
+                        R.nodes.insert(in);
+                        changed = true;
+                        q.push(in);
+                    }
+                }
+            }
+        }
+        return changed;
+    }
+
     void expandToFixpoint_(Region& R, Boundaries& B) {
         int guard = 0;
         while (guard++ < 10000) {
@@ -681,29 +796,33 @@ private:
                   << ", residual=" << B.residual.size() << ")\n";
     }
 
-    // Compute delta-reachable region (all nodes and edges reachable forward from delta facts/edges)
-    Region deltaReachable_(const std::vector<NodePtr>& delta_input_facts) {
+    // Compute delta-reachable region using impacted maps rebuilt after pruning.
+    // This is insertion-only and reuses the precomputed reachability for delta inserts.
+    Region deltaReachable_(const std::vector<NodePtr>& /*delta_input_facts*/) {
         Region DR;
-        // Seeds
-        std::set<NodePtr> seeds = view_.getDeltaInsertNodes();
-        auto dels = view_.getDeltaDeleteNodes();
-        seeds.insert(dels.begin(), dels.end());
-        for (auto& n : delta_input_facts) seeds.insert(n);
-        // forward
-        std::queue<NodePtr> q;
-        std::unordered_set<NodePtr> inq;
-        for (auto& n : seeds) { q.push(n); inq.insert(n); DR.nodes.insert(n); }
-        while (!q.empty()) {
-            auto cur = q.front(); q.pop();
-            for (auto& e : view_.getValidEdges()) {
-                auto ins = view_.getInputs(e);
-                bool touches = false;
-                for (auto& t : ins) if (t.get()==cur.get()) { touches = true; break; }
-                if (!touches) continue;
-                DR.edges.insert(e);
-                auto h = view_.getOutput(e);
+        const auto& reachNodes = view_.getDeltaInsertReachableNodes();
+        const auto& reachEdges = view_.getDeltaInsertReachableEdges();
+        if (!reachNodes.empty() || !reachEdges.empty()) {
+            DR.nodes.insert(reachNodes.begin(), reachNodes.end());
+            DR.edges.insert(reachEdges.begin(), reachEdges.end());
+        } else {
+            const auto& nodeImpacted = view_.getNodeImpactedByDeltaInsert();
+            const auto& edgeImpacted = view_.getEdgeImpactedByDeltaInsert();
+            for (const auto& kv : nodeImpacted) {
+                DR.nodes.insert(kv.first);
+                DR.nodes.insert(kv.second.begin(), kv.second.end());
+            }
+            for (const auto& kv : edgeImpacted) {
+                DR.edges.insert(kv.second.begin(), kv.second.end());
+            }
+        }
+        for (const auto& n : view_.getDeltaInsertNodes()) {
+            DR.nodes.insert(n);
+        }
+        for (const auto& e : view_.getDeltaInsertEdges()) {
+            DR.edges.insert(e);
+            if (auto h = view_.getOutput(e)) {
                 DR.nodes.insert(h);
-                if (!inq.count(h)) { q.push(h); inq.insert(h); }
             }
         }
         return DR;
@@ -876,6 +995,7 @@ private:
     Region     last_region_;
     Boundaries last_boundaries_;
     Region     dr_;
+    IncRegionAnalysis last_analysis_;
     bool       have_last_ = false;
     std::set<NodePtr> last_delta_nodes_;
     std::set<EdgePtr> last_delta_edges_;
@@ -1011,6 +1131,16 @@ public:
         (void)edge_p12; (void)edge_p23; (void)edge_p34; (void)edge_p45; (void)edge_p24_rec; (void)edge_p56;
         (void)edge_p67; (void)edge_p78; (void)edge_p57; (void)edge_p58; (void)edge_p68;
 
+        // Make all facts/edges probabilistic for demo to exercise calibration.
+        for (auto& n : nodes_) {
+            if (n->isFact) {
+                n->setProbability(0.6);
+            }
+        }
+        for (auto& e : edges_) {
+            e->setProbability(0.6);
+        }
+
         // Reset cached validity sets inherited from IncrementalDerivationGraphViewInterface.
         validNodes_.clear();
         validEdges_.clear();
@@ -1026,17 +1156,23 @@ public:
     const std::set<EdgePtr>& getDeltaInsertEdges() const override { return delta_ins_edges_; }
     const std::set<EdgePtr>& getDeltaDeleteEdges() const override { return delta_del_edges_; }
 
-    const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaDelete() const override {
+    const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& getNodeImpactedByDeltaDelete() const override {
         return node_impacted_by_del_;
     }
-    const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const override {
+    const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const override {
         return edge_impacted_by_del_;
     }
-    const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaInsert() const override {
+    const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& getNodeImpactedByDeltaInsert() const override {
         return node_impacted_by_ins_;
     }
-    const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const override {
+    const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const override {
         return edge_impacted_by_ins_;
+    }
+    const std::unordered_set<NodePtr>& getDeltaInsertReachableNodes() const override {
+        return delta_ins_reachable_nodes_;
+    }
+    const std::unordered_set<EdgePtr>& getDeltaInsertReachableEdges() const override {
+        return delta_ins_reachable_edges_;
     }
 
 private:
@@ -1063,6 +1199,7 @@ private:
         nodes_.insert(node);
         if (delta == DeltaTag::Insert) {
             delta_ins_nodes_.insert(node);
+            delta_ins_reachable_nodes_.insert(node);
         } else if (delta == DeltaTag::Delete) {
             delta_del_nodes_.insert(node);
         }
@@ -1075,6 +1212,7 @@ private:
         edges_.insert(e);
         if (delta == DeltaTag::Insert) {
             delta_ins_edges_.insert(e);
+            delta_ins_reachable_edges_.insert(e);
         } else if (delta == DeltaTag::Delete) {
             delta_del_edges_.insert(e);
         }
@@ -1085,12 +1223,19 @@ private:
         auto& target = insert ? node_impacted_by_ins_ : node_impacted_by_del_;
         auto& slot = target[deltaNode];
         slot.insert(impacted.begin(), impacted.end());
+        if (insert) {
+            delta_ins_reachable_nodes_.insert(deltaNode);
+            delta_ins_reachable_nodes_.insert(impacted.begin(), impacted.end());
+        }
     }
 
     void recordEdgeImpact_(const NodePtr& deltaNode, std::initializer_list<EdgePtr> impacted, bool insert) {
         auto& target = insert ? edge_impacted_by_ins_ : edge_impacted_by_del_;
         auto& slot = target[deltaNode];
         slot.insert(impacted.begin(), impacted.end());
+        if (insert) {
+            delta_ins_reachable_edges_.insert(impacted.begin(), impacted.end());
+        }
     }
 
     void clearAll_() {
@@ -1100,6 +1245,8 @@ private:
         delta_ins_edges_.clear(); delta_del_edges_.clear();
         node_impacted_by_del_.clear(); edge_impacted_by_del_.clear();
         node_impacted_by_ins_.clear(); edge_impacted_by_ins_.clear();
+        delta_ins_reachable_nodes_.clear();
+        delta_ins_reachable_edges_.clear();
         validNodes_.clear(); validEdges_.clear();
     }
 
@@ -1108,10 +1255,12 @@ private:
     std::unordered_set<EdgePtr>      edges_;
     std::set<NodePtr>                delta_ins_nodes_, delta_del_nodes_;
     std::set<EdgePtr>                delta_ins_edges_, delta_del_edges_;
-    std::unordered_map<NodePtr, std::set<NodePtr>> node_impacted_by_del_;
-    std::unordered_map<NodePtr, std::set<EdgePtr>> edge_impacted_by_del_;
-    std::unordered_map<NodePtr, std::set<NodePtr>> node_impacted_by_ins_;
-    std::unordered_map<NodePtr, std::set<EdgePtr>> edge_impacted_by_ins_;
+    std::unordered_map<NodePtr, std::unordered_set<NodePtr>> node_impacted_by_del_;
+    std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> edge_impacted_by_del_;
+    std::unordered_map<NodePtr, std::unordered_set<NodePtr>> node_impacted_by_ins_;
+    std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> edge_impacted_by_ins_;
+    std::unordered_set<NodePtr> delta_ins_reachable_nodes_;
+    std::unordered_set<EdgePtr> delta_ins_reachable_edges_;
 };
 
 } // namespace incra

@@ -234,6 +234,8 @@ public:
 
     // Weight-related operations
     void setVariableWeight(int varIndex, double posWeight, double negWeight) override;
+    FormulaManager<BddNodeRef>::VariableWeight getVariableWeight(int varIndex) const override;
+    bool hasVariableWeight(int varIndex) const override;
     double computeWeightedModelCount(const BddNodeRef& node) override;
 
     BddNodeRef createWeightedExample() override;
@@ -262,6 +264,9 @@ public:
         stats["reordering_runtime"] = std::string(buf);
         last_reordering_time = current_reordering_time;
         return stats;
+    }
+    double getReorderingTimeSeconds() const {
+        return static_cast<double>(Cudd_ReadReorderingTime(manager.get())) / 1000.0;
     }
 
 
@@ -683,6 +688,18 @@ bool WeightedBDDManager::isSame(const BddNodeRef& a, const BddNodeRef& b) {
 
 void WeightedBDDManager::setVariableWeight(int varIndex, double posWeight, double negWeight) {
     weights[varIndex] = VariableWeight{posWeight, negWeight};
+}
+
+FormulaManager<BddNodeRef>::VariableWeight WeightedBDDManager::getVariableWeight(int varIndex) const {
+    auto it = weights.find(varIndex);
+    if (it == weights.end()) {
+        return FormulaManager<BddNodeRef>::VariableWeight{1.0, 0.0};
+    }
+    return FormulaManager<BddNodeRef>::VariableWeight{it->second.posWeight, it->second.negWeight};
+}
+
+bool WeightedBDDManager::hasVariableWeight(int varIndex) const {
+    return weights.find(varIndex) != weights.end();
 }
 
 double WeightedBDDManager::computeWeightedModelCount(const BddNodeRef& node) {

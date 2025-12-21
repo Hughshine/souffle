@@ -17,7 +17,9 @@
 #include <unordered_set>
 #include <algorithm>
 #include <climits>
+#include <type_traits>
 #include "souffle/problog/debug/Debugger.h"
+#include "souffle/problog/RegionalIncremental.h"
 
 
 Debugger& debugger = Debugger::getInstance();
@@ -1406,5 +1408,27 @@ void buildFormulasCyclewiseOnDemand(
 //        auto prob = formulaManager.computeWeightedModelCount(bdd);
 //        probResult[node] = prob;
 //    }
+}
+
+// Placeholder for the regional incremental pipeline. Currently delegates to the
+// existing incremental cyclewise implementation to keep behavior unchanged.
+template<typename FormulaNodeRef>
+void buildFormulasIncRegionalCyclewise(
+    IncrementalDerivationGraphViewInterface& view,
+    FormulaManager<FormulaNodeRef>& formulaManager,
+    std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
+    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
+    std::set<NodePtr>& changedNodes
+) {
+    debugger.logMessage(Level::INFO, "[inc-regional] start pipeline");
+    using FMType = std::remove_reference_t<decltype(formulaManager)>;
+    RegionalIncrementalForwardCompilation<FMType, FormulaNodeRef> orchestrator;
+    orchestrator.applyUpdate(view, formulaManager, nodeFormulas, edgeFormulas, changedNodes);
+    formulaManager.dumpProfilingStatistics();
+    for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
+        debugger.addInfo(key, value);
+    }
+    debugger.logMessage(Level::INFO, "[inc-regional] pipeline finished; usedFallback="
+        + std::string(orchestrator.getStats().usedFallback ? "true" : "false"));
 }
 #endif //FORWARDCOMPILATION_H

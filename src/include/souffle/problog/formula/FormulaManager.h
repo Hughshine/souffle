@@ -27,6 +27,15 @@ public:
     virtual std::string toString(const NodeRef& node) = 0;
     virtual void preConfig(DerivationGraphViewInterface& view) {};
     virtual void setVariableWeight(int varIndex, double posWeight, double negWeight) = 0;
+    struct VariableWeight { double posWeight; double negWeight; };
+    virtual VariableWeight getVariableWeight(int varIndex) const {
+        (void)varIndex;
+        return VariableWeight{1.0, 0.0};
+    }
+    virtual bool hasVariableWeight(int varIndex) const {
+        (void)varIndex;
+        return false;
+    }
     virtual double computeWeightedModelCount(const NodeRef& node) = 0;
     virtual int getVarIndex(const Node& node) = 0;
     virtual int getVarIndex(const Hyperedge& edge) = 0;

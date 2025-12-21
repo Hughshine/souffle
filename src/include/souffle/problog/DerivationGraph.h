@@ -597,10 +597,12 @@ public:
     virtual const std::set<EdgePtr>& getDeltaInsertEdges() const = 0;
     virtual const std::set<NodePtr>& getDeltaDeleteNodes() const = 0;
     virtual const std::set<EdgePtr>& getDeltaDeleteEdges() const = 0;
-    virtual const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaDelete() const = 0;
-    virtual const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const = 0;
-    virtual const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaInsert() const = 0;
-    virtual const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const = 0;
+    virtual const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& getNodeImpactedByDeltaDelete() const = 0;
+    virtual const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const = 0;
+    virtual const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& getNodeImpactedByDeltaInsert() const = 0;
+    virtual const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const = 0;
+    virtual const std::unordered_set<NodePtr>& getDeltaInsertReachableNodes() const = 0;
+    virtual const std::unordered_set<EdgePtr>& getDeltaInsertReachableEdges() const = 0;
     const std::set<NodePtr>& getValidNodes() {
         if (validNodes_.size() > 0) {
             return validNodes_;
@@ -706,10 +708,12 @@ public:
                     const std::set<EdgePtr>& deltaInsertEdges,
                     const std::set<NodePtr>& deltaDeleteNodes,
                     const std::set<EdgePtr>& deltaDeleteEdges,
-            const std::unordered_map<NodePtr, std::set<NodePtr>>& nodeImpactedByDeltaDelete = {},
-            const std::unordered_map<NodePtr, std::set<EdgePtr>>& edgeImpactedByDeltaDelete = {},
-            const std::unordered_map<NodePtr, std::set<NodePtr>>& nodeImpactedByDeltaInsert = {},
-            const std::unordered_map<NodePtr, std::set<EdgePtr>>& edgeImpactedByDeltaInsert = {})
+            const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& nodeImpactedByDeltaDelete = {},
+            const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& edgeImpactedByDeltaDelete = {},
+            const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& nodeImpactedByDeltaInsert = {},
+            const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& edgeImpactedByDeltaInsert = {},
+            const std::unordered_set<NodePtr>& deltaInsertReachableNodes = {},
+            const std::unordered_set<EdgePtr>& deltaInsertReachableEdges = {})
             : SubgraphView(nodes, edges),
               deltaInsertNodes_(deltaInsertNodes),
               deltaInsertEdges_(deltaInsertEdges),
@@ -718,7 +722,9 @@ public:
             nodeImpactedByDeltaDelete_(nodeImpactedByDeltaDelete),
             edgeImpactedByDeltaDelete_(edgeImpactedByDeltaDelete),
             nodeImpactedByDeltaInsert_(nodeImpactedByDeltaInsert),
-            edgeImpactedByDeltaInsert_(edgeImpactedByDeltaInsert) {};
+            edgeImpactedByDeltaInsert_(edgeImpactedByDeltaInsert),
+            deltaInsertReachableNodes_(deltaInsertReachableNodes),
+            deltaInsertReachableEdges_(deltaInsertReachableEdges) {};
 
     // getNodes() / getEdges() from DerivationGraphView
     const std::unordered_set<NodePtr>& getNodes() const override {return nodes_; };
@@ -730,17 +736,23 @@ public:
     const std::set<EdgePtr>& getDeltaDeleteEdges() const override {return deltaDeleteEdges_; };
 
 
-    const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaDelete() const override {
+    const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& getNodeImpactedByDeltaDelete() const override {
         return nodeImpactedByDeltaDelete_;
     }
-    const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const override {
+    const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const override {
         return edgeImpactedByDeltaDelete_;
     }
-    const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaInsert() const override {
+    const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& getNodeImpactedByDeltaInsert() const override {
         return nodeImpactedByDeltaInsert_;
     }
-    const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const override {
+    const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const override {
         return edgeImpactedByDeltaInsert_;
+    }
+    const std::unordered_set<NodePtr>& getDeltaInsertReachableNodes() const override {
+        return deltaInsertReachableNodes_;
+    }
+    const std::unordered_set<EdgePtr>& getDeltaInsertReachableEdges() const override {
+        return deltaInsertReachableEdges_;
     }
 
 
@@ -751,10 +763,12 @@ protected:
     std::set<EdgePtr> deltaInsertEdges_;
     std::set<NodePtr> deltaDeleteNodes_;
     std::set<EdgePtr> deltaDeleteEdges_;
-    std::unordered_map<NodePtr, std::set<NodePtr>> nodeImpactedByDeltaDelete_;
-    std::unordered_map<NodePtr, std::set<EdgePtr>> edgeImpactedByDeltaDelete_;
-    std::unordered_map<NodePtr, std::set<NodePtr>> nodeImpactedByDeltaInsert_;
-    std::unordered_map<NodePtr, std::set<EdgePtr>> edgeImpactedByDeltaInsert_;
+    std::unordered_map<NodePtr, std::unordered_set<NodePtr>> nodeImpactedByDeltaDelete_;
+    std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> edgeImpactedByDeltaDelete_;
+    std::unordered_map<NodePtr, std::unordered_set<NodePtr>> nodeImpactedByDeltaInsert_;
+    std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> edgeImpactedByDeltaInsert_;
+    std::unordered_set<NodePtr> deltaInsertReachableNodes_;
+    std::unordered_set<EdgePtr> deltaInsertReachableEdges_;
 };
 
 class DerivationGraph: virtual public DerivationGraphViewInterface {
@@ -1265,6 +1279,8 @@ public:
             this->deletedFactImpactedEdges.clear();
             this->insertedFactImpactedNodes.clear();
             this->insertedFactImpactedEdges.clear();
+            this->deltaInsertReachableNodes.clear();
+            this->deltaInsertReachableEdges.clear();
         }
 
 //        for (auto& insertedRuleApp : deltaInsertRuleApps) {
@@ -1296,10 +1312,12 @@ public:
     std::set<NodePtr> deltaDeleteNodes;
     std::set<EdgePtr> deltaDeleteEdges;
 
-    std::unordered_map<NodePtr, std::set<NodePtr>> deletedFactImpactedNodes;
-    std::unordered_map<NodePtr, std::set<EdgePtr>> deletedFactImpactedEdges;
-    std::unordered_map<NodePtr, std::set<NodePtr>> insertedFactImpactedNodes;
-    std::unordered_map<NodePtr, std::set<EdgePtr>> insertedFactImpactedEdges;
+    std::unordered_map<NodePtr, std::unordered_set<NodePtr>> deletedFactImpactedNodes;
+    std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> deletedFactImpactedEdges;
+    std::unordered_map<NodePtr, std::unordered_set<NodePtr>> insertedFactImpactedNodes;
+    std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> insertedFactImpactedEdges;
+    std::unordered_set<NodePtr> deltaInsertReachableNodes;
+    std::unordered_set<EdgePtr> deltaInsertReachableEdges;
 
     const std::set<NodePtr>& getDeltaInsertNodes() const {
         return deltaInsertNodes;
@@ -1317,20 +1335,28 @@ public:
         return deltaDeleteEdges;
     }
 
-    const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaDelete() const {
+    const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& getNodeImpactedByDeltaDelete() const {
         return deletedFactImpactedNodes;
     }
 
-    const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const {
+    const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const {
         return deletedFactImpactedEdges;
     }
 
-    const std::unordered_map<NodePtr, std::set<NodePtr>>& getNodeImpactedByDeltaInsert() const {
+    const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& getNodeImpactedByDeltaInsert() const {
         return insertedFactImpactedNodes;
     }
 
-    const std::unordered_map<NodePtr, std::set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const {
+    const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const {
         return insertedFactImpactedEdges;
+    }
+
+    const std::unordered_set<NodePtr>& getDeltaInsertReachableNodes() const {
+        return deltaInsertReachableNodes;
+    }
+
+    const std::unordered_set<EdgePtr>& getDeltaInsertReachableEdges() const {
+        return deltaInsertReachableEdges;
     }
 
 //    std::set<NodePtr> validNodes_;
@@ -1602,7 +1628,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
     {
         FunctionTimer scope("applyDeltaDeletes: cleanup impacted sets");
         for (auto& [fact, impactedEdges]: deletedFactImpactedEdges) {
-            std::set<EdgePtr> newImpactedEdges;
+            std::unordered_set<EdgePtr> newImpactedEdges;
             for (const auto& impactedEdge : impactedEdges) {
                 // 如果这个边已经被标记为删除，则不需要再次添加
                 if (deltaDeleteEdges.find(impactedEdge) != deltaDeleteEdges.end()) {
@@ -1615,7 +1641,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             impactedEdges = std::move(newImpactedEdges);
         }
         for (auto& [fact, impactedNodes]: deletedFactImpactedNodes) {
-            std::set<NodePtr> newImpactedNodes;
+            std::unordered_set<NodePtr> newImpactedNodes;
             for (const auto& impactedNode : impactedNodes) {
                 // 如果这个节点已经被标记为删除，则不需要再次添加
                 if (deltaDeleteNodes.find(impactedNode) != deltaDeleteNodes.end()) {
@@ -1866,17 +1892,20 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     }
 
 
-    std::unordered_map<NodePtr, std::set<NodePtr>> newInsertedFactImpactedNodes;
-    std::unordered_map<NodePtr, std::set<EdgePtr>> newInsertedFactImpactedEdges;
-    std::unordered_map<NodePtr, std::set<NodePtr>> newDeletedFactImpactedNodes;
-    std::unordered_map<NodePtr, std::set<EdgePtr>> newDeletedFactImpactedEdges;
+    std::unordered_set<NodePtr> newInsertedReachableNodes;
+    std::unordered_set<EdgePtr> newInsertedReachableEdges;
+    std::unordered_map<NodePtr, std::unordered_set<NodePtr>> newInsertedFactImpactedNodes;
+    std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> newInsertedFactImpactedEdges;
+    std::unordered_map<NodePtr, std::unordered_set<NodePtr>> newDeletedFactImpactedNodes;
+    std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> newDeletedFactImpactedEdges;
     {
         FunctionTimer scopeTimer("prune-inc: rebuild impacted maps");
         using Clock = std::chrono::steady_clock;
         double insImpactMs = 0.0, delImpactMs = 0.0;
         size_t insImpactNodes = 0, insImpactEdges = 0, insSources = 0;
         size_t delImpactNodes = 0, delImpactEdges = 0, delSources = 0;
-        auto computeImpact = [&](const NodePtr& src, std::set<NodePtr>& outNodes, std::set<EdgePtr>& outEdges) -> std::pair<size_t, size_t> {
+        auto computeImpact = [&](const NodePtr& src, std::unordered_set<NodePtr>& outNodes,
+                                 std::unordered_set<EdgePtr>& outEdges) -> std::pair<size_t, size_t> {
             std::queue<NodePtr> q;
             std::unordered_set<NodePtr> visited;
             if (!src || !newNodes.count(src)) {
@@ -1904,12 +1933,14 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         };
 
         for (const auto& fact : newDeltaInsertedNodes) {
-            std::set<NodePtr> impactedNodes;
-            std::set<EdgePtr> impactedEdges;
+            std::unordered_set<NodePtr> impactedNodes;
+            std::unordered_set<EdgePtr> impactedEdges;
             auto t0 = Clock::now();
             auto counts = computeImpact(fact, impactedNodes, impactedEdges);
             insImpactMs += std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
             if (!impactedNodes.empty() || !impactedEdges.empty()) {
+                newInsertedReachableNodes.insert(impactedNodes.begin(), impactedNodes.end());
+                newInsertedReachableEdges.insert(impactedEdges.begin(), impactedEdges.end());
                 newInsertedFactImpactedNodes[fact] = std::move(impactedNodes);
                 newInsertedFactImpactedEdges[fact] = std::move(impactedEdges);
                 insImpactNodes += counts.first;
@@ -1918,8 +1949,8 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
             }
         }
         for (const auto& fact : newDeltaDeletedNodes) {
-            std::set<NodePtr> impactedNodes;
-            std::set<EdgePtr> impactedEdges;
+            std::unordered_set<NodePtr> impactedNodes;
+            std::unordered_set<EdgePtr> impactedEdges;
             auto t0 = Clock::now();
             auto counts = computeImpact(fact, impactedNodes, impactedEdges);
             delImpactMs += std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
@@ -1950,7 +1981,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                                std::move(newDeletedFactImpactedNodes),
                                std::move(newDeletedFactImpactedEdges),
                                std::move(newInsertedFactImpactedNodes),
-                               std::move(newInsertedFactImpactedEdges));
+                               std::move(newInsertedFactImpactedEdges),
+                               std::move(newInsertedReachableNodes),
+                               std::move(newInsertedReachableEdges));
     }();
     {
         FunctionTimer scopeTimer("prune-inc: dumpStatisticsInc(view)");
