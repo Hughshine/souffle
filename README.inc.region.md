@@ -140,6 +140,10 @@ Mergeable anchor 判定（`mergeableEdgeAtHead_`）：
 - `[inc-regional rebuild] timing(ms): ...`
 - `[inc-regional] timing(ms): analyze sccClose plan rebuild calibrate total`
 - `[prune-inc impact] ...`（prune-inc 重建 impacted maps）
+- `[prune-inc] delta-delete counts (start/post-mark-pruned/filtered/canonicalised/view): nodes=... edges=...`
+- `[inc-naive] delta counts: insNodes=... insEdges=... delNodes=... delEdges=...`
+- `[inc-regional] delta counts: insNodes=... insEdges=... delNodes=... delEdges=...`
+- `Deletion deletedVarsIndex size: N`（删除阶段用于变量清理）
 调试输出默认关闭，可按需开启：
 - `--dumpjson` / CLI `set dumpjson`：输出 JSON（prune 之后）。
 - `--dumpdot` / CLI `set dumpdot`：输出 derivation graph 的 DOT。

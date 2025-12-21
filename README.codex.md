@@ -136,6 +136,7 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
   - Incremental prune skips bi-imp merge and delta-delete canonicalisation; prune now logs delta-delete counts per phase.
   - `tryGarbageCollection()` is invoked at the end of each turn in CLI runs.
   - Forward compilation logs delta counts (inc-naive/inc-regional) and deletion `deletedVarsIndex` size.
+  - Inc-regional forward compilation now runs the inc-naive deletion phase before regional insertion.
 - P12 repro (inc10_1, manual runs; output dirs suffixed `*_repro`):
   - Compile: `python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py --base-dir experiments/side_channel_inc_eval compile --cases 12 --timeout 300`
   - Runs:

@@ -37,6 +37,9 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
 - Outputs: `output/facts.full.prob`, `output/facts.inc.prob`, per-delta `delta-*-fact-iter*-{inc,full}.prob`.
 - Logs: `log_P1_*.json` (per-stage timings), stdout from manual runs (e.g., `log_inc_applyDelta_inc*.stdout`).
 - CLI runs in inc mode print delta size: `[applyDelta] delTuples=… delRuleApps=… delFacts=… insTuples=… insRuleApps=… insFacts=…`.
+- Forward compilation prints per-turn delta counts: `[inc-naive] delta counts: insNodes=… insEdges=… delNodes=… delEdges=…` and `[inc-regional] delta counts: …`.
+- Deletion stage prints `Deletion deletedVarsIndex size: N` before postprocessing variables.
+- Prune prints delta-delete counts per phase: `[prune-inc] delta-delete counts (start|post-mark-pruned|filtered|canonicalised|view): nodes=… edges=…`.
 - Prune now rebuilds impacted maps on the pruned subgraph; applyDelta no longer does impacted BFS.
 - Optional debug outputs (default off): `--dumpjson`, `--dumpdot`, `--dumpstat` gate JSON/DOT/stats dumps after prune.
 
@@ -59,6 +62,7 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
 - If you edit delta files manually (`delta/inc10_*.txt`), rerun compile+run so probabilities match.
 - `reordering_runtime` is a CUDD delta timer with millisecond resolution (computed from `Cudd_ReadReorderingTime()`).
 - If `time` reports `user > real`, some work is running in parallel threads (OpenMP or other). To force single-thread runs: `OMP_NUM_THREADS=1 OMP_THREAD_LIMIT=1` or pass `-j 1`.
+- CLI runs invoke `tryGarbageCollection()` at the end of each turn to encourage BDD cleanup after deletions.
 
 ## How I run the inc experiments (exact commands)
 From repo root, with release Soufflé on PATH:
