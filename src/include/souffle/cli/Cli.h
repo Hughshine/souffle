@@ -229,6 +229,8 @@ public:
         } else {
             DerivationGraph::setMergeBiImpEnabled(false);
         }
+        DerivationGraphViewInterface::setDumpDotEnabled(options.isDumpDotEnabled());
+        DerivationGraphViewInterface::setDumpStatsEnabled(options.isDumpStatEnabled());
         auto& mode = options.getIncMode();
         if (mode == "full") {
             setIncMode(IncMode::FULL);
@@ -244,6 +246,10 @@ public:
         }
     }
     void setIncMode(IncMode mode) {
+        if ((mode == IncMode::INC_NAIVE || mode == IncMode::INC_REGIONAL) &&
+                graph != nullptr && graph->isBiImpMerged()) {
+            assert(false && "bi-imp merged graph cannot switch to incremental mode");
+        }
         incMode = mode;
     }
     void setDerivationOnly(bool val) {
@@ -393,6 +399,40 @@ public:
                 std::cout << "Available modes: inc-naive (inc/incr), inc-regional, full, elastic" << std::endl;
                 std::cout << "Current mode unchanged." << std::endl;
             }
+        } else if (cmd == "set") {
+            std::string key;
+            iss >> key;
+            if (key == "dumpjson") {
+                opt.setDumpJsonEnabled(true);
+                std::cout << "Set dumpjson to true" << std::endl;
+            } else if (key == "dumpdot") {
+                opt.setDumpDotEnabled(true);
+                DerivationGraphViewInterface::setDumpDotEnabled(true);
+                std::cout << "Set dumpdot to true" << std::endl;
+            } else if (key == "dumpstat") {
+                opt.setDumpStatEnabled(true);
+                DerivationGraphViewInterface::setDumpStatsEnabled(true);
+                std::cout << "Set dumpstat to true" << std::endl;
+            } else {
+                std::cout << "Unknown option: " << key << std::endl;
+            }
+        } else if (cmd == "unset") {
+            std::string key;
+            iss >> key;
+            if (key == "dumpjson") {
+                opt.setDumpJsonEnabled(false);
+                std::cout << "Set dumpjson to false" << std::endl;
+            } else if (key == "dumpdot") {
+                opt.setDumpDotEnabled(false);
+                DerivationGraphViewInterface::setDumpDotEnabled(false);
+                std::cout << "Set dumpdot to false" << std::endl;
+            } else if (key == "dumpstat") {
+                opt.setDumpStatEnabled(false);
+                DerivationGraphViewInterface::setDumpStatsEnabled(false);
+                std::cout << "Set dumpstat to false" << std::endl;
+            } else {
+                std::cout << "Unknown option: " << key << std::endl;
+            }
         } else if (cmd == "commit") {
             std::cout << "PARSED COMMIT: Would apply " << pendingOperations.size()
                       << " pending changes and run incremental computation" << std::endl;
@@ -516,6 +556,10 @@ public:
         static size_t commitCount = 0;
         // TODO: should clean all delta relations after each commit
         if (isGround) {
+            if ((incMode == IncMode::INC_NAIVE || incMode == IncMode::INC_REGIONAL) &&
+                    graph != nullptr && graph->isBiImpMerged()) {
+                assert(false && "bi-imp merged graph cannot run incremental mode");
+            }
             debugger.startTurn();
             // for ground program ...
             // get the incremental derivation graph -> build formulas -> compute probabilities
@@ -548,13 +592,22 @@ public:
             bool useRegional = incMode == IncMode::INC_REGIONAL;
             if (incMode == IncMode::INC_NAIVE || useRegional) {
                 debugger.startStage(StageKind::PRUNING_INC);
-                std::cout << "[prune-inc] pre-applyDelta statistics:\n";
-                graph->dumpStatisticsInc(std::cout);
-                graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
+                if (opt.isDumpStatEnabled()) {
+                    std::cout << "[prune-inc] pre-applyDelta statistics:\n";
+                    graph->dumpStatisticsInc(std::cout);
+                }
+                if (opt.isDumpDotEnabled()) {
+                    graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
+                }
+                DerivationGraph::setMergeBiImpEnabled(false);
                 auto view = graph->prune(this->outputRelations);
                 debugger.endStage();
-                view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
-                view.dumpJsonInc(makeTimestampedFilename("derivation-inc-after-prune", iteration, ".json"));
+                if (opt.isDumpDotEnabled()) {
+                    view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                }
+                if (opt.isDumpJsonEnabled()) {
+                    view.dumpJsonInc(makeTimestampedFilename("derivation-inc-after-prune", iteration, ".json"));
+                }
                 changedNodes.clear();
 
                 std::cout << view.getDeltaInsertNodes().size() << " nodes with inserted derivations.\n";
@@ -562,6 +615,9 @@ public:
                 std::cout << view.getDeltaInsertEdges().size() << " edges with inserted derivations.\n";
                 std::cout << view.getDeltaDeleteEdges().size() << " edges with deleted derivations.\n";
                 if (derivationOnly) {
+                    if (ddManager != nullptr) {
+                        ddManager->tryGarbageCollection();
+                    }
                     debugger.endTurn();
                     iteration++;
                     pendingOperations.clear();
@@ -592,6 +648,9 @@ public:
                     debugger.endStage();
                 }
 
+                if (ddManager != nullptr) {
+                    ddManager->tryGarbageCollection();
+                }
                 debugger.endTurn();
                 std::string incTag = useRegional ? "-inc-regional" : "-inc-naive";
                 std::string incPrefix = "fact-iter" + std::to_string(iteration) + incTag;
@@ -600,24 +659,34 @@ public:
             } else if (incMode == IncMode::FULL) {
                 debugger.startStage(StageKind::PRUNING_FULL);
                 {
-                    FunctionTimer timer("PRUNING_FULL: dumpDot-before-prune");
-                    graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
+                    if (opt.isDumpDotEnabled()) {
+                        FunctionTimer timer("PRUNING_FULL: dumpDot-before-prune");
+                        graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
+                    }
                 }
                 IncSubgraphView view = [&] {
                     FunctionTimer timer("PRUNING_FULL: prune");
+                    DerivationGraph::setMergeBiImpEnabled(true);
                     return graph->prune(this->outputRelations);
                 }();
                 {
-                    FunctionTimer timer("PRUNING_FULL: dumpDot-after-prune");
-                    view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
+                    if (opt.isDumpDotEnabled()) {
+                        FunctionTimer timer("PRUNING_FULL: dumpDot-after-prune");
+                        view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
+                    }
                 }
                 {
-                    FunctionTimer timer("PRUNING_FULL: dumpJson-after-prune");
-                    view.dumpJsonInc(makeTimestampedFilename("derivation-full-after-prune", iteration, ".json"));
+                    if (opt.isDumpJsonEnabled()) {
+                        FunctionTimer timer("PRUNING_FULL: dumpJson-after-prune");
+                        view.dumpJsonInc(makeTimestampedFilename("derivation-full-after-prune", iteration, ".json"));
+                    }
                 }
                 debugger.endStage();
 
                 if (derivationOnly) {
+                    if (ddManager != nullptr) {
+                        ddManager->tryGarbageCollection();
+                    }
                     debugger.endTurn();
                     iteration++;
                     pendingOperations.clear();
@@ -638,6 +707,9 @@ public:
                 std::string basePrefix = "fact-iter" + std::to_string(iteration);
                 dumpProbabilities(probResult, opt.getOutputFileDir() + "/", basePrefix + "-full");
                 debugger.endStage();
+                if (ddManager != nullptr) {
+                    ddManager->tryGarbageCollection();
+                }
                 debugger.endTurn();
                 iteration++;
             } else if (incMode == IncMode::ELASTIC) {
@@ -646,6 +718,10 @@ public:
             }
         }
         else if (!isGround && program) {  // for non-ground program ...
+            if ((incMode == IncMode::INC_NAIVE || incMode == IncMode::INC_REGIONAL) &&
+                    graph != nullptr && graph->isBiImpMerged()) {
+                assert(false && "bi-imp merged graph cannot run incremental mode");
+            }
             {
                 purgeAllIncDeltaRelations();
                 // insert delta into relations for real
@@ -746,8 +822,10 @@ public:
                     debugger.endStage();
                 }
                 debugger.startStage(StageKind::PRUNING_INC);
-                std::cout << "[prune-inc] pre-applyDelta statistics:\n";
-                graph->dumpStatisticsInc(std::cout);
+                if (opt.isDumpStatEnabled()) {
+                    std::cout << "[prune-inc] pre-applyDelta statistics:\n";
+                    graph->dumpStatisticsInc(std::cout);
+                }
                 {
                     FunctionTimer timer("PRUNING_INC: applyDelta");
                     graph->applyDelta(
@@ -759,24 +837,34 @@ public:
                     );
                 }
                 {
-                    FunctionTimer timer("PRUNING_INC: dumpDot-before-prune");
-                    graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
+                    if (opt.isDumpDotEnabled()) {
+                        FunctionTimer timer("PRUNING_INC: dumpDot-before-prune");
+                        graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
+                    }
                 }
                 IncSubgraphView view = [&] {
                     FunctionTimer timer("PRUNING_INC: prune");
+                    DerivationGraph::setMergeBiImpEnabled(false);
                     return graph->prune(program->getOutputRelations());
                 }();  // will be assigned below
                 {
-                    FunctionTimer timer("PRUNING_INC: dumpDot-after-prune");
-                    view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                    if (opt.isDumpDotEnabled()) {
+                        FunctionTimer timer("PRUNING_INC: dumpDot-after-prune");
+                        view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                    }
                 }
                 {
-                    FunctionTimer timer("PRUNING_INC: dumpJson-after-prune");
-                    view.dumpJsonInc(makeTimestampedFilename("derivation-inc-after-prune", iteration, ".json"));
+                    if (opt.isDumpJsonEnabled()) {
+                        FunctionTimer timer("PRUNING_INC: dumpJson-after-prune");
+                        view.dumpJsonInc(makeTimestampedFilename("derivation-inc-after-prune", iteration, ".json"));
+                    }
                 }
                 debugger.endStage();
                 changedNodes.clear();
                 if (derivationOnly) {
+                    if (ddManager != nullptr) {
+                        ddManager->tryGarbageCollection();
+                    }
                     debugger.endTurn();
                     iteration++;
                     pendingOperations.clear();
@@ -804,6 +892,9 @@ public:
                     probResult = newProbResult;
                     debugger.endStage();
                 }
+                if (ddManager != nullptr) {
+                    ddManager->tryGarbageCollection();
+                }
                 debugger.endTurn();
                 std::string incTag = useRegional ? "-inc-regional" : "-inc-naive";
                 std::string incPrefix = "fact-iter" + std::to_string(iteration) + incTag;
@@ -823,24 +914,34 @@ public:
                 graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, *ruleManager, *queryManager, fact_prob);
                 debugger.endStage();
                 {
-                    FunctionTimer timer("PRUNING_FULL: dumpDot-before-prune");
-                    graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
+                    if (opt.isDumpDotEnabled()) {
+                        FunctionTimer timer("PRUNING_FULL: dumpDot-before-prune");
+                        graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
+                    }
                 }
                 debugger.startStage(StageKind::PRUNING_FULL);
                 IncSubgraphView view = [&] {
                     FunctionTimer timer("PRUNING_FULL: prune");
+                    DerivationGraph::setMergeBiImpEnabled(true);
                     return graph->prune(program->getOutputRelations());
                 }();
                 {
-                    FunctionTimer timer("PRUNING_FULL: dumpDot-after-prune");
-                    view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
+                    if (opt.isDumpDotEnabled()) {
+                        FunctionTimer timer("PRUNING_FULL: dumpDot-after-prune");
+                        view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
+                    }
                 }
                 {
-                    FunctionTimer timer("PRUNING_FULL: dumpJson-after-prune");
-                    view.dumpJsonInc(makeTimestampedFilename("derivation-full-after-prune", iteration, ".json"));
+                    if (opt.isDumpJsonEnabled()) {
+                        FunctionTimer timer("PRUNING_FULL: dumpJson-after-prune");
+                        view.dumpJsonInc(makeTimestampedFilename("derivation-full-after-prune", iteration, ".json"));
+                    }
                 }
                 debugger.endStage();
                 if (derivationOnly) {
+                    if (ddManager != nullptr) {
+                        ddManager->tryGarbageCollection();
+                    }
                     debugger.endTurn();
                     iteration++;
                     pendingOperations.clear();
@@ -862,6 +963,9 @@ public:
                 std::string basePrefix = "fact-iter" + std::to_string(iteration);
                 dumpProbabilities(probResult, opt.getOutputFileDir() + "/", basePrefix + "-full");
                 debugger.endStage();
+                if (ddManager != nullptr) {
+                    ddManager->tryGarbageCollection();
+                }
                 debugger.endTurn();
                 iteration++;
                 // wmc

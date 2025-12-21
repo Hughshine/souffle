@@ -358,11 +358,21 @@ public:
     NodePtr getOutput(EdgePtr edge) const;
     std::vector<bool> getBodyNegations(EdgePtr edge) const;
     std::vector<bool> getBodyNegationsStable(EdgePtr edge) const;
+    static void setDumpDotEnabled(bool enabled) { dumpDotEnabled = enabled; }
+    static bool isDumpDotEnabled() { return dumpDotEnabled; }
+    static void setDumpStatsEnabled(bool enabled) { dumpStatsEnabled = enabled; }
+    static bool isDumpStatsEnabled() { return dumpStatsEnabled; }
 
     mutable std::unordered_map<size_t, std::vector<EdgePtr>> cachedSortedIncomingEdges;
+    CycleDependencyGraph& getCycleDependencyGraph() const;
+    void clearCycleDependencyGraphCache() const;
     std::vector<EdgePtr> getIncomingEdgesStable(NodePtr node) const;
 
     virtual ~DerivationGraphViewInterface() = default;
+protected:
+    mutable std::shared_ptr<CycleDependencyGraph> cachedCycleDependencyGraph_;
+    static inline bool dumpDotEnabled = false;
+    static inline bool dumpStatsEnabled = false;
 };
 
 std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdges(NodePtr node) const {
@@ -388,6 +398,7 @@ std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdgesStable(NodePt
     cachedSortedIncomingEdges.emplace(node->getId(), sorted);
     return sorted;
 }
+
 
 
 std::vector<EdgePtr> DerivationGraphViewInterface::getOutgoingEdges(NodePtr node) const {
@@ -469,6 +480,9 @@ public:
     std::unordered_set<EdgePtr>& mutableEdges() { return edges_; }
 
     void dumpStatistics(std::ostream& out) const {
+        if (!DerivationGraphViewInterface::isDumpStatsEnabled()) {
+            return;
+        }
         out << "DerivationGraph Statistics:" << std::endl;
         out << "  Number of nodes: " << nodes_.size() << std::endl;
         out << "  Number of edges: " << edges_.size() << std::endl;
@@ -546,6 +560,9 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
 }
 
 void DerivationGraphViewInterface::dumpDot(const std::string& filename) const {
+    if (!isDumpDotEnabled()) {
+        return;
+    }
     std::ofstream out(filename);
     if (!out.is_open()) {
         throw std::runtime_error("Cannot open file: " + filename);
@@ -671,6 +688,7 @@ public:
         deletedDeterminsticFacts_.clear();
         deletedNonDeterministicFacts_.clear();
         cachedSortedIncomingEdges.clear();
+        clearCycleDependencyGraphCache();
     }
 
     // deletion impacted
@@ -679,6 +697,9 @@ public:
     void dumpDotInc(const std::string& filename) const;
     void dumpJsonInc(const std::string& filename) const;
     void dumpStatisticsInc(std::ostream& out) {
+        if (!DerivationGraphViewInterface::isDumpStatsEnabled()) {
+            return;
+        }
         out << "IncrementalDerivationGraph Statistics:" << std::endl;
         out << "  Number of nodes: " << getNodes().size() << std::endl;
         out << "  Number of edges: " << getEdges().size() << std::endl;
@@ -776,10 +797,16 @@ public:
     static void setMergeBiImpEnabled(bool enabled) {
         mergeBiImpEnabled = enabled;
     }
+    bool isBiImpMerged() const {
+        return biImpMerged;
+    }
 
     DerivationGraph() : nextNodeId(0), nextEdgeId(0) {}
     DerivationGraph(const RuleManager* rm) : nextNodeId(0), nextEdgeId(0), ruleManager(rm) {}
     void dumpStatistics(std::ostream& out) const {
+        if (!DerivationGraphViewInterface::isDumpStatsEnabled()) {
+            return;
+        }
         out << "DerivationGraph Statistics:" << std::endl;
         out << "  Number of nodes: " << nodes.size() << std::endl;
         out << "  Number of edges: " << edges.size() << std::endl;
@@ -1124,6 +1151,7 @@ protected:
     size_t nextEdgeId;
     const RuleManager* ruleManager;
     static inline bool mergeBiImpEnabled = true;
+    bool biImpMerged = false;
     // map original node id to its current representative after merges
     std::unordered_map<size_t, NodePtr> nodeRepMap;
 
@@ -1281,6 +1309,7 @@ public:
             this->insertedFactImpactedEdges.clear();
             this->deltaInsertReachableNodes.clear();
             this->deltaInsertReachableEdges.clear();
+            this->clearCycleDependencyGraphCache();
         }
 
 //        for (auto& insertedRuleApp : deltaInsertRuleApps) {
@@ -1685,6 +1714,8 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
 // pruning is not incremental for now
 IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>& outputRelations) {
     FunctionTimer totalTimer("prune-inc total");
+    std::cout << "[prune-inc] delta-delete counts (start): nodes=" << deltaDeleteNodes.size()
+              << " edges=" << deltaDeleteEdges.size() << std::endl;
     // std::cout << "[prune-inc] pre-prune graph nodes=" << nodes.size()
     //           << " edges=" << edges.size()
     //           << " deltaInsertNodes=" << deltaInsertNodes.size()
@@ -1811,6 +1842,8 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
             }
         }
     }
+    std::cout << "[prune-inc] delta-delete counts (post-mark-pruned): nodes=" << deltaDeleteNodes.size()
+              << " edges=" << deltaDeleteEdges.size() << std::endl;
 
     // 过滤节点和边
     std::set<NodePtr> newDeltaDeletedNodes;
@@ -1828,34 +1861,28 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
             }
         }
     }
+    std::cout << "[prune-inc] delta-delete counts (filtered): nodes=" << newDeltaDeletedNodes.size()
+              << " edges=" << newDeltaDeletedEdges.size() << std::endl;
 
     // eqrel merge (if enabled) and cleanup
     {
         FunctionTimer scopeTimer("prune-inc: mergeBiImp + cleanup");
-        mergeBiImpEquivalences(newNodes, newEdges);
+        if (mergeBiImpEnabled) {
+            mergeBiImpEquivalences(newNodes, newEdges);
+        }
         removeSelfLoopEdges(newNodes, newEdges);
     }
 
-    // Canonicalise delta-deleted sets after merging.
-    {
-        FunctionTimer scopeTimer("prune-inc: canonicalise delta-deleted");
-        std::set<NodePtr> filteredNodes;
-        for (const auto& n : newDeltaDeletedNodes) {
-            auto rep = findRepresentative(n);
-            if (newNodes.count(rep)) {
-                filteredNodes.insert(rep);
-            }
+    if (mergeBiImpEnabled) {
+        if (newDeltaDeletedNodes.size() > 0 || newDeltaDeletedEdges.size() > 0) {
+            assert (false);
         }
-        newDeltaDeletedNodes.swap(filteredNodes);
-
-        std::set<EdgePtr> filteredEdges;
-        for (const auto& e : newDeltaDeletedEdges) {
-            if (newEdges.count(e)) {
-                filteredEdges.insert(e);
-            }
+        if (deltaInsertNodes.size() > 0 || deltaInsertEdges.size() > 0) {
+            assert (false);
         }
-        newDeltaDeletedEdges.swap(filteredEdges);
     }
+    std::cout << "[prune-inc] delta-delete counts (canonicalised): nodes=" << newDeltaDeletedNodes.size()
+              << " edges=" << newDeltaDeletedEdges.size() << std::endl;
 
 
 
@@ -1989,6 +2016,8 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         FunctionTimer scopeTimer("prune-inc: dumpStatisticsInc(view)");
         view.dumpStatisticsInc(std::cout);
     }
+    std::cout << "[prune-inc] delta-delete counts (view): nodes=" << view.getDeltaDeleteNodes().size()
+              << " edges=" << view.getDeltaDeleteEdges().size() << std::endl;
     return view;
 }
 
@@ -2071,6 +2100,7 @@ void DerivationGraph::mergeBiImpEquivalences(
 
     std::size_t mergedClasses = 0;
     std::size_t mergedNodes = 0;
+    bool mergeChanged = false;
 
     for (const auto& comp : sccs) {
         if (comp.size() <= 1 && !hasSelfLoop(comp.front())) continue;
@@ -2149,6 +2179,9 @@ void DerivationGraph::mergeBiImpEquivalences(
         }
         mergedClasses++;
     }
+    if (mergedClasses > 0) {
+        mergeChanged = true;
+    }
 
     auto edgeSig = [](const EdgePtr& e) {
         std::stringstream ss;
@@ -2178,6 +2211,9 @@ void DerivationGraph::mergeBiImpEquivalences(
         }
     }
 
+    if (!toRemove.empty()) {
+        mergeChanged = true;
+    }
     for (const auto& e : toRemove) {
         liveEdges.erase(e);
         edges.erase(e);
@@ -2208,6 +2244,9 @@ void DerivationGraph::mergeBiImpEquivalences(
         n->outgoingEdges = std::move(newOut);
     }
 
+    if (mergeChanged) {
+        biImpMerged = true;
+    }
     if (mergedClasses > 0) {
         std::cerr << "[bi-imp-merge] merged classes: " << mergedClasses
                   << ", merged nodes: " << mergedNodes
@@ -2262,6 +2301,9 @@ void DerivationGraph::removeSelfLoopEdges(
 }
 
 void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& filename) const {
+    if (!isDumpDotEnabled()) {
+        return;
+    }
     std::ofstream out(filename);
     if (!out.is_open()) {
         throw std::runtime_error("Cannot open file: " + filename);
@@ -2566,6 +2608,9 @@ struct CycleDependencyGraph {
 
 
     void dumpDot(const std::string& filename) const {
+        if (!DerivationGraphViewInterface::isDumpDotEnabled()) {
+            return;
+        }
         std::ofstream out(filename);
         if (!out.is_open()) {
             throw std::runtime_error("Cannot open file: " + filename);
@@ -2721,6 +2766,17 @@ private:
         }
     }
 };
+
+CycleDependencyGraph& DerivationGraphViewInterface::getCycleDependencyGraph() const {
+    if (!cachedCycleDependencyGraph_) {
+        cachedCycleDependencyGraph_ = std::make_shared<CycleDependencyGraph>(*this);
+    }
+    return *cachedCycleDependencyGraph_;
+}
+
+void DerivationGraphViewInterface::clearCycleDependencyGraphCache() const {
+    cachedCycleDependencyGraph_.reset();
+}
 
 void DerivationGraphViewInterface::writeGraphStatsJson() const {
     static size_t s_idx = 0;  // 控制输出文件 index
@@ -2888,54 +2944,6 @@ void IncrementalDerivationGraphViewInterface::dumpJsonInc(const std::string& fil
         json_array_append(del_edges, edge_to_json(e));
     }
 
-    // impact_by_delete
-    Json impact_del_nodes = Json::array();
-    for (const auto& kv : this->getNodeImpactedByDeltaDelete()) {
-        Json arr = Json::array();
-        for (const auto& n : kv.second) {
-            json_array_append(arr, n->getTuple().toString());
-        }
-        json_array_append(impact_del_nodes, Json::object{
-            {"delta", kv.first->getTuple().toString()},
-            {"impacted", arr}
-        });
-    }
-    Json impact_del_edges = Json::array();
-    for (const auto& kv : this->getEdgeImpactedByDeltaDelete()) {
-        Json arr = Json::array();
-        for (const auto& e : kv.second) {
-            json_array_append(arr, edge_to_json(e));
-        }
-        json_array_append(impact_del_edges, Json::object{
-            {"delta", kv.first->getTuple().toString()},
-            {"impacted", arr}
-        });
-    }
-
-    // impact_by_insert
-    Json impact_ins_nodes = Json::array();
-    for (const auto& kv : this->getNodeImpactedByDeltaInsert()) {
-        Json arr = Json::array();
-        for (const auto& n : kv.second) {
-            json_array_append(arr, n->getTuple().toString());
-        }
-        json_array_append(impact_ins_nodes, Json::object{
-            {"delta", kv.first->getTuple().toString()},
-            {"impacted", arr}
-        });
-    }
-    Json impact_ins_edges = Json::array();
-    for (const auto& kv : this->getEdgeImpactedByDeltaInsert()) {
-        Json arr = Json::array();
-        for (const auto& e : kv.second) {
-            json_array_append(arr, edge_to_json(e));
-        }
-        json_array_append(impact_ins_edges, Json::object{
-            {"delta", kv.first->getTuple().toString()},
-            {"impacted", arr}
-        });
-    }
-
     Json root = Json::object{
         {"facts", facts},
         {"rules", rules},
@@ -2945,12 +2953,6 @@ void IncrementalDerivationGraphViewInterface::dumpJsonInc(const std::string& fil
             }},
             {"delete", Json::object{
                 {"nodes", del_nodes}, {"edges", del_edges}, {"facts", del_facts}
-            }},
-            {"impact_by_delete", Json::object{
-                {"nodes", impact_del_nodes}, {"edges", impact_del_edges}
-            }},
-            {"impact_by_insert", Json::object{
-                {"nodes", impact_ins_nodes}, {"edges", impact_ins_edges}
             }}
         }}
     };

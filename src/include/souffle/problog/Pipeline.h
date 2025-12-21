@@ -254,6 +254,8 @@ inline void runPipeline(
         bool enableOnlineCli = false) {
     std::cout << std::fixed << std::setprecision(8);
     Debugger& debugger = Debugger::getInstance();
+    DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
+    DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());
     bool rewritePerformed = false;
 
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);
@@ -267,7 +269,9 @@ inline void runPipeline(
               << " ms\n";
     debugger.endStage();
 
-    graph->dumpDot("before_prune.dot");
+    if (opt.isDumpDotEnabled()) {
+        graph->dumpDot("before_prune.dot");
+    }
 
     debugger.startStage(StageKind::PRUNING_FULL);
     auto t2 = std::chrono::steady_clock::now();
@@ -278,8 +282,12 @@ inline void runPipeline(
               << " ms\n";
     debugger.endStage();
 
-    view.dumpDot("after_prune.dot");
-    view.dumpJson("derivation.json");
+    if (opt.isDumpDotEnabled()) {
+        view.dumpDot("after_prune.dot");
+    }
+    if (opt.isDumpJsonEnabled()) {
+        view.dumpJson("derivation.json");
+    }
     if (opt.isRewriteEnabled()) {
         debugger.startStage(StageKind::PRECONFIG_FULL);
         auto rewriteStart = std::chrono::steady_clock::now();
@@ -305,7 +313,9 @@ inline void runPipeline(
                   << ", randomVarsRatio=" << randomVarsRatio
                   << ", randomVarsRemoved=" << rewriteStats.totalRandomVars
                   << ", simpleFactRegions=" << rewriteStats.simpleFactRegions << std::endl;
-        view.dumpDot("rewrite_final.dot");
+        if (opt.isDumpDotEnabled()) {
+            view.dumpDot("rewrite_final.dot");
+        }
         debugger.endStage();
         rewritePerformed = true;
     }

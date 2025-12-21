@@ -3,9 +3,10 @@
 本文件描述当前代码实现的 inc-regional 增量 pipeline。内容以代码为准，不是规划文档。
 
 ## Scope / Assumptions
-- 仅覆盖 insertion（delta insert）阶段；deletion 仍复用经典增量 pipeline。
+- deletion 先执行经典增量删除逻辑，再进入 regional insertion。
 - 增量模式不执行 rewrite。
 - 必须已有基线公式（`nodeFormulas`/`edgeFormulas` 非空），否则直接 `assert` 失败。
+- 增量模式禁用 bi-imp merge（full merge 后不允许切换到 inc/inc-regional）。
 
 ## How to Enable
 - CLI 参数：`--setmode inc-regional`（或交互 CLI 输入 `setmode inc-regional`）。
@@ -27,10 +28,10 @@
 1) `applyDeltaDeletes`（旧逻辑）  
 2) `applyDeltaInserts`（旧逻辑）  
 3) `prune-inc`（构建子图 + impacted maps + deltaReach cache）  
-4) Forward compilation（inc-naive 或 inc-regional）  
+4) Forward compilation：先跑 deletion（inc-naive 逻辑），再跑 inc-regional insertion  
 5) WMC + 输出 iter 结果
 
-inc-regional 只替换 insertion 的 forward compilation；deletion 仍走旧增量流程。
+inc-regional 只替换 insertion 的 forward compilation；deletion 复用 inc-naive 的 deletion 实现。
 
 ---
 
@@ -139,6 +140,10 @@ Mergeable anchor 判定（`mergeableEdgeAtHead_`）：
 - `[inc-regional rebuild] timing(ms): ...`
 - `[inc-regional] timing(ms): analyze sccClose plan rebuild calibrate total`
 - `[prune-inc impact] ...`（prune-inc 重建 impacted maps）
+调试输出默认关闭，可按需开启：
+- `--dumpjson` / CLI `set dumpjson`：输出 JSON（prune 之后）。
+- `--dumpdot` / CLI `set dumpdot`：输出 derivation graph 的 DOT。
+- `--dumpstat` / CLI `set dumpstat`：输出 `dumpStatisticsInc` / `dumpStatistics`。
 
 ---
 

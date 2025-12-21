@@ -1365,6 +1365,9 @@ public:
         const std::vector<SISORegionInfo>& regions,
         const std::string& filename)
     {
+        if (!DerivationGraphViewInterface::isDumpDotEnabled()) {
+            return;
+        }
         std::ofstream out(filename);
         if (!out.is_open()) {
             std::cerr << "Cannot open dot file: " << filename << "\n";

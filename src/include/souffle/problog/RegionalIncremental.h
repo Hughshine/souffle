@@ -194,7 +194,7 @@ public:
         auto tInitEdgesEnd = nowMs();
 
         auto tDepGraphStart = nowMs();
-        CycleDependencyGraph depGraph(view);
+        auto& depGraph = view.getCycleDependencyGraph();
         auto tDepGraphEnd = nowMs();
         std::unordered_set<size_t> regionCycles;
         auto tRegionCyclesStart = nowMs();
@@ -448,9 +448,14 @@ public:
         std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
         std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
         std::set<NodePtr>& changedNodes) {
+        Debugger& debugger = Debugger::getInstance();
         const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
         const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
         if (deltaInsertedEdges.empty() && deltaInsertedNodes.empty()) {
+            formulaManager.dumpProfilingStatistics();
+            for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
+                debugger.addInfo(key, value);
+            }
             return;
         }
 
@@ -474,7 +479,7 @@ public:
         auto t1 = nowMs();
 
         // === 2) Ensure SCC-closed ===
-        CycleDependencyGraph depGraph(view);
+        auto& depGraph = view.getCycleDependencyGraph();
         bool expanded = RegionSccClosure::closeToScc(analysis.region, analyzer.lastDeltaReachable(), depGraph);
         stats_.sccExpanded = expanded;
         auto t2 = nowMs();

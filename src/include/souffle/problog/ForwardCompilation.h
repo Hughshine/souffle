@@ -230,7 +230,7 @@ void buildFormulasCyclewise(
     debugger.logMessage(Level::INFO, "Variable ordering takes " + std::to_string(preConfigMs) + " ms");
 
     auto depStart = std::chrono::steady_clock::now();
-    CycleDependencyGraph depGraph(view);
+    auto& depGraph = view.getCycleDependencyGraph();
 //    depGraph.dumpCycles(std::cout);
     depGraph.dumpDot("scc.dot");
     auto depMs = toMs(std::chrono::steady_clock::now() - depStart);
@@ -692,7 +692,7 @@ void buildFormulasIncCyclewise(
     using namespace std::chrono;
     static int turn = 1;
     auto start = high_resolution_clock::now();
-    CycleDependencyGraph depGraph(view);  // 包括 computeSCCs, computeDependencies, computeDepths
+    auto& depGraph = view.getCycleDependencyGraph();  // 包括 computeSCCs, computeDependencies, computeDepths
     depGraph.dumpDot("scc" + std::to_string(turn++) + ".dot");
 
 
@@ -700,11 +700,20 @@ void buildFormulasIncCyclewise(
     const auto& deltaDeletedEdges = view.getDeltaDeleteEdges();
     const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
     const auto& deltaDeletedNodes = view.getDeltaDeleteNodes();
+    debugger.logMessage(Level::INFO, "[inc-naive] delta counts: insNodes=" +
+        std::to_string(deltaInsertedNodes.size()) + " insEdges=" +
+        std::to_string(deltaInsertedEdges.size()) + " delNodes=" +
+        std::to_string(deltaDeletedNodes.size()) + " delEdges=" +
+        std::to_string(deltaDeletedEdges.size()));
     auto end = high_resolution_clock::now();
     debugger.logMessage(Level::INFO, "Finished building dependency graph and preparation. Time: " +
         std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
     if (deltaInsertedEdges.empty() && deltaDeletedEdges.empty()) {
         debugger.logMessage(Level::INFO, "No changes to apply, skipping incremental update");
+        formulaManager.dumpProfilingStatistics();
+        for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
+            debugger.addInfo(key, value);
+        }
         return;
     }
     debugger.logMessage(Level::INFO, "Starting incremental update for deleted edges");
@@ -857,23 +866,25 @@ void buildFormulasIncCyclewise(
 
         start = high_resolution_clock::now();
         // update the variable ordering for deleted non-deterministic facts
-//        std::set<int> deletedVarsIndex;
-//        for (auto node: deletedNonDeterminsticFacts) {
-//            auto index = formulaManager.getVarIndex(*node);
-//            deletedVarsIndex.insert(index);
-//        }
-//        for (auto edge: deltaDeletedEdges) {
-//            if (edge->isDeterministic()) continue;
-//            auto index = formulaManager.getVarIndex(*edge);
-//            deletedVarsIndex.insert(index);
-//        }
-//
-//        formulaManager.dumpProfilingStatistics();
-//
-//        if (!deletedVarsIndex.empty()) {
-//            formulaManager.postprocessUselessVariables(deletedVarsIndex);
-//            formulaManager.dumpProfilingStatistics();
-//        }
+        std::set<int> deletedVarsIndex;
+        for (auto node: deletedNonDeterminsticFacts) {
+            auto index = formulaManager.getVarIndex(*node);
+            deletedVarsIndex.insert(index);
+        }
+        for (auto edge: deltaDeletedEdges) {
+            if (edge->isDeterministic()) continue;
+            auto index = formulaManager.getVarIndex(*edge);
+            deletedVarsIndex.insert(index);
+        }
+        debugger.logMessage(Level::INFO, "Deletion deletedVarsIndex size: " +
+            std::to_string(deletedVarsIndex.size()));
+
+        formulaManager.dumpProfilingStatistics();
+
+        if (!deletedVarsIndex.empty()) {
+            formulaManager.postprocessUselessVariables(deletedVarsIndex);
+            formulaManager.dumpProfilingStatistics();
+        }
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Finished updating variable ordering after deletion (non-deterministic). Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
@@ -1225,7 +1236,7 @@ void buildFormulasCyclewiseOnDemand(
         edge->tmpRefCount = edge->currentRefCount;
     }
 
-    CycleDependencyGraph depGraph(view);
+    auto& depGraph = view.getCycleDependencyGraph();
 //    depGraph.dumpCycles(std::cout);
     depGraph.dumpDot("scc.dot");
 
@@ -1421,6 +1432,290 @@ void buildFormulasIncRegionalCyclewise(
     std::set<NodePtr>& changedNodes
 ) {
     debugger.logMessage(Level::INFO, "[inc-regional] start pipeline");
+    using namespace std::chrono;
+    const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
+    const auto& deltaDeletedEdges = view.getDeltaDeleteEdges();
+    const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
+    const auto& deltaDeletedNodes = view.getDeltaDeleteNodes();
+    debugger.logMessage(Level::INFO, "[inc-regional] delta counts: insNodes=" +
+        std::to_string(deltaInsertedNodes.size()) + " insEdges=" +
+        std::to_string(deltaInsertedEdges.size()) + " delNodes=" +
+        std::to_string(deltaDeletedNodes.size()) + " delEdges=" +
+        std::to_string(deltaDeletedEdges.size()));
+
+    if (deltaInsertedEdges.empty() && deltaInsertedNodes.empty() &&
+            deltaDeletedEdges.empty() && deltaDeletedNodes.empty()) {
+        debugger.logMessage(Level::INFO, "No changes to apply, skipping incremental update");
+        formulaManager.dumpProfilingStatistics();
+        for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
+            debugger.addInfo(key, value);
+        }
+        debugger.logMessage(Level::INFO, "[inc-regional] pipeline finished; usedFallback=false");
+        return;
+    }
+
+    if (!deltaDeletedEdges.empty() || !deltaDeletedNodes.empty()) {
+        auto start = high_resolution_clock::now();
+        auto& depGraph = view.getCycleDependencyGraph();  // includes SCC/dependencies/depths
+        auto end = high_resolution_clock::now();
+        debugger.logMessage(Level::INFO, "Finished building dependency graph and preparation. Time: " +
+            std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+
+        debugger.logMessage(Level::INFO, "[inc-regional] Performing deletion");
+        start = high_resolution_clock::now();
+        std::map<size_t, std::priority_queue<PrioritizedEdge> > cycleWorklists;
+        std::map<size_t, std::set<EdgePtr> > cycleInWorklists;
+
+        std::set<NodePtr> deletedFacts = view.getDeletedFacts();
+        std::set<NodePtr> deletedDeterminsticFacts = view.getDeletedDeterminsticFacts();
+        std::set<NodePtr> deletedNonDeterminsticFacts = view.getDeletedNonDeterministicFacts();
+        for (auto deletedFact: deletedFacts) {
+            assertProbabilityInRange(0.0, "deleted fact weight");
+            formulaManager.setVariableWeight(formulaManager.getVarIndex(*deletedFact), 0.0, 1.0);
+        }
+        for (auto node : deltaDeletedNodes) {
+            nodeFormulas.erase(node);
+            changedNodes.insert(node);
+        }
+
+        for (auto edge: deltaDeletedEdges) {
+            edgeFormulas.erase(edge);
+        }
+
+        for (auto it = nodeFormulas.begin(); it != nodeFormulas.end(); ) {
+            if (view.getValidNodes().find(it->first) == view.getValidNodes().end()) {
+                it = nodeFormulas.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        for (auto it = edgeFormulas.begin(); it != edgeFormulas.end(); ) {
+            if (view.getValidEdges().find(it->first) == view.getValidEdges().end()) {
+                it = edgeFormulas.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        auto& nodeImpactedByDeltaDelete = view.getNodeImpactedByDeltaDelete();
+        auto& edgeImpactedByDeltaDelete = view.getEdgeImpactedByDeltaDelete();
+
+        start = high_resolution_clock::now();
+        for (auto& deletedDeterminsticFact: deletedDeterminsticFacts) {
+            if (nodeImpactedByDeltaDelete.find(deletedDeterminsticFact) == nodeImpactedByDeltaDelete.end()) {
+                continue;
+            }
+            if (edgeImpactedByDeltaDelete.find(deletedDeterminsticFact) == edgeImpactedByDeltaDelete.end()) {
+                continue;
+            }
+            auto& impactedNodes = nodeImpactedByDeltaDelete.at(deletedDeterminsticFact);
+            for (auto node: impactedNodes) {
+                if (deltaDeletedNodes.count(node)) {
+                    continue;
+                }
+                if (nodeFormulas.count(node) == 0 || formulaManager.isSame(nodeFormulas[node], formulaManager.getFalse())) {
+                    continue;
+                }
+                if (node->isFact) {
+                    continue;
+                }
+                nodeFormulas[node] = formulaManager.getFalse();
+                changedNodes.insert(node);
+            }
+            auto& impactedEdges = edgeImpactedByDeltaDelete.at(deletedDeterminsticFact);
+            for (auto edge: impactedEdges) {
+                if (deltaDeletedEdges.count(edge)) {
+                    continue;
+                }
+                if (view.getOutput(edge)->isFact) {
+                    continue;
+                }
+                edgeFormulas[edge] = formulaManager.getFalse();
+                auto& worklist = cycleWorklists[depGraph.edgeToCycleIndex.at(edge)];
+                auto& inWorklist = cycleInWorklists[depGraph.edgeToCycleIndex.at(edge)];
+                if (inWorklist.count(edge)) {
+                    continue;
+                }
+                worklist.push({edge, depGraph.edgeDepthsGlobal[edge], (int)depGraph.edgeDepthsGlobal[edge]});
+                inWorklist.insert(edge);
+            }
+        }
+
+        for (auto& impactedNode: changedNodes) {
+            std::vector<FormulaNodeRef> incoming;
+            for (EdgePtr e : view.getIncomingEdges(impactedNode)) {
+                if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
+                    incoming.push_back(edgeFormulas[e]);
+                }
+            }
+            FormulaNodeRef newNode = formulaManager.makeOr(incoming);
+            if (!formulaManager.isSame(nodeFormulas[impactedNode], newNode)) {
+                nodeFormulas[impactedNode] = newNode;
+            }
+        }
+        end = high_resolution_clock::now();
+        debugger.logMessage(Level::INFO, "Finished over-deleting impacted formulas. Time: " +
+            std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+
+        for (auto& deletedNonDeterminsticFact: deletedNonDeterminsticFacts) {
+            if (nodeImpactedByDeltaDelete.find(deletedNonDeterminsticFact) == nodeImpactedByDeltaDelete.end()) {
+                continue;
+            }
+            if (edgeImpactedByDeltaDelete.find(deletedNonDeterminsticFact) == edgeImpactedByDeltaDelete.end()) {
+                continue;
+            }
+            auto& impactedNodes = nodeImpactedByDeltaDelete.at(deletedNonDeterminsticFact);
+            for (auto node: impactedNodes) {
+                if (deltaDeletedNodes.count(node)) {
+                    continue;
+                }
+                if (nodeFormulas.count(node) == 0 || formulaManager.isSame(nodeFormulas[node], formulaManager.getFalse())) {
+                    continue;
+                }
+                if (node->isFact) { continue; }
+                auto newNodeFormula = formulaManager.makeCondition(nodeFormulas[node], {}, {formulaManager.getVarIndex(*deletedNonDeterminsticFact)});
+                if (!formulaManager.isSame(nodeFormulas[node], newNodeFormula)) {
+                    nodeFormulas[node] = newNodeFormula;
+                    changedNodes.insert(node);
+                }
+            }
+
+            auto& impactedEdges = edgeImpactedByDeltaDelete.at(deletedNonDeterminsticFact);
+            for (auto edge: impactedEdges) {
+                if (deltaDeletedEdges.count(edge)) {
+                    continue;
+                }
+                edgeFormulas[edge] = formulaManager.makeCondition(edgeFormulas[edge], {}, {formulaManager.getVarIndex(*deletedNonDeterminsticFact)});
+            }
+        }
+        end = high_resolution_clock::now();
+        debugger.logMessage(Level::INFO, "Finished conditioning on deleted non-deterministic facts. Time: " +
+            std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+
+        start = high_resolution_clock::now();
+        std::set<int> deletedVarsIndex;
+        for (auto node: deletedNonDeterminsticFacts) {
+            auto index = formulaManager.getVarIndex(*node);
+            deletedVarsIndex.insert(index);
+        }
+        for (auto edge: deltaDeletedEdges) {
+            if (edge->isDeterministic()) continue;
+            auto index = formulaManager.getVarIndex(*edge);
+            deletedVarsIndex.insert(index);
+        }
+        debugger.logMessage(Level::INFO, "Deletion deletedVarsIndex size: " +
+            std::to_string(deletedVarsIndex.size()));
+        formulaManager.dumpProfilingStatistics();
+        if (!deletedVarsIndex.empty()) {
+            formulaManager.postprocessUselessVariables(deletedVarsIndex);
+            formulaManager.dumpProfilingStatistics();
+        }
+        end = high_resolution_clock::now();
+        debugger.logMessage(Level::INFO, "Finished updating variable ordering after deletion (non-deterministic). Time: " +
+            std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+
+        start = high_resolution_clock::now();
+        std::queue<size_t> ready;
+        std::vector<bool> scheduled(depGraph.nodeCycles.size(), false);
+        std::vector<size_t> inDegree = depGraph.inDegrees;
+        for (size_t cid = 0; cid < depGraph.nodeCycles.size(); ++cid)
+            if (inDegree[cid] == 0) {ready.push(cid); scheduled[cid] = true;}
+
+        while (!ready.empty()) {
+            size_t cid = ready.front(); ready.pop();
+            scheduled[cid] = true;
+            auto& worklist = cycleWorklists[cid];
+            int round = 0;
+            int _seqId = 0;
+            while (!worklist.empty()) {
+                auto* iteration = debugger.startIteration();
+                EdgePtr edge = worklist.top().edge; worklist.pop();
+                cycleInWorklists[cid].erase(edge);
+                round++;
+                FormulaNodeRef baseFormula = edge->isDeterministic()
+                    ? formulaManager.getTrue()
+                    : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
+                std::vector<FormulaNodeRef> inputFormulas{baseFormula};
+
+                const auto& inputs = view.getInputs(edge);
+                const auto& negs = view.getBodyNegations(edge);
+                bool allAvailable = true;
+                for (size_t i = 0; i < inputs.size(); ++i) {
+                    auto it = nodeFormulas.find(inputs[i]);
+                    if (it == nodeFormulas.end()) {
+                        allAvailable = false;
+                        break;
+                    }
+                    inputFormulas.push_back(negs[i] ? formulaManager.makeNot(it->second) : it->second);
+                }
+
+                if (!allAvailable) {
+                    worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+                    cycleInWorklists[cid].insert(edge);
+                    debugger.endIteration();
+                    continue;
+                }
+
+                FormulaNodeRef newEdge = formulaManager.makeAnd(inputFormulas);
+                if (formulaManager.isSame(edgeFormulas[edge], newEdge)) {
+                    debugger.endIteration();
+                    continue;
+                }
+
+                edgeFormulas[edge] = newEdge;
+
+                NodePtr output = view.getOutput(edge);
+                if (!output || output->isFact) {
+                    debugger.endIteration();
+                    continue;
+                }
+
+                std::vector<FormulaNodeRef> incoming;
+                for (EdgePtr e : view.getIncomingEdges(output)) {
+                    if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
+                        incoming.push_back(edgeFormulas[e]);
+                    }
+                }
+
+                FormulaNodeRef newNode = formulaManager.makeOr(incoming);
+                if (!formulaManager.isSame(nodeFormulas[output], newNode)) {
+                    nodeFormulas[output] = newNode;
+                    changedNodes.insert(output);
+                    for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
+                        assert (depGraph.edgeToCycleIndex.count(outEdge));
+                        auto it = depGraph.edgeToCycleIndex.find(outEdge);
+                        if (it->second == cid && !cycleInWorklists[cid].count(outEdge)) {
+                            cycleWorklists[cid].push({outEdge, depGraph.edgeDepthsGlobal[outEdge], _seqId++});
+                            cycleInWorklists[cid].insert(outEdge);
+                        }
+                    }
+                }
+                debugger.endIteration();
+            }
+
+            for (size_t succ : depGraph.reverseDependencies[cid]) {
+                if (--inDegree[succ] == 0 && !scheduled[succ]) {
+                    ready.push(succ);
+                }
+            }
+        }
+        end = high_resolution_clock::now();
+        debugger.logMessage(Level::INFO, "rederive time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+    } else {
+        debugger.logMessage(Level::INFO, "[inc-regional] No deletions; skipping deletion phase");
+    }
+
+    if (deltaInsertedEdges.empty() && deltaInsertedNodes.empty()) {
+        debugger.logMessage(Level::INFO, "[inc-regional] No inserted edges/nodes, skipping insertion");
+        formulaManager.dumpProfilingStatistics();
+        for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
+            debugger.addInfo(key, value);
+        }
+        debugger.logMessage(Level::INFO, "[inc-regional] pipeline finished; usedFallback=false");
+        return;
+    }
+
     using FMType = std::remove_reference_t<decltype(formulaManager)>;
     RegionalIncrementalForwardCompilation<FMType, FormulaNodeRef> orchestrator;
     orchestrator.applyUpdate(view, formulaManager, nodeFormulas, edgeFormulas, changedNodes);

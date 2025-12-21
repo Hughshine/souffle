@@ -322,23 +322,90 @@ private:
 
     // Build Least-Parents (LP) sets for nodes following the dominance-based definition.
     void buildLeastParents_() {
+        using Clock = std::chrono::steady_clock;
+        auto toMs = [](auto dur) { return std::chrono::duration<double, std::milli>(dur).count(); };
+        auto t_total_start = Clock::now();
+        auto t0 = Clock::now();
         prepareGraphStructures_();
+        double t_prepare = toMs(Clock::now() - t0);
         lp_set_.clear();
         reachable_cache_.clear();
+        t0 = Clock::now();
+        auto& scc = view_.getCycleDependencyGraph();
+        double t_scc = toMs(Clock::now() - t0);
+        double t_scc_reach = 0.0;
+        double t_scc_nodes = 0.0;
+        double t_reachable = 0.0;
+        double t_branch = 0.0;
+        double t_dominators = 0.0;
+        double t_select = 0.0;
+        size_t sources_total = 0;
+        size_t sources_used = 0;
+        size_t sources_skipped = 0;
+        size_t branch_edges = 0;
+        size_t branch_nodes = 0;
+        size_t reachable_nodes = 0;
+        std::unordered_map<size_t, std::unordered_set<size_t>> scc_reach;
+        std::unordered_map<size_t, std::set<NodePtr>> scc_reach_nodes;
+        std::function<const std::unordered_set<size_t>&(size_t)> getReachSccs =
+                [&](size_t cid) -> const std::unordered_set<size_t>& {
+            auto it = scc_reach.find(cid);
+            if (it != scc_reach.end()) return it->second;
+            auto ts = Clock::now();
+            std::unordered_set<size_t> reach{cid};
+            if (cid < scc.reverseDependencies.size()) {
+                for (auto succ : scc.reverseDependencies[cid]) {
+                    const auto& succReach = getReachSccs(succ);
+                    reach.insert(succReach.begin(), succReach.end());
+                }
+            }
+            t_scc_reach += toMs(Clock::now() - ts);
+            return scc_reach.emplace(cid, std::move(reach)).first->second;
+        };
+        auto getReachNodes = [&](size_t cid) -> const std::set<NodePtr>& {
+            auto it = scc_reach_nodes.find(cid);
+            if (it != scc_reach_nodes.end()) return it->second;
+            auto ts = Clock::now();
+            std::set<NodePtr> nodes;
+            const auto& reachSccs = getReachSccs(cid);
+            for (auto rid : reachSccs) {
+                if (rid >= scc.nodeCycles.size()) continue;
+                const auto& group = scc.nodeCycles[rid];
+                nodes.insert(group.begin(), group.end());
+            }
+            t_scc_nodes += toMs(Clock::now() - ts);
+            return scc_reach_nodes.emplace(cid, std::move(nodes)).first->second;
+        };
         for (auto& source : view_.getValidNodes()) {
-            auto reachable = forwardReachable_(source);
-            reachable_cache_[source] = reachable;
+            sources_total++;
             auto outIt = outgoing_edges_map_.find(source);
             if (outIt == outgoing_edges_map_.end() || outIt->second.size() < 2) {
                 lp_set_[source] = {};
+                sources_skipped++;
                 continue;
             }
+            sources_used++;
+            auto tr = Clock::now();
+            auto cit = scc.nodeToCycleIndex.find(source);
+            if (cit != scc.nodeToCycleIndex.end()) {
+                const auto& reachable = getReachNodes(cit->second);
+                reachable_cache_[source] = reachable;
+            } else {
+                reachable_cache_[source] = forwardReachable_(source);
+            }
+            const auto& reachable = reachable_cache_[source];
+            t_reachable += toMs(Clock::now() - tr);
+            reachable_nodes += reachable.size();
             std::unordered_map<NodePtr, size_t> branch_counts;
             for (auto& edge : outIt->second) {
                 if (!edge) continue;
                 auto child = view_.getOutput(edge);
                 if (!child) continue;
+                auto tb = Clock::now();
                 auto branchReach = forwardReachableFromBranch_(child, source);
+                t_branch += toMs(Clock::now() - tb);
+                branch_edges++;
+                branch_nodes += branchReach.size();
                 for (auto& node : branchReach) {
                     if (node.get() == source.get()) continue;
                     branch_counts[node]++;
@@ -354,7 +421,10 @@ private:
                 lp_set_[source] = {};
                 continue;
             }
+            auto td = Clock::now();
             auto dom = computeDominators_(source, reachable);
+            t_dominators += toMs(Clock::now() - td);
+            auto ts = Clock::now();
             std::set<NodePtr> least;
             for (auto& m : merge_nodes) {
                 bool dominated = false;
@@ -368,8 +438,26 @@ private:
                 }
                 if (!dominated) least.insert(m);
             }
+            t_select += toMs(Clock::now() - ts);
             lp_set_[source] = std::move(least);
         }
+        double t_total = toMs(Clock::now() - t_total_start);
+        std::cout << "[least-parents] timing(ms): prepare=" << t_prepare
+                  << " scc=" << t_scc
+                  << " sccReach=" << t_scc_reach
+                  << " reachNodes=" << t_scc_nodes
+                  << " reachable=" << t_reachable
+                  << " branch=" << t_branch
+                  << " dominators=" << t_dominators
+                  << " select=" << t_select
+                  << " total=" << t_total
+                  << " sources=" << sources_total
+                  << " used=" << sources_used
+                  << " skipped=" << sources_skipped
+                  << " branches=" << branch_edges
+                  << " branchNodes=" << branch_nodes
+                  << " reachNodes=" << reachable_nodes
+                  << "\n";
     }
 
     void computeScopes_() {
@@ -579,13 +667,13 @@ private:
         std::set<EdgePtr> delta_edges = view_.getDeltaInsertEdges();
         for (auto& n : delta_input_facts) delta_nodes.insert(n);
 
-        std::set<NodePtr> out_nodes;
+        std::unordered_set<NodePtr> out_nodes;
         for (auto& e : delta_edges) {
             out_nodes.insert(view_.getOutput(e));
         }
 
-        std::set<NodePtr> scope_nodes_union;
-        std::set<EdgePtr> scope_edges_union;
+        std::unordered_set<NodePtr> scope_nodes_union;
+        std::unordered_set<EdgePtr> scope_edges_union;
         for (auto& x : delta_nodes) {
             auto nit = node_scope_.find(x);
             if (nit != node_scope_.end()) {
@@ -597,11 +685,11 @@ private:
             }
         }
 
-        std::set<NodePtr> candidate_nodes = delta_nodes;
+        std::unordered_set<NodePtr> candidate_nodes(delta_nodes.begin(), delta_nodes.end());
         candidate_nodes.insert(out_nodes.begin(), out_nodes.end());
         candidate_nodes.insert(scope_nodes_union.begin(), scope_nodes_union.end());
 
-        std::set<EdgePtr> candidate_edges = delta_edges;
+        std::unordered_set<EdgePtr> candidate_edges(delta_edges.begin(), delta_edges.end());
         candidate_edges.insert(scope_edges_union.begin(), scope_edges_union.end());
 
         for (auto& n : candidate_nodes) {
@@ -619,7 +707,7 @@ private:
 
     Boundaries classifyBoundaries_(const Region& R) {
         Boundaries B;
-        std::set<NodePtr> boundary_nodes;
+        std::unordered_set<NodePtr> boundary_nodes;
         for (auto& e : view_.getValidEdges()) {
             auto head = view_.getOutput(e);
             auto ins = view_.getInputs(e);
@@ -631,12 +719,12 @@ private:
             }
         }
 
-        std::set<NodePtr> out_nodes;
+        std::unordered_set<NodePtr> out_nodes;
         for (auto& e : last_delta_edges_) {
             out_nodes.insert(view_.getOutput(e));
         }
 
-        std::set<NodePtr> lp_union;
+        std::unordered_set<NodePtr> lp_union;
         for (auto& x : last_delta_nodes_) {
             auto it = lp_set_.find(x);
             if (it != lp_set_.end()) {

@@ -46,6 +46,7 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 
 ## Current State (incremental)
 - Incremental pipelines are delta-driven and do not run rewrite (`--setmode inc` / `--setmode inc-regional`).
+- Bi-imp merge is disabled for inc/inc-regional; a merged graph asserts if you try to switch to incremental.
 - Session focus: inc-naive vs inc-regional timing + consistency; see Context Dump for latest P4–P13 runs and P1/P3 skip note.
 
 ## Investigation Tips
@@ -124,3 +125,29 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
   - Run P12 (inc10_1): `--setmode inc-regional` with `--logfile log_P12_inc10_1_inc_regional_profile8`
     - stdout: `experiments/side_channel_inc_eval/P12/run_inc_regional.profile8.stdout`
   - Analyze timing (inc-regional): `reach≈0.586 ms`, `total≈23.841 ms` (from `run_inc_regional.profile8.stdout`).
+
+## Context Dump (2025-12-21)
+- Recent code changes:
+  - Added `--dumpjson`, `--dumpdot`, `--dumpstat` options (default false) in `src/include/souffle/CompiledOptions.h` and CLI `set/unset` handling in `src/include/souffle/cli/Cli.h`.
+  - `DerivationGraphViewInterface` gates `dumpJson`/`dumpDot`/`dumpStatistics` outputs; `dumpStatisticsInc` and `dumpStatistics` now no-op unless `dumpstat` is enabled.
+  - `dumpJsonInc` no longer emits `impact_by_*` blocks (reduced JSON size).
+  - Pipeline wiring: `src/include/souffle/problog/Pipeline.h` sets dump flags so CLI and batch runs are consistent.
+  - Bi-imp merge tracking: `src/include/souffle/problog/DerivationGraph.h` records `biImpMerged` and asserts if merge is enabled with delta changes; `src/include/souffle/cli/Cli.h` forbids inc modes when a graph is merged.
+  - Incremental prune skips bi-imp merge and delta-delete canonicalisation; prune now logs delta-delete counts per phase.
+  - `tryGarbageCollection()` is invoked at the end of each turn in CLI runs.
+  - Forward compilation logs delta counts (inc-naive/inc-regional) and deletion `deletedVarsIndex` size.
+- P12 repro (inc10_1, manual runs; output dirs suffixed `*_repro`):
+  - Compile: `python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py --base-dir experiments/side_channel_inc_eval compile --cases 12 --timeout 300`
+  - Runs:
+    - inc-naive: `./compute -F input -D output_run_inc_naive_repro --setmode inc < delta/inc10_1.txt`
+    - inc-regional: `./compute -F input -D output_run_inc_regional_repro --setmode inc-regional < delta/inc10_1.txt`
+    - full: `./compute -F input -D output_run_full_repro --setmode full < delta/inc10_1.txt`
+  - Consistency: `facts.prob` and `fact-iter1/2` match full for both inc-naive and inc-regional.
+  - Latest repro (2025-12-21 04:06, delta inc10_1):
+    - Logs: `log_P12_inc10_1_inc_naive_repro_20251221_040639.json_20251221_4642.json`,
+      `log_P12_inc10_1_inc_regional_repro_20251221_040648.json_20251221_4650.json`,
+      `log_P12_inc10_1_full_repro_20251221_040656.json_20251221_4659.json`.
+    - Wall time (real s): inc-naive 2.67, inc-regional 2.63, full 2.62.
+    - Reordering (turn-3): ≈0.210s across all three pipelines.
+    - live_nodes (turn-2/3): inc-naive 1642/11870; inc-regional 1625/10545; full 1868/13817.
+  - Note: `time` can report `user > real` when OpenMP uses multiple threads. For strict single-thread runs, set `OMP_NUM_THREADS=1 OMP_THREAD_LIMIT=1` (or pass `-j 1`).

@@ -74,11 +74,14 @@ protected:
     std::string knowledge_representation;  // bdd, sdd are supported
     bool merge_bi_imp = true;  // enable merging mutually implying deterministic nodes
     bool enable_rewrite = false;  // enable SISO-based graph rewriting
+    bool dump_json = false;  // dump derivation graph JSON after prune
+    bool dump_dot = false;  // dump derivation graph DOT after prune
+    bool dump_stat = false;  // dump derivation graph stats after prune
 public:
     // all argument constructor
-    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc", bool merge_bi = true, bool rewrite = false)
+    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc", bool merge_bi = true, bool rewrite = false, bool dumpjson = false, bool dumpdot = false, bool dumpstat = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
-    , incMode(mode), merge_bi_imp(merge_bi), enable_rewrite(rewrite) {}
+    , incMode(mode), merge_bi_imp(merge_bi), enable_rewrite(rewrite), dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat) {}
 
     CmdOptions() {}
     /**
@@ -126,6 +129,24 @@ public:
     bool isRewriteEnabled() const {
         return enable_rewrite;
     }
+    bool isDumpJsonEnabled() const {
+        return dump_json;
+    }
+    void setDumpJsonEnabled(bool enabled) {
+        dump_json = enabled;
+    }
+    bool isDumpDotEnabled() const {
+        return dump_dot;
+    }
+    void setDumpDotEnabled(bool enabled) {
+        dump_dot = enabled;
+    }
+    bool isDumpStatEnabled() const {
+        return dump_stat;
+    }
+    void setDumpStatEnabled(bool enabled) {
+        dump_stat = enabled;
+    }
 
     /**
      * get filename of profile
@@ -166,6 +187,8 @@ public:
                 {"knowledge", true, nullptr, 'k'}, {"logfile", true, nullptr, 'l'},
                 {"derv-only", true, nullptr, 'd'}, {"setmode", true, nullptr, 'm'},
                 {"merge-bi-imp", false, nullptr, 'e'}, {"rewrite", false, nullptr, 'r'},
+                {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
+                {"dumpstat", false, nullptr, 'S'},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -173,7 +196,7 @@ public:
         bool ok = true;
         knowledge_representation = "bdd";  // default knowledge representation
         int c; /* command-line arguments processing */
-        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d:em:r", longOptions, nullptr)) != EOF) {
+        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d:em:rJTS", longOptions, nullptr)) != EOF) {
             switch (c) {
                 /* Fact directories */
                 case 'F':
@@ -262,6 +285,15 @@ public:
                 case 'r':
                     enable_rewrite = true;
                     break;
+                case 'J':
+                    dump_json = true;
+                    break;
+                case 'T':
+                    dump_dot = true;
+                    break;
+                case 'S':
+                    dump_stat = true;
+                    break;
                 default: printHelpPage(exec_name); return false;
             }
         }
@@ -297,6 +329,9 @@ private:
         std::cerr << "    -d, --derv-only              -- Only compute the derivation graph\n";
         std::cerr << "    -e, --merge-bi-imp           -- Enable merging mutually implying deterministic nodes during pruning\n";
         std::cerr << "    -r, --rewrite                -- Enable SISO-based graph rewriting\n";
+        std::cerr << "    --dumpjson                   -- Dump derivation graph JSON after prune\n";
+        std::cerr << "    --dumpdot                    -- Dump derivation graph DOT after prune\n";
+        std::cerr << "    --dumpstat                   -- Dump derivation graph stats after prune\n";
 #ifdef _OPENMP
         std::cerr << "    -j <NUM>, --jobs=<NUM>       -- Specify number of threads\n";
         if (num_jobs > 0) {
