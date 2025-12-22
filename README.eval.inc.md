@@ -5,6 +5,7 @@ Incremental side-channel benchmark notes (context + procedures). Experiments liv
 ## Scope
 - Online incremental CLI path only (`--online`, inc-naive/inc-regional). Legacy `--inc` backend is deprecated.
 - Incremental modes do not run rewrite; they reuse the online DRed-like deletion/rederive/insertion.
+- Full baseline uses `full-hard` by default (`--setmode full`); `full-soft` is available for reuse of the DD manager state.
 
 ## Prerequisites
 - Build release Soufflé: `cmake --build cmake-build-release --target souffle -j4`
@@ -40,6 +41,7 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
 ## What to look at
 - Outputs: `output/facts.full.prob`, `output/facts.inc.prob`, per-delta `delta-*-fact-iter*-{inc,full}.prob`.
 - Logs: debugger JSON reports now land in the output directory (e.g., `output/log_P1_*.json`); stdout from manual runs (e.g., `log_inc_applyDelta_inc*.stdout`) still holds CLI prints.
+- Debugger JSON `turns[].mode` will show `FULL-HARD` / `FULL-SOFT` / `INC`.
 - CLI runs in inc mode print delta size: `[applyDelta] delTuples=… delRuleApps=… delFacts=… insTuples=… insRuleApps=… insFacts=…`.
 - Forward compilation prints per-turn delta counts: `[inc-naive] delta counts: insNodes=… insEdges=… delNodes=… delEdges=…` and `[inc-regional] delta counts: …`.
 - Deletion stage prints `Deletion deletedVarsIndex size: N` before postprocessing variables.

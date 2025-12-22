@@ -148,12 +148,13 @@ public:
 
     TurnInfo* startTurn(const std::string& mode = "DEFAULT") {
         std::lock_guard<std::mutex> lock(mtx_);
-        assert (mode == "DEFAULT" || mode == "FULL" || mode == "INC");
+        assert (mode == "DEFAULT" || mode == "FULL" || mode == "FULL-HARD" ||
+                mode == "FULL-SOFT" || mode == "INC");
         std::string realMode;
-        if (turnCount_ == 0 || mode == "FULL") {
-            realMode = "FULL";  // Default mode if not specified
-        } else if (mode == "DEFAULT" && turnCount_ > 0) {
-            realMode = "INC";
+        if (mode == "DEFAULT") {
+            realMode = (turnCount_ == 0) ? "FULL-HARD" : "INC";
+        } else if (mode == "FULL" || mode == "FULL-HARD" || mode == "FULL-SOFT") {
+            realMode = mode;
         } else {
             realMode = "INC";
         }

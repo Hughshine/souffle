@@ -53,8 +53,9 @@ Defaults are baked into each generated binary. Typical defaults in this repo (e.
 - `-k, --knowledge <bdd|sdd>`: default `bdd`
 - `-l, --logfile <FILE>`: debugger JSON base name, default `log.txt`
 - `-d, --derv-only <true|false>`: default `false`
-- `-m, --setmode <inc-naive|inc-regional|full|elastic>`: default `inc-naive`
+- `-m, --setmode <inc-naive|inc-regional|full-hard|full-soft|full|elastic>`: default `inc-naive`
   - aliases: `inc`, `incr`, `incremental` map to `inc-naive`
+  - `full` maps to `full-hard` (hard reset each turn); `full-soft` reuses the DD manager state
 - `-e, --merge-bi-imp`: default `false`
 - `-r, --rewrite`: default `false`
 - `--dumpjson`: default `false`
@@ -68,7 +69,7 @@ Commands:
 - `delete/remove Rel(v1, v2, ...)`: queue deletion
 - `list`: show pending operations
 - `commit`: apply pending operations and run incremental computation
-- `setmode inc-naive|inc-regional|full|elastic`: switch mode
+- `setmode inc-naive|inc-regional|full-hard|full-soft|full|elastic`: switch mode
 - `set dumpjson|dumpdot|dumpstat` / `unset ...`: toggle dump outputs
 - `dump`: print current relations (or PreDG in ground mode)
 - `help`, `q`: help/quit

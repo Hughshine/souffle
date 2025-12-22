@@ -5,6 +5,7 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 ## Scope
 - Online incremental path (`--online`) is the active implementation; legacy `--inc` backend is deprecated.
 - Incremental modes skip rewrite; rewrite docs apply to full-mode runs.
+- Full mode now has `full-hard` (default) and `full-soft`; `full` maps to `full-hard`.
 
 ## Key Docs (full/rewrite)
 - `README.rewrite.md` — current rewrite pipeline design, status, perf notes.
@@ -40,7 +41,7 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 - Per benchmark dir (e.g., `experiments/side_channel_inc_eval/P9`):
   - inc-naive: `./compute -F input -D output_run_inc_naive --setmode inc < delta/inc10_1.txt`
   - inc-regional: `./compute -F input -D output_run_inc_regional --setmode inc-regional < delta/inc10_1.txt`
-  - full baseline (no rewrite): `./compute -F input -D output_run_full --setmode full < delta/inc10_1.txt`
+  - full baseline (no rewrite): `./compute -F input -D output_run_full --setmode full < delta/inc10_1.txt` (maps to `full-hard`)
   - Outputs should match: `diff output_run_inc_naive/facts.prob output_run_full/facts.prob`
   - Debugger JSON reports now land in the output dir; the filename uses the basename of `--logfile` plus a timestamp.
 

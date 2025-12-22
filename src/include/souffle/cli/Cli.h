@@ -56,7 +56,8 @@ std::string getIncDeltaTupleInsertRelationName(const std::string& name) {
 }
 
 enum IncMode {
-  FULL,
+  FULL_HARD,
+  FULL_SOFT,
   INC_NAIVE,
   INC_REGIONAL,
   ELASTIC
@@ -94,6 +95,14 @@ private:
 
     void logTurnMode(const std::string& modeLabel) const {
         std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel << std::endl;
+    }
+
+    bool isFullMode() const {
+        return incMode == IncMode::FULL_HARD || incMode == IncMode::FULL_SOFT;
+    }
+
+    const char* fullModeLabel() const {
+        return incMode == IncMode::FULL_SOFT ? "FULL-SOFT" : "FULL-HARD";
     }
 
     std::string outputPath(const std::string& filename) const {
@@ -296,8 +305,10 @@ public:
         DerivationGraphViewInterface::setDumpDotEnabled(options.isDumpDotEnabled());
         DerivationGraphViewInterface::setDumpStatsEnabled(options.isDumpStatEnabled());
         auto& mode = options.getIncMode();
-        if (mode == "full") {
-            setIncMode(IncMode::FULL);
+        if (mode == "full" || mode == "full-hard") {
+            setIncMode(IncMode::FULL_HARD);
+        } else if (mode == "full-soft") {
+            setIncMode(IncMode::FULL_SOFT);
         } else if (mode == "inc" || mode == "incremental" || mode == "incr" || mode == "inc-naive") {
             setIncMode(IncMode::INC_NAIVE);
         } else if (mode == "inc-regional" || mode == "regional") {
@@ -446,9 +457,12 @@ public:
             } else if (mode == "inc-regional" || mode == "regional") {
                 incMode = IncMode::INC_REGIONAL;
                 std::cout << "Set incremental mode to INC-REGIONAL" << std::endl;
-            } else if (mode == "full") {
-                incMode = IncMode::FULL;
-                std::cout << "Set incremental mode to FULL" << std::endl;
+            } else if (mode == "full" || mode == "full-hard") {
+                incMode = IncMode::FULL_HARD;
+                std::cout << "Set incremental mode to FULL-HARD" << std::endl;
+            } else if (mode == "full-soft") {
+                incMode = IncMode::FULL_SOFT;
+                std::cout << "Set incremental mode to FULL-SOFT" << std::endl;
             } else if (mode == "elastic") {
                 incMode = IncMode::ELASTIC;
                 std::cout << "Set incremental mode to ELASTIC" << std::endl;
@@ -460,7 +474,7 @@ public:
 //            }
             else {
                 std::cout << "Unknown mode: " << mode << std::endl;
-                std::cout << "Available modes: inc-naive (inc/incr), inc-regional, full, elastic" << std::endl;
+                std::cout << "Available modes: inc-naive (inc/incr), inc-regional, full (full-hard), full-soft, elastic" << std::endl;
                 std::cout << "Current mode unchanged." << std::endl;
             }
         } else if (cmd == "set") {
@@ -625,7 +639,7 @@ public:
                 assert(false && "bi-imp merged graph cannot run incremental mode");
             }
             DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
-            debugger.startTurn();
+            debugger.startTurn(isFullMode() ? fullModeLabel() : "DEFAULT");
             // for ground program ...
             // get the incremental derivation graph -> build formulas -> compute probabilities
 //             1.
@@ -722,8 +736,17 @@ public:
                 std::string incPrefix = "fact-iter" + std::to_string(iteration) + incTag;
                 dumpProbabilities(probResult, opt.getOutputFileDir() + "/", incPrefix);
                 iteration++;
-            } else if (incMode == IncMode::FULL) {
-                logTurnMode("FULL");
+            } else if (isFullMode()) {
+                logTurnMode(fullModeLabel());
+                if (ddManager != nullptr) {
+                    nodeFormulas->clear();
+                    edgeFormulas->clear();
+                    if (incMode == IncMode::FULL_HARD) {
+                        ddManager->resetHard();
+                    } else {
+                        ddManager->reset();
+                    }
+                }
                 debugger.startStage(StageKind::PRUNING_FULL);
                 {
                     if (opt.isDumpDotEnabled()) {
@@ -969,10 +992,19 @@ public:
                 std::string incPrefix = "fact-iter" + std::to_string(iteration) + incTag;
                 dumpProbabilities(probResult, opt.getOutputFileDir() + "/", incPrefix);
                 iteration++;
-            } else if (incMode == IncMode::FULL) {
-                debugger.startTurn();
+            } else if (isFullMode()) {
+                debugger.startTurn(fullModeLabel());
                 DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
-                logTurnMode("FULL");
+                logTurnMode(fullModeLabel());
+                if (ddManager != nullptr) {
+                    nodeFormulas->clear();
+                    edgeFormulas->clear();
+                    if (incMode == IncMode::FULL_HARD) {
+                        ddManager->resetHard();
+                    } else {
+                        ddManager->reset();
+                    }
+                }
 
 //                purgeAllNonIncDeltaRelations();
 //                program->loadAllExcept(opt.getInputFileDir());  //

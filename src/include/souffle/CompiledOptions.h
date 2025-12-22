@@ -270,8 +270,10 @@ public:
                     std::string modeArg(optarg);
                     if (modeArg == "inc" || modeArg == "incremental" || modeArg == "incr") {
                         incMode = "inc-naive";
+                    } else if (modeArg == "full") {
+                        incMode = "full-hard";
                     } else if (modeArg == "inc-naive" || modeArg == "inc-regional" ||
-                               modeArg == "full" || modeArg == "elastic") {
+                               modeArg == "full-hard" || modeArg == "full-soft" || modeArg == "elastic") {
                         incMode = modeArg;
                     } else {
                         std::cerr << "Invalid incremental mode [-m]: " << optarg << "\n";

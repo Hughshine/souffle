@@ -17,6 +17,28 @@ extern "C" {
 #include <cudd.h>
 }
 
+using Clock = std::chrono::steady_clock;
+using Duration = std::chrono::duration<double>;
+
+static constexpr bool kCuddVerbose = false;
+Cudd_ReorderingType currentReorderingType = CUDD_REORDER_SAME;
+std::chrono::time_point<Clock> _cudd_gc_start_time;
+std::chrono::time_point<Clock> _cudd_gc_end_time;
+int _cudd_gc_count = 0;
+bool gc_begin = true;
+int _cudd_reordering_count = 0;
+std::chrono::time_point<Clock> _cudd_reordering_start_time;
+std::chrono::time_point<Clock> _cudd_reordering_end_time;
+bool reordering_begin = true;
+
+static inline void resetReorderingState() {
+    currentReorderingType = CUDD_REORDER_SAME;
+    gc_begin = true;
+    reordering_begin = true;
+    _cudd_gc_count = 0;
+    _cudd_reordering_count = 0;
+}
+
 void adaptiveReorder(DdManager* manager);
 void adaptiveReorder2(DdManager* manager);
 double getCacheHitRate(DdManager* manager);
@@ -149,6 +171,31 @@ public:
     void tryGarbageCollection() {
         Cudd_ReduceHeap(manager.get(), CUDD_REORDER_NONE, 0);
     }
+    void reset() override {
+        nodeIndex_.clear();
+        edgeIndex_.clear();
+        nextVarIndex_ = 0;
+        variableRegistry.clear();
+        weights.clear();
+        wmcCache_.clear();
+        unsigned int maxCacheHard = Cudd_ReadMaxCacheHard(manager.get());
+        if (maxCacheHard > 1) {
+            Cudd_SetMaxCacheHard(manager.get(), 1);
+            Cudd_SetMaxCacheHard(manager.get(), maxCacheHard);
+        }
+        tryGarbageCollection();
+    }
+    void resetHard() override {
+        nodeIndex_.clear();
+        edgeIndex_.clear();
+        nextVarIndex_ = 0;
+        variableRegistry.clear();
+        weights.clear();
+        wmcCache_.clear();
+        last_reordering_time_ = 0;
+        manager.reset();
+        manager = initManager();
+    }
     void stopDynamicOptimization() override {
         Cudd_AutodynDisable(manager.get());
     }
@@ -163,6 +210,7 @@ public:
         using namespace std::chrono;
         auto toMs = [](auto d) { return duration<double, std::milli>(d).count(); };
 
+        wmcCache_.clear();
         auto oldCuddVarSize = Cudd_ReadSize(manager.get());
         size_t factVars = 0;
         size_t edgeVars = 0;
@@ -257,12 +305,11 @@ public:
         stats["cache_lookups"] = std::to_string(Cudd_ReadCacheLookUps(manager.get()));
         stats["cache_hit_rate"] = std::to_string(getCacheHitRate(manager.get()) * 100.0) + "%";
 
-        static long last_reordering_time = 0;
         long current_reordering_time = Cudd_ReadReorderingTime(manager.get());
         char buf[32];
-        std::snprintf(buf, sizeof(buf), "%.3f", (current_reordering_time - last_reordering_time) / 1000.0);
+        std::snprintf(buf, sizeof(buf), "%.3f", (current_reordering_time - last_reordering_time_) / 1000.0);
         stats["reordering_runtime"] = std::string(buf);
-        last_reordering_time = current_reordering_time;
+        last_reordering_time_ = current_reordering_time;
         return stats;
     }
     double getReorderingTimeSeconds() const {
@@ -277,6 +324,7 @@ private:
     BddNodeRef makeOrSequential(const std::vector<BddNodeRef>& nodes);
     double recursiveWeightedModelCount(DdNode* node,
                                      std::unordered_map<DdNode*, double>& cache);
+    std::shared_ptr<DdManager> initManager();
 
     std::shared_ptr<DdManager> manager;
     std::unordered_map<int, VariableWeight> weights;
@@ -285,6 +333,8 @@ private:
                             std::unordered_map<DdNode*, std::string>& cache);
     std::string getVariableName(int varIndex);
     std::unordered_map<int, BddNodeRef> variableRegistry;
+    std::unordered_map<DdNode*, double> wmcCache_;
+    long last_reordering_time_ = 0;
 
 
 };
@@ -299,10 +349,6 @@ double getCacheHitRate(DdManager* manager) {
 
 
 
-using Clock = std::chrono::steady_clock;
-using Duration = std::chrono::duration<double>;
-Cudd_ReorderingType currentReorderingType = CUDD_REORDER_SAME;
-static constexpr bool kCuddVerbose = false;
 void adaptiveReorder(DdManager* manager) {
     size_t node_count = Cudd_ReadNodeCount(manager);
     Cudd_ReorderingType next = CUDD_REORDER_NONE;
@@ -346,10 +392,6 @@ void adaptiveReorder2(DdManager* manager) {
 }
 
 
-std::chrono::time_point<Clock> _cudd_gc_start_time;
-std::chrono::time_point<Clock> _cudd_gc_end_time;
-int _cudd_gc_count = 0;
-bool gc_begin = true;
 int myGCFunc(DdManager* dd, const char* str, void* data) {
     if (kCuddVerbose) {
         std::cout << "[GC] current error code = " << Cudd_ReadErrorCode(dd) << "\n";
@@ -381,10 +423,6 @@ int myGCFunc(DdManager* dd, const char* str, void* data) {
 }
 
 
-int _cudd_reordering_count = 0;
-std::chrono::time_point<Clock> _cudd_reordering_start_time;
-std::chrono::time_point<Clock> _cudd_reordering_end_time;
-bool reordering_begin = true;
 int myVRFunc(DdManager* dd, const char* str, void* data) {
     if (kCuddVerbose) std::cout << "[VR] current error code = " << Cudd_ReadErrorCode(dd) << "\n";
     if (reordering_begin) {
@@ -403,6 +441,11 @@ int myVRFunc(DdManager* dd, const char* str, void* data) {
 }
 // Implementation
 WeightedBDDManager::WeightedBDDManager() {
+    manager = initManager();
+}
+
+std::shared_ptr<DdManager> WeightedBDDManager::initManager() {
+    resetReorderingState();
     // could make this static, TODO
 //    DdManager* m = Cudd_Init(0, 0, 4096 * 2, 2048 * 2024, 32UL * 1024 * 1024 * 1024);
     // 这些参数对性能的影响很复杂。memory设置太大会减少gc=>reordering，reordering不频繁不好，太频繁也不好.
@@ -423,15 +466,14 @@ WeightedBDDManager::WeightedBDDManager() {
 //    Cudd_SetMaxCacheHard(m, 1 << 28);
 //    adaptiveReorder(m);
 //    Cudd_SetMaxLive(m, );
+    if (m == nullptr) {
+        throw std::runtime_error("Failed to initialize CUDD manager");
+    }
     Cudd_AddHook(m, myGCFunc, CUDD_PRE_GC_HOOK);
     Cudd_AddHook(m, myGCFunc, CUDD_POST_GC_HOOK);
     Cudd_AddHook(m, myVRFunc, CUDD_PRE_REORDERING_HOOK);
     Cudd_AddHook(m, myVRFunc, CUDD_POST_REORDERING_HOOK);
-
-    if (m == nullptr) {
-        throw std::runtime_error("Failed to initialize CUDD manager");
-    }
-    manager = std::shared_ptr<DdManager>(m, [](DdManager* m) {
+    return std::shared_ptr<DdManager>(m, [](DdManager* m) {
         if (m) Cudd_Quit(m);
     });
 }
@@ -711,8 +753,7 @@ double WeightedBDDManager::computeWeightedModelCount(const BddNodeRef& node) {
 //                      << ", negWeight = " << weight.negWeight << std::endl;
 //        }
 //    }
-    std::unordered_map<DdNode*, double> cache;
-    return recursiveWeightedModelCount(node.get(), cache);
+    return recursiveWeightedModelCount(node.get(), wmcCache_);
 }
 
 double WeightedBDDManager::recursiveWeightedModelCount(

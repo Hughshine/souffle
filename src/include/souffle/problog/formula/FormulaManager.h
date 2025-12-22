@@ -47,6 +47,8 @@ public:
         return {};
     }
     virtual void tryGarbageCollection() {};
+    virtual void reset() {};
+    virtual void resetHard() {};
 };
 
 template<typename NodeRef>

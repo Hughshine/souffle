@@ -116,6 +116,7 @@ inline void runBddPipeline(
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
         bool enableOnlineCli) {
     Debugger& debugger = Debugger::getInstance();
+    (void)evidences;
 
     std::map<NodePtr, BddNodeRef> nodeFormulas;
     std::map<EdgePtr, BddNodeRef> edgeFormulas;
@@ -135,41 +136,13 @@ inline void runBddPipeline(
         debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
 
         auto t2 = std::chrono::steady_clock::now();
-        applyEvidence(graph, evidences);
-        auto t3 = std::chrono::steady_clock::now();
-
-        auto evidenceBdd = bddManager.getTrue();
-        for (const auto& [node, bdd] : nodeFormulas) {
-            if (node->hasEvidence()) {
-                evidenceBdd = bddManager.makeAnd(evidenceBdd, bdd);
-            }
-        }
-        auto t4 = std::chrono::steady_clock::now();
-        double evidenceWeight = bddManager.computeWeightedModelCount(evidenceBdd);
-        std::cout << "Evidence WMC: " << evidenceWeight << std::endl;
-        auto t5 = std::chrono::steady_clock::now();
-
         probResult.clear();
         for (const auto& [node, bdd] : nodeFormulas) {
-            auto conditionedBdd = bdd;
-            for (const auto& [eNode, ebdd] : nodeFormulas) {
-                if (eNode->hasEvidence()) {
-                    conditionedBdd = bddManager.makeAnd(conditionedBdd, ebdd);
-                }
-            }
-            double weightedCount = bddManager.computeWeightedModelCount(conditionedBdd);
-            double prob = (evidenceWeight == 0.0) ? 0.0 : weightedCount / evidenceWeight;
-            probResult[node] = prob;
+            probResult[node] = bddManager.computeWeightedModelCount(bdd);
         }
-        auto t6 = std::chrono::steady_clock::now();
-        std::cout << "[pipeline] evidence conditioning took "
+        auto t3 = std::chrono::steady_clock::now();
+        std::cout << "[pipeline] BDD WMC took "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
-                  << " ms\n";
-        std::cout << "[pipeline] evidence WMC took "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(t5 - t4).count()
-                  << " ms\n";
-        std::cout << "[pipeline] per-node conditional WMC took "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(t6 - t5).count()
                   << " ms\n";
         debugger.endStage();
 

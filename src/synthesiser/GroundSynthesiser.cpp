@@ -189,7 +189,7 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     GenFunction& runFunc = mainClass.addFunction("run", Visibility::Public);
     runFunc.setRetType("void");
 
-    runFunc.body() << "Debugger::getInstance().startTurn(\"FULL\");\n\n";
+    runFunc.body() << "Debugger::getInstance().startTurn(\"FULL-HARD\");\n\n";
 
     if (!groundInfo.inputRelationNames.empty()) {
         runFunc.body() << "Debugger::getInstance().startStage(StageKind::IO_LOAD_FULL);\n";
