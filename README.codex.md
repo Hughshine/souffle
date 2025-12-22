@@ -2,6 +2,10 @@
 
 Use this file to orient Codex sessions. It lists the essential docs, code hotspots, and how to run experiments.
 
+## Scope
+- Online incremental path (`--online`) is the active implementation; legacy `--inc` backend is deprecated.
+- Incremental modes skip rewrite; rewrite docs apply to full-mode runs.
+
 ## Key Docs (full/rewrite)
 - `README.rewrite.md` — current rewrite pipeline design, status, perf notes.
 - `README.rewrite.2.md` — earlier/alternative optimization plan.
@@ -9,7 +13,7 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 - `README.siso.md` — SISO definition/assumptions.
 - `README.eval.md` — how to run full experiments and compare outputs/timings.
 
-## Key Docs (incremental)
+## Key Docs (online incremental)
 - `README.eval.inc.md` — how to run incremental evals and compare outputs/timings.
 - `README.inc.region.md` — regional incremental pipeline notes/usage.
 - `experiments/side_channel_inc_mini/README.md` — mini incremental benchmark notes.
@@ -19,10 +23,11 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 - `src/include/souffle/problog/GraphAnalyzer.h` — SISO detection, heuristics/filters.
 - `src/include/souffle/problog/Pipeline.h` + `ForwardCompilation.h` — orchestration and BDD construction.
 
-## Core Code (incremental)
+## Core Code (online incremental)
 - `src/include/souffle/problog/RegionalIncremental.h` — inc-regional pipeline.
 - `src/include/souffle/problog/IncRegionAnalyzer.h` — regional impact analysis and timing breakdown.
 - `src/include/souffle/cli/Cli.h` — iter probability dumps (inc-naive/inc-regional/full).
+- `src/ast2ram/online/*` — online translation for DRed-like delta relations and `_inc` strata.
 
 ## Experiment How-To (full/rewrite; side_channel_full)
 - Per benchmark dir (e.g., `experiments/side_channel_full/P12`):
@@ -31,7 +36,7 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
   - Outputs should match: `diff output_no_rewrite_xx/facts.prob output_rewrite_xx/facts.prob`
   - Logs contain `[pipeline]` timings (create graph, pruning, SISO detection/rewrite, BDD init/build, WMC).
 
-## Experiment How-To (incremental; side_channel_inc_eval)
+## Experiment How-To (online incremental; side_channel_inc_eval)
 - Per benchmark dir (e.g., `experiments/side_channel_inc_eval/P9`):
   - inc-naive: `./compute -F input -D output_run_inc_naive --setmode inc < delta/inc10_1.txt`
   - inc-regional: `./compute -F input -D output_run_inc_regional --setmode inc-regional < delta/inc10_1.txt`
@@ -45,15 +50,15 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 - P5: rewrite ≈ no-rewrite (~0.33–0.34s, BDD ~210 nodes).
 - P12: rewrite slower (~6.5s vs ~3.3s) mainly due to SISO rewrite (~3.3s); outputs match.
 
-## Current State (incremental)
-- Incremental pipelines are delta-driven and do not run rewrite (`--setmode inc` / `--setmode inc-regional`).
+## Current State (online incremental)
+- Online incremental pipelines are delta-driven and do not run rewrite (`--setmode inc` / `--setmode inc-regional`).
 - Bi-imp merge is disabled for inc/inc-regional; a merged graph asserts if you try to switch to incremental.
 - Session focus: inc-naive vs inc-regional timing + consistency; see Context Dump for latest P4–P13 runs and P1/P3 skip note.
 
 ## Investigation Tips
 - Profile per-region cost (detect/build/WMC/apply, live nodes) if slowing down.
 - Consider heuristic skips for low-payoff regions and analytic shortcuts for very simple SISOs (facts/linear chains).
-- Keep changes small; test on both small (P5) and larger (P12/P1x) cases and report timings plus BDD sizes.***
+- Keep changes small; test on both small (P5) and larger (P12/P1x) cases and report timings plus BDD sizes.
 
 ## Context Dump (2025-12-20)
 - Recent code changes:

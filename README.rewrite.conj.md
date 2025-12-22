@@ -1,3 +1,7 @@
+## Scope
+- 设计说明/规划文档；非当前实现。
+- 仅适用于 full-mode rewrite；增量模式不执行 rewrite。
+
 技术说明：SISO + Fact-Prefix + 纯合取区域的 DD 分解
 0. 背景与目标
 

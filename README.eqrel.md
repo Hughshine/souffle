@@ -1,5 +1,9 @@
 # Probabilistic eqrel-style pruning
 
+## Status
+- Design note only; not implemented in code.
+- Intended for pruning/graph simplification before forward compilation.
+
 ## Motivation
 
 - The two pruning routines in `src/include/souffle/problog/DerivationGraph.h:916` and `:1594` already shrink the derivation graph to only the nodes needed by the requested outputs.  Their final result, however, still contains internal “mirror” nodes that are linked to each other through probability-1 hyperedges, e.g. deterministic rewrites or aliasing rules (`A(x) :- B(x).`, `B(x) :- A(x).`).  When the graph is later sent to `ForwardCompilation` and converted into a decision diagram, these pairs end up producing identical formulas.

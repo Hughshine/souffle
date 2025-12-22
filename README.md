@@ -1,161 +1,131 @@
-What information we need to record?
+# Souffle (Local Research Fork)
 
-We have multiple stages:
-1. semi-naive evaluation (we do not need to much detailed profiling for this, just time and memory for each stratum I guess)
-   * it has different strata
-   * each stratum has its own set of rules, and iterations
-2. pruning 
-   * previous and final graph size, nodes/edges/cycles
-3. forward compilation
-    * iterations, memory and time, formula size, dynamic reordering algorithms
-4. weight model counting
+This repo extends upstream Souffle with a probabilistic pipeline and online incremental evaluation. It keeps upstream behavior but adds derivation-graph-based inference, DRed-like incremental updates, and rewrite prototypes.
 
+## Status / Scope
+- Active incremental path is `--online`. Legacy `--inc` backend is deprecated.
+- Rewrite pipeline is full-mode only; incremental modes do not run rewrite.
 
-This should be some differences between full compilation and incremental compilation.
-1. Dred
-    * it has different strata
-    * deletion/rederive/insertion, iterations
-2. pruning
-    * impacted nodes/edges/cycle count
-3. incremental forward compilation
-4. incremental model counting
----
+## Build and Dependencies
+- Build Souffle (release): `cmake --build cmake-build-release --target souffle -j4`
+- CUDD is required for the BDD backend.
+- SDD is optional, but must be built if you run with `-k sdd`.
+- `ctest` is outdated in this fork and should not be used as a validation signal.
 
-souffle --online -F./input -D./output compute.souffle.dl -L/usr/local/lib -lsdd++ -lsdd -lm  -I/usr/local/include -o compute
+## Program Syntax (souffle.dl example)
+```souffle
+.decl edge(u:number, v:number)
+.decl path(u:number, v:number)
+.input edge
+.output path
 
-You should install Cudd first.
-
-after your cmake build (follow souffle's original build guideline), you can use ctest [-j8] for testing. 
-
-```
-python ../../cmake-build-debug/src/souffle-compile.py main.cpp -o test --with-cudd -v
+path(x,y) :- edge(x,y).
+path(x,z) :- path(x,y), edge(y,z).
 ```
 
-Optimization potential lies in the following areas:
-1. facts written in .dl files are not optimized.
+Notes:
+- Facts are read from `-F` input directory as `<rel>.facts`.
+- Probabilities are read from `<rel>.prob` with line-for-line alignment; if missing, probabilities default to `1.0`.
+- Some generators also accept Problog-style facts in `.problog.dl` such as `0.3::edge(1,2).` and translate them into `.facts`/`.prob`.
+- This fork also accepts Problog-style probability prefixes on rules, e.g.:
+  ```
+  0.7::path(x,y) :- edge(x,y).
+  ```
+  which attaches a probabilistic coin to the rule application.
 
-Testing:
-
-You should install problog for comparison. 
+## Compile Programs (Generated C++)
+Use `--online` to enable the online CLI and incremental path in the generated binary:
 ```
-pip install --pre problog
-```
-
-
-
-# Welcome!
-
-This is the official repository for the [Soufflé](https://souffle-lang.github.io) language project.
-The Soufflé language is similar to Datalog (but has terms known as records), and is frequently used as a
-domain-specific language for analysis problems.
-
-[![License: UPL](https://img.shields.io/badge/License-UPL--1.0-blue.svg)](https://github.com/souffle-lang/souffle/blob/master/LICENSE)
-[![CI-Tests](https://github.com/souffle-lang/souffle/actions/workflows/CI-Tests.yml/badge.svg?event=push)](https://github.com/souffle-lang/souffle/actions/workflows/CI-Tests.yml)
-[![MSVC-CI-Tests](https://github.com/souffle-lang/souffle/actions/workflows/VS-CI-Tests.yml/badge.svg?event=push)](https://github.com/souffle-lang/souffle/actions/workflows/VS-CI-Tests.yml)
-[![codecov](https://codecov.io/gh/souffle-lang/souffle/branch/master/graph/badge.svg)](https://codecov.io/gh/souffle-lang/souffle)
-
-## Features of Soufflé
-
-*   Efficient translation to parallel C++ of Datalog programs (CAV'16, CC'16)
-
-*   Efficient interpretation using de-specialization techniques (PLDI'21)
-
-*   Specialized data structure for relations (PACT'19, PPoPP'19, PMAM'19) with optimal index selection (VLDB'18)
-
-*   Extended semantics of Datalog, e.g., permitting unbounded recursions with numbers and terms
-
-*   Simple component model for Datalog specifications
-
-*   Recursively defined record types/ADTs (aka. constructors) for tuples
-
-*   User-defined functors
-
-*   Strongly-typed types for safety
-
-*   Subsumption
-
-*   Aggregation
-
-*   Choice Construct (APLAS'21)
-
-*   Extended I/O system for relations (including SQLITE3 interfaces)
-
-*   C++/SWIG interfaces
-
-*   Provenance/Debugging (TOPLAS'20)
-
-*   Profiling tools
-
-
-## How to get Soufflé
-
-Use git to obtain the source code of Soufflé.
-
-    $ git clone https://github.com/souffle-lang/souffle.git
-
-Build instructions can be found [here](https://souffle-lang.github.io/build).
-
-## Legacy code
-
-If you have written code for an older version of Souffle, please use the command line flag `--legacy`.
-Alternatively, please add the following line to the start of your source-code:
-
-```
-.pragma "legacy"
+souffle --online -F ./input -D ./output compute.souffle.dl -o compute
 ```
 
-## Issues and Discussions 
+Compiler notes:
+- `-F` / `-D` at compile time set the default input/output directories baked into the binary.
+- `--online` is required for the online incremental CLI and `_inc` strata generation.
+- `-o` controls the output binary name.
 
-Use either the [issue list](https://github.com/souffle-lang/souffle/issues) for
+## Runtime Options (Compiled Program)
+Defaults are baked into each generated binary. Typical defaults in this repo (e.g., P12) are listed below; use `-h` for the authoritative values.
+- `-F, --facts <DIR>`: input directory, default `input`
+- `-D, --output <DIR>`: output directory, default `output`
+- `-p, --profile <FILE>`: profile file, default empty (only if compiled with profiling)
+- `-j, --jobs <NUM|auto>`: threads, default `1`
+- `-k, --knowledge <bdd|sdd>`: default `bdd`
+- `-l, --logfile <FILE>`: debugger JSON base name, default `log.txt`
+- `-d, --derv-only <true|false>`: default `false`
+- `-m, --setmode <inc-naive|inc-regional|full|elastic>`: default `inc-naive`
+  - aliases: `inc`, `incr`, `incremental` map to `inc-naive`
+- `-e, --merge-bi-imp`: default `false`
+- `-r, --rewrite`: default `false`
+- `--dumpjson`: default `false`
+- `--dumpdot`: default `false`
+- `--dumpstat`: default `false`
+- `-h`: help
 
-- bug reporting
+## Online Incremental CLI (Interactive or Batch)
+Commands:
+- `insert [prob::]Rel(v1, v2, ...) [prob]`: queue insertion (probability optional)
+- `delete/remove Rel(v1, v2, ...)`: queue deletion
+- `list`: show pending operations
+- `commit`: apply pending operations and run incremental computation
+- `setmode inc-naive|inc-regional|full|elastic`: switch mode
+- `set dumpjson|dumpdot|dumpstat` / `unset ...`: toggle dump outputs
+- `dump`: print current relations (or PreDG in ground mode)
+- `help`, `q`: help/quit
 
-- enhancements
+Example (interactive):
+```
+./compute -F input -D output --setmode inc
+insert 0.3::Edge(1,2)
+delete Edge(3,4)
+commit
+q
+```
 
-- documentation
+Example (batch from delta file):
+```
+./compute -F input -D output --setmode inc < delta/inc10_1.txt
+```
 
-- proposals
+## First Turn vs Subsequent Turns
+- First turn uses facts/probabilities from the `-F` input directory to compute the baseline.
+- Subsequent turns apply queued deltas (insert/delete + commit) and run incremental updates.
 
-- releases
+### First Turn Input Files (Required Format)
+- For each `.input` relation `R`, provide `R.facts` in the `-F` directory.
+  - One tuple per line, tab-separated fields, matching the `.decl` attribute order.
+- Optional `R.prob` provides per-tuple probabilities:
+  - One floating-point probability per line, aligned with `R.facts`.
+  - If `R.prob` is missing, all tuples default to probability `1.0`.
 
-- compatibility issues
+## Differences From Upstream Souffle
 
-- refactoring.
+### Full-Mode Changes
+- Probabilistic semantics: derivation graph, pruning, forward compilation, weighted model counting.
+- Knowledge backend selection via `-k bdd|sdd`.
+- Optional SISO rewrite (`-r`) for full-mode runs only.
+- Debug/profiling outputs: JSON/DOT/stats dumps after prune.
 
-or use the [discussions](https://github.com/souffle-lang/souffle/discussions) bulletin board to engage with other community members and for asking questions you’re wondering about.
+### Incremental (Online) Changes
+- Online DRed-like delta relations (`$inc_delta_*`, `@inc_*`) and `_inc` strata.
+- inc-naive vs inc-regional insertion paths; deletion uses DRed-like overdelete/rederive.
+- Turn-based CLI with insert/delete/commit, and per-iteration probability outputs.
 
-## How to contribute
-
-Issues and bug reports for Souffle are found in the [issue list](https://github.com/souffle-lang/souffle/issues).
-This list is also where new contributors may find extensions / bug fixes to work on.
-
-To contribute in this repo, please open a pull request from your fork of this repository.
-The general workflow is as follows.
-
-1. Find an issue in the issue list.
-
-2. Fork the [souffle-lang/souffle](http://github.com/souffle-lang/souffle.git) repo.
-
-3. Push your changes to a branch in your forked repo.
-
-4. Submit a pull request to souffle-lang/souffle from your forked repo.
-
-Our continuous integration framework enforces coding guidelines with the help of clang-format and clang-tidy.
-
-For more information on building and developing Souffle, please read the [developer tutorial](https://souffle-lang.github.io/development).
-
-## [Home Page](https://souffle-lang.github.io)
-
-## [Documentation](https://souffle-lang.github.io/docs.html)
-
-## [Contributors](https://souffle-lang.github.io/contributors)
-
-## [Issues](https://github.com/souffle-lang/souffle/issues)
-
-## [License](https://github.com/souffle-lang/souffle/blob/master/licenses/SOUFFLE-UPL.txt)
-
-## For academics
-
-If you use our work, please cite our work. A list of publications can be found [here](https://souffle-lang.github.io/publications). The main publications are:
- * Herbert Jordan, Bernhard Scholz, Pavle Subotić: Souffle: On Synthesis of Program Analyzers. CAV 2016.
- * Bernhard Scholz, Herbert Jordan, Pavle Subotić, Till Westmann: On fast large-scale program analysis in Datalog. CC 2016: 196-206
+## Other README Files (Index)
+- `README.dred.md`: online DRed internals, deletion bottlenecks, code pointers.
+- `README.eval.inc.md`: incremental benchmark workflow and logs.
+- `README.inc.region.md`: inc-regional pipeline design and profiling notes.
+- `README.eval.md`: full-mode rewrite evaluation commands.
+- `README.rewrite.md`: current rewrite pipeline behavior and performance.
+- `README.rewrite.impl.md`: historical rewrite experiments and logs.
+- `README.rewrite.120725.md`: historical notes (2025-12-07).
+- `README.rewrite.120825.md`: historical notes (2025-12-08).
+- `README.rewrite.2.md`: alternative rewrite plan (historical).
+- `README.rewrite.conj.md`: pure-conjunctive rewrite design (plan).
+- `README.siso.md`: SISO detection algorithm details.
+- `README.ordering.md`: variable ordering roadmap (plan).
+- `README.eqrel.md`: eqrel-style pruning design (plan).
+- `README.lazy.md`: lazy DD design roadmap.
+- `README.git.md`: local git hygiene for this repo.
+- `experiments/side_channel_inc_mini/README.md`: mini incremental benchmark.
+- `experiments/ground/README.txt`: ground-program frontend tests.

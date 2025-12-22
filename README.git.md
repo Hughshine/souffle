@@ -3,6 +3,9 @@
 This repo mixes source, experiments, and generated artifacts. Keep commits small and avoid
 checking in outputs or logs unless explicitly asked.
 
+## Scope
+- Local repo hygiene guidance only; does not affect runtime behavior.
+
 ## What to Commit
 
 Include:

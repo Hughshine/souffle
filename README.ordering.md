@@ -2,6 +2,10 @@
 
 This note captures how we can extend `BDDForceHeuristics` so that the static variable ordering reflects correlations between sub-formulas. The goal is to keep highly correlated portions together (with their shared set centered) while discouraging unrelated pieces from interleaving.
 
+## Status
+- Roadmap/proposal only; not implemented in code.
+- Applies to full-mode variable ordering (not tied to online incremental DRed).
+
 ## 1. Observations From The Current Implementation
 
 - `GraphHeuristics.h` currently produces only *attractive* hyperedges (AND/OR/BRIDGE) and minimizes weighted span during FORCE iterations (`forceFree()` at `src/include/souffle/problog/formula/GraphHeuristics.h:528`).

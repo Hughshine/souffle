@@ -2,6 +2,10 @@
 
 Incremental side-channel benchmark notes (context + procedures). Experiments live under `experiments/side_channel_inc_eval/` and use the release Soufflé binary. **Do not git-add anything under `experiments/` or other generated artifacts.**
 
+## Scope
+- Online incremental CLI path only (`--online`, inc-naive/inc-regional). Legacy `--inc` backend is deprecated.
+- Incremental modes do not run rewrite; they reuse the online DRed-like deletion/rederive/insertion.
+
 ## Prerequisites
 - Build release Soufflé: `cmake --build cmake-build-release --target souffle -j4`
 - Put the release binary on PATH before running the Python scripts:
@@ -42,6 +46,11 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
 - Prune prints delta-delete counts per phase: `[prune-inc] delta-delete counts (start|post-mark-pruned|filtered|canonicalised|view): nodes=… edges=…`.
 - Prune now rebuilds impacted maps on the pruned subgraph; applyDelta no longer does impacted BFS.
 - Optional debug outputs (default off): `--dumpjson`, `--dumpdot`, `--dumpstat` gate JSON/DOT/stats dumps after prune, all written under `-D` output dir.
+
+## Implementation pointers (online path)
+- `src/ast2ram/online/UnitTranslator.cpp`: `inc_table_update` + `_inc` strata generation.
+- `src/synthesiser/Synthesiser.cpp`: `runFunctionInc` and `runAllInc` in generated code.
+- `src/include/souffle/cli/Cli.h`: applyDelta + mode dispatch (inc-naive/inc-regional).
 
 ## Latest status / known issues
 - P1 (and P3) incremental insertion can loop in `ForwardCompilation` on the KEY_SENSITIVE eq-cycle; worklist never drains. Investigations suggest formulas keep flipping among a few BDDs despite stable var indices. Avoid these cases for now.

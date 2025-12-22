@@ -2,6 +2,10 @@
 
 This file summarizes the SISO rewrite pipeline: design, current state (post revert), observed behavior, and near‑term plans.
 
+## Scope
+- Full-mode pipeline only; incremental modes (`inc`/`inc-regional`) skip rewrite.
+- Uses `--online` for compilation to keep CLI/problog hooks available.
+
 ## Goal
 - Iteratively find SISO regions (single entry/exit) in the derivation graph, summarize each region into a single probabilistic edge, then run the usual forward compilation on the smaller view.
 
@@ -36,4 +40,4 @@ This file summarizes the SISO rewrite pipeline: design, current state (post reve
 4) Safeguards:
    - Optional limit on total rewrite time or total regions processed; early exit to avoid regressions.
 
-Use this as a reference before making further optimizations. Keep changes small and measure on both small (P5) and larger (P12/P1x) cases, comparing total time and BDD sizes with and without rewrite.***
+Use this as a reference before making further optimizations. Keep changes small and measure on both small (P5) and larger (P12/P1x) cases, comparing total time and BDD sizes with and without rewrite.

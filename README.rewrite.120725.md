@@ -1,3 +1,7 @@
+## Scope
+- 历史记录（2025-12-07）；非当前实现的权威描述。
+- 仅适用于 full-mode rewrite；增量模式不执行 rewrite。
+
 ## 背景 / 用法
 - 核心代码：`src/include/souffle/problog/GraphAnalyzer.h`（SISO 检测），`GraphRewriter.h`（重写与后处理），`Pipeline.h`（管线计时），`Plan.md` 记录待办。
 - 编译：`cmake --build cmake-build-release --target souffle -j4`

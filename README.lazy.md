@@ -1,5 +1,9 @@
 # Lazy decision-diagram plan
 
+## Status
+- Design/roadmap only; not implemented in code.
+- Independent of online incremental DRed (applies to formula managers).
+
 ## Why
 - CuddManager and SddManager eagerly build DDs for every `makeAnd`/`makeOr`, so intermediate nodes blow up even though only equivalence checks and weighted model counting actually need canonical DDs.
 - A lazy layer that keeps formulas symbolic until required should cut DD construction, reduce reordering churn, and make it cheaper to try alternative orderings/backends.

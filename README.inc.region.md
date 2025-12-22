@@ -2,7 +2,16 @@
 
 本文件描述当前代码实现的 inc-regional 增量 pipeline。内容以代码为准，不是规划文档。
 
-## Scope / Assumptions
+## Scope / Context
+- 仅适用于 `--online` 生成的程序（在线增量路径）；旧 `--inc` backend 已弃用。
+- inc-regional 只替换 insertion 的 forward compilation；deletion 仍复用 inc-naive 的 DRed-like 逻辑。
+- rewrite 在 inc/inc-regional 模式下不会执行。
+
+## Related docs
+- `README.eval.inc.md` (benchmark procedures + logs)
+- `README.dred.md` (online DRed internals and deletion bottlenecks)
+
+## Assumptions
 - deletion 先执行经典增量删除逻辑，再进入 regional insertion。
 - 增量模式不执行 rewrite。
 - 必须已有基线公式（`nodeFormulas`/`edgeFormulas` 非空），否则直接 `assert` 失败。

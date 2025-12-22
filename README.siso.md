@@ -4,6 +4,10 @@
 
 This note explains what `src/include/souffle/problog/GraphAnalyzer.h` does, the major steps in its algorithm, and where the debug logs land. It is meant to help reason about why SISO regions may or may not be found on a given derivation graph.
 
+## Scope
+- Detection algorithm only (GraphAnalyzer); rewrite application lives in `README.rewrite.md`.
+- Not specific to online incremental; applies to full-mode derivation graphs.
+
 ## High-level goal
 Given a derivation hypergraph (nodes = facts/derivations, hyperedges = rule applications), detect **SISO** (single-entry, single-exit) regions. A SISO region is defined here as a subgraph with:
 - One entry node that is reachable from outside the region (at least one predecessor outside).

@@ -1,3 +1,7 @@
+## Scope
+- 历史记录（2025-12-08）；非当前实现的权威描述。
+- 仅适用于 full-mode rewrite；增量模式不执行 rewrite。
+
 ## 背景与目标（2025-12-08）
 - 核心组件：`src/include/souffle/problog/GraphAnalyzer.h`（SISO 检测）、`GraphRewriter.h`（重写与边收缩）、`Pipeline.h`（管线计时）、`Plan.md`（任务记录）。
 - 目标：通过 SISO/局部重写和 fact-prefix/边收缩减少随机变量、降低 BDD 构建成本，并在简单结构上用更便宜的 fast path 替代 BDD。
