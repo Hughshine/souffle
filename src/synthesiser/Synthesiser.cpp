@@ -4174,9 +4174,12 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     emitProblogPipeline(hook);
 
     hook << "Debugger& debugger = Debugger::getInstance();\n";
-    hook << "std::string reportFile = generateFilename(opt.getLogFileName(), \".json\");\n";
+    hook << "std::string logBase = basenameFromPath(opt.getLogFileName());\n";
+    hook << "std::string reportFileName = generateFilename(logBase, \".json\");\n";
+    hook << "std::string reportFile = souffle::problog::makeOutputPath(opt, reportFileName);\n";
     hook << "std::ofstream ofs = std::ofstream(reportFile);\n";
     hook << "debugger.printReportJson(ofs);\n";
+    hook << "std::cout << \"[pipeline] debugger log: \" << reportFileName << std::endl;\n";
     hook << "// debugger.printReport(std::cout);\n";
     // add online incremental&interactive computation
 

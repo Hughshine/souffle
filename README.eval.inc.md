@@ -35,19 +35,19 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
 
 ## What to look at
 - Outputs: `output/facts.full.prob`, `output/facts.inc.prob`, per-delta `delta-*-fact-iter*-{inc,full}.prob`.
-- Logs: `log_P1_*.json` (per-stage timings), stdout from manual runs (e.g., `log_inc_applyDelta_inc*.stdout`).
+- Logs: debugger JSON reports now land in the output directory (e.g., `output/log_P1_*.json`); stdout from manual runs (e.g., `log_inc_applyDelta_inc*.stdout`) still holds CLI prints.
 - CLI runs in inc mode print delta size: `[applyDelta] delTuples=… delRuleApps=… delFacts=… insTuples=… insRuleApps=… insFacts=…`.
 - Forward compilation prints per-turn delta counts: `[inc-naive] delta counts: insNodes=… insEdges=… delNodes=… delEdges=…` and `[inc-regional] delta counts: …`.
 - Deletion stage prints `Deletion deletedVarsIndex size: N` before postprocessing variables.
 - Prune prints delta-delete counts per phase: `[prune-inc] delta-delete counts (start|post-mark-pruned|filtered|canonicalised|view): nodes=… edges=…`.
 - Prune now rebuilds impacted maps on the pruned subgraph; applyDelta no longer does impacted BFS.
-- Optional debug outputs (default off): `--dumpjson`, `--dumpdot`, `--dumpstat` gate JSON/DOT/stats dumps after prune.
+- Optional debug outputs (default off): `--dumpjson`, `--dumpdot`, `--dumpstat` gate JSON/DOT/stats dumps after prune, all written under `-D` output dir.
 
 ## Latest status / known issues
 - P1 (and P3) incremental insertion can loop in `ForwardCompilation` on the KEY_SENSITIVE eq-cycle; worklist never drains. Investigations suggest formulas keep flipping among a few BDDs despite stable var indices. Avoid these cases for now.
 - Incremental pruning still dominates time for larger cases (P12/P13), e.g. P13 inc10: prune≈2.6s, forward≈1.07s, total≈3.71s; full run forward+wmc is heavy but still faster overall (≈3.40s). P4–P11 are small and fast.
 - All P4–P13 inc10 runs (delta sample 1) currently match full results (`max|Δ|=0`) as recorded in `output/delta-inc10-1.json` per case.
-- Generated logs: per-case `log_P*_inc10_1_inc_*.json` and `log_P*_inc10_1_full_*.json` hold stage breakdowns; `output/delta-inc10-1.json` holds consistency checks.
+- Generated logs: per-case `output/log_P*_inc10_1_inc_*.json` and `output/log_P*_inc10_1_full_*.json` hold stage breakdowns; `output/delta-inc10-1.json` holds consistency checks.
 - P12 manual repro (2025-12-21, delta inc10_1): outputs still match; turn-3 reordering ≈0.21s across all pipelines, live_nodes turn2/3 now reflect deletions (inc-naive 1642/11870, inc-regional 1625/10545, full 1868/13817).
 - Incremental runs disable bi-imp merge; if a graph is merged (full mode), switching to inc/inc-regional asserts to avoid cache mismatch.
 
@@ -63,6 +63,7 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
 - `reordering_runtime` is a CUDD delta timer with millisecond resolution (computed from `Cudd_ReadReorderingTime()`).
 - If `time` reports `user > real`, some work is running in parallel threads (OpenMP or other). To force single-thread runs: `OMP_NUM_THREADS=1 OMP_THREAD_LIMIT=1` or pass `-j 1`.
 - CLI runs invoke `tryGarbageCollection()` at the end of each turn to encourage BDD cleanup after deletions.
+- CLI accepts non-interactive stdin (e.g., `< delta/inc1_1.txt`) and will process `insert/delete/commit/q` lines.
 
 ## How I run the inc experiments (exact commands)
 From repo root, with release Soufflé on PATH:
@@ -87,6 +88,6 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
   --cases 4-13 --delta-labels inc10 --delta-samples 1 --timeout 30
 ```
 Artifacts per case:
-- Stage logs: `log_P*_inc10_1_inc_*.json`, `log_P*_inc10_1_full_*.json`.
+- Stage logs: `output/log_P*_inc10_1_inc_*.json`, `output/log_P*_inc10_1_full_*.json`.
 - Consistency + paths: `output/delta-inc10-1.json` (contains base/iter comparisons, `max|Δ|`, etc).
 - Prob outputs: `output/delta-inc10-1-{inc,full}-fact-iter*.prob`, `output/facts.{inc,full}.prob`.

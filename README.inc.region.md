@@ -148,6 +148,9 @@ Mergeable anchor 判定（`mergeableEdgeAtHead_`）：
 - `--dumpjson` / CLI `set dumpjson`：输出 JSON（prune 之后）。
 - `--dumpdot` / CLI `set dumpdot`：输出 derivation graph 的 DOT。
 - `--dumpstat` / CLI `set dumpstat`：输出 `dumpStatisticsInc` / `dumpStatistics`。
+输出位置说明：
+- 所有 `.dot` / `.json` / `dumpStatistics` 输出都会写入 `-D` 指定的 output 目录（含 `derivation-inc-*.dot/json`、`scc.dot` 等）。
+- debugger JSON 报告也写入 output 目录，文件名取 `--logfile` 的 **basename** 再加时间戳；stdout 只打印文件名。
 
 ---
 

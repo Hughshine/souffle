@@ -242,7 +242,7 @@ public:
             int seq = 0;
             for (auto e : depGraph.edgeCycles[cid]) {
                 if (shouldRebuildEdge(e)) {
-                    worklist.push({e, depGraph.edgeDepthsGlobal[e], seq++});
+                    worklist.push({e, depGraph.edgeDepthsGlobal.at(e), seq++});
                     inWorklist.insert(e);
                 }
             }
@@ -273,7 +273,7 @@ public:
                 if (!allAvail) {
                     // If missing inputs are outside the region, do not requeue forever.
                     if (missingInsideRegion) {
-                        if (!inWorklist.count(edge)) worklist.push({edge, depGraph.edgeDepthsGlobal[edge], seq++});
+                        if (!inWorklist.count(edge)) worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), seq++});
                     }
                     continue;
                 }
@@ -298,7 +298,7 @@ public:
                             auto eit = depGraph.edgeToCycleIndex.find(outEdge);
                             if (eit != depGraph.edgeToCycleIndex.end() && eit->second == cid && shouldRebuildEdge(outEdge)) {
                                 if (!inWorklist.count(outEdge)) {
-                                    worklist.push({outEdge, depGraph.edgeDepthsGlobal[outEdge], seq++});
+                                    worklist.push({outEdge, depGraph.edgeDepthsGlobal.at(outEdge), seq++});
                                     inWorklist.insert(outEdge);
                                 }
                             }

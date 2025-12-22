@@ -26,6 +26,17 @@
 
 namespace souffle::problog {
 
+inline std::string makeOutputPath(const CmdOptions& opt, const std::string& filename) {
+    const std::string& dir = opt.getOutputFileDir();
+    if (dir.empty()) {
+        return filename;
+    }
+    if (dir.back() == '/') {
+        return dir + filename;
+    }
+    return dir + "/" + filename;
+}
+
 inline void applyEvidence(
         IncrementalDerivationGraph& graph,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences) {
@@ -256,6 +267,7 @@ inline void runPipeline(
     Debugger& debugger = Debugger::getInstance();
     DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
     DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());
+    DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
     bool rewritePerformed = false;
 
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);
@@ -270,7 +282,7 @@ inline void runPipeline(
     debugger.endStage();
 
     if (opt.isDumpDotEnabled()) {
-        graph->dumpDot("before_prune.dot");
+        graph->dumpDot(makeOutputPath(opt, "before_prune.dot"));
     }
 
     debugger.startStage(StageKind::PRUNING_FULL);
@@ -283,10 +295,10 @@ inline void runPipeline(
     debugger.endStage();
 
     if (opt.isDumpDotEnabled()) {
-        view.dumpDot("after_prune.dot");
+        view.dumpDot(makeOutputPath(opt, "after_prune.dot"));
     }
     if (opt.isDumpJsonEnabled()) {
-        view.dumpJson("derivation.json");
+        view.dumpJson(makeOutputPath(opt, "derivation.json"));
     }
     if (opt.isRewriteEnabled()) {
         debugger.startStage(StageKind::PRECONFIG_FULL);
@@ -314,7 +326,7 @@ inline void runPipeline(
                   << ", randomVarsRemoved=" << rewriteStats.totalRandomVars
                   << ", simpleFactRegions=" << rewriteStats.simpleFactRegions << std::endl;
         if (opt.isDumpDotEnabled()) {
-            view.dumpDot("rewrite_final.dot");
+            view.dumpDot(makeOutputPath(opt, "rewrite_final.dot"));
         }
         debugger.endStage();
         rewritePerformed = true;

@@ -362,6 +362,26 @@ public:
     static bool isDumpDotEnabled() { return dumpDotEnabled; }
     static void setDumpStatsEnabled(bool enabled) { dumpStatsEnabled = enabled; }
     static bool isDumpStatsEnabled() { return dumpStatsEnabled; }
+    static void setDumpOutputDir(const std::string& dir) { dumpOutputDir = dir; }
+    static const std::string& getDumpOutputDir() { return dumpOutputDir; }
+    static std::string qualifyDumpPath(const std::string& filename) {
+        if (filename.empty()) {
+            return filename;
+        }
+        if (!dumpOutputDir.empty()) {
+            if (filename.front() == '/') {
+                return filename;
+            }
+            if (filename.find('/') != std::string::npos) {
+                return filename;
+            }
+            if (dumpOutputDir.back() == '/') {
+                return dumpOutputDir + filename;
+            }
+            return dumpOutputDir + "/" + filename;
+        }
+        return filename;
+    }
 
     mutable std::unordered_map<size_t, std::vector<EdgePtr>> cachedSortedIncomingEdges;
     CycleDependencyGraph& getCycleDependencyGraph() const;
@@ -373,6 +393,7 @@ protected:
     mutable std::shared_ptr<CycleDependencyGraph> cachedCycleDependencyGraph_;
     static inline bool dumpDotEnabled = false;
     static inline bool dumpStatsEnabled = false;
+    static inline std::string dumpOutputDir = "";
 };
 
 std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdges(NodePtr node) const {
@@ -493,9 +514,10 @@ protected:
 };
 
 void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
-    std::ofstream out(filename);
+    const std::string path = qualifyDumpPath(filename);
+    std::ofstream out(path);
     if (!out.is_open()) {
-        throw std::runtime_error("Cannot open file: " + filename);
+        throw std::runtime_error("Cannot open file: " + path);
     }
 
     out << "{\n";
@@ -563,9 +585,10 @@ void DerivationGraphViewInterface::dumpDot(const std::string& filename) const {
     if (!isDumpDotEnabled()) {
         return;
     }
-    std::ofstream out(filename);
+    const std::string path = qualifyDumpPath(filename);
+    std::ofstream out(path);
     if (!out.is_open()) {
-        throw std::runtime_error("Cannot open file: " + filename);
+        throw std::runtime_error("Cannot open file: " + path);
     }
 
     out << "digraph SubgraphView {\n";
@@ -2304,9 +2327,10 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
     if (!isDumpDotEnabled()) {
         return;
     }
-    std::ofstream out(filename);
+    const std::string path = qualifyDumpPath(filename);
+    std::ofstream out(path);
     if (!out.is_open()) {
-        throw std::runtime_error("Cannot open file: " + filename);
+        throw std::runtime_error("Cannot open file: " + path);
     }
 
     out << "digraph IncrementalDerivationGraph {\n";
@@ -2611,9 +2635,10 @@ struct CycleDependencyGraph {
         if (!DerivationGraphViewInterface::isDumpDotEnabled()) {
             return;
         }
-        std::ofstream out(filename);
+        const std::string path = DerivationGraphViewInterface::qualifyDumpPath(filename);
+        std::ofstream out(path);
         if (!out.is_open()) {
-            throw std::runtime_error("Cannot open file: " + filename);
+            throw std::runtime_error("Cannot open file: " + path);
         }
 
         out << "digraph CycleDependencyGraph {\n";
@@ -2780,8 +2805,10 @@ void DerivationGraphViewInterface::clearCycleDependencyGraphCache() const {
 
 void DerivationGraphViewInterface::writeGraphStatsJson() const {
     static size_t s_idx = 0;  // 控制输出文件 index
-    const std::string dir = "output";
-    const std::string path = dir + "/graph-" + std::to_string(s_idx++) + ".json";
+    const bool hasOutputDir = !dumpOutputDir.empty();
+    const std::string dir = hasOutputDir ? dumpOutputDir : "output";
+    const std::string filename = "graph-" + std::to_string(s_idx++) + ".json";
+    const std::string path = hasOutputDir ? qualifyDumpPath(filename) : (dir + "/" + filename);
 
 #if __cplusplus >= 201703L
     // 如目录不存在则创建（C++17）
@@ -2957,9 +2984,10 @@ void IncrementalDerivationGraphViewInterface::dumpJsonInc(const std::string& fil
         }}
     };
 
-    std::ofstream out(filename);
+    const std::string path = qualifyDumpPath(filename);
+    std::ofstream out(path);
     if (!out.is_open()) {
-        throw std::runtime_error("Cannot open file: " + filename);
+        throw std::runtime_error("Cannot open file: " + path);
     }
     out << root.dump();
     out.close();

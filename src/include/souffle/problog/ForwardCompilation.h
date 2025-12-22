@@ -303,9 +303,9 @@ void buildFormulasCyclewise(
 
         int _seqId = 0;
         for (auto edge : cycleEdges) {
-            worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+            worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
 //            std::cout << "Adding edge " << edge->getId() << " " << edge->toString()
-//                      << " with depth " << depGraph.edgeDepthsGlobal[edge] << " to worklist.\n";
+//                      << " with depth " << depGraph.edgeDepthsGlobal.at(edge) << " to worklist.\n";
             inWorklist.insert(edge);
         }
 
@@ -360,7 +360,7 @@ void buildFormulasCyclewise(
 
             if (!allAvailable) {
 //                std::cout << "Not all inputs available for edge " << edge->getId() << ", re-adding to worklist.\n";
-                worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+                worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
                 inWorklist.insert(edge);
                 continue;
             }
@@ -386,7 +386,7 @@ void buildFormulasCyclewise(
                         for (auto& outEdge : view.getOutgoingEdges(out)) {
                             auto it = depGraph.edgeToCycleIndex.find(outEdge);
                             if (it != depGraph.edgeToCycleIndex.end() && it->second == cid && !inWorklist.count(outEdge)) {
-                                worklist.push({outEdge, depGraph.edgeDepthsGlobal[outEdge], _seqId++});
+                                worklist.push({outEdge, depGraph.edgeDepthsGlobal.at(outEdge), _seqId++});
                                 inWorklist.insert(outEdge);
                             }
                         }
@@ -804,7 +804,7 @@ void buildFormulasIncCyclewise(
                 if (inWorklist.count(edge)) {
                     continue;
                 }
-                worklist.push({edge, depGraph.edgeDepthsGlobal[edge], (int)depGraph.edgeDepthsGlobal[edge]});  // use depth as priority
+                worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), (int)depGraph.edgeDepthsGlobal.at(edge)});  // use depth as priority
                 inWorklist.insert(edge);
             }
         }
@@ -929,7 +929,7 @@ void buildFormulasIncCyclewise(
                 }
 
                 if (!allAvailable) {
-                    worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+                    worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
                     cycleInWorklists[cid].insert(edge);
                     debugger.endIteration();
                     continue;
@@ -968,7 +968,7 @@ void buildFormulasIncCyclewise(
                         assert (depGraph.edgeToCycleIndex.count(outEdge));
                         auto it = depGraph.edgeToCycleIndex.find(outEdge);
                         if (it->second == cid && !cycleInWorklists[cid].count(outEdge)) {
-                            cycleWorklists[cid].push({outEdge, depGraph.edgeDepthsGlobal[outEdge], _seqId++});
+                            cycleWorklists[cid].push({outEdge, depGraph.edgeDepthsGlobal.at(outEdge), _seqId++});
                             cycleInWorklists[cid].insert(outEdge);
                         }
                     }
@@ -1033,7 +1033,7 @@ void buildFormulasIncCyclewise(
             }
             assert (depGraph.edgeToCycleIndex.count(edge));
             size_t cid = depGraph.edgeToCycleIndex.at(edge);
-            cycleWorklists[cid].push({edge, depGraph.edgeDepthsGlobal[edge], 0});
+            cycleWorklists[cid].push({edge, depGraph.edgeDepthsGlobal.at(edge), 0});
             cycleInWorklists[cid].insert(edge);
         }
         // TODO
@@ -1089,7 +1089,7 @@ void buildFormulasIncCyclewise(
                 }
 
                 if (!allAvailable) {
-                    worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+                    worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
                     inWorklist.insert(edge);
                     std::cout << "    [REQUEUE] Missing input for edge " << edge->toString()
                               << ", back to worklist (cycle " << cid
@@ -1168,7 +1168,7 @@ void buildFormulasIncCyclewise(
                         assert (depGraph.edgeToCycleIndex.count(outEdge));
                         auto outCid = it->second;
                         if (!cycleInWorklists[outCid].count(outEdge)) {
-                            cycleWorklists[outCid].push({outEdge, depGraph.edgeDepthsGlobal[outEdge], _seqId++});
+                            cycleWorklists[outCid].push({outEdge, depGraph.edgeDepthsGlobal.at(outEdge), _seqId++});
                             cycleInWorklists[outCid].insert(outEdge);
                             std::cout << "    [ENQUEUE] Node formula changed for "
                                       << output->toString()
@@ -1290,9 +1290,9 @@ void buildFormulasCyclewiseOnDemand(
 
         int _seqId = 0;
         for (auto edge : cycleEdges) {
-            worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+            worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
 //            std::cout << "Adding edge " << edge->getId() << " " << edge->toString()
-//                      << " with depth " << depGraph.edgeDepthsGlobal[edge] << " to worklist.\n";
+//                      << " with depth " << depGraph.edgeDepthsGlobal.at(edge) << " to worklist.\n";
             inWorklist.insert(edge);
         }
 
@@ -1328,7 +1328,7 @@ void buildFormulasCyclewiseOnDemand(
 
             if (!allAvailable) {
 //                std::cout << "Not all inputs available for edge " << edge->getId() << ", re-adding to worklist.\n";
-                worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+                worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
                 inWorklist.insert(edge);
                 continue;
             }
@@ -1354,7 +1354,7 @@ void buildFormulasCyclewiseOnDemand(
                         for (auto& outEdge : view.getOutgoingEdges(out)) {
                             auto it = depGraph.edgeToCycleIndex.find(outEdge);
                             if (it != depGraph.edgeToCycleIndex.end() && it->second == cid && !inWorklist.count(outEdge)) {
-                                worklist.push({outEdge, depGraph.edgeDepthsGlobal[outEdge], _seqId++});
+                                worklist.push({outEdge, depGraph.edgeDepthsGlobal.at(outEdge), _seqId++});
                                 inWorklist.insert(outEdge);
                             }
                         }
@@ -1537,7 +1537,7 @@ void buildFormulasIncRegionalCyclewise(
                 if (inWorklist.count(edge)) {
                     continue;
                 }
-                worklist.push({edge, depGraph.edgeDepthsGlobal[edge], (int)depGraph.edgeDepthsGlobal[edge]});
+                worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), (int)depGraph.edgeDepthsGlobal.at(edge)});
                 inWorklist.insert(edge);
             }
         }
@@ -1651,7 +1651,7 @@ void buildFormulasIncRegionalCyclewise(
                 }
 
                 if (!allAvailable) {
-                    worklist.push({edge, depGraph.edgeDepthsGlobal[edge], _seqId++});
+                    worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
                     cycleInWorklists[cid].insert(edge);
                     debugger.endIteration();
                     continue;
@@ -1686,7 +1686,7 @@ void buildFormulasIncRegionalCyclewise(
                         assert (depGraph.edgeToCycleIndex.count(outEdge));
                         auto it = depGraph.edgeToCycleIndex.find(outEdge);
                         if (it->second == cid && !cycleInWorklists[cid].count(outEdge)) {
-                            cycleWorklists[cid].push({outEdge, depGraph.edgeDepthsGlobal[outEdge], _seqId++});
+                            cycleWorklists[cid].push({outEdge, depGraph.edgeDepthsGlobal.at(outEdge), _seqId++});
                             cycleInWorklists[cid].insert(outEdge);
                         }
                     }

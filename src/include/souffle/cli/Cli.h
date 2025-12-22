@@ -92,6 +92,69 @@ private:
     // Store all pending operations
     std::vector<Operation> pendingOperations;
 
+    void logTurnMode(const std::string& modeLabel) const {
+        std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel << std::endl;
+    }
+
+    std::string outputPath(const std::string& filename) const {
+        const std::string& dir = opt.getOutputFileDir();
+        if (dir.empty()) {
+            return filename;
+        }
+        if (dir.back() == '/') {
+            return dir + filename;
+        }
+        return dir + "/" + filename;
+    }
+
+    std::string outputTimestampedPath(const std::string& prefix, size_t iter,
+            const std::string& extension) const {
+        return outputPath(makeTimestampedFilename(prefix, iter, extension));
+    }
+
+    static std::string formatRatio(size_t part, size_t total) {
+        if (total == 0) {
+            return "n/a";
+        }
+        const double pct = 100.0 * static_cast<double>(part) / static_cast<double>(total);
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2) << pct << "%";
+        return oss.str();
+    }
+
+    void logPrunedDeltaSummary(const IncSubgraphView& view, const std::string& modeLabel) const {
+        const size_t insNodes = view.getDeltaInsertNodes().size();
+        const size_t insEdges = view.getDeltaInsertEdges().size();
+        const size_t delNodes = view.getDeltaDeleteNodes().size();
+        const size_t delEdges = view.getDeltaDeleteEdges().size();
+        const size_t totalNodes = view.getNodes().size();
+        const size_t totalEdges = view.getEdges().size();
+        std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel
+                  << " pruned_delta: insNodes=" << insNodes
+                  << " insEdges=" << insEdges
+                  << " delNodes=" << delNodes
+                  << " delEdges=" << delEdges
+                  << " totalNodes=" << totalNodes
+                  << " totalEdges=" << totalEdges
+                  << std::endl;
+        std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel
+                  << " pruned_delta_ratio: insNodes=" << formatRatio(insNodes, totalNodes)
+                  << " insEdges=" << formatRatio(insEdges, totalEdges)
+                  << " delNodes=" << formatRatio(delNodes, totalNodes)
+                  << " delEdges=" << formatRatio(delEdges, totalEdges)
+                  << std::endl;
+        if (modeLabel == "INC_REGIONAL") {
+            const size_t reachNodes = view.getDeltaInsertReachableNodes().size();
+            const size_t reachEdges = view.getDeltaInsertReachableEdges().size();
+            std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel
+                      << " deltaReach_ratio: insNodes=" << formatRatio(insNodes, reachNodes)
+                      << " insEdges=" << formatRatio(insEdges, reachEdges)
+                      << " reachNodes=" << reachNodes
+                      << " reachEdges=" << reachEdges
+                      << std::endl;
+        }
+    }
+
     // Parse a tuple with potential probability
     // Returns: relation name, values, probability, success flag
     std::tuple<std::string, std::vector<std::string>, double, bool>
@@ -208,7 +271,8 @@ public:
               edgeFormulas(edgeFormulas),
               changedNodes(),
               isGround(isGround),
-              preDG(preDG) {
+              preDG(preDG),
+              running(true) {
         // Initialize readline
         using_history();
     }
@@ -560,6 +624,7 @@ public:
                     graph != nullptr && graph->isBiImpMerged()) {
                 assert(false && "bi-imp merged graph cannot run incremental mode");
             }
+            DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
             debugger.startTurn();
             // for ground program ...
             // get the incremental derivation graph -> build formulas -> compute probabilities
@@ -597,17 +662,18 @@ public:
                     graph->dumpStatisticsInc(std::cout);
                 }
                 if (opt.isDumpDotEnabled()) {
-                    graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
+                    graph->dumpDotInc(outputPath("derivation-inc-before-prune" + std::to_string(iteration) + ".dot"));
                 }
                 DerivationGraph::setMergeBiImpEnabled(false);
                 auto view = graph->prune(this->outputRelations);
                 debugger.endStage();
                 if (opt.isDumpDotEnabled()) {
-                    view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                    view.dumpDotInc(outputPath("derivation-inc-after-prune" + std::to_string(iteration) + ".dot"));
                 }
                 if (opt.isDumpJsonEnabled()) {
-                    view.dumpJsonInc(makeTimestampedFilename("derivation-inc-after-prune", iteration, ".json"));
+                    view.dumpJsonInc(outputTimestampedPath("derivation-inc-after-prune", iteration, ".json"));
                 }
+                logPrunedDeltaSummary(view, useRegional ? "INC_REGIONAL" : "INC_NAIVE");
                 changedNodes.clear();
 
                 std::cout << view.getDeltaInsertNodes().size() << " nodes with inserted derivations.\n";
@@ -657,11 +723,12 @@ public:
                 dumpProbabilities(probResult, opt.getOutputFileDir() + "/", incPrefix);
                 iteration++;
             } else if (incMode == IncMode::FULL) {
+                logTurnMode("FULL");
                 debugger.startStage(StageKind::PRUNING_FULL);
                 {
                     if (opt.isDumpDotEnabled()) {
                         FunctionTimer timer("PRUNING_FULL: dumpDot-before-prune");
-                        graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
+                        graph->dumpDotInc(outputPath("derivation-full-before-prune" + std::to_string(iteration) + ".dot"));
                     }
                 }
                 IncSubgraphView view = [&] {
@@ -672,13 +739,13 @@ public:
                 {
                     if (opt.isDumpDotEnabled()) {
                         FunctionTimer timer("PRUNING_FULL: dumpDot-after-prune");
-                        view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
+                        view.dumpDotInc(outputPath("derivation-full-after-prune" + std::to_string(iteration) + ".dot"));
                     }
                 }
                 {
                     if (opt.isDumpJsonEnabled()) {
                         FunctionTimer timer("PRUNING_FULL: dumpJson-after-prune");
-                        view.dumpJsonInc(makeTimestampedFilename("derivation-full-after-prune", iteration, ".json"));
+                        view.dumpJsonInc(outputTimestampedPath("derivation-full-after-prune", iteration, ".json"));
                     }
                 }
                 debugger.endStage();
@@ -821,6 +888,7 @@ public:
                     program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);
                     debugger.endStage();
                 }
+                DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
                 debugger.startStage(StageKind::PRUNING_INC);
                 if (opt.isDumpStatEnabled()) {
                     std::cout << "[prune-inc] pre-applyDelta statistics:\n";
@@ -839,7 +907,7 @@ public:
                 {
                     if (opt.isDumpDotEnabled()) {
                         FunctionTimer timer("PRUNING_INC: dumpDot-before-prune");
-                        graph->dumpDotInc("derivation-inc-before-prune" + std::to_string(iteration) + ".dot");
+                        graph->dumpDotInc(outputPath("derivation-inc-before-prune" + std::to_string(iteration) + ".dot"));
                     }
                 }
                 IncSubgraphView view = [&] {
@@ -850,16 +918,17 @@ public:
                 {
                     if (opt.isDumpDotEnabled()) {
                         FunctionTimer timer("PRUNING_INC: dumpDot-after-prune");
-                        view.dumpDotInc("derivation-inc-after-prune" + std::to_string(iteration) + ".dot");
+                        view.dumpDotInc(outputPath("derivation-inc-after-prune" + std::to_string(iteration) + ".dot"));
                     }
                 }
                 {
                     if (opt.isDumpJsonEnabled()) {
                         FunctionTimer timer("PRUNING_INC: dumpJson-after-prune");
-                        view.dumpJsonInc(makeTimestampedFilename("derivation-inc-after-prune", iteration, ".json"));
+                        view.dumpJsonInc(outputTimestampedPath("derivation-inc-after-prune", iteration, ".json"));
                     }
                 }
                 debugger.endStage();
+                logPrunedDeltaSummary(view, useRegional ? "INC_REGIONAL" : "INC_NAIVE");
                 changedNodes.clear();
                 if (derivationOnly) {
                     if (ddManager != nullptr) {
@@ -902,6 +971,8 @@ public:
                 iteration++;
             } else if (incMode == IncMode::FULL) {
                 debugger.startTurn();
+                DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
+                logTurnMode("FULL");
 
 //                purgeAllNonIncDeltaRelations();
 //                program->loadAllExcept(opt.getInputFileDir());  //
@@ -916,7 +987,7 @@ public:
                 {
                     if (opt.isDumpDotEnabled()) {
                         FunctionTimer timer("PRUNING_FULL: dumpDot-before-prune");
-                        graph->dumpDotInc("derivation-full-before-prune" + std::to_string(iteration) + ".dot");
+                        graph->dumpDotInc(outputPath("derivation-full-before-prune" + std::to_string(iteration) + ".dot"));
                     }
                 }
                 debugger.startStage(StageKind::PRUNING_FULL);
@@ -928,13 +999,13 @@ public:
                 {
                     if (opt.isDumpDotEnabled()) {
                         FunctionTimer timer("PRUNING_FULL: dumpDot-after-prune");
-                        view.dumpDotInc("derivation-full-after-prune" + std::to_string(iteration) + ".dot");
+                        view.dumpDotInc(outputPath("derivation-full-after-prune" + std::to_string(iteration) + ".dot"));
                     }
                 }
                 {
                     if (opt.isDumpJsonEnabled()) {
                         FunctionTimer timer("PRUNING_FULL: dumpJson-after-prune");
-                        view.dumpJsonInc(makeTimestampedFilename("derivation-full-after-prune", iteration, ".json"));
+                        view.dumpJsonInc(outputTimestampedPath("derivation-full-after-prune", iteration, ".json"));
                     }
                 }
                 debugger.endStage();
@@ -1023,6 +1094,18 @@ public:
         std::cout << "Incremental Souffle CLI (Callback Version)" << std::endl;
         std::cout << "Type 'help' for a list of available commands" << std::endl;
         IncrementalCLI::instance = this;
+        if (!isatty(STDIN_FILENO)) {
+            std::string line;
+            while (this->running && std::getline(std::cin, line)) {
+                if (!line.empty() && line.back() == '\r') {
+                    line.pop_back();
+                }
+                if (!line.empty()) {
+                    this->running = this->processCommand(line);
+                }
+            }
+            return;
+        }
         // 1. 安装回调处理器
         //    参数1: 交互式提示符
         //    参数2: 指向我们上面定义的 line_handler 函数的指针

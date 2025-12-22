@@ -37,6 +37,7 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
   - inc-regional: `./compute -F input -D output_run_inc_regional --setmode inc-regional < delta/inc10_1.txt`
   - full baseline (no rewrite): `./compute -F input -D output_run_full --setmode full < delta/inc10_1.txt`
   - Outputs should match: `diff output_run_inc_naive/facts.prob output_run_full/facts.prob`
+  - Debugger JSON reports now land in the output dir; the filename uses the basename of `--logfile` plus a timestamp.
 
 ## Current State (full/rewrite)
 - Reverted aggressive fact-prefix/folding; simple SISO only updates edge probability, not folding nodes.
@@ -132,6 +133,8 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
   - `DerivationGraphViewInterface` gates `dumpJson`/`dumpDot`/`dumpStatistics` outputs; `dumpStatisticsInc` and `dumpStatistics` now no-op unless `dumpstat` is enabled.
   - `dumpJsonInc` no longer emits `impact_by_*` blocks (reduced JSON size).
   - Pipeline wiring: `src/include/souffle/problog/Pipeline.h` sets dump flags so CLI and batch runs are consistent.
+  - Non-tty CLI runs now consume stdin via `std::getline` (so `< delta/*.txt` works reliably); `running` is initialized to `true`.
+  - Debugger JSON reports now write into the `-D` output dir; `--logfile` paths are reduced to basename and stdout prints only the filename.
   - Bi-imp merge tracking: `src/include/souffle/problog/DerivationGraph.h` records `biImpMerged` and asserts if merge is enabled with delta changes; `src/include/souffle/cli/Cli.h` forbids inc modes when a graph is merged.
   - Incremental prune skips bi-imp merge and delta-delete canonicalisation; prune now logs delta-delete counts per phase.
   - `tryGarbageCollection()` is invoked at the end of each turn in CLI runs.

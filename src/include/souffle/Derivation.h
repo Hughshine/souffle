@@ -38,6 +38,17 @@ inline std::string generateFilename(const std::string& prefix = "log", const std
     return oss.str();
 }
 
+inline std::string basenameFromPath(const std::string& path) {
+    if (path.empty()) {
+        return path;
+    }
+    const std::string::size_type pos = path.find_last_of("/\\");
+    if (pos == std::string::npos || pos + 1 >= path.size()) {
+        return path;
+    }
+    return path.substr(pos + 1);
+}
+
 // TODO: move to another file
 class FunctionTimer {
 private:
