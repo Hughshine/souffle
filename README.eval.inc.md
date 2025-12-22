@@ -55,6 +55,15 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
 - `src/include/souffle/cli/Cli.h`: applyDelta + mode dispatch (inc-naive/inc-regional).
 
 ## Latest status / known issues
+- Current side-channel benchmarks for inc1 contain no disjunctions, so `inc-regional` effectively degenerates to `inc-naive` (delta-reachable set is dominated by deletions).
+- Analyzer cost has been reduced and is now negligible relative to forward compilation.
+- The printed delete/insert timers are small and do not trigger reordering, yet incremental delete/insert still show long forward-compilation time relative to the delta size; needs profiling to confirm whether this is expected.
+- DRed deletion is still inefficient; no fix yet.
+- Incrementalizing prune is under consideration but lower priority; prune time still contributes non-trivially.
+- Elastic incremental pipeline remains a plan; design/implementation is not settled.
+- To exercise inc-regional properly we likely need HV-related rules (richer side-channel reasoning) or another benchmark (e.g., data race).
+- inc-naive (and current inc-regional) is faster than full largely because delta impact is small and variable ordering from turn-1 is reused (no reordering on insert/delete).
+- Continuous inc-regional state maintenance/correctness is still pending; current experiments only include a single inc-regional turn (no calibration, so no outdated DD applied).
 - P1 (and P3) incremental insertion can loop in `ForwardCompilation` on the KEY_SENSITIVE eq-cycle; worklist never drains. Investigations suggest formulas keep flipping among a few BDDs despite stable var indices. Avoid these cases for now.
 - Incremental pruning still dominates time for larger cases (P12/P13), e.g. P13 inc10: prune≈2.6s, forward≈1.07s, total≈3.71s; full run forward+wmc is heavy but still faster overall (≈3.40s). P4–P11 are small and fast.
 - All P4–P13 inc10 runs (delta sample 1) currently match full results (`max|Δ|=0`) as recorded in `output/delta-inc10-1.json` per case.

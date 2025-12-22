@@ -166,6 +166,7 @@ Mergeable anchor 判定（`mergeableEdgeAtHead_`）：
 ## Known Limitations / TODO
 - Calibration 结果尚未自动 apply（仅计算并缓存）。
 - Regional 仅覆盖 insertion；deletion 仍走旧逻辑。
+- 当前 side-channel inc1 benchmark 不包含 disjunction，inc-regional 实际退化为 inc-naive（delta-reachable 主要是 deleted 部分）。
 - anchor 选择目前取第一个可行候选，没有评分/优化。
 - Region 迭代顺序不稳定（`unordered_set`）；日志和输出顺序不保证稳定。
 
