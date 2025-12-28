@@ -253,7 +253,7 @@ private:
     std::unordered_map<const Node*, int> nodeToRawIndex_;
     std::unordered_map<const Hyperedge*, int> edgeToRawIndex_;
 
-    int nextRawVar = 0;
+    int nextRawVar = 1;
     int nextInternalVar = 0;
 
 
@@ -302,7 +302,7 @@ inline SddFormulaManager::SddFormulaManager(
 
 
         nextInternalVar = static_cast<int>(sdd_manager_var_count(manager_));
-        nextRawVar = 0;
+        nextRawVar = 1;
     }
 
 inline SddNodeRef SddFormulaManager::createVar(int rawIndex) {
