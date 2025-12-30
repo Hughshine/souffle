@@ -204,8 +204,8 @@ struct PrioritizedEdge {
     int sequence_id;
     bool operator<(const PrioritizedEdge& other) const {
         if (priority != other.priority)
-            return priority > other.priority;  // 小值优先
-        return sequence_id > other.sequence_id;  // 小编号优先er depth = higher priority
+            return priority > other.priority;  // Smaller value first
+        return sequence_id > other.sequence_id;  // Smaller sequence id first
     }
 };
 
@@ -247,7 +247,7 @@ void buildFormulasCyclewise(
         }
     };
 
-    // 1. 初始化公式
+    // 1. Initialize formulas
     for (const auto& node : view.getNodes()) {
         if (seedTrueNodes.count(node)) {
             FormulaNodeRef var = formulaManager.getTrue();
@@ -280,7 +280,7 @@ void buildFormulasCyclewise(
     }
     auto baseInitMs = toMs(std::chrono::steady_clock::now() - baseStart);
 
-    // 2. 调度 SCC
+    // 2. Schedule SCCs
     auto cycleTotalStart = std::chrono::steady_clock::now();
     std::vector<size_t> remainingInDegrees = depGraph.inDegrees;
     std::vector<bool> visited(depGraph.nodeCycles.size(), false);
@@ -581,7 +581,7 @@ void buildFormulasInc(
             debugger.endIteration();
         }
     }
-    // === 插入阶段 ===
+    // === Insertion phase ===
     if (deltaInsertedEdges.empty()) {
         stage->logMessage(Level::INFO, "No inserted edges, skipping insertion phase\n");
         return;
@@ -677,7 +677,7 @@ void buildFormulasInc(
     debugger.endStage();
 }
 
-// TODO: 目前每个worklist内没有按照depth排序
+// TODO: Worklists are not depth-ordered yet.
 template<typename FormulaNodeRef>
 void buildFormulasIncCyclewise(
     IncrementalDerivationGraphViewInterface& view,
@@ -692,7 +692,7 @@ void buildFormulasIncCyclewise(
     using namespace std::chrono;
     static int turn = 1;
     auto start = high_resolution_clock::now();
-    auto& depGraph = view.getCycleDependencyGraph();  // 包括 computeSCCs, computeDependencies, computeDepths
+    auto& depGraph = view.getCycleDependencyGraph();  // Includes computeSCCs, computeDependencies, computeDepths
     depGraph.dumpDot("scc" + std::to_string(turn++) + ".dot");
 
 
@@ -1004,7 +1004,7 @@ void buildFormulasIncCyclewise(
         std::vector<bool> scheduled(depGraph.nodeCycles.size(), false);  // whether the cycle has been scheduled for insertion phase
         size_t insertion_impacted_node_count = 0;
 
-        // === 插入阶段 ===
+        // === Insertion phase ===
         std::cout << "Processing inserted edges" << std::endl;
         debugger.logMessage(Level::INFO, "Processing inserted edges");
         // initialized formulas for newly inserted nodes and edges
@@ -1244,7 +1244,7 @@ void buildFormulasCyclewiseOnDemand(
     std::map<NodePtr, FormulaNodeRef> baseNodeFormulas;
     std::map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
     size_t round = 0;
-    // 1. 初始化公式
+    // 1. Initialize formulas
     for (const auto& node : view.getNodes()) {
         if (node->isFact) {
             FormulaNodeRef var = (node->getProbability() == 1.0)
@@ -1269,7 +1269,7 @@ void buildFormulasCyclewiseOnDemand(
         baseEdgeFormulas[edge] = f;
     }
 
-    // 2. 调度 SCC
+    // 2. Schedule SCCs
     std::vector<size_t> remainingInDegrees = depGraph.inDegrees;
     std::vector<bool> visited(depGraph.nodeCycles.size(), false);
     std::queue<size_t> ready;

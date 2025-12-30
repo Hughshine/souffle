@@ -248,7 +248,7 @@ private:
     std::shared_ptr<VtreeWrapper> vtree_;
     Debugger& debugger_;
 
-    // rawId -> internalId 映射
+    // rawId -> internalId mapping
     std::unordered_map<int,int> rawToInternal;
     std::unordered_map<const Node*, int> nodeToRawIndex_;
     std::unordered_map<const Hyperedge*, int> edgeToRawIndex_;
@@ -493,7 +493,7 @@ inline SddNodeRef SddFormulaManager::makeCondition(
 
     SddNodeRef result = f;
 
-    // 正 literal
+    // Positive literal
     for (int rawIdx : trueIndexes) {
         if (rawIdx <= 0) {
             throw std::runtime_error("SDD condition index must be >= 1");
@@ -605,7 +605,7 @@ inline std::vector<double> SddFormulaManager::buildWeightArray() const {
             weights[i] = it->second.negWeight;
             weights[i + varCount] = it->second.posWeight;
         } else {
-            // 默认：neg = 0, pos = 1
+            // Default: neg = 0, pos = 1
             weights[i] = 0.0;
             weights[i + varCount] = 1.0;
         }

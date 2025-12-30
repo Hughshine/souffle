@@ -114,7 +114,7 @@ std::string ClauseTranslator::getClauseString(const ast::Clause& clause) const {
     return toString(*renamedClone);
 }
 
-// version含义：rule的第几个版本；版本总数取决于rule的body有几个sccAtom
+// version meaning: which version of the rule; total versions depend on how many sccAtoms the rule body has.
 std::string ClauseTranslator::getClauseAtomName(const ast::Clause& clause, const ast::Atom* atom) const {
     return getAtomName(clause, atom, sccAtoms, version, isRecursive(), mode, true);
 }

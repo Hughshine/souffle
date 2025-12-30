@@ -4,40 +4,40 @@
 - Historical rewrite plan; not current behavior.
 - Full-mode only; incremental modes skip rewrite.
 
-先说结论：
+Bottom line:
 
-GraphAnalyzer.h 这版可以继续沿用（不必大动），SISO detection 逻辑保持现在的“以点为中心”的设计。
+The current GraphAnalyzer.h can continue to be used (no major changes needed); keep the SISO detection logic with the existing "node-centered" design.
 
-GraphRewriter.h 我下面给出一个更新版，在现有基础上加了：
+Below is an updated GraphRewriter.h based on the current version, adding:
 
-简单 SISO（2 点 1 边）special case：可以在满足额外结构条件时，把 SI/ SO 合并成一个新的 fact 节点（但实现上我保守一点：先保留你现在的“只更新 edge 概率”的 fast path，合并逻辑单独挂在 fact-prefix pass 上，避免一下子动太猛）。
+Simple SISO (2 nodes, 1 edge) special case: when extra structural conditions hold, SI/SO can be merged into a new fact node (but I am being conservative: keep the current fast path that only updates edge probability, and hang the merge logic off the fact-prefix pass to avoid changing too much at once).
 
-fact-prefix SISO（从 input facts 反向到某个 b 的锥）：在 GraphRewriter 内部做 backward BFS，识别“从 facts 出发、闭合、不逃逸”的子图，并用 BDD 只对这个子图做 forward compilation，算出 Pr(b)，把 b 重写成新的 fact。
+Fact-prefix SISO (cone from input facts back to a node b): do backward BFS inside GraphRewriter, identify subgraphs that are "closed and non-escaping from facts", and run BDD forward compilation only on this subgraph to compute Pr(b), then rewrite b into a new fact.
 
-更合理的停止条件：一轮中如果 SISO 和 fact-prefix 都没重写任何 region，就认为到达 fixpoint。
+More reasonable stop condition: if in a round neither SISO nor fact-prefix rewrites any region, consider the fixpoint reached.
 
-统计字段扩展：统计 fact-prefix region 数量等，并在 Pipeline 日志里输出。
+Extend statistics fields: count fact-prefix regions, etc., and output in Pipeline logs.
 
-你可以把下面的 GraphRewriter.h 直接覆盖现有版本，再按我后面给的 patch 修改 Pipeline.h。
-GraphAnalyzer.h 暂时不用改（你本地已经有新版，和这里的 GraphRewriter 完全兼容）。
+You can directly replace the current GraphRewriter.h with the version below, then apply the Pipeline.h patch shown later.
+GraphAnalyzer.h does not need changes for now (your local version is already updated and fully compatible with this GraphRewriter).
 
-一、更新版 GraphRewriter.h
+1. Updated GraphRewriter.h
 
-说明
+Notes
 
-完全基于你当前 repo 里的 GraphRewriter.h（我以此为基线做最小增量改动）。
+Based entirely on the current GraphRewriter.h in your repo (I used it as the baseline and made minimal incremental changes).
 
-主要新增：
+Main additions:
 
-fact-prefix 区域结构体 & 构造逻辑
+fact-prefix region struct and construction logic
 
-fact-prefix 重写 pass
+fact-prefix rewrite pass
 
-计算区域 Pr(exit) 的 computeRegionMarginalProbability
+computeRegionMarginalProbability for region Pr(exit)
 
-rewriteUntilFixpoint 中插入 fact-prefix pass，并修复 simple SISO condProb 的 bug。
+Insert fact-prefix pass into rewriteUntilFixpoint, and fix the simple SISO condProb bug.
 
-简单 SISO 合并（si/so 融合）目前只在 fact-prefix 重写里做（也就是从 facts 反向到 b 的“广义 SISO”），对于普通 entry→exit SISO 仍然只是合成 edge，避免改变外部接口的太多行为。
+Simple SISO merge (si/so merge) is currently only done inside fact-prefix rewrite (the "generalized SISO" from facts back to b). For normal entry->exit SISO, it still only synthesizes an edge, to avoid changing too much external behavior.
 
 #pragma once
 
@@ -1112,17 +1112,17 @@ private:
 
 }  // namespace souffle::problog
 
-二、Pipeline.h 的最小改动
+2. Minimal changes to Pipeline.h
 
-Pipeline.h 里两处地方需要同步：
+Two places in Pipeline.h need to be updated:
 
-打印 / 日志 增加 factPrefixRegions 字段。
+Add factPrefixRegions to console/log output.
 
-（可选）未来如果你在 CmdOptions 里加更细粒度开关（例如 --rewrite-fact-prefix），这里可以根据选项决定是否开启 fact-prefix pass。当前版本通过 env var SOUFFLE_FACT_PREFIX_REWRITE 控制，所以 Pipeline 不用动逻辑，只改输出即可。
+(Optional) If you later add a finer-grained switch in CmdOptions (e.g., --rewrite-fact-prefix), you can use it here to decide whether to enable the fact-prefix pass. The current version is controlled via env var SOUFFLE_FACT_PREFIX_REWRITE, so Pipeline does not need logic changes, just output changes.
 
-1. 控制台输出
+1. Console output
 
-原来（你现在的版本）：
+Currently (your version):
 
 std::cout << "[pipeline] SISO rewrite took " << rewriteMs << " ms"
           << " (iterations=" << rewriteStats.numIterations
@@ -1139,7 +1139,7 @@ std::cout << "[pipeline] SISO rewrite took " << rewriteMs << " ms"
           << ")" << std::endl;
 
 
-建议改成（新增 fact-prefix 的计数）：
+Suggested change (add fact-prefix count):
 
 std::cout << "[pipeline] SISO rewrite took " << rewriteMs << " ms"
           << " (iterations=" << rewriteStats.numIterations
@@ -1156,9 +1156,9 @@ std::cout << "[pipeline] SISO rewrite took " << rewriteMs << " ms"
           << ", factPrefixRegions=" << rewriteStats.factPrefixRegions
           << ")" << std::endl;
 
-2. rewrite.log 输出
+2. rewrite.log output
 
-原来：
+Currently:
 
 rewriteLog << "duration_ms=" << rewriteMs
            << ",iterations=" << rewriteStats.numIterations
@@ -1175,7 +1175,7 @@ rewriteLog << "duration_ms=" << rewriteMs
            << std::endl;
 
 
-改成：
+Change to:
 
 rewriteLog << "duration_ms=" << rewriteMs
            << ",iterations=" << rewriteStats.numIterations
@@ -1192,31 +1192,31 @@ rewriteLog << "duration_ms=" << rewriteMs
            << ",factPrefixRegions=" << rewriteStats.factPrefixRegions
            << std::endl;
 
-三、命令行参数建议（给 Codex 的指引）
+3. Command-line parameter suggestions (guidance for Codex)
 
-当前实现里：
+In the current implementation:
 
-SISO rewrite 受 opt.isRewriteEnabled() 控制。
+SISO rewrite is controlled by opt.isRewriteEnabled().
 
-fact-prefix pass 受环境变量 SOUFFLE_FACT_PREFIX_REWRITE 控制（默认开启）。
+fact-prefix pass is controlled by environment variable SOUFFLE_FACT_PREFIX_REWRITE (default on).
 
-如果你希望走 command-line，而不是 env，建议在 CmdOptions 里加：
+If you want command-line instead of env, add to CmdOptions:
 
 bool isFactPrefixRewriteEnabled() const;
 
 
-以及一个参数（名字你决定，比如）：
+And a parameter (name up to you), for example:
 
---rewrite-fact-prefix[=on|off] 或
+--rewrite-fact-prefix[=on|off] or
 
-扩展现有 --rewrite 支持 mode：none | siso | siso+fact-prefix。
+Extend existing --rewrite to support mode: none | siso | siso+fact-prefix.
 
-Pipeline.h 里可以变成：
+Pipeline.h could be:
 
 if (opt.isRewriteEnabled()) {
     GraphRewriter rewriter;
     if (!opt.isFactPrefixRewriteEnabled()) {
-        // 显式关闭 fact-prefix，给 GraphRewriter 加一个静态开关或利用 env。
+        // Explicitly disable fact-prefix; add a static switch in GraphRewriter or use env.
         std::setenv("SOUFFLE_FACT_PREFIX_REWRITE", "0", /*overwrite*/1);
     }
     bool rewriteDebug = std::getenv("SOUFFLE_REWRITE_DEBUG") != nullptr;
@@ -1224,89 +1224,89 @@ if (opt.isRewriteEnabled()) {
 }
 
 
-Codex 在实现的时候，需要：
-修改 CmdOptions 的 parse 逻辑和 help 文档。
+When implementing, Codex should:
+Modify CmdOptions parse logic and help docs.
 
-确保默认行为与现在一致（即：--rewrite 开启时，SISO + fact-prefix 都启用）。
+Ensure the default behavior stays the same (i.e., when --rewrite is enabled, both SISO + fact-prefix are enabled).
 
-四、测试 / 实验建议（给 Codex 的 checklist）
-1. 单条简单 SISO（2 节点 1 边）
+4. Test/experiment suggestions (Codex checklist)
+1. Simple single SISO (2 nodes, 1 edge)
 
-程序上构造：
+Construct programmatically:
 
-fact a，Pr(a)=0.3
+fact a, Pr(a)=0.3
 
-rule b :- a，边概率 p=0.5
+rule b :- a, edge probability p=0.5
 
-不启用 rewrite（或关闭 rewrite）：
+Without rewrite (or rewrite off):
 
-全图 forward compilation 得到 Pr(b) = 0.15。
+Whole-graph forward compilation yields Pr(b) = 0.15.
 
-启用 rewrite（含 simple SISO fast path）：
+With rewrite (including simple SISO fast path):
 
-SISO detetion 应该找到 a -> b 的 region（2 nodes, 1 edge）。
+SISO detection should find the a -> b region (2 nodes, 1 edge).
 
-现在的实现只更新 edge 概率为 pEdge（0.5），不改变语义；
+Current implementation only updates edge probability to pEdge (0.5), no semantic change;
 
-最终 BDD pipeline 仍应给出 Pr(b)=0.15。
+Final BDD pipeline should still give Pr(b)=0.15.
 
-rewrite 日志中 simpleFactRegions=1，factPrefixRegions=0。
+Rewrite log should show simpleFactRegions=1, factPrefixRegions=0.
 
-如果你之后想真的把 a/b 合并成一个 fact，这个 test 就变成检查 a 被移除、b 变成 fact，Pr(b)=0.15。那时只需要在 applyRegionRewrite 的 simple 分支里改成“合并节点”的逻辑即可。
+If you later want to actually merge a/b into one fact, this test becomes checking that a is removed, b becomes a fact, Pr(b)=0.15. Then you only need to change the applyRegionRewrite simple branch to "merge nodes".
 
-2. fact-prefix 场景：a -> b / a' -> b
+2. fact-prefix scenario: a -> b / a' -> b
 
-构造：
+Construct:
 
-a, a' 是 input facts，Pr(a)=0.2, Pr(a')=0.4
+a, a' are input facts, Pr(a)=0.2, Pr(a')=0.4
 
-规则：b :- a (p=1)，b :- a' (p=1)
+Rules: b :- a (p=1), b :- a' (p=1)
 
-不 rewrite：
+No rewrite:
 
-全图 forward compilation 给出：
-Pr(b) = 1 - (1 - 0.2) * (1 - 0.4) = 0.52。
+Whole-graph forward compilation yields:
+Pr(b) = 1 - (1 - 0.2) * (1 - 0.4) = 0.52.
 
-启用 rewrite：
+With rewrite:
 
-fact-prefix pass 对 b 做 backward cone：nodes = {a,a',b}，edges = {a->b, a'->b}。
+fact-prefix pass does backward cone for b: nodes = {a,a',b}, edges = {a->b, a'->b}.
 
-满足：
+Satisfies:
 
-boundary 只有 facts a, a'；
+boundary only facts a, a';
 
-没有 escape edge；
+no escape edges;
 
-randomVars 数量=2（两条随机 fact），在默认阈值 2 之内；
+randomVars count=2 (two random facts), within default threshold 2;
 
-BDD pass 只在这个子图上跑，compute Pr(b)=0.52。
+BDD pass runs only on this subgraph, compute Pr(b)=0.52.
 
-b 被 rewrite 为 fact，Pr(b)=0.52，a、a' 和两条边从 view 中移除。
+b rewritten to fact, Pr(b)=0.52, a, a' and the two edges removed from the view.
 
-下游 query 只看 b，全图 forward compilation 结果保持一致。
+Downstream queries only see b, whole-graph forward compilation remains consistent.
 
-日志里 factPrefixRegions=1，simpleFactRegions=0。
+Log should show factPrefixRegions=1, simpleFactRegions=0.
 
-3. 复杂结构 / scalability
+3. Complex structure / scalability
 
-用你现有 benchmark：
+Use existing benchmarks:
 
-在 --rewrite 开启 / 关闭的情况下：
+With --rewrite on/off:
 
-确认最终 query 概率不变；
+Confirm final query probabilities are unchanged;
 
-比较 BDD build 和 WMC 的时间，观察 fact-prefix+SISO 的加速效果；
+Compare BDD build and WMC times, observe speedup from fact-prefix+SISO;
 
-查看 rewrite.log 中 regions、nodesRemoved、edgesRemoved 等指标是否合理。
+Check rewrite.log metrics like regions, nodesRemoved, edgesRemoved for reasonableness.
 
-4. 回退/健壮性
+4. Fallback/robustness
 
-刻意构造不满足 fact-prefix 条件的例子：
+Deliberately construct cases that do not meet fact-prefix conditions:
 
-一个 fact 同时连到 b、c；
+a fact connects to both b and c;
 
-cone 里有非 fact 的入度为 0 节点；
+the cone contains a non-fact node with in-degree 0;
 
-cone 内部节点有对外 escape 边；
+cone internal nodes have escape edges to outside;
 
-按照实现，这些都会在 buildFactPrefixRegion 里被拒绝（debug 模式会有详细原因），fail-safe 地退回到原始 BDD pipeline，不影响正确性。
+By design, these are rejected in buildFactPrefixRegion (debug mode has detailed reasons), and safely fall back to the original BDD pipeline without affecting correctness.

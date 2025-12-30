@@ -30,14 +30,14 @@ enum class SISORegionKind {
 };
 
 struct SISORegionInfo {
-    std::vector<NodePtr> internalNodes;      // region 中所有节点（包含 SI / SO）
-    std::vector<EdgePtr> internalEdges;      // region 中所有边（SI→SO 所有路径上的边）
-    NodePtr entry = nullptr;                 // SI node（入口）
-    std::vector<NodePtr> entryPreds;         // SI 的外部前驱节点（可为空）
-    NodePtr exit = nullptr;                  // SO node（出口）
+    std::vector<NodePtr> internalNodes;      // All nodes in the region (including SI / SO)
+    std::vector<EdgePtr> internalEdges;      // All edges in the region (edges on SI->SO paths)
+    NodePtr entry = nullptr;                 // SI node (entry)
+    std::vector<NodePtr> entryPreds;         // External predecessors of SI (may be empty)
+    NodePtr exit = nullptr;                  // SO node (exit)
     bool valid = false;
-    bool prefixAllFactsRequired = false;     // 先保留这个标志，后续如果要用 support 做更细分判断
-    SISORegionKind kind = SISORegionKind::Unknown;  // SISO 类别标记，便于快速路径处理
+    bool prefixAllFactsRequired = false;     // Keep this flag for now; may use support for finer checks later
+    SISORegionKind kind = SISORegionKind::Unknown;  // SISO kind tag for fast-path handling
 };
 
 class GraphAnalyzer {
@@ -47,7 +47,7 @@ private:
     using SupportMap  = std::unordered_map<NodePtr, NodeSet>;
     using EdgeDomInputs = std::unordered_map<EdgePtr, std::vector<NodePtr>>;
 
-    // ======= 调试输出 =======
+    // ======= Debug output =======
     static std::ostream& dbg() {
         static std::ofstream out("siso_debug.log", std::ios::app);
         if (out.is_open()) return out;
@@ -87,7 +87,7 @@ private:
         return r;
     }
 
-    // ======= 支配结构 & prefix 结构 =======
+    // ======= Dominator structure & prefix structure =======
     struct DomGraph {
         std::vector<NodePtr>              nodes;    // nodes in dom-graph
         std::unordered_map<NodePtr, int>  indexOf;  // node -> index
@@ -469,7 +469,7 @@ private:
         return randomCount;
     }
 
-    // ========= support（反向收集所有能到达的 facts） =========
+    // ========= support (collect all reachable facts backward) =========
     static NodeSet backwardCollectFacts(
         const DerivationGraphViewInterface& g,
         NodePtr start)
@@ -513,14 +513,14 @@ private:
         return mp;
     }
 
-    // ========= 计算每条超边的 dominant input group =========
+    // ========= Compute dominant input group for each hyperedge =========
     static EdgeDomInputs computeEdgeDomInputs(
         const DerivationGraphViewInterface& g,
         const SupportMap& sup)
     {
         EdgeDomInputs dpi;
 
-        // 调试日志
+        // Debug log
         static const std::string LOGF = "siso_edge_dom_inputs.log";
         std::ofstream logf(LOGF, std::ios::app);
         if (!logf.is_open()) {
@@ -583,7 +583,7 @@ private:
                     logf << "}\n";
                 }
 
-                // 按 support overlap 分组
+                // Group by support overlap.
                 for (NodePtr v : inputs) {
                     const NodeSet& sv = sup.at(v);
 
@@ -618,7 +618,7 @@ private:
 
                 if (groups.empty()) continue;
 
-                // 选 supUnion 最大的 group 作为 dominant input group
+                // Choose the group with the largest supUnion as the dominant input group.
                 int   best     = 0;
                 size_t bestSize = groups[0].supUnion.size();
                 for (int i = 1; i < (int)groups.size(); i++) {
@@ -642,11 +642,11 @@ private:
         return dpi;
     }
 
-    // ========= 构造 dom-graph =========
+    // ========= Build dom-graph =========
     static DomGraph buildDomGraph(const DerivationGraphViewInterface& g) {
         DomGraph dg;
 
-        // 为所有节点分配 index
+        // Assign an index to every node.
         int idx = 0;
         for (NodePtr n : g.getNodes()) {
             if (!n) continue;
@@ -657,7 +657,7 @@ private:
         const int N = (int)dg.nodes.size();
         dg.preds.assign(N, {});
 
-        // 根据超边把输入指向输出，构成有向图
+        // Build a directed graph by connecting inputs to outputs via hyperedges.
         for (EdgePtr e : g.getEdges()) {
             if (!e) continue;
             NodePtr out = g.getOutput(e);
@@ -677,7 +677,7 @@ private:
             }
         }
 
-        // 选一个无前驱节点作为支配树根；如果不存在，就选 0
+        // Choose a node with no predecessors as the dominator tree root; if none, use 0.
         dg.entryIndex = -1;
         for (int i = 0; i < N; i++) {
             if (dg.preds[i].empty()) {
@@ -692,7 +692,7 @@ private:
         return dg;
     }
 
-    // ========= 标准 dominator 算法 =========
+    // ========= Standard dominator algorithm =========
     static DomInfo computeDominators(const DomGraph& dg) {
         DomInfo info;
         const int N = (int)dg.nodes.size();
@@ -701,7 +701,7 @@ private:
 
         if (N == 0 || dg.entryIndex < 0) return info;
 
-        // 初始化：entry 的 dom 集 = {entry}，其余 = 全集
+        // Initialize: entry dom set = {entry}, others = all nodes.
         for (int i = 0; i < N; i++) {
             if (i == dg.entryIndex) {
                 info.domSets[i] = {i};
@@ -743,7 +743,7 @@ private:
             }
         }
 
-        // 计算 immediate dominator
+        // Compute immediate dominator
         for (int n = 0; n < N; n++) {
             if (n == dg.entryIndex) {
                 info.idom[n] = -1;
@@ -805,7 +805,7 @@ private:
         return pre;
     }
 
-    // ========= 支配树上的 LCA / 合流点 =========
+    // ========= LCA / join point in the dominator tree =========
     static int lcaInDomTree(int a, int b, const std::vector<int>& idom) {
         if (a < 0 || b < 0) return -1;
         if (a == b) return a;
@@ -851,7 +851,7 @@ private:
         return cur;
     }
 
-    // ========= 从 candidate SO node 找 SI =========
+    // ========= Find SI from a candidate SO node =========
     static Candidate findCandidate(
         const DerivationGraphViewInterface& g,
         NodePtr exitNode,
@@ -869,7 +869,7 @@ private:
         }
         int exitIdx = itExitIdx->second;
 
-        // 收集所有 incoming hyperedge 的 dominant inputs，在支配树上求合流点
+        // Collect dominant inputs for all incoming hyperedges and compute confluence in the dominator tree.
         std::vector<int> srcIdx;
         for (EdgePtr eIn : g.getIncomingEdges(exitNode)) {
             if (!eIn) continue;
@@ -879,9 +879,9 @@ private:
 
             auto it = pre.domInputs.find(eIn);
             if (it != pre.domInputs.end()) {
-                domSet = &it->second;       // 已经选过的 dominant input group
+                domSet = &it->second;       // Previously chosen dominant input group
             } else {
-                tmp = g.getInputs(eIn);     // 没有分组信息，就全部当 dominant
+                tmp = g.getInputs(eIn);     // No grouping info; treat all as dominant
                 domSet = &tmp;
             }
 
@@ -894,7 +894,7 @@ private:
         }
 
         if (srcIdx.empty()) {
-            // 没有前驱，不能形成「从 SI 到 SO」的 region
+            // No predecessors: cannot form an SI->SO region
             log("findCandidate rejected: exitNode has no incoming edges");
             return cand;
         }
@@ -918,7 +918,7 @@ private:
         return cand;
     }
 
-    // ========= 构建 strict / full region =========
+    // ========= Build strict / full region =========
     static Region buildStrictRegion(
         const DerivationGraphViewInterface& g,
         NodePtr entryNode,
@@ -1024,8 +1024,8 @@ private:
         return reg;
     }
 
-    // ========= 收集 SI 的外部前驱（不再作为合法性条件） =========
-    static bool selectEntryEdgeAndPreds(   // 现在永远返回 true，只作为收集信息
+    // ========= Collect external predecessors of SI (no longer a validity condition) =========
+    static bool selectEntryEdgeAndPreds(   // Always returns true now; only collects info
         const DerivationGraphViewInterface& g,
         const Region& fullRegion,
         NodePtr entryNode,
@@ -1058,7 +1058,7 @@ private:
             }
 
             if (hasOutsidePred && !entryEdge) {
-                entryEdge = eIn;   // 仅调试用途
+                entryEdge = eIn;   // Debug only
             }
         }
 
@@ -1067,7 +1067,7 @@ private:
         return true;
     }
 
-    // ========= escape 检查：只看「内部节点」的 outgoing edge 是否连到 region 外 =========
+    // ========= Escape check: only look at outgoing edges from internal nodes to outside the region =========
     static bool checkNoEscape(
         const DerivationGraphViewInterface& g,
         const Region& fullRegion,
@@ -1077,7 +1077,7 @@ private:
         for (NodePtr n : fullRegion.nodes) {
             if (!n) continue;
 
-            // entry / exit 都是边界节点，不检查它们的 outgoing
+            // entry/exit are boundary nodes; do not check their outgoing
             if (n == entryNode || n == exitNode) continue;
 
             for (EdgePtr e : g.getOutgoingEdges(n)) {
@@ -1086,7 +1086,7 @@ private:
 
                 bool outInside = (out && fullRegion.nodes.count(out));
 
-                // 只要有 outgoing 指到了 region 之外，就是 escape
+                // Any outgoing edge to outside the region is an escape
                 if (!outInside) {
                     log("checkNoEscape fail: node=" + n->toString() +
                         " edge=" + std::to_string(e ? e->getId() : -1) +
@@ -1099,7 +1099,7 @@ private:
         return true;
     }
 
-    // ========= 将 Region + 边界节点组装成 SISORegionInfo =========
+    // ========= Assemble Region + boundary nodes into SISORegionInfo =========
     static SISORegionInfo assembleSISO(
         const Region& strictRegion,
         const Region& fullRegion,
@@ -1107,10 +1107,10 @@ private:
         const std::vector<NodePtr>& entryPreds,
         NodePtr exitNode)
     {
-        (void)strictRegion;  // 目前没有单独用 strictRegion，可留着以后细分
+        (void)strictRegion;  // Not used separately yet; keep for future refinement
         SISORegionInfo info;
 
-        // 至少要有 SI 和 SO 两个点
+        // Must have at least SI and SO nodes
         if (!entryNode || !exitNode) return info;
         if (fullRegion.nodes.size() < 2)    return info;
 
@@ -1136,7 +1136,7 @@ private:
         return info;
     }
 
-    // ========= 从 candidate SO node 识别 SISO（核心 pipeline） =========
+    // ========= Detect SISO from candidate SO node (core pipeline) =========
     static SISORegionInfo detectSISOFromExitNodeWithPrefix(
         const DerivationGraphViewInterface& g,
         NodePtr exitNode,
@@ -1148,7 +1148,7 @@ private:
         return {};
     }
 
-    // ========= 兼容旧接口：从 exitEdge 出发 =========
+    // ========= Compatibility with old interface: start from exitEdge =========
     static SISORegionInfo detectSISOStrictFromExitWithPrefix(
         const DerivationGraphViewInterface& g,
         EdgePtr exitEdge,
@@ -1167,9 +1167,9 @@ private:
     }
 
 public:
-    // ===================== 对外接口 =====================
+    // ===================== Public API =====================
 
-    // 旧接口保留签名，当前实现为轻量 fast-path 检测（最多两条边），找不到则返回空。
+    // Old interface keeps its signature; current implementation is lightweight fast-path detection (up to two edges), returns empty if none.
     static inline SISORegionInfo detectSISOStrictFromExit(
         const DerivationGraphViewInterface& g,
         EdgePtr exitEdge)
@@ -1186,7 +1186,7 @@ public:
         FastPathDetectStats fastStats;
         auto regions = detectFastPathRegions(g, &fastStats);
         auto t1 = std::chrono::steady_clock::now();
-        // 去重：小 region 在前，避免重叠
+        // Dedup: smaller regions first to avoid overlap.
         auto countKinds = [](const std::vector<SISORegionInfo>& vec) {
             size_t singleHyperedgeCount = 0;
             size_t linearTwoEdgeCount = 0;
@@ -1272,7 +1272,7 @@ public:
         return result;
     }
 
-    // 输出完整图，并用不同颜色高亮一个 SISO 区域
+    // Output the full graph and highlight a SISO region with different colors.
     static inline void dumpRegionAsDot(
         const DerivationGraphViewInterface& g,
         const SISORegionInfo& r,
@@ -1293,7 +1293,7 @@ public:
         out << "digraph DerivationGraphWithSISO {\n";
         out << "  rankdir=LR;\n";
 
-        // 先输出节点：entry / exit / 其他 region / 非 region
+        // Output nodes first: entry / exit / other region / non-region
         out << "  node [shape=box, style=filled, fillcolor=lightblue];\n";
         for (const auto& n : nodes) {
             if (!n) continue;
@@ -1305,7 +1305,7 @@ public:
                 } else if (r.exit && n == r.exit) {
                     fill = "lightcoral"; // SO
                 } else {
-                    fill = "khaki";      // region 内部其它节点
+                    fill = "khaki";      // Other nodes inside the region
                 }
             }
 
@@ -1315,7 +1315,7 @@ public:
                 << "\", fillcolor=" << fill << "];\n";
         }
 
-        // 再输出 hyperedge（虚点），region 内的边用红色，其它用灰色
+        // Then output hyperedges (point nodes): region edges in red, others in gray.
         out << "  node [shape=point, width=0.2];\n";
         for (const auto& e : edges) {
             if (!e) continue;
@@ -1326,19 +1326,19 @@ public:
 
             auto inputs = g.getInputs(e);
             if (std::find(inputs.begin(), inputs.end(), outNode) != inputs.end()) {
-                // 跳过 head∈body 的伪环
+                // Skip pseudo-cycles where head is in body.
                 continue;
             }
 
             bool inRegion = regionEdges.count(e) > 0;
 
-            // 画 edge 点本身
+            // Draw the edge node itself.
             out << "  edge" << e->getId()
                 << " ["
                 << "color=" << (inRegion ? "red" : "gray")
                 << "];\n";
 
-            // 输入到 edge
+            // Input to edge
             for (NodePtr in : inputs) {
                 if (!in) continue;
                 if (!nodes.count(in)) continue;
@@ -1347,7 +1347,7 @@ public:
                     << " [color=" << (inRegion ? "red" : "gray") << "];\n";
             }
 
-            // edge 到输出
+            // Edge to output
             if (nodes.count(outNode)) {
                 out << "  edge" << e->getId()
                     << " -> node" << outNode->getId()
@@ -1359,7 +1359,7 @@ public:
         out.close();
     }
 
-    // 输出完整图，同时用不同颜色标注所有 SISO 区域（非 SISO 节点/边用浅灰）
+    // Output the full graph and color all SISO regions (non-SISO nodes/edges in light gray).
     static inline void dumpAllRegionsAsDot(
         const DerivationGraphViewInterface& g,
         const std::vector<SISORegionInfo>& regions,
@@ -1379,7 +1379,7 @@ public:
             "#bcbd22", "#17becf"
         };
 
-        // 记录节点/边的区域颜色（多区域时取第一个匹配色）以及 entry/exit 标记
+        // Record node/edge region colors (first match when multiple regions) and entry/exit markers.
         std::unordered_map<NodePtr, std::string> nodeColor;
         std::unordered_map<EdgePtr, std::string> edgeColor;
         std::unordered_map<NodePtr, int> entryCount;
@@ -1403,7 +1403,7 @@ public:
         out << "  rankdir=LR;\n";
         out << "  node [shape=box, style=filled, fillcolor=lightgray, color=gray];\n";
 
-        // 所有节点：在 region 的染色，否则浅灰
+        // All nodes: color if in region, otherwise light gray.
         for (const auto& n : g.getNodes()) {
             if (!n) continue;
             auto it = nodeColor.find(n);
@@ -1422,7 +1422,7 @@ public:
                 << "\", color=\"" << col << "\", fontcolor=\"black\", peripheries=" << periph << "];\n";
         }
 
-        // hyperedge 作为 point 节点
+        // Hyperedges as point nodes.
         out << "  node [shape=point, width=0.2, height=0.2, style=filled];\n";
         for (const auto& e : g.getEdges()) {
             if (!e) continue;
@@ -1451,12 +1451,12 @@ public:
         out << "}\n";
     }
 
-    // 简单 CSV 打印 SISO 信息（更新为 node-only 版本）
+    // Simple CSV print of SISO info (updated to node-only version).
     static inline void printSISOInfo(
         const DerivationGraphViewInterface& g,
         const SISORegionInfo& r)
     {
-        (void)g; // 目前没用到 g，本函数只是 dump region 信息
+        (void)g; // Not used yet; this function only dumps region info.
 
         std::ofstream out("siso_info.csv", std::ios::app);
         if (!out.is_open()) {

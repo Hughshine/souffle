@@ -1117,7 +1117,7 @@ inline void json_array_append(json11::Json& arr, const json11::Json& val) {
     const auto& items = arr.array_items();              // const ref
     std::vector<json11::Json> tmp(items.begin(), items.end());
     tmp.push_back(val);
-    arr = json11::Json(std::move(tmp));                 // 重新赋值
+    arr = json11::Json(std::move(tmp));                 // Reassign
 }
 
 #ifdef _MSC_VER

@@ -4,14 +4,14 @@
 - Historical experiment log; not the current behavior.
 - Full-mode rewrite only; incremental modes skip rewrite.
 
-目前graph rewrite pipeline的问题。
+Current issues with the graph rewrite pipeline.
 
-1. siso detection:
-  对于一般的SISO，我们不动SI和SO，只简化中间部分。并减少寻找较大的candidate siso，避免过大的detection开销
-  但我们仍然detect“最简单的siso”，也就是si -> so（只有一边两点的siso），这种siso我们会希望在rewrite时合并si和so为相同节点。同时我们希望正确更新概率。对于这种siso，限制增加，因为要融合si和so，需要保证si/so也满足限制条件（si只有单独的输出/so只有单独的输入）
-2. siso rewrite
-  对于特定的SISO模式，我们避免forward compilation，直接用概率公式计算新的概率，避免开销。
-  同时支持最简子图的融合。
+1. SISO detection:
+  For general SISOs, we do not touch SI and SO and only simplify the middle part. Also reduce the search for large candidate SISOs to avoid excessive detection overhead.
+  But we still detect the "simplest SISO", i.e., si -> so (two nodes, one edge). For this SISO, we want to merge si and so into the same node during rewrite, while correctly updating probabilities. This SISO needs extra constraints because merging si/so requires si/so to satisfy constraints too (si has only a single outgoing edge / so has only a single incoming edge).
+2. SISO rewrite
+  For specific SISO patterns, avoid forward compilation and compute the new probability directly with formulas to avoid overhead.
+  Also support merging the simplest subgraph.
 
 ===
 

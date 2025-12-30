@@ -17,14 +17,14 @@
 #include <algorithm>
 #include <cassert>
 
-// 依赖 DerivationGraph 做 materialize（只在 .h 中使用也没问题）
+// Depends on DerivationGraph for materialize (header-only use is fine).
 #include "souffle/Derivation.h"
 #include "DerivationGraph.h"  // NodePtr/EdgePtr/DerivationGraph/UntypedTuple
 
 using NodeId = std::size_t;
 using EdgeId = std::size_t;
 
-/** 节点键：关系名 + 实参（使用 RamDomain，与 UntypedTuple 保持一致） */
+/** Node key: relation name + arguments (use RamDomain, consistent with UntypedTuple). */
 struct AtomKey {
     std::string rel;
     std::vector<souffle::RamDomain> args;
@@ -53,7 +53,7 @@ struct AtomKeyHash {
         std::hash<souffle::RamDomain> Hd;
         std::size_t h = Hs(k.rel);
         for (auto v : k.args) {
-            // 混合哈希
+            // Mixed hash
             h ^= (Hd(v) + 0x9e3779b97f4a7c15ULL + (h<<6) + (h>>2));
         }
         return h;
@@ -61,11 +61,12 @@ struct AtomKeyHash {
 };
 
 /**
- * 预设图（header-only）
- * - Node = ground 原子
- * - Hyperedge = ground 规则（多输入一输出）
- * - 支持：多次 seed 输入、O(V+E) 传播、剪枝视图（不真正删除边/点）、动态增删边、导出 DOT
- * - materialize(DerivationGraph&): 将当前视图落到工程内已有 DerivationGraph
+ * Preset graph (header-only)
+ * - Node = ground atom
+ * - Hyperedge = ground rule (multiple inputs, one output)
+ * - Supports: repeated seed inputs, O(V+E) propagation, pruned view (no real edge/node deletion),
+ *   dynamic edge add/remove, DOT export
+ * - materialize(DerivationGraph&): project the current view into an existing DerivationGraph
  */
 class PreDerivationGraph {
 public:
@@ -79,7 +80,7 @@ public:
         double probability{1.0};
     };
 
-    /** —— 剪枝视图：只读包装 —— */
+    /** -- Pruned view: read-only wrapper -- */
     class DerivationGraphView {
     public:
         DerivationGraphView(const PreDerivationGraph* g,
@@ -119,14 +120,14 @@ public:
     };
 
 public:
-    // —— 节点 —— //
+    // -- Nodes --
     NodeId addNode(const AtomKey& k, double probability = 1.0) {
         auto it = nodeIdByKey_.find(k);
         if (it != nodeIdByKey_.end()) return it->second;
         NodeId id = nodes_.size();
         nodes_.push_back(k);
         nodeIdByKey_[k] = id;
-        // 扩容状态
+        // Expand state storage
         present_base_.push_back(0);
         present_.push_back(0);
         outEdges_.emplace_back();
@@ -149,7 +150,7 @@ public:
     }
     const AtomKey& key(NodeId id) const { return nodes_.at(id); }
 
-    // —— 超边 —— //
+    // -- Hyperedges --
     EdgeId addEdge(const std::vector<NodeId>& inputs, NodeId output, double prob = 1.0, const std::vector<bool>& negs = {}) {
         EdgeId id = edges_.size();
         if (negs.size() > 0) {
@@ -160,7 +161,7 @@ public:
         }
         edge_need_.push_back(static_cast<uint32_t>(inputs.size()));
         edge_have_.push_back(0);
-        edge_alive_.push_back(0); // recompute 后计算
+        edge_alive_.push_back(0); // Computed after recompute
         for (NodeId u : inputs) {
             if (u >= outEdges_.size()) outEdges_.resize(u + 1);
             outEdges_[u].push_back(id);
@@ -170,7 +171,7 @@ public:
     void enableEdge(EdgeId e, bool en) { edges_.at(e).enabled = en; }
     void removeEdge(EdgeId e) { edges_.at(e).enabled = false; }
 
-    // —— 输入种子（facts） —— //
+    // -- Input seeds (facts) --
     enum class SeedMode { Accumulate, Replace };
 
     void seedFacts(const std::vector<NodeId>& facts, SeedMode mode = SeedMode::Accumulate) {
@@ -209,7 +210,7 @@ public:
         retractFacts(ids);
     }
 
-    // —— 传播 & 剪枝 —— //
+    // -- Propagation & pruning --
     void recompute() {
         std::fill(present_.begin(), present_.end(), 0);
         std::fill(edge_have_.begin(), edge_have_.end(), 0);
@@ -235,7 +236,7 @@ public:
             }
         }
 
-        // alive 边：enabled && 所有 inputs present && output present
+        // Alive edge: enabled && all inputs present && output present
         for (EdgeId e = 0; e < edges_.size(); ++e) {
             const auto& E = edges_[e];
             if (!E.enabled) { edge_alive_[e] = 0; continue; }
@@ -245,10 +246,10 @@ public:
         }
     }
 
-    // —— 只读视图 —— //
+    // -- Read-only view --
     DerivationGraphView view() const { return DerivationGraphView(this, &present_, &edge_alive_); }
 
-    // —— 导出 DOT（present 节点/满足体的边 = 实线；否则虚线） —— //
+    // -- Export DOT (present nodes / edges with body satisfied = solid; otherwise dashed) --
     void toDot(std::ostream& os) const {
         os << "digraph G{\n";
         for (NodeId u = 0; u < nodes_.size(); ++u) {
@@ -289,28 +290,28 @@ public:
         os << "}\n";
     }
 
-    // —— 落到已有 DerivationGraph —— //
+    // -- Materialize into an existing DerivationGraph --
     /**
-     * 将“当前剪枝视图”投影到 DerivationGraph：
-     * - present_[u]==1 的节点 -> createNode(UntypedTuple{...})
-     * - edge_alive_[e]==1 的边 -> createHyperedge(inputs, output)
-     * - 对于 present_base_[u]==1 的节点，额外设置 node->isFact = true
+     * Project the "current pruned view" into DerivationGraph:
+     * - Nodes with present_[u]==1 -> createNode(UntypedTuple{...})
+     * - Edges with edge_alive_[e]==1 -> createHyperedge(inputs, output)
+     * - For nodes with present_base_[u]==1, additionally set node->isFact = true
      */
     // void materialize(IncrementalDerivationGraph& out) const {
-    //     // 1) 为所有可见节点创建/复用 DG 节点
+    //     // 1) Create/reuse DG nodes for all visible nodes
     //     std::vector<NodePtr> id2node(nodes_.size(), nullptr);
     //     for (NodeId u = 0; u < nodes_.size(); ++u) {
     //         if (!present_[u]) continue;
     //         const AtomKey& k = nodes_[u];
-    //         UntypedTuple tup{k.rel, k.args};        // 与示例一致：UntypedTuple{"rel",{args}} :contentReference[oaicite:4]{index=4}
-    //         auto np = out.createNode(tup);                   // 使用现成 API 创建/查找节点 :contentReference[oaicite:5]{index=5}
-    //         if (present_base_[u]) { np->isFact = true; }     // 标注 fact，方便下游区分（dumpJson 会用到） :contentReference[oaicite:6]{index=6}
+    //         UntypedTuple tup{k.rel, k.args};        // Match example: UntypedTuple{"rel",{args}}
+    //         auto np = out.createNode(tup);                   // Use existing API to create/find node
+    //         if (present_base_[u]) { np->isFact = true; }     // Mark fact for downstream (dumpJson uses it)
     //         // probability TODO
     //         np->setProbability(node_probabilities_.at(u));
     //         id2node[u] = np;
     //     }
     //
-    //     // 2) 为所有可见边创建超边
+    //     // 2) Create hyperedges for all visible edges
     //     for (EdgeId e = 0; e < edges_.size(); ++e) {
     //         // negation
     //         // probability
@@ -320,7 +321,7 @@ public:
     //         inputs.reserve(E.inputs.size());
     //         for (NodeId u : E.inputs) {
     //             auto np = id2node[u];
-    //             // 若输入未 present（理论上不会发生），跳过该边
+    //             // If an input is not present (should not happen), skip the edge
     //             if (!np) { inputs.clear(); break; }
     //             inputs.push_back(np);
     //         }
@@ -328,7 +329,7 @@ public:
     //         auto outNode = id2node[E.output];
     //         if (!outNode) continue;
     //
-    //         // 使用不带 Rule 的便捷重载创建超边（够用） :contentReference[oaicite:7]{index=7}
+    //         // Use the convenience overload without Rule (sufficient here)
     //         // TODO: should unify id type
     //         auto edge = out.createHyperedge(inputs, outNode, nullptr, E.bodyNegations, {static_cast<souffle::RamDomain>(e), {}});
     //         // TODO
@@ -337,16 +338,16 @@ public:
     // }
 
     void materialize(IncrementalDerivationGraph& out) const {
-        // --- 准备阶段：清空上一轮的增量信息，并记录旧状态 ---
+        // --- Prep: clear previous incremental info and capture old state ---
         out.deltaInsertNodes.clear();
         out.deltaInsertEdges.clear();
         out.deltaDeleteNodes.clear();
         out.deltaDeleteEdges.clear();
 
-        std::unordered_set<NodePtr> oldNodes = out.nodes; // 直接访问
-        std::unordered_set<EdgePtr> oldEdges = out.edges; // 直接访问
+        std::unordered_set<NodePtr> oldNodes = out.nodes; // Direct access
+        std::unordered_set<EdgePtr> oldEdges = out.edges; // Direct access
 
-        // --- 第一步：处理节点（增、删、改） ---
+        // --- Step 1: handle nodes (add/delete/update) ---
         std::vector<NodePtr> id2node(nodes_.size(), nullptr);
         for (NodeId u = 0; u < nodes_.size(); ++u) {
             if (!present_[u]) continue;
@@ -365,7 +366,7 @@ public:
         }
         out.deltaDeleteNodes.insert(oldNodes.begin(), oldNodes.end());
 
-        // --- 第二步：处理边（增、删、改） ---
+        // --- Step 2: handle edges (add/delete/update) ---
         for (EdgeId e = 0; e < edges_.size(); ++e) {
             if (!edge_alive_[e]) continue;
             const auto& E = edges_[e];
@@ -402,8 +403,8 @@ public:
         }
         out.deltaDeleteEdges.insert(oldEdges.begin(), oldEdges.end());
 
-        // --- 第三步：执行实际的删除操作，使图结构一致 ---
-        // 1. 删除边
+        // --- Step 3: perform actual deletions to keep graph consistent ---
+        // 1. Delete edges
         for (const auto& edgeToDelete : out.deltaDeleteEdges) {
             edgeToDelete->getOutput()->getIncomingEdges().erase(
                 std::remove(edgeToDelete->getOutput()->getIncomingEdges().begin(), edgeToDelete->getOutput()->getIncomingEdges().end(), edgeToDelete),
@@ -414,24 +415,24 @@ public:
                     std::remove(inputNode->getOutgoingEdges().begin(), inputNode->getOutgoingEdges().end(), edgeToDelete),
                     inputNode->getOutgoingEdges().end());
             }
-            out.edges.erase(edgeToDelete); // 直接访问 out.edges
-            // 注意：仍然无法清理 edgeKeyToEdgeMap，因为它需要 Rule 信息来重建 key
+            out.edges.erase(edgeToDelete); // Direct access to out.edges
+            // Note: still cannot clean edgeKeyToEdgeMap because it needs Rule info to rebuild the key
         }
 
-        // 2. 删除节点
+        // 2. Delete nodes
         for (const auto& nodeToDelete : out.deltaDeleteNodes) {
-            out.tupleToNodeMap.erase(nodeToDelete->getTuple()); // 直接访问
-            out.nodes.erase(nodeToDelete); // 直接访问
+            out.tupleToNodeMap.erase(nodeToDelete->getTuple()); // Direct access
+            out.nodes.erase(nodeToDelete); // Direct access
         }
     }
 
 
-    // —— 统计/访问器 —— //
+    // -- Stats/accessors --
     std::size_t numNodes() const { return nodes_.size(); }
     std::size_t numEdges() const { return edges_.size(); }
 
-    const std::vector<AtomKey>& allNodes() const { return nodes_; }      // 全集（即使未接边）
-    const std::vector<Edge>&    allEdges() const { return edges_; }      // 全集（即使被禁用）
+    const std::vector<AtomKey>& allNodes() const { return nodes_; }      // Full set (even if unconnected)
+    const std::vector<Edge>&    allEdges() const { return edges_; }      // Full set (even if disabled)
 
 private:
     void ensureNodeSize(NodeId id) {
@@ -443,21 +444,21 @@ private:
     }
 
 private:
-    // 节点全集（包含未接边节点，便于之后快速连边）
+    // All nodes (including unconnected nodes, for fast edge linking later)
     std::vector<AtomKey> nodes_;
     std::unordered_map<AtomKey, NodeId, AtomKeyHash> nodeIdByKey_;
 
-    // 边全集
+    // All edges
     std::vector<Edge> edges_;
 
-    // 出边索引：node -> [edges...]
+    // Outgoing edge index: node -> [edges...]
     std::vector<std::vector<EdgeId>> outEdges_;
 
-    // 运行期状态
-    std::vector<uint8_t> present_base_; // 输入/显式事实
-    std::vector<uint8_t> present_;      // 闭包可达（base + 推导）
+    // Runtime state
+    std::vector<uint8_t> present_base_; // Input/explicit facts
+    std::vector<uint8_t> present_;      // Closure reachable (base + derived)
 
-    // 边计数与剪枝标记
+    // Edge counts and pruning flags
     std::vector<uint32_t> edge_need_;
     std::vector<uint32_t> edge_have_;
     std::vector<uint8_t>  edge_alive_;

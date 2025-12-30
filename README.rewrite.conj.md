@@ -1,508 +1,508 @@
 ## Scope
-- 设计说明/规划文档；非当前实现。
-- 仅适用于 full-mode rewrite；增量模式不执行 rewrite。
+- Design/plan document; not the current implementation.
+- Full-mode rewrite only; incremental modes do not perform rewrite.
 
-技术说明：SISO + Fact-Prefix + 纯合取区域的 DD 分解
-0. 背景与目标
+Technical note: DD decomposition for SISO + Fact-Prefix + pure-conjunctive regions
+0. Background and goals
 
-现有 pipeline 的核心目标是：在构造 DD（BDD/SDD）时，对 derivation graph 做结构分解，减少需要同时考虑的随机变量数，从而让 forward compilation 可扩展。
+The core goal of the existing pipeline is: when constructing DDs (BDD/SDD), structurally decompose the derivation graph to reduce the number of random variables that must be considered at once, making forward compilation scalable.
 
-目前已经有两条“结构化分解”的路径：
+There are currently two "structured decomposition" paths:
 
-SISO 区域（entry→exit）
+SISO region (entry->exit)
 
-GraphAnalyzer 在 derivation graph 上识别 SISO 子图；
+GraphAnalyzer identifies SISO subgraphs in the derivation graph;
 
-GraphRewriter 在局部子图上用 forward compilation + WMC 求出 Pr(exit | entry)，将整个区域压缩成一条 summary hyperedge entry -> exit。
+GraphRewriter uses forward compilation + WMC on the local subgraph to compute Pr(exit | entry), and compresses the whole region into a summary hyperedge entry -> exit.
 
-Fact-Prefix 区域（从 input facts 到某个中间节点 b 的锥）
+Fact-prefix region (cone from input facts to an intermediate node b)
 
-对某个节点 b，构造它的 backward reachable 子图直到 fact frontier；
+For a node b, build its backward reachable subgraph to the fact frontier;
 
-在这块子图上做局部 forward compilation + WMC 求 Pr(b)，把 b 重写为有概率的 fact，并删除 cone 内其它节点/边。
+Run local forward compilation + WMC on this subgraph to compute Pr(b), rewrite b into a probabilistic fact, and delete other nodes/edges in the cone.
 
-这份文档要补的是第三条 fast path：
+This document adds a third fast path:
 
-纯合取（pure-conjunctive） backward 区域
+Pure-conjunctive backward region
 
-对某个节点 b，如果它的 backward reachable 区域是“无环 + 无 disjunction + 公式结构是纯合取”的，则
+For a node b, if its backward reachable region is "acyclic + no disjunction + formula is purely conjunctive", then
 
-不使用 DD，只通过一次 backward DFS/收集随机变量 + 简单乘积就能算出 Pr(b)；
+Do not use DD; compute Pr(b) via one backward DFS, collect random variables, and multiply directly;
 
-然后重用 Fact-Prefix 的重写逻辑，把 b 变成 fact。
+Then reuse Fact-Prefix rewrite to turn b into a fact.
 
-目标是：在保持语义正确的前提下，避免在简单结构上反复构造 BDD，减少 CUDD 开销。
+Goal: preserve semantics while avoiding repeated BDD construction on simple structures, reducing CUDD overhead.
 
-1. 概念与语义：什么是“纯合取 backward 区域”？
+1. Concept and semantics: what is a "pure-conjunctive backward region"?
 
-对象：给定当前 view（IncSubgraphView）中的一个节点 b。
+Object: given a node b in the current view (IncSubgraphView).
 
-考虑 b 在 view 中的 backward reachable 子图 R(b)，即：
+Consider the backward reachable subgraph R(b) in the view:
 
-从 b 出发沿 getIncomingEdges 反向走，
+Start at b and traverse getIncomingEdges backward,
 
-一直走到 boundary（通常是 input facts：isFact=true && in-degree=0）为止，
+Continue until the boundary (usually input facts: isFact=true && in-degree=0),
 
-收集经过的节点和边得到的子图。
+Collect visited nodes and edges into a subgraph.
 
-我们把下面满足条件的 R(b) 定义为“纯合取 backward 区域”：
+We define R(b) as a "pure-conjunctive backward region" if it satisfies:
 
-无 disjunction（按节点）
-对 R(b) 中的每个节点 v，在当前 view 上：
+No disjunction (per node)
+For each node v in R(b), in the current view:
 
-|incomingEdges(v)| ≤ 1
+|incomingEdges(v)| <= 1
 
-即：无 “同一结论有多条规则推导”的情形。
+That is, no "multiple rules deriving the same conclusion".
 
-在你当前构图里，input facts 不会有 incoming edges，因此不会出现 “fact + rule 同时定义同一 node”的混合 disj。
+In the current graph, input facts have no incoming edges, so there is no mixed disjunction of "fact + rule defining the same node".
 
-在正依赖图上无环（对 region 本身）
+Acyclic in the positive dependency graph (for the region itself)
 
-对 R(b) 中的每个节点 v，全局 SCC 信息显示：
+For each node v in R(b), global SCC info shows:
 
-sccSize[v] == 1 且没有 self-loop；
+sccSize[v] == 1 and no self-loop;
 
-换句话说：R(b) 在“正依赖图”里是一个 DAG，不包含任何非平凡 SCC 节点。
+In other words, R(b) is a DAG in the positive dependency graph and contains no non-trivial SCC nodes.
 
-外部其它地方（前一个 stratum 等）可以有环，只要这些节点不在 R(b) 内。
+Other parts (previous strata, etc.) may have cycles as long as those nodes are not inside R(b).
 
-公式结构是纯合取，不出现 OR
+Formula structure is purely conjunctive, no OR
 
-每条规则边 e: inputs -> out 的语义仍然是：
-F_e = X_e ∧ (∧_{u∈inputs} F_u)（X_e 是边上的 coin）；
+For each rule edge e: inputs -> out, the semantics is still:
+F_e = X_e ∧ (∧_{u∈inputs} F_u) (X_e is the edge coin);
 
-对于 v，因为 |In(v)| ≤ 1，要么没有规则（fact），要么仅有一条规则：
-F_v = F_e；
+For v, because |In(v)| <= 1, it either has no rule (fact), or exactly one rule:
+F_v = F_e;
 
-在整个 R(b) 无环的前提下递归展开，最终 F_b 的结构是
+With R(b) acyclic, recursively expanding yields:
 F_b ≡ ∧_i L_i
-其中每个 L_i 是某个 primitive 随机变量的正字面 X 或负字面 ¬X（见 negation 限制）。
+where each L_i is a positive literal X or negative literal ¬X of a primitive random variable (see negation constraints).
 
-negation 限制：只对 primitive fact 取反
+Negation constraint: only negate primitive facts
 
-对规则体中的 not A，只允许 A 是 fact 且在 R(b) 内不再有自己的规则推导（即 A 在 region 内是“原子的”）；
+For not A in a rule body, only allow A to be a fact and to have no further rule derivations in R(b) (i.e., A is "atomic" in the region);
 
-在这种情况下，not A 的公式直接是 ¬X_A，仍然是一个 literal；
+In that case, not A's formula is simply ¬X_A, still a literal;
 
-一旦发现 not 作用在某个非 fact 的中间节点上（该节点有自己的子公式），这块 region 就不能被认为是纯合取，需要 fallback 到 BDD。
+If not applies to a non-fact intermediate node (with its own subformula), the region is not pure-conjunctive and should fall back to BDD.
 
-在这些条件下，F_b 真正是一个“一堆 literal 的 conjuction”：
+Under these conditions, F_b is truly a "conjunction of literals":
 
 F_b = ∧_{v∈P} X_v ∧ ∧_{u∈N} ¬X_u
 
-其中：
+Where:
 
-P：正向出现的 primitive 随机变量集合（fact coin + edge coin）；
+P: set of primitive random variables appearing positively (fact coin + edge coin);
 
-N：负向出现的 primitive 随机变量集合。
+N: set of primitive random variables appearing negatively.
 
-如果某个变量同时在 P 和 N 中出现，就有 X ∧ ¬X ≡ False，于是 Pr(F_b)=0。
+If a variable appears in both P and N, then X ∧ ¬X ≡ False, and Pr(F_b)=0.
 
-在随机变量两两独立的假设下（你目前的模型假设），可以直接计算：
+Under the independent-variable assumption (the current model assumption), we can directly compute:
 
 Pr(F_b) = ∏_{v∈P} p_v × ∏_{u∈N} (1 - p_u)
 
-这里 p_v 是对应 fact 或 edge coin 的概率。
+Here p_v is the probability of the corresponding fact or edge coin.
 
-2. 全局预备：SCC 信息与“trivially acyclic”判定
+2. Global prerequisites: SCC info and "trivially acyclic" predicate
 
-为了检测“region 内无环”，建议复用已有的 SCC 基础设施：
+To detect "acyclic in the region", reuse existing SCC infrastructure:
 
-在构建 derivation graph / CycleDependencyGraph 时，全局做一次 SCC 分析（你已经在 forward compilation 前做过类似事情）。
+When building the derivation graph / CycleDependencyGraph, run a global SCC analysis once (as already done before forward compilation).
 
-对每个 node 记录：
+Record for each node:
 
-sccId[node]：所在 SCC 的 id；
+sccId[node]: SCC id;
 
-sccSize[sccId]：该 SCC 的节点数；
+sccSize[sccId]: number of nodes in the SCC;
 
-hasSelfLoop[node]：是否存在 self-loop edge。
+hasSelfLoop[node]: whether it has a self-loop edge.
 
-对 GraphRewriter 暴露一个轻量接口概念（不必严格按照这里的函数名来）：
+Expose a lightweight interface concept to GraphRewriter (names can vary):
 
 bool isTriviallyAcyclic(NodePtr v)
 
-语义：sccSize[v] == 1 && !hasSelfLoop[v]；
+Semantics: sccSize[v] == 1 && !hasSelfLoop[v];
 
-在 pure-conj 检测中，我们对 region 内每个节点都要求 isTriviallyAcyclic(v) 为真。
+In pure-conj detection, every node in the region must satisfy isTriviallyAcyclic(v).
 
-要点：
-“无环”约束的是 region 自身，而不是全图或当前 stratum；
-其它 stratum 或图的其他部分可以有环，只要不被纳入本次要使用 pure-conj 的 region。
+Key points:
+"Acyclic" constrains the region itself, not the whole graph or current stratum;
+Other strata or other parts of the graph may have cycles as long as they are not included in the pure-conj region.
 
-3. 检测纯合取 backward 区域：构造 R(b)
+3. Detect pure-conj backward region: construct R(b)
 
-在 GraphRewriter 中，为某个节点 b 尝试 pure-conj fast path 时，需要先构造它的 backward 区域 R(b) 并进行结构检查。建议流程：
+In GraphRewriter, when trying the pure-conj fast path for node b, first construct its backward region R(b) and check structure. Suggested flow:
 
-3.1 backward BFS/DFS 构造
+3.1 Backward BFS/DFS construction
 
-从 b 出发，在当前 view（IncSubgraphView）上做一次 BFS/DFS：
+Start from b, do a BFS/DFS on the current view (IncSubgraphView):
 
-数据结构：
+Data structures:
 
-worklist：节点队列或栈；
+worklist: node queue or stack;
 
-regionNodes：集合（NodePtr 集）；
+regionNodes: set (NodePtr set);
 
-regionEdges：集合（EdgePtr 集）。
+regionEdges: set (EdgePtr set).
 
-伪流程（概念）：
+Pseudo flow (concept):
 
-初始化：
+Init:
 
-把 b 放进 worklist 和 regionNodes；
+Put b into worklist and regionNodes;
 
-如果 !isTriviallyAcyclic(b)，则直接放弃 pure-conj fast path。
+If !isTriviallyAcyclic(b), abort pure-conj fast path.
 
-循环：
-从 worklist 取出一个 v：
+Loop:
+Pop v from worklist:
 
-检查 isTriviallyAcyclic(v)：
+Check isTriviallyAcyclic(v):
 
-若否：说明 v 所在 SCC 有环，这个 region 不适合 pure-conj，整个构造 abort（返回“非纯合取”）；
+If false: v's SCC has a cycle; this region is not suitable for pure-conj; abort construction (return "not pure-conj");
 
-查询它在当前 view 上的 incoming edges：
+Query incoming edges in the current view:
 
-如果 |incomingEdges(v)| > 1：说明存在 disjunction（多个规则推出同一结论），abort；
+If |incomingEdges(v)| > 1: disjunction exists (multiple rules derive the same conclusion), abort;
 
-若 |incomingEdges(v)| == 0：
+If |incomingEdges(v)| == 0:
 
-v 是 boundary：
+v is boundary:
 
-在你当前系统中，这意味着是一个 input fact（isFact=true，in-degree=0）；
+In the current system this means an input fact (isFact=true, in-degree=0);
 
-在 pure-conj 场景下，这很好：到此为止，不再往前扩展；
+In the pure-conj scenario this is fine: stop expanding.
 
-若 |incomingEdges(v)| == 1：设 e 为唯一入边：
+If |incomingEdges(v)| == 1: let e be the unique incoming edge:
 
-将 e 加入 regionEdges；
+Add e to regionEdges;
 
-对 e->getInputs() 中每个源 node u：
+For each source node u in e->getInputs():
 
-加入 regionNodes；
+Add u to regionNodes;
 
-如果 u 不是 fact，则放入 worklist 继续 backward；
+If u is not a fact, push to worklist and continue backward;
 
-如果 u 是 fact（isFact=true 且无入边），就当作 boundary，不继续。
+If u is a fact (isFact=true and no incoming edges), treat as boundary and do not continue.
 
-限制条件：
-在构建过程中可以加规模阈值防止 region 过大，如：
+Constraints:
+During construction, add size thresholds to prevent the region from becoming too large, e.g.:
 
-regionNodes.size() <= SOUFFLE_PURE_CONJ_MAX_NODES；
+regionNodes.size() <= SOUFFLE_PURE_CONJ_MAX_NODES;
 
-regionEdges.size() <= SOUFFLE_PURE_CONJ_MAX_EDGES；
-超过就 abort，退回 BDD 流程。
+regionEdges.size() <= SOUFFLE_PURE_CONJ_MAX_EDGES;
+If exceeded, abort and fall back to BDD.
 
-最终，如果整个过程未早期 abort，则得到：
+Finally, if no early abort, we obtain:
 
-regionNodes：R(b) 内所有节点；
+regionNodes: all nodes in R(b);
 
-regionEdges：R(b) 内所有边；
-同时我们已经确保了：
+regionEdges: all edges in R(b);
+and we have ensured:
 
-region 内无环（所有 v trivially acyclic）；
+region is acyclic (all v trivially acyclic);
 
-region 内任何 v 的 in-degree ≤ 1（在 view 上无 disj）；
+every v in region has in-degree <= 1 (no disj in view);
 
-boundary 节点都是 facts（不会继续向前扩展）；
+boundary nodes are facts (do not expand further);
 
-region 的拓扑结构本质上就是一个从 b 流向 facts 的 DAG。
+the region topology is a DAG flowing from b to facts.
 
-3.2 negation 的额外约束（在下一步 probability 阶段处理）
+3.2 Additional negation constraints (handled in the next probability stage)
 
-构造 R(b) 时暂时不处理 negation，只保证结构无环、无 disj、boundary 为 fact。
+When constructing R(b), ignore negation for now; only ensure the structure is acyclic, disj-free, and boundary nodes are facts.
 
-在后面的“概率计算”阶段，如果发现：
+In the later "probability computation" stage, if you find:
 
-某条边的 body negation 作用在一个非 fact 节点上；
+a body's negation applies to a non-fact node;
 
-或者 negation 涉及的 fact 在 region 中还有规则继续推导（不是 primitive），
+or a negated fact still has further derivations in the region (not primitive),
 
-则认为这个 region 在公式级别不再是“纯 literal 的合取”，需要 fallback 到 BDD。
+then the region is no longer a "pure literal conjunction" at the formula level, and should fall back to BDD.
 
-4. 在纯合取 region 上计算 Pr(b)：literal 收集与乘积
+4. Compute Pr(b) on a pure-conj region: literal collection and product
 
-在 R(b) 上，假设满足上述结构条件，现在要计算 Pr(b)，不通过 DD，而是直接 closed form。
+On R(b), assuming the above structural conditions hold, compute Pr(b) without DD, using a closed form.
 
-4.1 primitive 随机变量与 VarId
+4.1 Primitive random variables and VarId
 
-需要一个对 primitive 随机事件的统一标识：
+Need a unified identifier for primitive random events:
 
-每个 probabilistic fact（0<p<1）对应一个 VarId；
+Each probabilistic fact (0<p<1) corresponds to a VarId;
 
-每条 probabilistic edge（0<p<1）对应一个 VarId；
+Each probabilistic edge (0<p<1) corresponds to a VarId;
 
-可以用适当的整数 id 或 std::pair<kind,id>，具体由现有实现决定。
+Use an integer id or std::pair<kind,id>, depending on the current implementation.
 
-并提供：
+Provide:
 
-double getProbability(VarId v)：返回该随机事件的 p；
+double getProbability(VarId v): return p for that random event;
 
-VarId varOfFact(NodePtr fact)；
+VarId varOfFact(NodePtr fact);
 
-VarId varOfEdge(EdgePtr edge)。
+VarId varOfEdge(EdgePtr edge).
 
-4.2 literal 集合：正负集合 + 矛盾检查
+4.2 Literal sets: positive/negative sets + contradiction checks
 
-在 R(b) 上构造公式：
+Construct the formula on R(b):
 
 F_b = ∧_i L_i
 L_i ∈ {X, ¬X}
 
-我们维护两个集合：
+Maintain two sets:
 
-posVars：出现为 X 的 VarId 集合；
+posVars: VarId set appearing as X;
 
-negVars：出现为 ¬X 的 VarId 集合。
+negVars: VarId set appearing as ¬X.
 
-规则：
+Rules:
 
-遍历 region 内所有 edge：
+Traverse all edges in the region:
 
-对每条边 e：
+For each edge e:
 
-若 0 < prob(e) < 1：
+If 0 < prob(e) < 1:
 
-取 ve = varOfEdge(e)；
+Let ve = varOfEdge(e);
 
-插入到 posVars；
+Insert into posVars;
 
-如果 ve 已在 negVars 中，则 X ∧ ¬X ≡ False，直接判定 Pr(b)=0，结束 fast path。
+If ve is already in negVars, then X ∧ ¬X ≡ False, immediately set Pr(b)=0 and end the fast path.
 
-处理 body negations：
+Handle body negations:
 
-对每个 not A：
+For each not A:
 
-要求 A 是 fact 且在 region 中没有进一步 incoming edges（之前构造中已经保证 A 是 boundary fact）；
+Require A is a fact and has no further incoming edges in the region (construction already ensured A is a boundary fact);
 
-取 va = varOfFact(A)，插入 negVars；
+Let va = varOfFact(A), insert into negVars;
 
-若 va 已在 posVars 中，同样说明 X ∧ ¬X，Pr(b)=0。
+If va is already in posVars, again X ∧ ¬X, Pr(b)=0.
 
-遍历 region 内所有 fact 节点：
+Traverse all fact nodes in the region:
 
-对每个 fact f：
+For each fact f:
 
-若 0 < prob(f) < 1：
+If 0 < prob(f) < 1:
 
-取 vf = varOfFact(f)，插入 posVars；
+Let vf = varOfFact(f), insert into posVars;
 
-若 vf 已在 negVars，则 Pr(b)=0。
+If vf is already in negVars, Pr(b)=0.
 
-如果在上述步骤中没有出现正负矛盾，则得到一组 self-consistent 的正/负 literal。
+If no positive/negative contradictions arise, we have a self-consistent set of positive/negative literals.
 
-4.3 概率乘积
+4.3 Probability product
 
-在变量独立假设下：
+Under the variable independence assumption:
 
 Pr(F_b) = ∏_{v∈posVars} p_v × ∏_{u∈negVars} (1 - p_u)
 
-实现上：
+Implementation:
 
-遍历 posVars，累乘 p_v；
+Iterate posVars, multiply p_v;
 
-遍历 negVars，累乘 (1 - p_v)；
+Iterate negVars, multiply (1 - p_v);
 
-若中途有任何 p_v 是 0 或 1，按正常乘法处理（等价于一些 literal 实际上是常量）。
+If any p_v is 0 or 1, normal multiplication handles it (some literals are effectively constants).
 
-如果已经判定 X ∧ ¬X 情况，直接返回 0。
+If X ∧ ¬X was already detected, return 0.
 
-4.4 fast path vs fallback
+4.4 Fast path vs fallback
 
-如果在 literal 收集过程中发现以下情况之一：
+If during literal collection you encounter any of:
 
-negation 作用在非 fact 上（或在 region 内 fact 又有规则推导）；
+negation on a non-fact (or a fact that still has derivations in the region);
 
-不能为某个节点/edge 分配明确的 VarId；
+cannot assign a clear VarId to some node/edge;
 
-或者其它实现上无法处理的复杂情况（比如未来扩展出的新构造）；
+or other implementation-complex cases (e.g., future extensions);
 
-则应当放弃纯合取 fast path，回退到原来的 BDD-based computeRegionMarginalProbability，保持语义正确。
+then abandon the pure-conj fast path and fall back to the original BDD-based computeRegionMarginalProbability to preserve correctness.
 
-5. 与 GraphRewriter / Pipeline 的集成建议
-5.1 集成点：fact-prefix pass
+5. Integration suggestions with GraphRewriter / Pipeline
+5.1 Integration point: fact-prefix pass
 
-目前 GraphRewriter 大致有两类 rewrite：
+Currently GraphRewriter roughly has two rewrite types:
 
-Fact-prefix 区域重写：
+Fact-prefix region rewrite:
 
-构造从 exit=b backward 到 fact frontier 的 region；
+Construct a region by walking backward from exit=b to the fact frontier;
 
-用 BDD 在 region 上算 Pr(b)；
+Use BDD on the region to compute Pr(b);
 
-把 b 设成 fact(prob=Pr(b))，删除 region 内其它节点/边。
+Set b as fact(prob=Pr(b)) and delete other nodes/edges in the cone.
 
-entry→exit SISO 重写：
+Entry->exit SISO rewrite:
 
-对 GraphAnalyzer 找出的 SISO region，算 Pr(exit|entry)，插入 summary edge。
+For a SISO region found by GraphAnalyzer, compute Pr(exit|entry) and insert a summary edge.
 
-新的 pure-conj fast path 自然放在 fact-prefix 重写逻辑内部，作为一个“先试 cheap 路径，失败再跑 BDD”的分支：
+The new pure-conj fast path naturally fits inside fact-prefix rewrite as a "try cheap path first, fall back to BDD" branch:
 
-对每个 candidate exit 节点 b：
+For each candidate exit node b:
 
-先用上一节的 pure-conj 检测构造 R(b)（regionNodes/regionEdges）：
+First construct R(b) using the pure-conj detection from the previous section (regionNodes/regionEdges):
 
-若构造失败（发现 disj、环、节点数太大等），则跳过 pure-conj，直接走 BDD；
+If construction fails (disj, cycle, region too large, etc.), skip pure-conj and go directly to BDD;
 
-在 R(b) 上尝试纯合取概率计算：
+On R(b), attempt pure-conj probability computation:
 
-若成功（包括 Pr(b)=0 的情况）：
+If successful (including Pr(b)=0 cases):
 
-用现有 fact-prefix rewrite 逻辑把 b 变成 fact，删掉 cone 内其它节点/边；
+Use existing fact-prefix rewrite logic to turn b into a fact and delete the other nodes/edges in the cone;
 
-不再对这个 b 做 BDD；
+Do not run BDD for this b;
 
-若纯合取检测/计算失败（遇到 negation on non-fact 等），则 fallback 到原有 BDD 流程。
+If pure-conj detection/computation fails (negation on non-fact, etc.), fall back to the existing BDD path.
 
-5.2 与 SISO 重写的顺序
+5.2 Order relative to SISO rewrite
 
-建议顺序保持为：
+Recommended order:
 
-一个外层迭代 loop（直到本轮没有任何 rewrite 为止）；
+An outer iteration loop (until no rewrite happens in a round);
 
-每轮中：
+In each round:
 
-先做 fact-prefix + pure-conj fast path；
+First run fact-prefix + pure-conj fast path;
 
-再做 fact-prefix + BDD-based 重写（针对未被 pure-conj 处理的节点）；
+Then run fact-prefix + BDD-based rewrite (for nodes not handled by pure-conj);
 
-最后做 entry→exit SISO 重写；
+Finally run entry->exit SISO rewrite;
 
-若某一轮中三种 rewrite 都没做任何事情，视为达到 fixpoint。
+If in a round none of the three rewrites does anything, consider the fixpoint reached.
 
-这样：
+This way:
 
-纯合取 fast path 是最 cheap 的，优先消除图中的 100% conjunctive 区域；
+The pure-conj fast path is the cheapest and removes 100% conjunctive regions first;
 
-BDD-based fact-prefix 承接剩余的“从 facts 到 b 的 cone”；
+BDD-based fact-prefix handles the remaining "facts-to-b" cones;
 
-SISO 则针对一般的“内部结构复杂、对 entry→exit 可分解”的区域处理。
+SISO handles regions with more complex internal structure but decomposable entry->exit.
 
-5.3 环与 strata 的关系
+5.3 Relation between cycles and strata
 
-实现时不需要显式关心“当前 stratum”和“前一 stratum”的边界，只需要：
+Implementation does not need to explicitly reason about "current stratum" vs "previous stratum" boundaries. Just:
 
-对 region 内每个节点 v 调用“isTriviallyAcyclic(v)”（基于全局 SCC）；
+Call isTriviallyAcyclic(v) for each node v in the region (based on global SCC);
 
-若任何 v 参与非平凡 SCC（不管它本身属于哪个 stratum），这个 region 都不能用 pure-conj fast path；
+If any v participates in a non-trivial SCC (regardless of stratum), the region cannot use the pure-conj fast path.
 
-你当前的构图设置（input facts 无 incoming edges，被 prune 成 boundary）意味着：
+Your current graph setup (input facts have no incoming edges, pruned as boundaries) implies:
 
-backward cone 通常只包含当前 stratum 内的节点和事实；
+Backward cones typically contain only nodes and facts in the current stratum;
 
-前一 stratum 内的有环结构不会出现在 pure-conj 区域中（否则会有规则延伸到这边）。
+Cyclic structures in previous strata will not appear in pure-conj regions (otherwise rules would extend into this region).
 
-6. 运行开关与调参建议
+6. Runtime flags and tuning suggestions
 
-为了便于实验与调试，建议为 pure-conj fast path 增加一个可配置开关和阈值：
+For easier experimentation/debugging, add a configurable switch and thresholds for the pure-conj fast path:
 
-环境变量或选项：
+Environment variables or options:
 
-SOUFFLE_PURE_CONJ_REWRITE（true/false，默认开启）；
+SOUFFLE_PURE_CONJ_REWRITE (true/false, default on);
 
-SOUFFLE_PURE_CONJ_MAX_NODES（默认等于或小于 fact-prefix 的 MAX_NODES）；
+SOUFFLE_PURE_CONJ_MAX_NODES (default equal to or smaller than fact-prefix MAX_NODES);
 
-SOUFFLE_PURE_CONJ_MAX_EDGES；
+SOUFFLE_PURE_CONJ_MAX_EDGES;
 
-SOUFFLE_PURE_CONJ_MAX_RANDOM_VARS（可选：控制 region 内随机变量数的上限，过大时仍交给 BDD）。
+SOUFFLE_PURE_CONJ_MAX_RANDOM_VARS (optional: cap the number of random variables in the region; if too large, still use BDD).
 
-这些配置的读取可以参考现有的 SOUFFLE_SISO_MAX_EDGES、SOUFFLE_FACT_PREFIX_MAX_* 风格。
+Reading these configs can follow existing SOUFFLE_SISO_MAX_EDGES and SOUFFLE_FACT_PREFIX_MAX_* style.
 
-在 rewrite.log 或控制台输出中增加一些统计字段，例如：
+Add statistics in rewrite.log or console output, e.g.:
 
-pureConjRegions：使用了 pure-conj fast path 的区域数；
+pureConjRegions: number of regions that used the pure-conj fast path;
 
-pureConjZeroProbRegions：fast path 算出的 Pr(b)=0 的区域数；
+pureConjZeroProbRegions: number of regions where fast path computed Pr(b)=0;
 
-平均/最大 pureConjRegionNodes/Edges 等。
+average/max pureConjRegionNodes/Edges, etc.
 
-7. 测试与验证建议
-7.1 单元测试
+7. Testing and validation suggestions
+7.1 Unit tests
 
-构造若干小 derivation graph 的例子，覆盖：
+Construct small derivation-graph examples covering:
 
-纯合取 DAG（无 disj、无环）：
+Pure-conj DAG (no disj, no cycles):
 
-例如：a,b 为 facts，c :- a (coin), d :- c,b (coin)，求 Pr(d)。
+Example: a,b are facts, c :- a (coin), d :- c,b (coin), compute Pr(d).
 
-对照：直接用 BDD pipeline vs pure-conj fast path，检查结果一致。
+Compare: BDD pipeline vs pure-conj fast path, ensure results match.
 
-有 disj：
+With disjunction:
 
-d :- a, d :- b；
+d :- a, d :- b;
 
-buildPureConjRegionFrom 应返回“非纯合取”，走 BDD；
+buildPureConjRegionFrom should return "not pure-conj", use BDD;
 
-用 fast path 的话应该被禁止。
+Fast path should be disabled.
 
-有环：
+With cycles:
 
-a :- b, b :- a；
+a :- b, b :- a;
 
-任何包含 a 或 b 的 region 都应被 isTriviallyAcyclic 拦截，不能用 pure-conj fast path。
+Any region containing a or b should be blocked by isTriviallyAcyclic, pure-conj fast path not used.
 
-negation on fact：
+Negation on fact:
 
-p 是 fact，q :- not p；
+p is a fact, q :- not p;
 
-backward region 是 {q, p}，结构无 disj 无环；
+Backward region is {q, p}, structure has no disj and no cycles;
 
-pure-conj 应能识别 literal 集合 {¬X_p}，Pr(q) = 1 - p(p)。
+Pure-conj should identify literals {¬X_p}, Pr(q) = 1 - p(p).
 
-正负同时出现：
+Positive and negative both appear:
 
-构造一个 region 包含 p 和 not p 在同一路径上（例如不同 rule 链合到一个节点），
+Construct a region containing p and not p on the same path (e.g., different rule chains converging to one node),
 
-literal 收集时应 detect 到 X 和 ¬X 同时出现，返回 Pr=0。
+Literal collection should detect X and ¬X appearing together and return Pr=0.
 
-negation on非fact：
+Negation on non-fact:
 
-q :- p, r :- not q；
+q :- p, r :- not q;
 
-在构造 R(r) 时遇到 not q，且 q 不是 fact；
+When constructing R(r), encounter not q and q is not a fact;
 
-此时 tryComputePureConjProbability 应返回“不能处理”（fallback BDD），检查结果与纯 BDD pipeline 一致。
+tryComputePureConjProbability should return "cannot handle" (fallback BDD), check results match pure BDD pipeline.
 
-7.2 集成测试
+7.2 Integration tests
 
-在你已有的 benchmark 上（P9/P10 等）分场景跑：
+On existing benchmarks (P9/P10 etc.) run:
 
-baseline：--rewrite 关闭；
+baseline: --rewrite off;
 
-rewrite without pure-conj：只用现有 fact-prefix + SISO；
+rewrite without pure-conj: only existing fact-prefix + SISO;
 
-rewrite with pure-conj：新 fast path 开启。
+rewrite with pure-conj: new fast path enabled.
 
-比较：
+Compare:
 
-最终 query 的概率结果是否一致；
+Final query probabilities match;
 
-总运行时间、BDD 节点数、memory；
+Total runtime, BDD node count, memory;
 
-pureConjRegions 的数量及平均 region 大小。
+pureConjRegions count and average region size.
 
-8. 总结
+8. Summary
 
-对 Codex 来说，这个改造可以分为三个主要步骤：
+For Codex, this change can be split into three main steps:
 
-接线：
+Wiring:
 
-从现有 CycleDependencyGraph / SCC 结果暴露一个 isTriviallyAcyclic(node) 的接口；
+Expose an isTriviallyAcyclic(node) interface from existing CycleDependencyGraph/SCC results;
 
-在 GraphRewriter 中增加 pure-conj fast path 调用点（优先于 BDD 的 fact-prefix 重写）。
+Add a pure-conj fast path invocation in GraphRewriter (before BDD fact-prefix rewrite).
 
-结构检测：
+Structure detection:
 
-在 view 上，从 exit 节点 backward BFS/DFS 构造 region R(b)；
+In the view, construct region R(b) via backward BFS/DFS from the exit node;
 
-过程中检查：无环（trivial SCC）、无 disj（每节点 in-degree ≤ 1）、boundary 为 fact、规模不超阈值。
+During construction check: acyclic (trivial SCC), no disj (in-degree <= 1), boundary is fact, size within thresholds.
 
-概率计算：
+Probability computation:
 
-遍历 region edges + facts，收集 primitive 随机变量的正负 literal；
+Traverse region edges + facts, collect positive/negative literals of primitive random variables;
 
-若发现同一 VarId 同时正负出现，直接 Pr=0；
+If the same VarId appears in both positive and negative, set Pr=0;
 
-否则按 ∏ p × ∏ (1-p) 乘出 Pr(b)，重用现有 fact-prefix rewrite 把 b 变成 fact。
+Otherwise compute Pr(b) via ∏ p × ∏ (1-p), reuse existing fact-prefix rewrite to turn b into a fact.
 
-所有地方在实现时都应有良好 fallback：任何检测阶段失败，立即退回到已有的 BDD-based 逻辑，从而保证 correctness 优先、优化次之。
+Everywhere, implement robust fallback: if any detection step fails, immediately return to the existing BDD-based logic, ensuring correctness first and optimization second.

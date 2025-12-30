@@ -465,7 +465,7 @@ Own<ram::Statement> UnitTranslator::generateMergeRelations(
 
     // Predicate - insert all values
     for (std::size_t i = 0; i < rel->getArity(); i++) {
-        values.push_back(mk<ram::TupleElement>(0, i));  // TupleElement对应tuple的具体元。这里的逻辑看起来有些冗余，不知道生成代码有没有影响，相当于拆除一个tuple又重建回去。和RAM的设计直接相关。
+        values.push_back(mk<ram::TupleElement>(0, i));  // TupleElement refers to a tuple field. This looks a bit redundant, essentially deconstructing and rebuilding a tuple; it is tied to RAM design.
     }
     auto insertion = mk<ram::Insert>(destRelation, std::move(values));
     auto stmt = mk<ram::Query>(mk<ram::Scan>(srcRelation, 0, std::move(insertion)));
@@ -706,7 +706,7 @@ Own<ram::Statement> UnitTranslator::generateStratumPreamble(const ast::RelationS
     }
 
     // Generate code for priming relation
-    // 初始化delta，将每个relation已有的都变成delta. 它们是可能不为空的，因为可能具有non recursive rules，再前面会先处理掉.
+    // Initialize delta by copying existing relation contents into delta. They may be non-empty due to non-recursive rules, which are handled earlier.
     // INC: initialize delta_deletion, delta_insertion
     for (const ast::Relation* rel : scc) {
         std::string deltaDelRelation = getDeltaDeletionRelationName(rel->getQualifiedName());
@@ -720,7 +720,7 @@ Own<ram::Statement> UnitTranslator::generateStratumPreamble(const ast::RelationS
         }
     }
 
-    // TODO: 不知道debug relation是什么
+    // TODO: not sure what the debug relation is
     for (const ast::Relation* rel : scc) {
         if (const auto* debugRel = context->getDeltaDebugRelation(rel)) {
             const std::string debugRelation = getConcreteRelationName(debugRel->getQualifiedName());
@@ -769,7 +769,7 @@ Own<ram::Statement> UnitTranslator::generateStratumTableUpdates(const ast::Relat
                 mk<ram::Clear>(getDeltaDeletionRelationName(rel->getQualifiedName())),
                     mk<ram::DeltaUnion>(mainRelation, "", mainRelation,
                         "", getNewDeletionRelationName(rel->getQualifiedName()), "", getDeltaDeletionRelationName(rel->getQualifiedName())),
-                        // TODO: 需要把delta同时插入到inc_delta_tuple里；rec的delta和inc的delta不同
+                        // TODO: need to also insert delta into inc_delta_tuple; recursive delta and incremental delta differ
                         generateMergeRelations(rel, getIncDeltaTupleDeleteRelationName(rel->getQualifiedName()), getDeltaDeletionRelationName(rel->getQualifiedName())),
                     mk<ram::Clear>(getNewDeletionRelationName(rel->getQualifiedName())));
             } else {
@@ -1044,21 +1044,21 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratum(
         inc.push_back(mk<ram::Variable>(loop_counter));
         inc.push_back(mk<ram::UnsignedConstant>(1));
         auto increment_counter = mk<ram::Assign>(mk<ram::Variable>(loop_counter),
-                mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(inc)), false);  // counter每一次迭代后的累加
+                mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(inc)), false);  // Counter increment each iteration
         // Add in the main fixpoint loop
         auto loopBody = generateStratumLoopBody(scc, true);
         // loopBody->print(std::cout);
-        auto exitSequence = generateStratumExitSequence(scc, true);  // 每次迭代后，如果new都为空，说明迭代结束，离开循环体；否则更新tables，开始下一次迭代
+        auto exitSequence = generateStratumExitSequence(scc, true);  // If new is empty after an iteration, exit; otherwise update tables and continue.
         // exitSequence->print(std::cout);
-        auto updateSequence = generateStratumTableUpdates(scc, true); // 每次迭代后，将new->真正的table，new->delta, new清空
+        auto updateSequence = generateStratumTableUpdates(scc, true); // After each iteration, move new->table, new->delta, and clear new.
         auto fixpointLoop = mk<ram::Loop>(mk<ram::Sequence>(std::move(loopBody),
                 std::move(exitSequence), std::move(updateSequence), std::move(increment_counter)));
 
-        appendStmt(result, mk<ram::Assign>(mk<ram::Variable>(loop_counter), mk<ram::UnsignedConstant>(1), true));  // counter最初的赋值1
-        appendStmt(result, std::move(fixpointLoop)); // semi-naive 循环计算主体
+        appendStmt(result, mk<ram::Assign>(mk<ram::Variable>(loop_counter), mk<ram::UnsignedConstant>(1), true));  // Initial counter assignment to 1
+        appendStmt(result, std::move(fixpointLoop)); // Semi-naive loop body
         // TODO: delta union only for delete
         // Add in the postamble
-        appendStmt(result, generateStratumPostamble(scc, true)); // 最终删除全部的临时变量
+        appendStmt(result, generateStratumPostamble(scc, true)); // Finally clear all temporary variables
     }
 
     appendStmt(result, generateStratumPreamble(scc, false));
@@ -1075,19 +1075,19 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratum(
         inc.push_back(mk<ram::Variable>(loop_counter));
         inc.push_back(mk<ram::UnsignedConstant>(1));
         auto increment_counter = mk<ram::Assign>(mk<ram::Variable>(loop_counter),
-                mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(inc)), false);  // counter每一次迭代后的累加
+                mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(inc)), false);  // Counter increment each iteration
         // Add in the main fixpoint loop
         auto loopBody = generateStratumLoopBody(scc, false);
-        auto exitSequence = generateStratumExitSequence(scc, false);  // 每次迭代后，如果new都为空，说明迭代结束，离开循环体；否则更新tables，开始下一次迭代
-        auto updateSequence = generateStratumTableUpdates(scc, false); // 每次迭代后，将new->真正的table，new->delta, new清空
+        auto exitSequence = generateStratumExitSequence(scc, false);  // If new is empty after an iteration, exit; otherwise update tables and continue.
+        auto updateSequence = generateStratumTableUpdates(scc, false); // After each iteration, move new->table, new->delta, and clear new.
         auto fixpointLoop = mk<ram::Loop>(mk<ram::Sequence>(std::move(loopBody),
                 std::move(exitSequence), std::move(updateSequence), std::move(increment_counter)));
 
-        appendStmt(result, mk<ram::Assign>(mk<ram::Variable>(loop_counter), mk<ram::UnsignedConstant>(1), true));  // counter最初的赋值1
-        appendStmt(result, std::move(fixpointLoop)); // semi-naive 循环计算主体
+        appendStmt(result, mk<ram::Assign>(mk<ram::Variable>(loop_counter), mk<ram::UnsignedConstant>(1), true));  // Initial counter assignment to 1
+        appendStmt(result, std::move(fixpointLoop)); // Semi-naive loop body
         // TODO: delta union only for delete
         // Add in the postamble
-        appendStmt(result, generateStratumPostamble(scc, false)); // 最终删除全部的临时变量
+        appendStmt(result, generateStratumPostamble(scc, false)); // Finally clear all temporary variables
 
     }
     // TODO derv delta to tuple delta

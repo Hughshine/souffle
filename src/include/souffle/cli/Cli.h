@@ -1099,23 +1099,23 @@ public:
             return;
         }
 
-        // 将原始的、可能包含多行的输入添加到历史记录（只加一次）
+        // Add the raw input (possibly multi-line) to history (only once).
         add_history(line);
 
-        // 将 C 字符串转换为 C++ 字符串流，以便按行分割
+        // Convert C string to a C++ stringstream for line splitting.
         std::stringstream ss(line);
-        free(line); // 转换后立刻释放内存
+        free(line); // Free memory immediately after conversion.
 
         std::string single_command;
-        // 使用 std::getline 循环分割字符串
+        // Use std::getline to split lines.
         while (instance->running && std::getline(ss, single_command)) {
-            // 有时行尾会带有\r字符，这里做个简单的清理
+            // Line endings may include '\r'; trim it.
             if (!single_command.empty() && single_command.back() == '\r') {
                 single_command.pop_back();
             }
 
             if (!single_command.empty()) {
-                // 逐行处理分割出来的命令
+                // Process each split command line.
                 instance->running = instance->processCommand(single_command);
             }
         }
@@ -1138,21 +1138,21 @@ public:
             }
             return;
         }
-        // 1. 安装回调处理器
-        //    参数1: 交互式提示符
-        //    参数2: 指向我们上面定义的 line_handler 函数的指针
+        // 1. Install the callback handler.
+        //    Arg 1: interactive prompt
+        //    Arg 2: pointer to the line_handler defined above
         rl_callback_handler_install("> ", line_handler);
 
-        // 2. 进入主事件循环
+        // 2. Enter the main event loop.
         while (this->running) {
             fd_set fds;
             FD_ZERO(&fds);
-            FD_SET(STDIN_FILENO, &fds); // STDIN_FILENO 是标准输入的文件描述符，通常是 0
+            FD_SET(STDIN_FILENO, &fds); // STDIN_FILENO is the file descriptor for stdin, usually 0.
 
             int result = select(STDIN_FILENO + 1, &fds, NULL, NULL, NULL);
 
-            if (result < 0) { // 如果 select 出错
-                perror("select"); // 打印错误信息
+            if (result < 0) { // If select fails
+                perror("select"); // Print error info
                 break;
             }
 
@@ -1161,7 +1161,7 @@ public:
             }
         }
 
-        // 5. 程序即将退出，清理并移除回调处理器
+        // 5. On exit, clean up and remove the callback handler.
         rl_callback_handler_remove();
     }
 

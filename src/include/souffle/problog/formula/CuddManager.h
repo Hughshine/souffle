@@ -448,7 +448,7 @@ std::shared_ptr<DdManager> WeightedBDDManager::initManager() {
     resetReorderingState();
     // could make this static, TODO
 //    DdManager* m = Cudd_Init(0, 0, 4096 * 2, 2048 * 2024, 32UL * 1024 * 1024 * 1024);
-    // 这些参数对性能的影响很复杂。memory设置太大会减少gc=>reordering，reordering不频繁不好，太频繁也不好.
+    // These parameters have complex performance effects. Too much memory reduces GC => reordering; too infrequent reordering is bad, but too frequent is also bad.
 //    DdManager* m = Cudd_Init(0, 0, 4096, 1 << 24, 32UL * 1024 * 1024 * 1024);
 //    Cudd_SetMaxCacheHard(m, 10000000);
     // Preallocate ~1000 BDD vars to reduce ithVar expansions.
@@ -684,29 +684,29 @@ BddNodeRef WeightedBDDManager::makeCondition(const BddNodeRef& f,
 
 void WeightedBDDManager::postprocessUselessVariables(const std::set<int>& condVars) {
     DdManager* dd = manager.get();
-    int n = Cudd_ReadSize(dd);  // 当前BDD变量个数
+    int n = Cudd_ReadSize(dd);  // Current BDD variable count
     assert(n > 0);
-    // 获取当前的变量顺序（每一层对应的变量索引）
+    // Get current variable order (variable index per level).
     std::vector<int> currentOrder(n);
     for (int level = 0; level < n; ++level) {
         int var = Cudd_ReadInvPerm(dd, level);
-        // 检查是否越界或非法
+        // Check bounds/validity.
         assert(var >= 0 && var < n);
         currentOrder[level] = var;
     }
 
-    // 构造新的排列：将condVars中的变量移到前面，其他变量顺序不变
+    // Construct a new order: move condVars to the front, keep others' relative order.
     std::vector<int> newOrder;
     newOrder.reserve(n);
 
-    // 先添加需前置的变量（按它们在当前顺序中的出现顺序）
+    // Add front variables in their current order.
     for (int var : currentOrder) {
         if (condVars.count(var)) {
             assert(var >= 0 && var < n);
             newOrder.push_back(var);
         }
     }
-    // 再添加其余变量
+    // Then add the remaining variables.
     for (int var : currentOrder) {
         if (!condVars.count(var)) {
             assert(var >= 0 && var < n);
@@ -714,10 +714,10 @@ void WeightedBDDManager::postprocessUselessVariables(const std::set<int>& condVa
         }
     }
 
-    // 最终长度必须等于n
+    // Final length must equal n.
     assert(static_cast<int>(newOrder.size()) == n);
 
-    // 调用CUDD函数调整变量顺序
+    // Call CUDD to reorder variables.
     int result = Cudd_ShuffleHeap(dd, newOrder.data());
     if (result != 1) {
         throw std::runtime_error("Cudd_ShuffleHeap failed to reorder variables");

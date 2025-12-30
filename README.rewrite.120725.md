@@ -1,87 +1,87 @@
 ## Scope
-- 历史记录（2025-12-07）；非当前实现的权威描述。
-- 仅适用于 full-mode rewrite；增量模式不执行 rewrite。
+- Historical record (2025-12-07); not an authoritative description of the current implementation.
+- Applies only to full-mode rewrite; incremental modes do not perform rewrite.
 
-## 背景 / 用法
-- 核心代码：`src/include/souffle/problog/GraphAnalyzer.h`（SISO 检测），`GraphRewriter.h`（重写与后处理），`Pipeline.h`（管线计时），`Plan.md` 记录待办。
-- 编译：`cmake --build cmake-build-release --target souffle -j4`
-- 运行示例（带 profiling）：`./compute_new -p run_profile.log -F ./input -D ./output`；开启重写加 `-r`；fast-path 调试输出加 `SOUFFLE_SISO_FAST_DEBUG=1`。
+## Background / Usage
+- Core code: `src/include/souffle/problog/GraphAnalyzer.h` (SISO detection), `GraphRewriter.h` (rewrite and post-processing), `Pipeline.h` (pipeline timing), `Plan.md` tracks TODOs.
+- Build: `cmake --build cmake-build-release --target souffle -j4`
+- Example run (with profiling): `./compute_new -p run_profile.log -F ./input -D ./output`; enable rewrite with `-r`; enable fast-path debug output with `SOUFFLE_SISO_FAST_DEBUG=1`.
 
-## 目前实现状态（2025-12-07）
-### Fast-path SISO 检测
-- 支持的 RegionKind：`SingleHyperedge`（非 fact SI + ≥1 fact 输入，fact 输出单一边），`AllFactsToSO`（输入全 fact 且只连这条边），`LinearTwoEdge`（entry→mid→exit，mid 不可 query/evidence），`ParallelEdge`（>=2 单输入平行边，占位未重写），`General` 未启用。
-- 过滤：fact 输入需非 evidence/needOutput，all-facts 输入必须只有这一条出边；single-hyperedge 跳过单输入“朴素”边；linear mid 需唯一出边且非 query/evidence。
-- 重叠：仍做非重叠筛选。
+## Current implementation status (2025-12-07)
+### Fast-path SISO detection
+- Supported RegionKind: `SingleHyperedge` (non-fact SI + >=1 fact inputs, single-edge fact output), `AllFactsToSO` (all inputs are facts and only connect to this edge), `LinearTwoEdge` (entry->mid->exit, mid must not be query/evidence), `ParallelEdge` (>=2 single-input parallel edges, placeholder not rewritten), `General` disabled.
+- Filters: fact inputs must be non-evidence/needOutput; all-facts inputs must have only this outgoing edge; single-hyperedge skips single-input "naive" edge; linear mid must have a unique outgoing edge and be non-query/evidence.
+- Overlap: still applies non-overlap filtering.
 
-### 重写逻辑
-- All-facts：折叠为 fact 输出，概率乘以所有 fact 输入；删除孤立 fact 输入及原边。
-- Single-hyperedge：生成 SI→SO 新边，概率乘以 fact 输入，删除旧边及孤立 fact 输入。
-- Linear two-edge：两边概率相乘生成 entry→exit 新边，删除 mid 与两条旧边。
-- Parallel two-edge：仍占位（跳过）。
-- 每轮结束后执行“边收缩”：对所有边吸收非 evidence/query 的 fact 输入并更新概率，删除孤立 fact。
-- BDD manager 延迟初始化；dump dot、检测计时已保留。
+### Rewrite logic
+- All-facts: fold into a fact output, multiply probability by all fact inputs; delete isolated fact inputs and the original edge.
+- Single-hyperedge: create a new SI->SO edge, multiply probability by fact inputs, delete the old edge and isolated fact inputs.
+- Linear two-edge: multiply the two edge probabilities to create a new entry->exit edge, delete the mid node and the two old edges.
+- Parallel two-edge: still placeholder (skipped).
+- At the end of each round, run "edge compaction": absorb non-evidence/query fact inputs into all edges, update probability, delete isolated facts.
+- BDD manager is lazily initialized; dot dumps and detection timing are preserved.
 
-### 输出/日志
-- `[pipeline]` 行列出 create/pruning/rewrite/build/WMC 等耗时，rewrite 行包含迭代数、region 数、RV 变化、节点/边增删。
-- `Current live nodes` 为最终 forward compilation 的 BDD 节点数。
-- `SOUFFLE_SISO_FAST_DEBUG=1` 时打印 fast-path 过滤原因。
-- per-iteration 计时（GraphRewriter）：`total`、`countBefore`、`detect`、`loop`（含 `loopCond/loopRewritten/loopSkip`）、`edgeList`、`compact`、`countAfter`、`dumpRegions`（debug 时 dumpAllRegionsAsDot）、`dumpDot(before/after)`、`preLog/log`，`other` 为剩余杂项。dumpAllRegions/dumpDot 在 debug 下可能是主要开销（例如 P13 首轮 dumpRegions≈18ms, dumpDot(before)≈7ms, after≈2ms）。
-- fast-path debug 文本输出已注释以降低日志开销；事实概率 rewrite/no-rewrite 已确认一致。
+### Output/logs
+- `[pipeline]` rows list timings for create/pruning/rewrite/build/WMC, etc.; rewrite rows include iterations, region counts, RV changes, node/edge adds/removes.
+- `Current live nodes` is the BDD node count for final forward compilation.
+- `SOUFFLE_SISO_FAST_DEBUG=1` prints fast-path filter reasons.
+- Per-iteration timing (GraphRewriter): `total`, `countBefore`, `detect`, `loop` (with `loopCond/loopRewritten/loopSkip`), `edgeList`, `compact`, `countAfter`, `dumpRegions` (dumpAllRegionsAsDot in debug), `dumpDot(before/after)`, `preLog/log`, `other` is the remaining miscellaneous cost. dumpAllRegions/dumpDot may dominate in debug (e.g., P13 first round dumpRegions~=18ms, dumpDot(before)~=7ms, after~=2ms).
+- Fast-path debug text output is commented out to reduce logging overhead; facts.prob rewrite/no-rewrite consistency has been confirmed.
 
-## 最近基准（facts.prob 均一致）
-- P13：no-rw ≈4550 ms，BDD 97k；rw ≈2446 ms，BDD 10.9k。
-- P14：no-rw ≈10285 ms，BDD 199k；rw ≈4916 ms，BDD 17.5k。
-- P15：no-rw ≈44767 ms，BDD 820k；rw ≈27037 ms，BDD 45k。
-- P16：no-rw ≈141729 ms，BDD 2.08M；rw ≈74557 ms，BDD 97k。
-- P17 无重写 300s 超时（未完成）；重写未跑。P18/P19 未跑。
+## Recent benchmarks (facts.prob are consistent)
+- P13: no-rw ~=4550 ms, BDD 97k; rw ~=2446 ms, BDD 10.9k.
+- P14: no-rw ~=10285 ms, BDD 199k; rw ~=4916 ms, BDD 17.5k.
+- P15: no-rw ~=44767 ms, BDD 820k; rw ~=27037 ms, BDD 45k.
+- P16: no-rw ~=141729 ms, BDD 2.08M; rw ~=74557 ms, BDD 97k.
+- P17 no-rewrite timed out at 300s (not completed); rewrite not run. P18/P19 not run.
 
-## 可能的下一步
-- 完成 ParallelTwoEdge 重写（或禁用）。
-- 解决 P17/P18/P19 超时/大规模输出：可只跑重写或放宽超时。
-- 复核 edge compaction 对大图的收益/正确性；考虑跳过 query/evidence 相关边。
-- 清理未跟踪的实验产物（大量 dot/log）。
+## Possible next steps
+- Finish ParallelTwoEdge rewrite (or disable it).
+- Resolve P17/P18/P19 timeouts/large outputs: run only rewrite or increase the timeout.
+- Re-check edge compaction benefits/correctness on large graphs; consider skipping query/evidence-related edges.
+- Clean untracked experiment artifacts (many dot/log files).
 
-## 基准图结构小结（side_channel_full）
-- 主力 SISO 形态：`AllFactsToSO` 与 `SingleHyperedge` 最多（大量 fact 前置的一条超边），其次是少量 `LinearTwoEdge`；`ParallelEdge` 目前基本无匹配。
-- 常见模式：多输入 fact 聚合到一个中间结点，再指向一个 RAND/KEY 节点；经过重写后可将中间结点变为 fact，进一步触发新一轮 all-facts 折叠。
-- 罕见/缺失：真实的多输入并行单边（Parallel）几乎没有；general/复杂 SISO 未启用。
-- 影响性能的阶段：rewrite 开销几乎全部是 fast-path SISO detection（首轮最慢，后续递减）；在 `-p` 下，若开启 debug，会有 `dumpAllRegionsAsDot`/`dumpDot` 的 I/O 开销（单次可达 10–20 ms，P13 观测）。
-- BDD 构建：重写后 BDD 节点数大幅下降（P14~P17 中 rewrite BDD 比 no-rewrite 小 10–50×），构建时间与节点数成正比。
+## Benchmark graph structure summary (side_channel_full)
+- Dominant SISO shapes: `AllFactsToSO` and `SingleHyperedge` are most frequent (many fact prefixes into one hyperedge), followed by a small number of `LinearTwoEdge`; `ParallelEdge` has almost no matches.
+- Common pattern: many input facts aggregate into one intermediate node, then point to a RAND/KEY node; after rewriting, the intermediate node can become a fact, triggering another all-facts fold.
+- Rare/missing: true multi-input parallel single edges (Parallel) are almost absent; general/complex SISO is disabled.
+- Performance-impacting stage: rewrite overhead is almost entirely fast-path SISO detection (slowest in the first round, then decreasing); with `-p`, if debug is enabled, `dumpAllRegionsAsDot`/`dumpDot` I/O can be significant (10-20 ms per call, observed on P13).
+- BDD build: after rewrite, BDD node count drops sharply (P14-P17: rewrite BDD is 10-50x smaller than no-rewrite), build time is proportional to node count.
 
-## 最新端到端对比（P14–P17，使用最新 compute_new）
-粗略总耗时为 create+prune+rewrite+BDD build+per-node+prob dump 求和（来自 `run_rewrite_prof_new.stdout` 与 `run_no_rewrite_prof_new.stdout`）：
-- P14：rw ≈ 1.4s vs no-rw ≈ 13.0s（≈ **9.3×** 提速）
-- P15：rw ≈ 9.5s vs no-rw ≈ 44.7s（≈ **4.7×**）
-- P16：rw ≈ 16.5s vs no-rw ≈ 138.3s（≈ **8.4×**）
-- P17：rw ≈ 31.9s vs no-rw ≈ 307.2s（≈ **9.6×**）
-分解看：rewrite 侧的 BDD build/per-node 大幅降低；重写阶段本身已压到 0.2–1.9s 范围，检测也在数 ms–百 ms 范围。
+## Latest end-to-end comparison (P14-P17, using latest compute_new)
+Rough total time is the sum of create+prune+rewrite+BDD build+per-node+prob dump (from `run_rewrite_prof_new.stdout` and `run_no_rewrite_prof_new.stdout`):
+- P14: rw ~= 1.4s vs no-rw ~= 13.0s (~9.3x faster)
+- P15: rw ~= 9.5s vs no-rw ~= 44.7s (~4.7x)
+- P16: rw ~= 16.5s vs no-rw ~= 138.3s (~8.4x)
+- P17: rw ~= 31.9s vs no-rw ~= 307.2s (~9.6x)
+Breakdown: rewrite-side BDD build/per-node time drops sharply; rewrite itself is down to 0.2-1.9s, detection is in the ms to hundreds of ms range.
 
-### 各阶段计算量差异（rw vs no-rw）
-- RandomVars：rw 结束后约为 no-rw 的 24%（P14–P17 的 randomVarsRatio ≈0.24，去除 3/4 变量）。
-- BDD 节点（对应 BDD build / per-node 时间）：rw 的节点数与时间约为 no-rw 的 1/6–1/50（同一案例内，BDD build 与 per-node 均随节点数线性降低）。
-- Rewrite 迭代次数与 region 数：P14–P17 重写迭代 11–12 轮，regions 数 13k–63k，`nodesRemoved/edgesRemoved` ≈ `randomVarsRemoved` 量级，对最终规模压缩明显。
-- 无 rewrite 情况：SISO detection（legacy）耗时巨大（旧日志首轮可达数十秒到数百秒），在 rw 路径下 fast-path detection 已压到毫秒级。
+### Workload differences by stage (rw vs no-rw)
+- RandomVars: after rw, about 24% of no-rw (randomVarsRatio ~=0.24 for P14-P17, removing ~3/4 variables).
+- BDD nodes (corresponding to BDD build / per-node time): rw node count and time are about 1/6 to 1/50 of no-rw (within the same case, BDD build and per-node both decrease linearly with node count).
+- Rewrite iterations and region counts: P14-P17 have 11-12 rewrite iterations, 13k-63k regions, `nodesRemoved/edgesRemoved` roughly on the same order as `randomVarsRemoved`, strongly shrinking final size.
+- No-rewrite case: legacy SISO detection is extremely expensive (first round in old logs can be tens to hundreds of seconds); in rw mode fast-path detection is down to milliseconds.
 
-### rewrite 子阶段 profiling 特征
-- per-iteration 计时输出（GraphRewriter）：`total`、`countBefore`、`detect`（含 fast-path 各类别细分）、`loop`（cond/rewritten/skip）、`edgeList`、`compact`（边收缩）、`countAfter`、`dumpRegions`、`dumpDot(before/after)`、`preLog/log`、`remainder`。
-- 量化耗时（P14–P17，`-p`，未开 debug）：单轮 `total` ≈0.1–0.2s（P14）到 ≈1.9s（P17）；其中 `detect` 首轮 5–90 ms，后续降至 1–20 ms；`compact`/`edgeList`/`count*` 常在 1–10 ms；`dumpRegions`/`dumpDot` 在未开 debug 时 ~0 ms。
-- 开启 debug（`-p` 默认开启，dot 输出受环境控制）时的 I/O：`dumpAllRegionsAsDot`/`dumpDot` 可占单次 10–20 ms（P13 观测），会在 per-iter `dumpRegions/dumpDot` 字段体现。
-- BDD manager 延迟初始化，仅在需要 BDD 时创建；每轮结束的边收缩吸收 fact 输入并删除孤立 fact。
-- Fast-path detection 细分统计：`singleHyperedgeMs/Count`、`allFactsToSOMs/Count`、`linearTwoEdgeMs/Count`、`parallelEdgeMs/Count`；调试过滤原因可用 `SOUFFLE_SISO_FAST_DEBUG=1`。
+### Rewrite sub-stage profiling characteristics
+- Per-iteration timing output (GraphRewriter): `total`, `countBefore`, `detect` (with fast-path category breakdown), `loop` (cond/rewritten/skip), `edgeList`, `compact` (edge compaction), `countAfter`, `dumpRegions`, `dumpDot(before/after)`, `preLog/log`, `remainder`.
+- Quantified time (P14-P17, `-p`, no debug): single-round `total` ~=0.1-0.2s (P14) up to ~=1.9s (P17); `detect` is 5-90 ms in the first round, then 1-20 ms; `compact`/`edgeList`/`count*` often 1-10 ms; `dumpRegions`/`dumpDot` are ~0 ms without debug.
+- I/O when debug enabled (`-p` default enabled, dot output controlled by env): `dumpAllRegionsAsDot`/`dumpDot` can take 10-20 ms each (observed P13), reflected in per-iter `dumpRegions/dumpDot`.
+- BDD manager is lazily initialized, only created when BDD is needed; end-of-round edge compaction absorbs fact inputs and deletes isolated facts.
+- Fast-path detection breakdown: `singleHyperedgeMs/Count`, `allFactsToSOMs/Count`, `linearTwoEdgeMs/Count`, `parallelEdgeMs/Count`; debug filter reasons available via `SOUFFLE_SISO_FAST_DEBUG=1`.
 
-### 近期案例中的 SISO 分布（累计，rw 模式）
-- P14：single≈554，linear≈6.3k，parallel=0，all-facts≈3.9k；首轮以 all-facts 为主，后续转为 linear。
-- P15：single≈1.1k，linear≈13.4k，parallel=0，all-facts≈7.4k。
-- P16：single≈1.8k，linear≈22.6k，parallel=0，all-facts≈13.4k。
-- P17：single≈2.4k，linear≈30.7k，parallel=0，all-facts≈18.1k。
-- 规律：linear 与 all-facts 占比最高；parallel 未命中；single 量级次之。
+### SISO distribution in recent cases (cumulative, rw mode)
+- P14: single~=554, linear~=6.3k, parallel=0, all-facts~=3.9k; first round is dominated by all-facts, later rounds shift to linear.
+- P15: single~=1.1k, linear~=13.4k, parallel=0, all-facts~=7.4k.
+- P16: single~=1.8k, linear~=22.6k, parallel=0, all-facts~=13.4k.
+- P17: single~=2.4k, linear~=30.7k, parallel=0, all-facts~=18.1k.
+- Pattern: linear and all-facts dominate; parallel never hits; single is smaller but notable.
 
-## 近期实验命令（P14–P17）
-- 生成可执行（带 profile 与 full-only）：  
+## Recent experiment commands (P14-P17)
+- Build executable (with profile and full-only):  
   `souffle_bin=/home/hugh/research/datalog/souffle/cmake-build-release/src/souffle`  
   `"$souffle_bin" --full-only --profile=/dev/null --online -F ./input -D ./output compute.souffle.dl -o compute_new > rebuild.log 2>&1`
-- 跑 rewrite（含迭代/检测日志，输出到 `run_rewrite_prof_new.*`）：  
+- Run rewrite (with iteration/detection logs, output to `run_rewrite_prof_new.*`):  
   `./compute_new -r -p run_rewrite_prof_new.log -F ./input -D ./output_rewrite_prof > run_rewrite_prof_new.stdout 2>&1`
-- 跑 no-rewrite 对照（输出到 `run_no_rewrite_prof_new.*`，需先 `mkdir -p output_no_rewrite_prof`）：  
+- Run no-rewrite baseline (output to `run_no_rewrite_prof_new.*`, run `mkdir -p output_no_rewrite_prof` first):  
   `./compute_new -p run_no_rewrite_prof_new.log -F ./input -D ./output_no_rewrite_prof > run_no_rewrite_prof_new.stdout 2>&1`
-- 适用目录：`experiments/side_channel_full/P14`～`P17`（在各目录下执行上述命令）。
+- Applicable directories: `experiments/side_channel_full/P14`-`P17` (run the commands in each directory).

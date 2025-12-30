@@ -44,60 +44,60 @@
    - Cross-check WMC/equivalence vs eager managers on small graphs.  
    - Benchmark memory/time on existing smokers/eqrel experiments (toggle lazy vs eager).
 
-## 更细的实施拆解
-- **Symbolic DAG 扩展 (src/include/souffle/problog/formula/LogicFormulaManager.h 新增/改动)**  
-  - 增加常量节点、`true/false` 单例；在 `makeAnd/makeOr` 中做扁平化、去重、排序（按 varId + hash），并缓存 hash 以供 `isSame` O(1)。  
-  - 添加 `LazyNodeRef` 包装，兼容现有 `get()`/bool 检查，并暴露 `kind()/operands()` 便于 materialize。  
-  - 维护 `varId -> Node/Edge` 的弱映射（仅在需要打印/权重时用）。
+## More detailed implementation breakdown
+- **Symbolic DAG extensions (add/modify in src/include/souffle/problog/formula/LogicFormulaManager.h)**  
+  - Add constant nodes and `true/false` singletons; in `makeAnd/makeOr`, flatten, dedup, and sort (by varId + hash), and cache hashes for O(1) `isSame`.  
+  - Add a `LazyNodeRef` wrapper to keep existing `get()`/bool checks, and expose `kind()/operands()` for materialization.  
+  - Maintain a weak mapping `varId -> Node/Edge` (only used when printing/weighting).
 
-- **LazyManager 实现 (新文件例如 src/include/souffle/problog/formula/LazyManager.h)**  
-  - 继承 `DDManager<LazyNodeRef>`；内部持有 `SymbolicArena` + 权重表 + 可选 `preConfig` 结果。  
-  - `makeCondition`/`postprocessUselessVariables` 直接在符号层实现；`setVariableWeight` 更新权重并标记 materialization 缓存失效。  
-  - 提供 `ensureMaterialized(const LazyNodeRef&)`、`dropMaterialized()`、`strongIsSame(a,b)`（触发 backend 比较）等工具。
+- **LazyManager implementation (new file e.g. src/include/souffle/problog/formula/LazyManager.h)**  
+  - Derive from `DDManager<LazyNodeRef>`; internally hold `SymbolicArena` + weights + optional `preConfig` results.  
+  - Implement `makeCondition`/`postprocessUselessVariables` symbolically; `setVariableWeight` updates weights and marks materialization caches dirty.  
+  - Provide `ensureMaterialized(const LazyNodeRef&)`, `dropMaterialized()`, `strongIsSame(a,b)` (triggers backend comparison), and related helpers.
 
-- **Backend Bridge (同文件或单独 adapter)**  
-  - 模板 `LazyBackend<DDManagerType, NodeRefType>`，第一次 materialize 时创建真实 backend，执行保存的 `preConfig`，按访问到的 varId 创建变量并回放权重。  
-  - 利用 `transform(symbolicRoot, symbolicMgr, backendMgr)` 转成 DD；加 `std::unordered_map<LazyNodeRef, NodeRefType>` 做 compiled 缓存。  
-  - 失效策略：修改权重/调用 `dropMaterialized` 时清缓存，保留符号 DAG。
+- **Backend bridge (same file or separate adapter)**  
+  - Template `LazyBackend<DDManagerType, NodeRefType>`; on first materialization create the real backend, apply saved `preConfig`, create variables for accessed varIds, and replay weights.  
+  - Use `transform(symbolicRoot, symbolicMgr, backendMgr)` to convert to a DD; add `std::unordered_map<LazyNodeRef, NodeRefType>` as a compiled cache.  
+  - Invalidation policy: clear caches on weight changes or `dropMaterialized`, while keeping the symbolic DAG.
 
-- **具体管理器与管线接入**  
-  - 定义别名/类 `CuddLazyManager`、`SddLazyManager`，构造时注入对应 backend。  
-  - `ForwardCompilation` 里添加类型别名 `using DefaultFormulaManager = LazyOrEager...`，通过 CLI flag `--dd-backend` 选择。默认走 lazy-cudd。  
-  - `Pipeline` 和生成的 `compute.cpp` 里用统一工厂创建 manager，避免多处条件编译。
+- **Concrete managers and pipeline integration**  
+  - Define aliases/classes `CuddLazyManager`, `SddLazyManager`, injecting the backend in the constructor.  
+  - In `ForwardCompilation`, add a type alias like `using DefaultFormulaManager = LazyOrEager...`, and select via CLI flag `--dd-backend`. Default to lazy-cudd.  
+  - Use a single factory in `Pipeline` and the generated `compute.cpp` to create managers and avoid scattered conditionals.
 
-- **测试与验证**  
-  - 单测：符号等价、常量折叠、条件化、权重传播、缓存失效/重建。  
-  - 回归：对小图同时跑 eager/lazy，校验 WMC 相等；在 smokers/eqrel 记录内存/时间差。  
-  - 可选：在 debug 模式下 dump 符号公式 + materialized size，帮助对比。
+- **Testing and validation**  
+  - Unit tests: symbolic equivalence, constant folding, conditioning, weight propagation, cache invalidation/rebuild.  
+  - Regression: run eager/lazy on small graphs, check WMC equality; record memory/time differences on smokers/eqrel.  
+  - Optional: in debug, dump symbolic formulas + materialized size for comparison.
 
-## 数据结构设计草案
-- **LazyNode (内部节点定义)**  
-  - 字段：`enum Kind { CONST_TRUE, CONST_FALSE, VAR, AND, OR, NOT } kind; int varId; std::vector<LazyNodeRef> ops; std::optional<const Node*> node; std::optional<const Hyperedge*> edge; size_t hash;`  
-  - 不变量：AND/OR 的 `ops` 已扁平化且按 `(kind, varId, hash)` 排序、去重；NOT 仅 1 个子节点；VAR 仅 varId/node/edge；常量节点无子节点。  
-  - hash：构造时计算并缓存，AND/OR 采用 commutative hash（如 FNV/xxh 组合），用于快速查重。
+## Draft data-structure design
+- **LazyNode (internal node definition)**  
+  - Fields: `enum Kind { CONST_TRUE, CONST_FALSE, VAR, AND, OR, NOT } kind; int varId; std::vector<LazyNodeRef> ops; std::optional<const Node*> node; std::optional<const Hyperedge*> edge; size_t hash;`  
+  - Invariants: AND/OR `ops` are flattened and sorted by `(kind, varId, hash)` with dedup; NOT has exactly one child; VAR only carries varId/node/edge; constants have no children.  
+  - Hash: computed and cached at construction; AND/OR use a commutative hash (e.g., FNV/xxh combo) for fast dedup.
 
-- **LazyNodeRef (句柄)**  
-  - 字段：`std::shared_ptr<LazyNode> ptr;` 提供 `get()`/bool，`kind()/operands()/varId()` 访问器。  
-  - 比较：指针相等；哈希：指针地址。  
-  - 工厂只通过 `SymbolicArena` 创建，保证同构节点复用。
+- **LazyNodeRef (handle)**  
+  - Field: `std::shared_ptr<LazyNode> ptr;` provides `get()`/bool, `kind()/operands()/varId()` accessors.  
+  - Equality: pointer equality; hash: pointer address.  
+  - Factory only creates via `SymbolicArena`, ensuring isomorphic nodes are reused.
 
-- **SymbolicArena (去重工厂)**  
-  - 状态：`unordered_set<std::shared_ptr<LazyNode>, LazyNodeHash, LazyNodeEq> pool; LazyNodeRef trueRef/falseRef;`  
-  - API：`makeConst(bool)`, `makeVar(varId,node*,edge*)`, `makeAnd(vector<LazyNodeRef>)`, `makeOr(...)`, `makeNot(...)`，内部完成扁平化、排序、常量折叠、去重。  
-  - 记录：保留 `unordered_map<int,const Node*> nodeMap` / `edgeMap` 供打印和权重绑定。
+- **SymbolicArena (dedup factory)**  
+  - State: `unordered_set<std::shared_ptr<LazyNode>, LazyNodeHash, LazyNodeEq> pool; LazyNodeRef trueRef/falseRef;`  
+  - API: `makeConst(bool)`, `makeVar(varId,node*,edge*)`, `makeAnd(vector<LazyNodeRef>)`, `makeOr(...)`, `makeNot(...)`, internally performing flattening, sorting, constant folding, and dedup.  
+  - Record: keep `unordered_map<int,const Node*> nodeMap` / `edgeMap` for printing and weight binding.
 
-- **LazyManager (继承 DDManager<LazyNodeRef>)**  
-  - 状态：`SymbolicArena arena; unordered_map<int, WeightPair> weights; optional<PreconfigData> preconfig; bool dirty=true; unique_ptr<BackendAdapter> backend;`  
-  - API：`createVar`, `makeAnd/Or/Not`, `makeCondition`（符号化），`setVariableWeight`（置 dirty），`computeWeightedModelCount`（ensureMaterialized），`dropMaterialized`，`strongIsSame`。  
-  - Profiling：返回符号节点数/unique var 数；materialized 后合并 backend 数据。
+- **LazyManager (extends `DDManager<LazyNodeRef>`)**  
+  - State: `SymbolicArena arena; unordered_map<int, WeightPair> weights; optional<PreconfigData> preconfig; bool dirty=true; unique_ptr<BackendAdapter> backend;`  
+  - API: `createVar`, `makeAnd/Or/Not`, `makeCondition` (symbolic), `setVariableWeight` (marks dirty), `computeWeightedModelCount` (ensureMaterialized), `dropMaterialized`, `strongIsSame`.  
+  - Profiling: return symbolic node/unique var counts; after materialization merge backend stats.
 
-- **BackendAdapter (模板)**  
-  - 状态：`std::unique_ptr<RealMgr> mgr; unordered_map<int, NodeRef> varCache; unordered_map<LazyNodeRef, NodeRef> compiled;`  
-  - API：`materialize(root, arena, weights, preconfig) -> NodeRef`；内部：构建 mgr、配置顺序、createVar+weights、调用 `transform`。  
-  - 失效：`clearCompiled()` 清空 `compiled`/`varCache`；`mgr` 可复用或重建（取决于权重/顺序变化策略）。
+- **BackendAdapter (template)**  
+  - State: `std::unique_ptr<RealMgr> mgr; unordered_map<int, NodeRef> varCache; unordered_map<LazyNodeRef, NodeRef> compiled;`  
+  - API: `materialize(root, arena, weights, preconfig) -> NodeRef`; internally build manager, configure ordering, create vars+weights, call `transform`.  
+  - Invalidation: `clearCompiled()` empties `compiled`/`varCache`; `mgr` can be reused or rebuilt (depending on weight/ordering changes).
 
-- **预处理/顺序数据 (PreconfigData)**  
-  - 包含 `std::vector<int> order`（来自 `heuristics.compute`）和任何需要回放给 backend 的参数，LazyManager `preConfig` 填充，materialize 时使用。
+- **Preprocessing/ordering data (PreconfigData)**  
+  - Contains `std::vector<int> order` (from `heuristics.compute`) and any parameters that need to be replayed to the backend; `LazyManager` fills `preConfig` and uses it during materialization.
 
 ## Risks and mitigations
 - **Symbolic blow-up**: Very wide OR/AND may make the DAG large; mitigate with dedup, hashing, and optional chunked materialisation per stratum.  

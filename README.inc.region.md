@@ -1,174 +1,174 @@
 # Inc-Regional Incremental Pipeline (Current Design)
 
-本文件描述当前代码实现的 inc-regional 增量 pipeline。内容以代码为准，不是规划文档。
+This file describes the current inc-regional incremental pipeline implementation. It follows the code and is not a planning document.
 
 ## Scope / Context
-- 仅适用于 `--online` 生成的程序（在线增量路径）；旧 `--inc` backend 已弃用。
-- inc-regional 只替换 insertion 的 forward compilation；deletion 仍复用 inc-naive 的 DRed-like 逻辑。
-- rewrite 在 inc/inc-regional 模式下不会执行。
+- Applies only to programs generated with `--online` (online incremental path); the old `--inc` backend is deprecated.
+- inc-regional only replaces insertion forward compilation; deletion still reuses the inc-naive DRed-like logic.
+- rewrite is not executed in inc/inc-regional mode.
 
 ## Related docs
 - `README.eval.inc.md` (benchmark procedures + logs)
 - `README.dred.md` (online DRed internals and deletion bottlenecks)
 
 ## Assumptions
-- deletion 先执行经典增量删除逻辑，再进入 regional insertion。
-- 增量模式不执行 rewrite。
-- 必须已有基线公式（`nodeFormulas`/`edgeFormulas` 非空），否则直接 `assert` 失败。
-- 增量模式禁用 bi-imp merge（full merge 后不允许切换到 inc/inc-regional）。
+- Deletion runs the classic incremental delete logic first, then enters regional insertion.
+- Incremental mode does not run rewrite.
+- Baseline formulas must exist (`nodeFormulas`/`edgeFormulas` non-empty), otherwise an `assert` fails.
+- Incremental mode disables bi-imp merge (after full merge you cannot switch to inc/inc-regional).
 
 ## How to Enable
-- CLI 参数：`--setmode inc-regional`（或交互 CLI 输入 `setmode inc-regional`）。
-- `inc` / `incr` / `incremental` 现映射为 `inc-naive`。
-- 输出文件按模式区分：
+- CLI flag: `--setmode inc-regional` (or interactive CLI `setmode inc-regional`).
+- `inc` / `incr` / `incremental` now map to `inc-naive`.
+- Output files are separated by mode:
   - `fact-iter{N}-inc-naive.prob`
   - `fact-iter{N}-inc-regional.prob`
   - `fact-iter{N}-full.prob`
 
 ## Code Map
-- `src/include/souffle/problog/RegionalIncremental.h`：主实现（Analyzer → Plan → Rebuild → Calibrate）。
-- `src/include/souffle/problog/IncRegionAnalyzer.h`：region 分析、边界分类、mergeable anchors 缓存、分析 timing。
-- `src/include/souffle/problog/DerivationGraph.h`：prune-inc 生成 impacted maps + deltaReach cache。
-- `src/include/souffle/problog/ForwardCompilation.h`：`buildFormulasIncRegionalCyclewise` 入口。
-- `src/include/souffle/cli/Cli.h` / `src/MainDriver.cpp` / `src/include/souffle/CompiledOptions.h`：mode 解析与迭代输出名。
-- `src/include/souffle/problog/formula/*`：weight 读写与 reordering 时间统计。
+- `src/include/souffle/problog/RegionalIncremental.h`: main implementation (Analyzer -> Plan -> Rebuild -> Calibrate).
+- `src/include/souffle/problog/IncRegionAnalyzer.h`: region analysis, boundary classification, mergeable anchors cache, analysis timing.
+- `src/include/souffle/problog/DerivationGraph.h`: prune-inc builds impacted maps + deltaReach cache.
+- `src/include/souffle/problog/ForwardCompilation.h`: entry for `buildFormulasIncRegionalCyclewise`.
+- `src/include/souffle/cli/Cli.h` / `src/MainDriver.cpp` / `src/include/souffle/CompiledOptions.h`: mode parsing and iter output names.
+- `src/include/souffle/problog/formula/*`: weight read/write and reordering time stats.
 
 ## Pipeline Overview (Per Turn)
-1) `applyDeltaDeletes`（旧逻辑）  
-2) `applyDeltaInserts`（旧逻辑）  
-3) `prune-inc`（构建子图 + impacted maps + deltaReach cache）  
-4) Forward compilation：先跑 deletion（inc-naive 逻辑），再跑 inc-regional insertion  
-5) WMC + 输出 iter 结果
+1) `applyDeltaDeletes` (old logic)  
+2) `applyDeltaInserts` (old logic)  
+3) `prune-inc` (build subgraph + impacted maps + deltaReach cache)  
+4) Forward compilation: run deletion (inc-naive logic) first, then inc-regional insertion  
+5) WMC + emit iter results
 
-inc-regional 只替换 insertion 的 forward compilation；deletion 复用 inc-naive 的 deletion 实现。
+inc-regional only replaces insertion forward compilation; deletion reuses inc-naive deletion.
 
 ---
 
 ## Region Analysis (IncRegionAnalyzer)
-输入：`IncrementalDerivationGraphViewInterface` + delta insert facts（若无则用 delta insert nodes）。  
-输出：region、boundary 分类、mergeable anchors 缓存、deltaReachable 子图。
+Input: `IncrementalDerivationGraphViewInterface` + delta insert facts (or delta insert nodes if no facts).  
+Output: region, boundary classification, mergeable anchors cache, deltaReachable subgraph.
 
-关键步骤（对应 `[inc-analyze] timing(ms)`）：
-- `buildLeastParents_()` / `computeScopes_()`：范围与依赖结构。
-- `reachFromSources_()`：从 delta sources 计算可达过滤器。
-- `initialRegion_()`：初始 region。
-- `classifyBoundaries_()` + `expandToFixpoint_()`：按边界规则扩展 region。
-- `upstreamClose_()`：向上游补齐祖先（受 reach_filter 限制），必要时再分类/再扩展。
-- `deltaReachable_()` + `intersectWithDeltaReachable_()`：保证 region 在 delta-reachable 内。
-- `computeMergeableAnchors_()`：对 boundary 节点缓存可 merge 的旧入边候选。
+Key steps (correspond to `[inc-analyze] timing(ms)`):
+- `buildLeastParents_()` / `computeScopes_()`: scope and dependency structure.
+- `reachFromSources_()`: compute reachability filter from delta sources.
+- `initialRegion_()`: initial region.
+- `classifyBoundaries_()` + `expandToFixpoint_()`: expand region by boundary rules.
+- `upstreamClose_()`: add ancestors upstream (limited by reach_filter), reclassify/expand if needed.
+- `deltaReachable_()` + `intersectWithDeltaReachable_()`: ensure region stays inside delta-reachable.
+- `computeMergeableAnchors_()`: cache mergeable old incoming-edge candidates for boundary nodes.
 
-边界分类：
-- `out_induced` / `scope_induced` / `residual` 三类 boundary node。
+Boundary classification:
+- `out_induced` / `scope_induced` / `residual` boundary nodes.
 
-Mergeable anchor 判定（`mergeableEdgeAtHead_`）：
-- 不是 delta insert edge。
-- 非确定性边（deterministic edge 被排除）。
-- respects scopes。
-- non-subsumed。
+Mergeable anchor criteria (`mergeableEdgeAtHead_`):
+- Not a delta insert edge.
+- Non-deterministic edge (deterministic edges are excluded).
+- Respects scopes.
+- Non-subsumed.
 
-注意：Region 使用 `unordered_set`，遍历顺序不稳定。
+Note: region uses `unordered_set`, iteration order is unstable.
 
 ---
 
 ## Impacted Maps & Delta Reach Cache (DerivationGraph)
-`prune-inc` 会在子图上重建 impacted maps（插入/删除）：
-- 从每个 delta insert fact 做 BFS（沿 outgoing edges）收集受影响 nodes/edges。
-- 结果存入 `insertedFactImpactedNodes/Edges`（`unordered_set`）。
-- 同时构建 **delta-insert reachable union cache**：
+`prune-inc` rebuilds impacted maps (insert/delete) on the subgraph:
+- Run BFS from each delta insert fact (along outgoing edges) to collect impacted nodes/edges.
+- Store in `insertedFactImpactedNodes/Edges` (`unordered_set`).
+- Also build **delta-insert reachable union cache**:
   - `deltaInsertReachableNodes`
   - `deltaInsertReachableEdges`
-  该缓存通过 `getDeltaInsertReachableNodes/Edges()` 暴露给 analyzer。
+  This cache is exposed to the analyzer via `getDeltaInsertReachableNodes/Edges()`.
 
-`deltaReachable_()` 的优先级：
-1) 使用 union cache（最快）  
-2) 若为空，fallback 到 impacted maps  
+`deltaReachable_()` priority:
+1) Use union cache (fastest)  
+2) If empty, fall back to impacted maps  
 
-`reach_filter_` 直接使用 delta-reachable cache（不再额外补丁）。
+`reach_filter_` directly uses delta-reachable cache (no extra patching).
 
 ---
 
 ## Planning (RegionalInsertPlan)
-`RegionalInsertPlanBuilder` 从 analyzer 缓存构建计划：
-- `regionNodes`：region 内节点。
-- `boundaryNodes`：三类 boundary 的并集。
-- `anchorCandidates`：来自 analyzer 的 cached anchors。
-- `mergeReady`：若 `boundaryNodes` 为空或每个 boundary 至少有一个 anchor，则为 true。
-- `regionClosed`：`boundaryNodes` 为空。
+`RegionalInsertPlanBuilder` builds a plan from analyzer cache:
+- `regionNodes`: nodes inside region.
+- `boundaryNodes`: union of the three boundary types.
+- `anchorCandidates`: cached anchors from analyzer.
+- `mergeReady`: true if `boundaryNodes` is empty or each boundary has at least one anchor.
+- `regionClosed`: `boundaryNodes` is empty.
 
 ---
 
 ## Rebuild (RegionalDDRebuilder)
-目标：只重建 region 内节点/边，外部公式保持旧值。
+Goal: rebuild only nodes/edges inside the region; keep external formulas unchanged.
 
-步骤：
-- **Snapshot**：保存 boundary 节点旧公式（用于后续校准）。
-- **Init inserted nodes/edges**：为 delta insert nodes/edges 建立公式并设置权重。
-- **SCC 处理**：构建 `CycleDependencyGraph`，取 region 涉及的 cycle 集合，计算 indegree。
-- **重建循环**：
-  - 只处理满足 `shouldRebuildEdge` 的边：
-    - head 在 region 内，且（edge 是 delta-insert 或存在 region 内输入）。
-  - worklist 按 edge depth 排序。
-  - 若缺失输入来自 region 内，重新入队；若缺失输入仅来自 region 外，跳过。
-  - 更新 edge formula 后重算 head node 的 OR 公式。
-  - 需要时将受影响的 outgoing edges 再入队。
+Steps:
+- **Snapshot**: save old formulas for boundary nodes (for later calibration).
+- **Init inserted nodes/edges**: build formulas and set weights for delta insert nodes/edges.
+- **SCC handling**: build `CycleDependencyGraph`, collect cycles in the region, compute indegree.
+- **Rebuild loop**:
+  - Only process edges that satisfy `shouldRebuildEdge`:
+    - head is inside the region, and (edge is delta-insert or has inputs inside the region).
+  - Worklist is sorted by edge depth.
+  - If missing inputs are from inside the region, requeue; if missing inputs are only from outside, skip.
+  - After updating an edge formula, recompute the head node OR formula.
+  - Requeue outgoing edges if affected.
 
-计时输出（`[inc-regional rebuild]`）：
+Timing output (`[inc-regional rebuild]`):
 `snapshot/initNodes/initEdges/depGraph/regionCycles/indegree/rebuildLoop/total/reorder`  
-`reorder` 依赖 `FormulaManager::getReorderingTimeSeconds()`（CUDD 实现支持）。
+`reorder` depends on `FormulaManager::getReorderingTimeSeconds()` (supported by CUDD).
 
 ---
 
 ## Calibration (BoundaryGateCalibrator)
-目标：为 boundary 节点计算 gate 校准参数 `p*`（但当前不自动应用）。
+Goal: compute gate calibration parameter `p*` for boundary nodes (not auto-applied yet).
 
-流程（每个 boundary 节点 v）：
-1) `target = Pr_new(v)`（用重建后的公式计算）。
-2) 遍历 anchorCandidates[v]：
-   - 用 snapshot 旧公式计算 `oldVal`。
-   - 将 anchor 变量权重置 0 得 `alpha`，置 1 得 `beta`。
-   - `p* = (target - alpha) / (beta - alpha)`。
-3) 记录 `CalibrationRecord` 与 `weightOverrides`。
+Flow (per boundary node v):
+1) `target = Pr_new(v)` (computed from rebuilt formulas).
+2) For each anchorCandidates[v]:
+   - Compute `oldVal` using snapshot old formulas.
+   - Set anchor variable weight to 0 to get `alpha`, set to 1 to get `beta`.
+   - `p* = (target - alpha) / (beta - alpha)`.
+3) Record `CalibrationRecord` and `weightOverrides`.
 
-当前行为：
-- `calibrate()` **只计算并返回 override**，不写回权重。
-- `RegionalIncrementalForwardCompilation` 保存 `lastOverrides_` 供外部使用。
+Current behavior:
+- `calibrate()` **only computes and returns overrides**, does not write back weights.
+- `RegionalIncrementalForwardCompilation` stores `lastOverrides_` for external use.
 
 ---
 
 ## Fallback & Guards
-`RegionalIncrementalForwardCompilation::applyUpdate`：
-- `mergeReady == false` → fallback 到经典 `buildFormulasIncCyclewise`。
-- calibration 任一 boundary 失败 → fallback（可通过 `Options` 关闭）。
-- `nodeFormulas`/`edgeFormulas` 为空 → `assert` 失败。
+`RegionalIncrementalForwardCompilation::applyUpdate`:
+- `mergeReady == false` -> fall back to classic `buildFormulasIncCyclewise`.
+- Any boundary calibration failure -> fall back (can be disabled via `Options`).
+- `nodeFormulas`/`edgeFormulas` empty -> `assert` failure.
 
 ---
 
 ## Profiling / Logs
-常见输出：
+Common output:
 - `[inc-analyze] timing(ms): ...`
 - `[inc-regional rebuild] timing(ms): ...`
 - `[inc-regional] timing(ms): analyze sccClose plan rebuild calibrate total`
-- `[prune-inc impact] ...`（prune-inc 重建 impacted maps）
+- `[prune-inc impact] ...` (prune-inc rebuilds impacted maps)
 - `[prune-inc] delta-delete counts (start/post-mark-pruned/filtered/canonicalised/view): nodes=... edges=...`
 - `[inc-naive] delta counts: insNodes=... insEdges=... delNodes=... delEdges=...`
 - `[inc-regional] delta counts: insNodes=... insEdges=... delNodes=... delEdges=...`
-- `Deletion deletedVarsIndex size: N`（删除阶段用于变量清理）
-调试输出默认关闭，可按需开启：
-- `--dumpjson` / CLI `set dumpjson`：输出 JSON（prune 之后）。
-- `--dumpdot` / CLI `set dumpdot`：输出 derivation graph 的 DOT。
-- `--dumpstat` / CLI `set dumpstat`：输出 `dumpStatisticsInc` / `dumpStatistics`。
-输出位置说明：
-- 所有 `.dot` / `.json` / `dumpStatistics` 输出都会写入 `-D` 指定的 output 目录（含 `derivation-inc-*.dot/json`、`scc.dot` 等）。
-- debugger JSON 报告也写入 output 目录，文件名取 `--logfile` 的 **basename** 再加时间戳；stdout 只打印文件名。
+- `Deletion deletedVarsIndex size: N` (used for variable cleanup during deletion)
+Debug output is off by default; enable as needed:
+- `--dumpjson` / CLI `set dumpjson`: output JSON (after prune).
+- `--dumpdot` / CLI `set dumpdot`: output derivation graph DOT.
+- `--dumpstat` / CLI `set dumpstat`: output `dumpStatisticsInc` / `dumpStatistics`.
+Output location notes:
+- All `.dot` / `.json` / `dumpStatistics` outputs go into the `-D` output directory (including `derivation-inc-*.dot/json`, `scc.dot`, etc.).
+- Debugger JSON reports also go into the output directory; the filename uses the **basename** of `--logfile` plus a timestamp; stdout only prints the filename.
 
 ---
 
 ## Known Limitations / TODO
-- Calibration 结果尚未自动 apply（仅计算并缓存）。
-- Regional 仅覆盖 insertion；deletion 仍走旧逻辑。
-- 当前 side-channel inc1 benchmark 不包含 disjunction，inc-regional 实际退化为 inc-naive（delta-reachable 主要是 deleted 部分）。
-- anchor 选择目前取第一个可行候选，没有评分/优化。
-- Region 迭代顺序不稳定（`unordered_set`）；日志和输出顺序不保证稳定。
+- Calibration results are not auto-applied yet (computed and cached only).
+- Regional only covers insertion; deletion still uses old logic.
+- Current side-channel inc1 benchmark has no disjunction, so inc-regional effectively degenerates to inc-naive (delta-reachable is mostly deleted parts).
+- Anchor selection currently takes the first feasible candidate with no scoring/optimization.
+- Region iteration order is unstable (`unordered_set`); logs and output ordering are not guaranteed stable.
 
 ---
 
@@ -176,7 +176,7 @@ Mergeable anchor 判定（`mergeableEdgeAtHead_`）：
 ```
 ./compute -F input -D output_run_inc_regional --setmode inc-regional < delta/inc10_1.txt
 ```
-确认一致性：
+Confirm consistency:
 ```
 diff output_run_inc_regional/facts.prob output_run_full/facts.prob
 ```
