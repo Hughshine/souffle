@@ -8,9 +8,33 @@ This repo extends upstream Souffle with a probabilistic pipeline and online incr
 
 ## Build and Dependencies
 - Build Souffle (release): `cmake --build cmake-build-release --target souffle -j4`
+- Install or reference the built compiler in your `PATH` (examples can also use `SOUFFLE_BIN`).
 - CUDD is required for the BDD backend.
 - SDD is optional, but must be built if you run with `-k sdd`.
 - `ctest` is outdated in this fork and should not be used as a validation signal.
+
+### CUDD and SDD Preparation
+Commands below mirror the Dockerfile setup used in this repo.
+
+```
+# CUDD (new org) with autoreconf
+git clone --depth 1 https://github.com/cuddorg/cudd.git /opt/cudd
+cd /opt/cudd
+autoreconf -fiv
+./configure --enable-shared --prefix=/usr/local CFLAGS="-O3 -fPIC" CXXFLAGS="-O3 -fPIC"
+make -j"$(nproc)"
+sudo make install
+sudo ldconfig
+
+# SDD++ (bundles SDD 2.0)
+git clone --depth 1 https://github.com/black-sat/sddpp.git /opt/sddpp
+cmake -S /opt/sddpp -B /opt/sddpp/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+cmake --build /opt/sddpp/build -j"$(nproc)"
+sudo cmake --install /opt/sddpp/build
+sudo ldconfig
+```
 
 ## Program Syntax (souffle.dl example)
 ```souffle
@@ -34,7 +58,7 @@ Notes:
   which attaches a probabilistic coin to the rule application.
 
 ## Compile Programs (Generated C++)
-Use `--online` to enable the online CLI and incremental path in the generated binary:
+This fork requires `--online` for generated binaries:
 ```
 souffle --online -F ./input -D ./output compute.souffle.dl -o compute
 ```
@@ -42,6 +66,7 @@ souffle --online -F ./input -D ./output compute.souffle.dl -o compute
 Compiler notes:
 - `-F` / `-D` at compile time set the default input/output directories baked into the binary.
 - `--online` is required for the online incremental CLI and `_inc` strata generation.
+- `--full-only` disables incremental code generation but is still used together with `--online` in this fork.
 - `-o` controls the output binary name.
 
 ## Runtime Options (Compiled Program)
@@ -49,7 +74,6 @@ Defaults are baked into each generated binary. Typical defaults in this repo (e.
 - `-F, --facts <DIR>`: input directory, default `input`
 - `-D, --output <DIR>`: output directory, default `output`
 - `-p, --profile <FILE>`: profile file, default empty (only if compiled with profiling)
-- `-j, --jobs <NUM|auto>`: threads, default `1`
 - `-k, --knowledge <bdd|sdd>`: default `bdd`
 - `-l, --logfile <FILE>`: debugger JSON base name, default `log.txt`
 - `-d, --derv-only <true|false>`: default `false`
@@ -94,7 +118,8 @@ Example (batch from delta file):
 
 ### First Turn Input Files (Required Format)
 - For each `.input` relation `R`, provide `R.facts` in the `-F` directory.
-  - One tuple per line, tab-separated fields, matching the `.decl` attribute order.
+  - One tuple per line, tab-separated fields, matching the `.decl` attribute order (default delimiter `\t`).
+  - Override per relation via IO params, e.g. `.input R(delimiter=",")` / `.output R(delimiter=",")`.
 - Optional `R.prob` provides per-tuple probabilities:
   - One floating-point probability per line, aligned with `R.facts`.
   - If `R.prob` is missing, all tuples default to probability `1.0`.
