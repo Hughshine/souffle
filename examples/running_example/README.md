@@ -13,7 +13,7 @@ Files:
 - `output/`: generated results (ignored by git)
 
 ## Quick start
-Prerequisite: build/install the `souffle` compiler from this repo. Ensure it is on your `PATH` or set `SOUFFLE_BIN` (see below). This fork requires `--online`, and `run.sh` enforces it.
+Prerequisite: build/install the `souffle` compiler from this repo. Ensure it is on your `PATH` or set `SOUFFLE_BIN` (see below). Online is the default; `run.sh` still passes `--online` for clarity.
 
 ```
 ./run.sh
@@ -60,8 +60,8 @@ Evidence atoms must match declared relations and arity.
 ### Souffle compiler options (the `souffle` command)
 - `-o <bin>`: output binary name.
 - `-F <dir>` / `-D <dir>`: default input/output directories baked into the binary.
-- `--online`: enable the online incremental CLI in the generated binary (required in this fork).
-- `--full-only`: generate a full-only binary (disable incremental pipeline; still compiled with `--online` in this fork).
+- `--online`: enable the online incremental CLI in the generated binary (default in this fork).
+- `--full-only`: generate a full-only binary (disable incremental pipeline; still uses the online compiler path).
 - `--verbose`: show compiler diagnostics.
 
 ### Generated binary options (the compiled program)
@@ -70,15 +70,15 @@ Evidence atoms must match declared relations and arity.
 - `-p <file>`: write profiling info.
 - `-k <bdd|sdd>`: select BDD or SDD backend (SDD requires SDD++ install).
 - `--dumpdot`, `--dumpjson`, `--dumpstat`: debug outputs (fork-specific).
-- `-m, --setmode <inc-naive|inc-regional|full-hard|full-soft|full|elastic>`: incremental mode (when compiled with `--online`).
+- `-m, --setmode <inc-naive|inc-regional|full-hard|full-soft|full|elastic>`: incremental mode (online default).
 
 ## Script customization
 The `run.sh` script supports environment overrides:
 - `SOUFFLE_BIN`: path to the `souffle` compiler.
-- `SOUFFLE_COMPILE_OPTS`: extra compile flags (e.g., `--verbose`). `--online` is enforced.
+- `SOUFFLE_COMPILE_OPTS`: extra compile flags (e.g., `--verbose`); the script appends `--online` even though it is default.
 - `SOUFFLE_RUN_OPTS`: extra runtime flags (e.g., `-p run.log`).
 
 Example:
 ```
-SOUFFLE_COMPILE_OPTS="--online" SOUFFLE_RUN_OPTS="-p run.log" ./run.sh
+SOUFFLE_COMPILE_OPTS="--verbose" SOUFFLE_RUN_OPTS="-p run.log" ./run.sh
 ```

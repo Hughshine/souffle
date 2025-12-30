@@ -3,7 +3,8 @@
 Use this file to orient Codex sessions. It lists the essential docs, code hotspots, and how to run experiments.
 
 ## Scope
-- Online incremental path (`--online`) is the active implementation; legacy `--inc` backend is deprecated.
+- Online translation is the only implementation; `--online` is default and the legacy `--inc` backend is removed.
+- No interpreter path; `souffle file.dl` defaults to compile-only `-o <basename>`.
 - Incremental modes skip rewrite; rewrite docs apply to full-mode runs.
 - Full mode now has `full-hard` (default) and `full-soft`; `full` maps to `full-hard`.
 
@@ -88,8 +89,8 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
     - P12: inc-naive 2.98, inc-regional 4.37, full 2.47
     - P13: inc-naive 8.74, inc-regional 13.06, full 7.83
 - Compile note: `side_channel_inc.py compile` does **not** call bare `souffle -o compute`; it runs (per case dir):
-  - `souffle --online -F input -D output compute.souffle.dl -o compute` plus any `--souffle-arg` extra flags.
-  - `--online` is required for CLI/incremental runs; keep this when compiling manually.
+  - `souffle -F input -D output compute.souffle.dl -o compute` plus any `--souffle-arg` extra flags.
+  - The script may still pass `--online`, but it is optional now.
 - Pending: P1/P3 runs still skipped due to ForwardCompilation loop on KEY_SENSITIVE eq-cycle.
 - Inc-regional profiling focus (P12, delta `inc10_1`, profile2 logs):
   - Analyze time dominated by `deltaReach` (~653 ms of ~679 ms total); other sub-steps are single-digit ms.

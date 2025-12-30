@@ -4,7 +4,7 @@ This file summarizes the SISO rewrite pipeline: design, current state (post reve
 
 ## Scope
 - Full-mode pipeline only; incremental modes (`inc`/`inc-regional`) skip rewrite.
-- Uses `--online` for compilation to keep CLI/problog hooks available.
+- Online compilation is default; `--online` is optional (kept in commands when shown).
 
 ## Goal
 - Iteratively find SISO regions (single entry/exit) in the derivation graph, summarize each region into a single probabilistic edge, then run the usual forward compilation on the smaller view.

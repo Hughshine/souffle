@@ -126,26 +126,9 @@ set(SOUFFLE_SOURCES
     ast2ram/utility/SipsMetric.cpp
     ast2ram/utility/SipGraph.cpp
     ast/utility/Utils.cpp
-    ast2ram/provenance/ClauseTranslator.cpp
-    ast2ram/provenance/ConstraintTranslator.cpp
-    ast2ram/provenance/SubproofGenerator.cpp
-    ast2ram/provenance/TranslationStrategy.cpp
-    ast2ram/provenance/UnitTranslator.cpp
-    ast2ram/seminaive/ClauseTranslator.cpp
-    ast2ram/seminaive/ConstraintTranslator.cpp
-    ast2ram/seminaive/TranslationStrategy.cpp
-    ast2ram/seminaive/UnitTranslator.cpp
-    ast2ram/seminaive/ValueTranslator.cpp
     ast2ram/utility/Utils.cpp
     ast2ram/utility/TranslatorContext.cpp
     ast2ram/utility/ValueIndex.cpp
-    interpreter/Engine.cpp
-    interpreter/Generator.cpp
-    interpreter/BrieIndex.cpp
-    interpreter/BTreeIndex.cpp
-    interpreter/BTreeDeleteIndex.cpp
-    interpreter/EqrelIndex.cpp
-    interpreter/ProvenanceIndex.cpp
     parser/ParserDriver.cpp
     parser/ParserUtils.cpp
     parser/SrcLocation.cpp
@@ -178,21 +161,11 @@ set(SOUFFLE_SOURCES
     synthesiser/Utils.cpp
     synthesiser/GenDb.cpp
         include/souffle/Derivation.h
-        ast2ram/incremental/TranslationStrategy.cpp
-        ast2ram/incremental/ClauseTranslator.cpp
-        ast2ram/incremental/ConstraintTranslator.cpp
-        ast2ram/incremental/UnitTranslator.cpp
-        ast2ram/incremental/ValueTranslator.cpp
         ast/DeltaRelation.cpp
         ast/DeltaRelation.h
         ram/RecordDerivation.h
         ram/SequantialOperation.h
         ram/DeltaUnion.h
-        ast2ram/seminaive-with-delta/ConstraintTranslator.cpp
-        ast2ram/seminaive-with-delta/ClauseTranslator.cpp
-        ast2ram/seminaive-with-delta/TranslationStrategy.cpp
-        ast2ram/seminaive-with-delta/UnitTranslator.cpp
-        ast2ram/seminaive-with-delta/ValueTranslator.cpp
         ram/EmptyStatement.h
         ram/DerivationCheck.h
         ast2ram/online/ConstraintTranslator.cpp

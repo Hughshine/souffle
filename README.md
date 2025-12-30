@@ -1,9 +1,11 @@
 # Souffle (Local Research Fork)
 
-This repo extends upstream Souffle with a probabilistic pipeline and online incremental evaluation. It keeps upstream behavior but adds derivation-graph-based inference, DRed-like incremental updates, and rewrite prototypes.
+This repo extends upstream Souffle with a probabilistic pipeline and online incremental evaluation. It focuses on the online compiler path (no interpreter or non-online translators) while adding derivation-graph-based inference, DRed-like incremental updates, and rewrite prototypes.
 
 ## Status / Scope
-- Active incremental path is `--online`. Legacy `--inc` backend is deprecated.
+- Online incremental path is the only supported backend; the legacy `--inc` backend is removed.
+- Online compilation is the default; `--online` is optional and auto-enabled when missing.
+- No interpreter mode; `souffle file.dl` defaults to compile-only `-o <basename>`.
 - Rewrite pipeline is full-mode only; incremental modes do not run rewrite.
 
 ## Build and Dependencies
@@ -11,7 +13,7 @@ This repo extends upstream Souffle with a probabilistic pipeline and online incr
 - Install or reference the built compiler in your `PATH` (examples can also use `SOUFFLE_BIN`).
 - CUDD is required for the BDD backend.
 - SDD is optional, but must be built if you run with `-k sdd`.
-- `ctest` is outdated in this fork and should not be used as a validation signal.
+- `ctest` is disabled in this fork (test suite is out of date); running it will fail with a clear error.
 
 ### CUDD and SDD Preparation
 Commands below mirror the Dockerfile setup used in this repo.
@@ -58,15 +60,16 @@ Notes:
   which attaches a probabilistic coin to the rule application.
 
 ## Compile Programs (Generated C++)
-This fork requires `--online` for generated binaries:
+Online compilation is the default; `--online` remains accepted:
 ```
-souffle --online -F ./input -D ./output compute.souffle.dl -o compute
+souffle -F ./input -D ./output compute.souffle.dl -o compute
 ```
 
 Compiler notes:
 - `-F` / `-D` at compile time set the default input/output directories baked into the binary.
-- `--online` is required for the online incremental CLI and `_inc` strata generation.
-- `--full-only` disables incremental code generation but is still used together with `--online` in this fork.
+- If you omit all compile/generate flags, the compiler defaults to `-o <basename>` (compile only) and prints a notice.
+- Online CLI support and `_inc` strata are always enabled; `--online` is optional.
+- `--full-only` disables incremental code generation but still uses the online compiler path.
 - `-o` controls the output binary name.
 
 ## Runtime Options (Compiled Program)

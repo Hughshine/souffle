@@ -3,7 +3,7 @@
 Incremental side-channel benchmark notes (context + procedures). Experiments live under `experiments/side_channel_inc_eval/` and use the release Soufflé binary. **Do not git-add anything under `experiments/` or other generated artifacts.**
 
 ## Scope
-- Online incremental CLI path only (`--online`, inc-naive/inc-regional). Legacy `--inc` backend is deprecated.
+- Online incremental CLI path only (online is default; `--online` optional; inc-naive/inc-regional). Legacy `--inc` backend is removed.
 - Incremental modes do not run rewrite; they reuse the online DRed-like deletion/rederive/insertion.
 - Full baseline uses `full-hard` by default (`--setmode full`); `full-soft` is available for reuse of the DD manager state.
 
@@ -24,7 +24,7 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
 python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_eval delta --cases 1 --cleanup
 
-# 3) Compile Soufflé with online CLI (produces ./compute in P1/)
+# 3) Compile Soufflé (online default; produces ./compute in P1/)
 python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_eval compile --cases 1 --timeout 300
 
@@ -39,7 +39,7 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
 ```
 
 ## What to look at
-- Outputs: `output/facts.full.prob`, `output/facts.inc.prob`, per-delta `delta-*-fact-iter*-{inc,full}.prob`.
+- Outputs: `output/facts.full.prob`, `output/facts.inc.prob`, and per-turn `output/fact-iterN-{inc-naive,inc-regional,full}.prob`. Runner outputs are usually prefixed per delta, e.g. `output/delta-<label>-<sample>-{inc-naive,inc-regional,full}-fact-iterN-<mode>.prob`.
 - Logs: debugger JSON reports now land in the output directory (e.g., `output/log_P1_*.json`); stdout from manual runs (e.g., `log_inc_applyDelta_inc*.stdout`) still holds CLI prints.
 - Debugger JSON `turns[].mode` will show `FULL-HARD` / `FULL-SOFT` / `INC`.
 - CLI runs in inc mode print delta size: `[applyDelta] delTuples=… delRuleApps=… delFacts=… insTuples=… insRuleApps=… insFacts=…`.
@@ -110,4 +110,4 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
 Artifacts per case:
 - Stage logs: `output/log_P*_inc10_1_inc_*.json`, `output/log_P*_inc10_1_full_*.json`.
 - Consistency + paths: `output/delta-inc10-1.json` (contains base/iter comparisons, `max|Δ|`, etc).
-- Prob outputs: `output/delta-inc10-1-{inc,full}-fact-iter*.prob`, `output/facts.{inc,full}.prob`.
+- Prob outputs: `output/facts.{inc,full}.prob`, `output/fact-iterN-{inc-naive,inc-regional,full}.prob`, plus runner-prefixed `output/delta-<label>-<sample>-{inc-naive,inc-regional,full}-fact-iterN-<mode>.prob`.

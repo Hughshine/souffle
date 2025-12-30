@@ -1,6 +1,6 @@
 # Profiling Notes (Online Incremental)
 
-This note explains where timing/memory/graph statistics are reported, how to collect them, and how to interpret the key fields. It is written for the online incremental path (`--online`).
+This note explains where timing/memory/graph statistics are reported, how to collect them, and how to interpret the key fields. It is written for the online incremental path (default).
 
 ## Scope
 - Focus: P12-style runs with `inc-naive`, `inc-regional`, and `full` pipelines (`full` maps to `full-hard`; `full-soft` is optional).
@@ -40,7 +40,7 @@ Key lines to watch:
 ### 2) Output directory (`-D`)
 Generated per run:
 - `facts.prob`: baseline output.
-- `fact-iterN-*.prob`: per-turn probabilities.
+- `fact-iterN-{inc-naive,inc-regional,full}.prob`: per-turn probabilities.
 - `initial-input-relations-iter*.txt`: snapshot of input relations per turn.
 - `log_*.json`: debugger JSON (see below).
 

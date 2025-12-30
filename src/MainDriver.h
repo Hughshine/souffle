@@ -50,7 +50,4 @@ Own<ast2ram::UnitTranslator> getUnitTranslator(Global& glb);
 /** Construct and return a RAM transformer pipeline */
 Own<ram::transform::Transformer> ramTransformerSequence(Global& glb);
 
-/** Interpret the RAM translation unit using Souffle's interpreter engine. */
-bool interpretTranslationUnit(Global& glb, ram::TranslationUnit& ramTranslationUnit);
-
 }  // namespace souffle

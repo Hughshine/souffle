@@ -4,7 +4,7 @@ This describes how to exercise the SISO-based rewriting on `side_channel_full` b
 
 ## Scope
 - Full-mode rewrite only; incremental modes do not run rewrite.
-- Uses `--online` for compile to enable the CLI wrapper, but evaluation here is full-mode runs.
+- Online compilation is default; commands keep `--online` for clarity, but evaluation here is full-mode runs.
 
 ## Prerequisites
 - Build `souffle` (release): `cmake --build cmake-build-release --target souffle -j4`.

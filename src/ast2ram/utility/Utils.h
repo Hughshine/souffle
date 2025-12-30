@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "ast2ram/seminaive/ClauseTranslator.h"
+#include "ast2ram/ClauseTranslator.h"
 #include "souffle/utility/ContainerUtil.h"
 #include <string>
 

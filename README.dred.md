@@ -1,7 +1,7 @@
 # README: Online DRed (Derivation Graph Incremental) Implementation and Performance Notes
 
-- Covers only the online incremental path `--online`, which is the currently enabled implementation.
-- The old `--inc` incremental backend is deprecated; this file does not discuss it.
+- Covers only the online incremental path (default; `--online` optional), which is the only enabled implementation.
+- The old `--inc` incremental backend is removed; this file does not discuss it.
 - Focuses on semi-naive + DRed-like deletion/rederive/insertion; rewrite/forward compilation are covered in other docs.
 
 ## Online DRed flow (code-level overview)
@@ -50,7 +50,7 @@ Read in the following order to cover key hotspots on the deletion path:
 - `src/ast2ram/online/UnitTranslator.cpp`: generates `inc_table_update` and `_inc` strata; creates `@inc_*` / `$inc_*` relations.
 - `src/ast2ram/online/IncClauseTranslator.cpp`: rederive clause and RAM generation.
 - `src/ast2ram/utility/Utils.cpp`: incremental relation name prefixes (overdelete/rederive, etc.).
-- `src/ast2ram/utility/TranslatorContext.cpp`: `--online` selects online translation strategy.
+- `src/ast2ram/utility/TranslatorContext.cpp`: online translation strategy is hard-wired (no flag gating).
 
 ### 3.1 `visit_(Clear)`: whether relation clearing semantics are correctly implemented
 Search for key functions:
