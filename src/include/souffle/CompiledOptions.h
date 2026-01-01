@@ -73,15 +73,21 @@ protected:
     */
     std::string knowledge_representation;  // bdd, sdd are supported
     bool merge_bi_imp = true;  // enable merging mutually implying deterministic nodes
+    bool fold_const = false;  // enable deterministic constant pre-analysis (no prune rewrite)
     bool enable_rewrite = false;  // enable SISO-based graph rewriting
     bool dump_json = false;  // dump derivation graph JSON after prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
     bool dump_stat = false;  // dump derivation graph stats after prune
+    bool dump_const = false;  // dump constant pre-analysis details
 public:
     // all argument constructor
-    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj, std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc", bool merge_bi = true, bool rewrite = false, bool dumpjson = false, bool dumpdot = false, bool dumpstat = false)
+    CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
+            std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc",
+            bool merge_bi = true, bool foldconst = false, bool rewrite = false,
+            bool dumpjson = false, bool dumpdot = false, bool dumpstat = false, bool dumpconst = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
-    , incMode(mode), merge_bi_imp(merge_bi), enable_rewrite(rewrite), dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat) {}
+    , incMode(mode), merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
+      dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst) {}
 
     CmdOptions() {}
     /**
@@ -126,6 +132,9 @@ public:
     bool isMergeBiImpEnabled() const {
         return merge_bi_imp;
     }
+    bool isConstFoldEnabled() const {
+        return fold_const;
+    }
     bool isRewriteEnabled() const {
         return enable_rewrite;
     }
@@ -146,6 +155,9 @@ public:
     }
     void setDumpStatEnabled(bool enabled) {
         dump_stat = enabled;
+    }
+    bool isDumpConstEnabled() const {
+        return dump_const;
     }
 
     /**
@@ -186,9 +198,11 @@ public:
                 {"profile", true, nullptr, 'p'}, {"jobs", true, nullptr, 'j'}, {"index", true, nullptr, 'i'},
                 {"knowledge", true, nullptr, 'k'}, {"logfile", true, nullptr, 'l'},
                 {"derv-only", true, nullptr, 'd'}, {"setmode", true, nullptr, 'm'},
-                {"merge-bi-imp", false, nullptr, 'e'}, {"rewrite", false, nullptr, 'r'},
+                {"merge-bi-imp", false, nullptr, 'e'}, {"fold-const", false, nullptr, 'C'},
+                {"rewrite", false, nullptr, 'r'},
                 {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
                 {"dumpstat", false, nullptr, 'S'},
+                {"dumpconst", false, nullptr, 'U'},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -196,7 +210,7 @@ public:
         bool ok = true;
         knowledge_representation = "bdd";  // default knowledge representation
         int c; /* command-line arguments processing */
-        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d:em:rJTS", longOptions, nullptr)) != EOF) {
+        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d:em:C:rJTSU", longOptions, nullptr)) != EOF) {
             switch (c) {
                 /* Fact directories */
                 case 'F':
@@ -284,6 +298,9 @@ public:
                 case 'e':
                     merge_bi_imp = true;
                     break;
+                case 'C':
+                    fold_const = true;
+                    break;
                 case 'r':
                     enable_rewrite = true;
                     break;
@@ -295,6 +312,9 @@ public:
                     break;
                 case 'S':
                     dump_stat = true;
+                    break;
+                case 'U':
+                    dump_const = true;
                     break;
                 default: printHelpPage(exec_name); return false;
             }
@@ -330,10 +350,12 @@ private:
         std::cerr << "                                    (default: " << knowledge_representation << ")\n";
         std::cerr << "    -d, --derv-only              -- Only compute the derivation graph\n";
         std::cerr << "    -e, --merge-bi-imp           -- Enable merging mutually implying deterministic nodes during pruning\n";
+        std::cerr << "    -C, --fold-const             -- Enable deterministic constant pre-analysis (no prune rewrite; negation ignored)\n";
         std::cerr << "    -r, --rewrite                -- Enable SISO-based graph rewriting\n";
         std::cerr << "    --dumpjson                   -- Dump derivation graph JSON after prune\n";
         std::cerr << "    --dumpdot                    -- Dump derivation graph DOT after prune\n";
         std::cerr << "    --dumpstat                   -- Dump derivation graph stats after prune\n";
+        std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
 #ifdef _OPENMP
         std::cerr << "    -j <NUM>, --jobs=<NUM>       -- Specify number of threads\n";
         if (num_jobs > 0) {

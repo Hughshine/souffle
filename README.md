@@ -133,6 +133,7 @@ Example (batch from delta file):
 - Probabilistic semantics: derivation graph, pruning, forward compilation, weighted model counting.
 - Knowledge backend selection via `-k bdd|sdd`.
 - Optional SISO rewrite (`-r`) for full-mode runs only.
+- Optional deterministic constant pre-analysis in FC (`--fold-const`); use `--dumpconst` to write true/false nodes and edges (see `README.const.md`).
 - Debug/profiling outputs: JSON/DOT/stats dumps after prune.
 
 ### Incremental (Online) Changes
@@ -141,6 +142,7 @@ Example (batch from delta file):
 - Turn-based CLI with insert/delete/commit, and per-iteration probability outputs.
 
 ## Other README Files (Index)
+- `README.const.md`: const pre-analysis design and FC integration details.
 - `README.dred.md`: online DRed internals, deletion bottlenecks, code pointers.
 - `README.eval.inc.md`: incremental benchmark workflow and logs.
 - `README.inc.region.md`: inc-regional pipeline design and profiling notes.

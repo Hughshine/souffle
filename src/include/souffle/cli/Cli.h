@@ -302,6 +302,8 @@ public:
         } else {
             DerivationGraph::setMergeBiImpEnabled(false);
         }
+        DerivationGraph::setConstFoldEnabled(options.isConstFoldEnabled());
+        DerivationGraph::setConstDumpEnabled(options.isDumpConstEnabled());
         DerivationGraphViewInterface::setDumpDotEnabled(options.isDumpDotEnabled());
         DerivationGraphViewInterface::setDumpStatsEnabled(options.isDumpStatEnabled());
         auto& mode = options.getIncMode();
@@ -324,6 +326,10 @@ public:
         if ((mode == IncMode::INC_NAIVE || mode == IncMode::INC_REGIONAL) &&
                 graph != nullptr && graph->isBiImpMerged()) {
             assert(false && "bi-imp merged graph cannot switch to incremental mode");
+        }
+        if ((mode == IncMode::INC_NAIVE || mode == IncMode::INC_REGIONAL) &&
+                graph != nullptr && graph->isConstFolded()) {
+            assert(false && "const-folded graph cannot switch to incremental mode");
         }
         incMode = mode;
     }
@@ -638,6 +644,10 @@ public:
                     graph != nullptr && graph->isBiImpMerged()) {
                 assert(false && "bi-imp merged graph cannot run incremental mode");
             }
+            if ((incMode == IncMode::INC_NAIVE || incMode == IncMode::INC_REGIONAL) &&
+                    graph != nullptr && graph->isConstFolded()) {
+                assert(false && "const-folded graph cannot run incremental mode");
+            }
             DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
             debugger.startTurn(isFullMode() ? fullModeLabel() : "DEFAULT");
             // for ground program ...
@@ -811,6 +821,10 @@ public:
             if ((incMode == IncMode::INC_NAIVE || incMode == IncMode::INC_REGIONAL) &&
                     graph != nullptr && graph->isBiImpMerged()) {
                 assert(false && "bi-imp merged graph cannot run incremental mode");
+            }
+            if ((incMode == IncMode::INC_NAIVE || incMode == IncMode::INC_REGIONAL) &&
+                    graph != nullptr && graph->isConstFolded()) {
+                assert(false && "const-folded graph cannot run incremental mode");
             }
             {
                 purgeAllIncDeltaRelations();

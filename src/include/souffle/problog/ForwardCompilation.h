@@ -5,6 +5,7 @@
 #include "souffle/Derivation.h"
 #include "souffle/problog/DerivationGraph.h"
 #include "souffle/problog/RuleManager.h"
+#include "souffle/problog/ConstAnalysis.h"
 #include "souffle/problog/formula/FormulaManager.h"
 #include "souffle/problog/formula/LogicFormulaManager.h"
 #include <queue>
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <climits>
 #include <type_traits>
+#include <fstream>
 #include "souffle/problog/debug/Debugger.h"
 #include "souffle/problog/RegionalIncremental.h"
 
@@ -43,6 +45,22 @@ void buildFormulas(
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas
 ) {
     FunctionTimer timer(" forward compilation, building formulas ");
+    const bool useConst = DerivationGraph::isConstFoldEnabled();
+    const bool dumpConst = DerivationGraph::isConstDumpEnabled();
+    ConstAnalysisResult constInfo;
+    const ConstAnalysisResult* constInfoPtr = nullptr;
+    if (useConst || dumpConst) {
+        auto constStart = std::chrono::steady_clock::now();
+        constInfo = analyzeConstants(view, true);
+        auto constMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - constStart).count();
+        if (useConst) {
+            constInfoPtr = &constInfo;
+        }
+        std::cout << "[const-pre] tag=full-worklist took " << constMs << " ms" << std::endl;
+        logConstAnalysis(constInfo, view, "full-worklist");
+    }
+    ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager};
 
     // Initialize formulas for input facts (nodes)
     std::map<NodePtr, FormulaNodeRef> baseNodeFormulas;
@@ -99,46 +117,44 @@ void buildFormulas(
         FormulaNodeRef oldEdgeFormula = edgeFormulas[edge];
 //        std::cout << "Old edge formula: " << formulaManager.toString(oldEdgeFormula) << std::endl;
         // Compute new formula for the edge (conjunction of input node formulas and rule formula)
-        std::vector<FormulaNodeRef> inputFormulas;
-        // Add the rule formula (the edge's base formula)
-        inputFormulas.push_back(baseEdgeFormulas[edge]);
-
-        // Add the input node formulas
-        bool allInputsAvailable = true;
-        assert (view.getInputs(edge).size() == view.getBodyNegations(edge).size());
-        assert (view.getInputs(edge).size() == edge->getInputs().size());
-        for (size_t i = 0; i < view.getInputs(edge).size(); i++) {
-            auto input = view.getInputs(edge)[i];
-            auto isNegated = view.getBodyNegations(edge)[i];
-            auto it = nodeFormulas.find(input);
-            if (it != nodeFormulas.end()) {
-                if (!isNegated) {
-                    inputFormulas.push_back(it->second);
-                } else {
-                    inputFormulas.push_back(formulaManager.makeNot(it->second));
-                }
-            } else {
-                // Input node formula not available yet, skip this edge for now
-                // cannot skip, since there is cycle
-                allInputsAvailable = false;
-//                std::cout << "Input node formula not available yet: " << input->getTuple().toString() << std::endl;
-                break;
-            }
-        }
-
-        if (!allInputsAvailable) {
-            // Put the edge back in the worklist for later processing
-            worklist.push(edge);
-            inWorklist.insert(edge);
-            continue;
-        }
-
-        // Compute the conjunction of all input formulas
         FormulaNodeRef newEdgeFormula;
-        if (inputFormulas.size() == 1) {
-            newEdgeFormula = inputFormulas[0];
-        } else {
-            newEdgeFormula = formulaManager.makeAnd(inputFormulas);
+        bool edgeIsConst = constAccess.edgeFormula(edge, newEdgeFormula);
+        bool allInputsAvailable = true;
+        if (!edgeIsConst) {
+            std::vector<FormulaNodeRef> inputFormulas;
+            // Add the rule formula (the edge's base formula)
+            inputFormulas.push_back(baseEdgeFormulas[edge]);
+
+            // Add the input node formulas
+            assert (view.getInputs(edge).size() == view.getBodyNegations(edge).size());
+            assert (view.getInputs(edge).size() == edge->getInputs().size());
+            for (size_t i = 0; i < view.getInputs(edge).size(); i++) {
+                auto input = view.getInputs(edge)[i];
+                auto isNegated = view.getBodyNegations(edge)[i];
+                FormulaNodeRef lit;
+                if (!constAccess.inputLiteral(nodeFormulas, input, isNegated, lit)) {
+                    // Input node formula not available yet, skip this edge for now
+                    // cannot skip, since there is cycle
+                    allInputsAvailable = false;
+//                std::cout << "Input node formula not available yet: " << input->getTuple().toString() << std::endl;
+                    break;
+                }
+                inputFormulas.push_back(lit);
+            }
+
+            if (!allInputsAvailable) {
+                // Put the edge back in the worklist for later processing
+                worklist.push(edge);
+                inWorklist.insert(edge);
+                continue;
+            }
+
+            // Compute the conjunction of all input formulas
+            if (inputFormulas.size() == 1) {
+                newEdgeFormula = inputFormulas[0];
+            } else {
+                newEdgeFormula = formulaManager.makeAnd(inputFormulas);
+            }
         }
 
         // Check if the edge formula actually changed
@@ -156,26 +172,35 @@ void buildFormulas(
                 oldNodeFormula = nodeFormulas[output];
             }
 
-            // Collect formulas from all incoming edges
-            std::vector<FormulaNodeRef> incomingFormulas;
-            for (const auto& inEdge : view.getIncomingEdges(output)) {
-                auto it = edgeFormulas.find(inEdge);
-                if (it != edgeFormulas.end()) {
-                    if (it->second.get()) {
-                        // TODO: don't know why it can be NULL
-                        incomingFormulas.push_back(it->second);
+            // Compute the disjunction of all incoming edge formulas
+            FormulaNodeRef newNodeFormula;
+            bool hasNewNodeFormula = constAccess.nodeFormula(output, newNodeFormula);
+            if (!hasNewNodeFormula) {
+                // Collect formulas from all incoming edges
+                std::vector<FormulaNodeRef> incomingFormulas;
+                for (const auto& inEdge : view.getIncomingEdges(output)) {
+                    auto it = edgeFormulas.find(inEdge);
+                    if (it != edgeFormulas.end()) {
+                        if (it->second.get()) {
+                            // TODO: don't know why it can be NULL
+                            incomingFormulas.push_back(it->second);
+                        }
                     }
+                }
+
+                if (incomingFormulas.empty()) {
+                    assert (false && "No incoming edge formula found for the output node");
+                } else if (incomingFormulas.size() == 1) {
+                    newNodeFormula = incomingFormulas[0];
+                    hasNewNodeFormula = true;
+                } else {
+                    newNodeFormula = formulaManager.makeOr(incomingFormulas);
+                    hasNewNodeFormula = true;
                 }
             }
 
-            // Compute the disjunction of all incoming edge formulas
-            FormulaNodeRef newNodeFormula;
-            if (incomingFormulas.empty()) {
-                assert (false && "No incoming edge formula found for the output node");
-            } else if (incomingFormulas.size() == 1) {
-                newNodeFormula = incomingFormulas[0];
-            } else {
-                newNodeFormula = formulaManager.makeOr(incomingFormulas);
+            if (!hasNewNodeFormula) {
+                continue;
             }
 
             // Check if the node formula actually changed
@@ -223,6 +248,24 @@ void buildFormulasCyclewise(
          return std::chrono::duration<double, std::milli>(d).count();
      };
      auto overallStart = std::chrono::steady_clock::now();
+     const bool useConst = DerivationGraph::isConstFoldEnabled();
+     const bool dumpConst = DerivationGraph::isConstDumpEnabled();
+     ConstAnalysisResult constInfo;
+     const ConstAnalysisResult* constInfoPtr = nullptr;
+     if (useConst || dumpConst) {
+         auto constStart = std::chrono::steady_clock::now();
+         constInfo = analyzeConstants(view, true);
+         auto constMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::steady_clock::now() - constStart).count();
+         if (useConst) {
+             constInfoPtr = &constInfo;
+         }
+         if (seedTrueNodes.empty()) {
+             std::cout << "[const-pre] tag=full-cyclewise took " << constMs << " ms" << std::endl;
+             logConstAnalysis(constInfo, view, "full-cyclewise");
+         }
+     }
+     ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager};
 
      auto preStart = std::chrono::steady_clock::now();
      formulaManager.preConfig(view);
@@ -329,57 +372,67 @@ void buildFormulasCyclewise(
             inWorklist.erase(edge);
 //            std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
 //            std::cout << "Edge depth: " << depth << std::endl;
-            std::vector<FormulaNodeRef> inputs = { baseEdgeFormulas[edge] };
+            FormulaNodeRef newEdgeF;
+            bool edgeIsConst = constAccess.edgeFormula(edge, newEdgeF);
             bool allAvailable = true;
-
-            for (size_t i = 0; i < view.getInputs(edge).size(); ++i) {
-                NodePtr input = view.getInputs(edge)[i];
-                if (!nodeFormulas.count(input)) {
+            if (!edgeIsConst) {
+                std::vector<FormulaNodeRef> inputs = { baseEdgeFormulas[edge] };
+                for (size_t i = 0; i < view.getInputs(edge).size(); ++i) {
+                    NodePtr input = view.getInputs(edge)[i];
+                    FormulaNodeRef lit;
+                    if (!constAccess.inputLiteral(nodeFormulas, input, view.getBodyNegations(edge)[i], lit)) {
 //                    std::cout << "Input node formula not available: " << input->getId() << " " << input->toString() << std::endl;
-                    allAvailable = false;
-                    auto& sc = stallCount[edge];
-                    sc++;
-                    if (loggedFirstStall.insert(edge).second || sc == 100 || sc == 1000) {
-                        std::cout << "[buildFormulasCyclewise] stall edge " << edge->toString()
-                                  << " missing input formula for node " << input->toString()
-                                  << " (stall #" << sc << ")" << std::endl;
+                        allAvailable = false;
+                        auto& sc = stallCount[edge];
+                        sc++;
+                        if (loggedFirstStall.insert(edge).second || sc == 100 || sc == 1000) {
+                            std::cout << "[buildFormulasCyclewise] stall edge " << edge->toString()
+                                      << " missing input formula for node " << input->toString()
+                                      << " (stall #" << sc << ")" << std::endl;
+                        }
+                        if (sc > kMaxStall) {
+                            std::cout << "[buildFormulasCyclewise] giving up on edge " << edge->toString()
+                                      << " after " << sc << " stalls; setting formula to False to continue."
+                                      << std::endl;
+                            edgeFormulas[edge] = formulaManager.getFalse();
+                            allAvailable = true;  // allow propagation of False to break the cycle
+                        }
+                        break;
                     }
-                    if (sc > kMaxStall) {
-                        std::cout << "[buildFormulasCyclewise] giving up on edge " << edge->toString()
-                                  << " after " << sc << " stalls; setting formula to False to continue."
-                                  << std::endl;
-                        edgeFormulas[edge] = formulaManager.getFalse();
-                        allAvailable = true;  // allow propagation of False to break the cycle
-                    }
-                    break;
+                    inputs.push_back(lit);
                 }
-                inputs.push_back(view.getBodyNegations(edge)[i]
-                    ? formulaManager.makeNot(nodeFormulas[input])
-                    : nodeFormulas[input]);
-            }
 
-            if (!allAvailable) {
+                if (!allAvailable) {
 //                std::cout << "Not all inputs available for edge " << edge->getId() << ", re-adding to worklist.\n";
-                worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
-                inWorklist.insert(edge);
-                continue;
-            }
+                    worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
+                    inWorklist.insert(edge);
+                    continue;
+                }
 
-            FormulaNodeRef newEdgeF = (inputs.size() == 1) ? inputs[0] : formulaManager.makeAnd(inputs);
+                newEdgeF = (inputs.size() == 1) ? inputs[0] : formulaManager.makeAnd(inputs);
+            }
             if (!formulaManager.isSame(edgeFormulas[edge], newEdgeF)) {
                 edgeFormulas[edge] = newEdgeF;
                 NodePtr out = view.getOutput(edge);
 
-                std::vector<FormulaNodeRef> inFs;
-                for (auto& inEdge : view.getIncomingEdges(out)) {
-                    auto it = edgeFormulas.find(inEdge);
-                    if (it != edgeFormulas.end() && it->second.get()) {
-                        inFs.push_back(it->second);
+                FormulaNodeRef newNodeF;
+                bool hasNewNodeF = constAccess.nodeFormula(out, newNodeF);
+                if (!hasNewNodeF) {
+                    std::vector<FormulaNodeRef> inFs;
+                    for (auto& inEdge : view.getIncomingEdges(out)) {
+                        auto it = edgeFormulas.find(inEdge);
+                        if (it != edgeFormulas.end() && it->second.get()) {
+                            inFs.push_back(it->second);
+                        }
+                    }
+
+                    if (!inFs.empty()) {
+                        newNodeF = (inFs.size() == 1) ? inFs[0] : formulaManager.makeOr(inFs);
+                        hasNewNodeF = true;
                     }
                 }
 
-                if (!inFs.empty()) {
-                    FormulaNodeRef newNodeF = (inFs.size() == 1) ? inFs[0] : formulaManager.makeOr(inFs);
+                if (hasNewNodeF) {
                     if (!nodeFormulas.count(out) || !formulaManager.isSame(nodeFormulas[out], newNodeF)) {
                         nodeFormulas[out] = newNodeF;
 
@@ -449,6 +502,22 @@ void buildFormulasInc(
         stage->logMessage(Level::INFO, "No changes to apply, skipping incremental update\n");
         return;
     }
+    const bool useConst = DerivationGraph::isConstFoldEnabled();
+    const bool dumpConst = DerivationGraph::isConstDumpEnabled();
+    ConstAnalysisResult constInfo;
+    const ConstAnalysisResult* constInfoPtr = nullptr;
+    if (useConst || dumpConst) {
+        auto constStart = std::chrono::steady_clock::now();
+        constInfo = analyzeConstants(view, true);
+        auto constMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - constStart).count();
+        if (useConst) {
+            constInfoPtr = &constInfo;
+        }
+        std::cout << "[const-pre] tag=inc-worklist took " << constMs << " ms" << std::endl;
+        logConstAnalysis(constInfo, view, "inc-worklist");
+    }
+    ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager};
 
     // deletion
     if (deltaDeletedEdges.empty()) {
@@ -481,15 +550,19 @@ void buildFormulasInc(
             }
             // for all impacted but not deleted nodes, update their formulas
             for (auto node : nodes) {
-                std::vector<FormulaNodeRef> incoming;
-                for (auto e : view.getIncomingEdges(node)) {
-                    auto it = edgeFormulas.find(e);
-                    if (it != edgeFormulas.end() && it->second.get()) {
-                        incoming.push_back(it->second);
+                FormulaNodeRef newNodeFormula;
+                bool hasNewNodeFormula = constAccess.nodeFormula(node, newNodeFormula);
+                if (!hasNewNodeFormula) {
+                    std::vector<FormulaNodeRef> incoming;
+                    for (auto e : view.getIncomingEdges(node)) {
+                        auto it = edgeFormulas.find(e);
+                        if (it != edgeFormulas.end() && it->second.get()) {
+                            incoming.push_back(it->second);
+                        }
                     }
+                    assert (!incoming.empty());
+                    newNodeFormula = formulaManager.makeOr(incoming);
                 }
-                assert (!incoming.empty());
-                auto newNodeFormula = formulaManager.makeOr(incoming);
                 nodeFormulas[node] = newNodeFormula;
             }
         }
@@ -520,30 +593,34 @@ void buildFormulasInc(
             // now the edge should have its old formula (not deleted)
             FormulaNodeRef oldEdgeFormula = edgeFormulas[edge];
             // calculate the new formula
-            FormulaNodeRef baseFormula = edge->isDeterministic()
-                ? formulaManager.getTrue()
-                : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
-            std::vector<FormulaNodeRef> inputFormulas = {baseFormula};
-            const auto& inputs = view.getInputs(edge);
-            const auto& negs = view.getBodyNegations(edge);
-
+            FormulaNodeRef newEdgeFormula;
+            bool edgeIsConst = constAccess.edgeFormula(edge, newEdgeFormula);
             bool allInputsAvailable = true;
-            for (size_t i = 0; i < inputs.size(); ++i) {
-                auto it = nodeFormulas.find(inputs[i]);
-                if (it == nodeFormulas.end()) {
-                    worklist.push_back(edge);
-                    allInputsAvailable = false;
-                    break;
-                } else
-                    inputFormulas.push_back(negs[i] ? formulaManager.makeNot(it->second) : it->second);
-            }
-            if (!allInputsAvailable) {
-                // put the edge back in the worklist for later processing
-                iteration->logMessage(Level::INFO, "Input node formula not available yet, re-adding edge to worklist");
-                continue;
-            }
+            if (!edgeIsConst) {
+                FormulaNodeRef baseFormula = edge->isDeterministic()
+                    ? formulaManager.getTrue()
+                    : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
+                std::vector<FormulaNodeRef> inputFormulas = {baseFormula};
+                const auto& inputs = view.getInputs(edge);
+                const auto& negs = view.getBodyNegations(edge);
 
-            FormulaNodeRef newEdgeFormula = formulaManager.makeAnd(inputFormulas);
+                for (size_t i = 0; i < inputs.size(); ++i) {
+                    FormulaNodeRef lit;
+                    if (!constAccess.inputLiteral(nodeFormulas, inputs[i], negs[i], lit)) {
+                        worklist.push_back(edge);
+                        allInputsAvailable = false;
+                        break;
+                    }
+                    inputFormulas.push_back(lit);
+                }
+                if (!allInputsAvailable) {
+                    // put the edge back in the worklist for later processing
+                    iteration->logMessage(Level::INFO, "Input node formula not available yet, re-adding edge to worklist");
+                    continue;
+                }
+
+                newEdgeFormula = formulaManager.makeAnd(inputFormulas);
+            }
             // check if the edge formula actually changed
             if (formulaManager.isSame(oldEdgeFormula, newEdgeFormula)) {
                 iteration->logMessage(Level::INFO, "Edge formula did not change, skipping edge");
@@ -557,17 +634,23 @@ void buildFormulasInc(
 
             FormulaNodeRef oldNode = nodeFormulas[output];
 
-            std::vector<FormulaNodeRef> incoming;
-            for (auto e : view.getIncomingEdges(output)) {
-                auto it = edgeFormulas.find(e);
-                if (it != edgeFormulas.end() && it->second.get()) {
-                    incoming.push_back(it->second);
+            FormulaNodeRef newNode;
+            bool hasNewNode = constAccess.nodeFormula(output, newNode);
+            if (!hasNewNode) {
+                std::vector<FormulaNodeRef> incoming;
+                for (auto e : view.getIncomingEdges(output)) {
+                    auto it = edgeFormulas.find(e);
+                    if (it != edgeFormulas.end() && it->second.get()) {
+                        incoming.push_back(it->second);
+                    }
                 }
+                assert (!incoming.empty());
+                newNode = formulaManager.makeOr(incoming);
+                assert (!formulaManager.isSame(newNode, formulaManager.getFalse()));
+                hasNewNode = true;
             }
-            FormulaNodeRef newNode = formulaManager.makeOr(incoming);
-            assert (!formulaManager.isSame(newNode, formulaManager.getFalse()));
 
-            if (!formulaManager.isSame(oldNode, newNode)) {
+            if (hasNewNode && !formulaManager.isSame(oldNode, newNode)) {
                 iteration->logMessage(Level::INFO, "Node formula changed, updating node");
                 nodeFormulas[output] = newNode;
                 for (auto outEdge : view.getOutgoingEdges(output)) {
@@ -626,28 +709,32 @@ void buildFormulasInc(
         worklist.pop_front();
         FormulaNodeRef oldEdge = edgeFormulas[edge];
         // calculate the new formula
-        FormulaNodeRef baseFormula = edge->isDeterministic()
-            ? formulaManager.getTrue()
-            : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
-        std::vector<FormulaNodeRef> inputFormulas = {baseFormula};
-        const auto& inputs = view.getInputs(edge);
-        const auto& negs = view.getBodyNegations(edge);
+        FormulaNodeRef newEdge;
+        bool edgeIsConst = constAccess.edgeFormula(edge, newEdge);
         bool allInputsAvailable = true;
-        for (size_t i = 0; i < inputs.size(); ++i) {
-            auto it = nodeFormulas.find(inputs[i]);
-            if (it == nodeFormulas.end()) {
+        if (!edgeIsConst) {
+            FormulaNodeRef baseFormula = edge->isDeterministic()
+                ? formulaManager.getTrue()
+                : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
+            std::vector<FormulaNodeRef> inputFormulas = {baseFormula};
+            const auto& inputs = view.getInputs(edge);
+            const auto& negs = view.getBodyNegations(edge);
+            for (size_t i = 0; i < inputs.size(); ++i) {
+                FormulaNodeRef lit;
+                if (!constAccess.inputLiteral(nodeFormulas, inputs[i], negs[i], lit)) {
 //                std::cout << "Input node formula not available yet: " << inputs[i]->getTuple().toString() << std::endl;
-                allInputsAvailable = false;
-                worklist.push_back(edge);
-                break;
+                    allInputsAvailable = false;
+                    worklist.push_back(edge);
+                    break;
+                }
+                inputFormulas.push_back(lit);
             }
-            inputFormulas.push_back(negs[i] ? formulaManager.makeNot(it->second) : it->second);
+            if (!allInputsAvailable) {
+                // put the edge back in the worklist for later processing
+                continue;
+            }
+            newEdge = formulaManager.makeAnd(inputFormulas);
         }
-        if (!allInputsAvailable) {
-            // put the edge back in the worklist for later processing
-            continue;
-        }
-        FormulaNodeRef newEdge = formulaManager.makeAnd(inputFormulas);
 
         if (!formulaManager.isSame(oldEdge, newEdge)) {
 //            std::cout << "oldEdge: " << formulaManager.toString(oldEdge) << std::endl;
@@ -657,16 +744,23 @@ void buildFormulasInc(
             assert (output->isFact == false);
 //            assert (deltaInsertedNodes.count(output) == 0);
             FormulaNodeRef oldNode = nodeFormulas[output];
-            std::vector<FormulaNodeRef> incoming;
-            for (auto e : view.getIncomingEdges(output)) {
-                auto it = edgeFormulas.find(e);
-                if (it != edgeFormulas.end() && it->second.get()) {
-                    incoming.push_back(it->second);
+            FormulaNodeRef newNode;
+            bool hasNewNode = constAccess.nodeFormula(output, newNode);
+            if (!hasNewNode) {
+                std::vector<FormulaNodeRef> incoming;
+                for (auto e : view.getIncomingEdges(output)) {
+                    auto it = edgeFormulas.find(e);
+                    if (it != edgeFormulas.end() && it->second.get()) {
+                        incoming.push_back(it->second);
+                    }
+                }
+                if (!incoming.empty()) {
+                    newNode = formulaManager.makeOr(incoming);
+                    hasNewNode = true;
                 }
             }
-            FormulaNodeRef newNode = formulaManager.makeOr(incoming);
 
-            if (!formulaManager.isSame(oldNode, newNode)) {
+            if (hasNewNode && !formulaManager.isSame(oldNode, newNode)) {
                 nodeFormulas[output] = newNode;
                 for (auto outEdge : view.getOutgoingEdges(output)) {
                     worklist.push_back(outEdge);
@@ -716,6 +810,22 @@ void buildFormulasIncCyclewise(
         }
         return;
     }
+    const bool useConst = DerivationGraph::isConstFoldEnabled();
+    const bool dumpConst = DerivationGraph::isConstDumpEnabled();
+    ConstAnalysisResult constInfo;
+    const ConstAnalysisResult* constInfoPtr = nullptr;
+    if (useConst || dumpConst) {
+        auto constStart = std::chrono::steady_clock::now();
+        constInfo = analyzeConstants(view, true);
+        auto constMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - constStart).count();
+        if (useConst) {
+            constInfoPtr = &constInfo;
+        }
+        std::cout << "[const-pre] tag=inc-cyclewise took " << constMs << " ms" << std::endl;
+        logConstAnalysis(constInfo, view, "inc-cyclewise");
+    }
+    ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager};
     debugger.logMessage(Level::INFO, "Starting incremental update for deleted edges");
 
     start = high_resolution_clock::now();
@@ -811,13 +921,17 @@ void buildFormulasIncCyclewise(
 
         // update the impacted nodes' formula to the newest
         for (auto& impactedNode: changedNodes) {
-            std::vector<FormulaNodeRef> incoming;
-            for (EdgePtr e : view.getIncomingEdges(impactedNode)) {
-                if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
-                    incoming.push_back(edgeFormulas[e]);
+            FormulaNodeRef newNode;
+            bool hasNewNode = constAccess.nodeFormula(impactedNode, newNode);
+            if (!hasNewNode) {
+                std::vector<FormulaNodeRef> incoming;
+                for (EdgePtr e : view.getIncomingEdges(impactedNode)) {
+                    if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
+                        incoming.push_back(edgeFormulas[e]);
+                    }
                 }
+                newNode = formulaManager.makeOr(incoming);
             }
-            FormulaNodeRef newNode = formulaManager.makeOr(incoming);
             if (!formulaManager.isSame(nodeFormulas[impactedNode], newNode)) {
                 nodeFormulas[impactedNode] = newNode;
             }
@@ -910,32 +1024,36 @@ void buildFormulasIncCyclewise(
                 EdgePtr edge = worklist.top().edge; worklist.pop();
                 cycleInWorklists[cid].erase(edge);
                 round++;
-                FormulaNodeRef baseFormula = edge->isDeterministic()
-                    ? formulaManager.getTrue()
-                    : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
-                std::vector<FormulaNodeRef> inputFormulas{baseFormula};
+                FormulaNodeRef newEdge;
+                bool edgeIsConst = constAccess.edgeFormula(edge, newEdge);
+                if (!edgeIsConst) {
+                    FormulaNodeRef baseFormula = edge->isDeterministic()
+                        ? formulaManager.getTrue()
+                        : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
+                    std::vector<FormulaNodeRef> inputFormulas{baseFormula};
 
-                const auto& inputs = view.getInputs(edge);
-                const auto& negs = view.getBodyNegations(edge);
-                bool allAvailable = true;
-                for (size_t i = 0; i < inputs.size(); ++i) {
-                    auto it = nodeFormulas.find(inputs[i]);
-                    if (it == nodeFormulas.end()) {
+                    const auto& inputs = view.getInputs(edge);
+                    const auto& negs = view.getBodyNegations(edge);
+                    bool allAvailable = true;
+                    for (size_t i = 0; i < inputs.size(); ++i) {
+                        FormulaNodeRef lit;
+                        if (!constAccess.inputLiteral(nodeFormulas, inputs[i], negs[i], lit)) {
     //                    std::cout << "    [WAIT] Missing input: " << inputs[i]->toString() << std::endl;
-                        allAvailable = false;
-                        break;
+                            allAvailable = false;
+                            break;
+                        }
+                        inputFormulas.push_back(lit);
                     }
-                    inputFormulas.push_back(negs[i] ? formulaManager.makeNot(it->second) : it->second);
-                }
 
-                if (!allAvailable) {
-                    worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
-                    cycleInWorklists[cid].insert(edge);
-                    debugger.endIteration();
-                    continue;
-                }
+                    if (!allAvailable) {
+                        worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
+                        cycleInWorklists[cid].insert(edge);
+                        debugger.endIteration();
+                        continue;
+                    }
 
-                FormulaNodeRef newEdge = formulaManager.makeAnd(inputFormulas);
+                    newEdge = formulaManager.makeAnd(inputFormulas);
+                }
                 if (formulaManager.isSame(edgeFormulas[edge], newEdge)) {
 //                    std::cout << "    [SKIP] No change\n";
                     debugger.endIteration();
@@ -952,14 +1070,17 @@ void buildFormulasIncCyclewise(
                     continue;
                 }
 
-                std::vector<FormulaNodeRef> incoming;
-                for (EdgePtr e : view.getIncomingEdges(output)) {
-                    if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
-                        incoming.push_back(edgeFormulas[e]);
+                FormulaNodeRef newNode;
+                bool hasNewNode = constAccess.nodeFormula(output, newNode);
+                if (!hasNewNode) {
+                    std::vector<FormulaNodeRef> incoming;
+                    for (EdgePtr e : view.getIncomingEdges(output)) {
+                        if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
+                            incoming.push_back(edgeFormulas[e]);
+                        }
                     }
+                    newNode = formulaManager.makeOr(incoming);
                 }
-
-                FormulaNodeRef newNode = formulaManager.makeOr(incoming);
                 if (!formulaManager.isSame(nodeFormulas[output], newNode)) {
                     std::cout << "    [UPDATE] Node formula changed: " << output->toString() << std::endl;
                     nodeFormulas[output] = newNode;
@@ -1070,35 +1191,38 @@ void buildFormulasIncCyclewise(
                           << ", Worklist size: " << worklist.size() << std::endl;
                 std::cout << edge->toString() << " with depth " << depth << std::endl;
 
-                FormulaNodeRef baseFormula = edge->isDeterministic()
-                    ? formulaManager.getTrue()
-                    : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
-                std::vector<FormulaNodeRef> inputFormulas{baseFormula};
-
                 const auto& inputs = view.getInputs(edge);
                 const auto& negs = view.getBodyNegations(edge);
+                FormulaNodeRef newEdge;
+                bool edgeIsConst = constAccess.edgeFormula(edge, newEdge);
                 bool allAvailable = true;
-                for (size_t i = 0; i < inputs.size(); ++i) {
-                    auto it = nodeFormulas.find(inputs[i]);
-                    if (it == nodeFormulas.end()) {
+                if (!edgeIsConst) {
+                    FormulaNodeRef baseFormula = edge->isDeterministic()
+                        ? formulaManager.getTrue()
+                        : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
+                    std::vector<FormulaNodeRef> inputFormulas{baseFormula};
+                    for (size_t i = 0; i < inputs.size(); ++i) {
+                        FormulaNodeRef lit;
+                        if (!constAccess.inputLiteral(nodeFormulas, inputs[i], negs[i], lit)) {
     //                    std::cout << "    [WAIT] Missing input: " << inputs[i]->toString() << std::endl;
-                        allAvailable = false;
-                        break;
+                            allAvailable = false;
+                            break;
+                        }
+                        inputFormulas.push_back(lit);
                     }
-                    inputFormulas.push_back(negs[i] ? formulaManager.makeNot(it->second) : it->second);
-                }
 
-                if (!allAvailable) {
-                    worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
-                    inWorklist.insert(edge);
-                    std::cout << "    [REQUEUE] Missing input for edge " << edge->toString()
-                              << ", back to worklist (cycle " << cid
-                              << ", new worklist size=" << worklist.size() << ")\n";
+                    if (!allAvailable) {
+                        worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
+                        inWorklist.insert(edge);
+                        std::cout << "    [REQUEUE] Missing input for edge " << edge->toString()
+                                  << ", back to worklist (cycle " << cid
+                                  << ", new worklist size=" << worklist.size() << ")\n";
 //                    debugger.endIteration();
-                    continue;
-                }
+                        continue;
+                    }
 
-                FormulaNodeRef newEdge = formulaManager.makeAnd(inputFormulas);
+                    newEdge = formulaManager.makeAnd(inputFormulas);
+                }
                 if (!edgeFormulas[edge].get()) {
                     std::cout << "    [EDGE-OLD-NULL] " << edge->toString() << " old formula is null\n";
                 }
@@ -1138,14 +1262,17 @@ void buildFormulasIncCyclewise(
                     continue;
                 }
 
-                std::vector<FormulaNodeRef> incoming;
-                for (EdgePtr e : view.getIncomingEdges(output)) {
-                    if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
-                        incoming.push_back(edgeFormulas[e]);
+                FormulaNodeRef newNode;
+                bool hasNewNode = constAccess.nodeFormula(output, newNode);
+                if (!hasNewNode) {
+                    std::vector<FormulaNodeRef> incoming;
+                    for (EdgePtr e : view.getIncomingEdges(output)) {
+                        if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
+                            incoming.push_back(edgeFormulas[e]);
+                        }
                     }
+                    newNode = formulaManager.makeOr(incoming);
                 }
-
-                FormulaNodeRef newNode = formulaManager.makeOr(incoming);
                 if (!nodeFormulas[output].get()) {
                     std::cout << "    [NODE-OLD-NULL] " << output->toString() << " old formula is null\n";
                 }
@@ -1224,6 +1351,22 @@ void buildFormulasCyclewiseOnDemand(
 ) {
      FunctionTimer timer("Build Formulas Cyclewise using DAG + Depth");
      auto start = std::chrono::high_resolution_clock::now();
+     const bool useConst = DerivationGraph::isConstFoldEnabled();
+     const bool dumpConst = DerivationGraph::isConstDumpEnabled();
+     ConstAnalysisResult constInfo;
+     const ConstAnalysisResult* constInfoPtr = nullptr;
+     if (useConst || dumpConst) {
+         auto constStart = std::chrono::steady_clock::now();
+         constInfo = analyzeConstants(view, true);
+         auto constMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::steady_clock::now() - constStart).count();
+         if (useConst) {
+             constInfoPtr = &constInfo;
+         }
+         std::cout << "[const-pre] tag=full-ondemand took " << constMs << " ms" << std::endl;
+         logConstAnalysis(constInfo, view, "full-ondemand");
+     }
+     ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager};
      formulaManager.preConfig(view);
      auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -1311,43 +1454,54 @@ void buildFormulasCyclewiseOnDemand(
             inWorklist.erase(edge);
 //            std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
 //            std::cout << "Edge depth: " << depth << std::endl;
-            std::vector<FormulaNodeRef> inputs = { baseEdgeFormulas[edge] };
+            FormulaNodeRef newEdgeF;
+            bool edgeIsConst = constAccess.edgeFormula(edge, newEdgeF);
             bool allAvailable = true;
+            if (!edgeIsConst) {
+                std::vector<FormulaNodeRef> inputs = { baseEdgeFormulas[edge] };
 
-            for (size_t i = 0; i < view.getInputs(edge).size(); ++i) {
-                NodePtr input = view.getInputs(edge)[i];
-                if (!nodeFormulas.count(input)) {
+                for (size_t i = 0; i < view.getInputs(edge).size(); ++i) {
+                    NodePtr input = view.getInputs(edge)[i];
+                    FormulaNodeRef lit;
+                    if (!constAccess.inputLiteral(nodeFormulas, input, view.getBodyNegations(edge)[i], lit)) {
 //                    std::cout << "Input node formula not available: " << input->getId() << " " << input->toString() << std::endl;
-                    allAvailable = false;
-                    break;
+                        allAvailable = false;
+                        break;
+                    }
+                    inputs.push_back(lit);
                 }
-                inputs.push_back(view.getBodyNegations(edge)[i]
-                    ? formulaManager.makeNot(nodeFormulas[input])
-                    : nodeFormulas[input]);
-            }
 
-            if (!allAvailable) {
+                if (!allAvailable) {
 //                std::cout << "Not all inputs available for edge " << edge->getId() << ", re-adding to worklist.\n";
-                worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
-                inWorklist.insert(edge);
-                continue;
-            }
+                    worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
+                    inWorklist.insert(edge);
+                    continue;
+                }
 
-            FormulaNodeRef newEdgeF = (inputs.size() == 1) ? inputs[0] : formulaManager.makeAnd(inputs);
+                newEdgeF = (inputs.size() == 1) ? inputs[0] : formulaManager.makeAnd(inputs);
+            }
             if (!formulaManager.isSame(edgeFormulas[edge], newEdgeF)) {
                 edgeFormulas[edge] = newEdgeF;
                 NodePtr out = view.getOutput(edge);
 
-                std::vector<FormulaNodeRef> inFs;
-                for (auto& inEdge : view.getIncomingEdges(out)) {
-                    auto it = edgeFormulas.find(inEdge);
-                    if (it != edgeFormulas.end() && it->second.get()) {
-                        inFs.push_back(it->second);
+                FormulaNodeRef newNodeF;
+                bool hasNewNodeF = constAccess.nodeFormula(out, newNodeF);
+                if (!hasNewNodeF) {
+                    std::vector<FormulaNodeRef> inFs;
+                    for (auto& inEdge : view.getIncomingEdges(out)) {
+                        auto it = edgeFormulas.find(inEdge);
+                        if (it != edgeFormulas.end() && it->second.get()) {
+                            inFs.push_back(it->second);
+                        }
+                    }
+
+                    if (!inFs.empty()) {
+                        newNodeF = (inFs.size() == 1) ? inFs[0] : formulaManager.makeOr(inFs);
+                        hasNewNodeF = true;
                     }
                 }
 
-                if (!inFs.empty()) {
-                    FormulaNodeRef newNodeF = (inFs.size() == 1) ? inFs[0] : formulaManager.makeOr(inFs);
+                if (hasNewNodeF) {
                     if (!nodeFormulas.count(out) || !formulaManager.isSame(nodeFormulas[out], newNodeF)) {
                         nodeFormulas[out] = newNodeF;
 
@@ -1453,6 +1607,22 @@ void buildFormulasIncRegionalCyclewise(
         debugger.logMessage(Level::INFO, "[inc-regional] pipeline finished; usedFallback=false");
         return;
     }
+    const bool useConst = DerivationGraph::isConstFoldEnabled();
+    const bool dumpConst = DerivationGraph::isConstDumpEnabled();
+    ConstAnalysisResult constInfo;
+    const ConstAnalysisResult* constInfoPtr = nullptr;
+    if (useConst || dumpConst) {
+        auto constStart = std::chrono::steady_clock::now();
+        constInfo = analyzeConstants(view, true);
+        auto constMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - constStart).count();
+        if (useConst) {
+            constInfoPtr = &constInfo;
+        }
+        std::cout << "[const-pre] tag=inc-regional took " << constMs << " ms" << std::endl;
+        logConstAnalysis(constInfo, view, "inc-regional");
+    }
+    ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager};
 
     if (!deltaDeletedEdges.empty() || !deltaDeletedNodes.empty()) {
         auto start = high_resolution_clock::now();
@@ -1543,14 +1713,20 @@ void buildFormulasIncRegionalCyclewise(
         }
 
         for (auto& impactedNode: changedNodes) {
-            std::vector<FormulaNodeRef> incoming;
-            for (EdgePtr e : view.getIncomingEdges(impactedNode)) {
-                if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
-                    incoming.push_back(edgeFormulas[e]);
+            FormulaNodeRef newNode;
+            bool hasNewNode = constAccess.nodeFormula(impactedNode, newNode);
+            if (!hasNewNode) {
+                std::vector<FormulaNodeRef> incoming;
+                for (EdgePtr e : view.getIncomingEdges(impactedNode)) {
+                    if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
+                        incoming.push_back(edgeFormulas[e]);
+                    }
                 }
+                assert (!incoming.empty());
+                newNode = formulaManager.makeOr(incoming);
+                hasNewNode = true;
             }
-            FormulaNodeRef newNode = formulaManager.makeOr(incoming);
-            if (!formulaManager.isSame(nodeFormulas[impactedNode], newNode)) {
+            if (hasNewNode && !formulaManager.isSame(nodeFormulas[impactedNode], newNode)) {
                 nodeFormulas[impactedNode] = newNode;
             }
         }
@@ -1633,31 +1809,35 @@ void buildFormulasIncRegionalCyclewise(
                 EdgePtr edge = worklist.top().edge; worklist.pop();
                 cycleInWorklists[cid].erase(edge);
                 round++;
-                FormulaNodeRef baseFormula = edge->isDeterministic()
-                    ? formulaManager.getTrue()
-                    : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
-                std::vector<FormulaNodeRef> inputFormulas{baseFormula};
-
-                const auto& inputs = view.getInputs(edge);
-                const auto& negs = view.getBodyNegations(edge);
+                FormulaNodeRef newEdge;
+                bool edgeIsConst = constAccess.edgeFormula(edge, newEdge);
                 bool allAvailable = true;
-                for (size_t i = 0; i < inputs.size(); ++i) {
-                    auto it = nodeFormulas.find(inputs[i]);
-                    if (it == nodeFormulas.end()) {
-                        allAvailable = false;
-                        break;
+                if (!edgeIsConst) {
+                    FormulaNodeRef baseFormula = edge->isDeterministic()
+                        ? formulaManager.getTrue()
+                        : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
+                    std::vector<FormulaNodeRef> inputFormulas{baseFormula};
+
+                    const auto& inputs = view.getInputs(edge);
+                    const auto& negs = view.getBodyNegations(edge);
+                    for (size_t i = 0; i < inputs.size(); ++i) {
+                        FormulaNodeRef lit;
+                        if (!constAccess.inputLiteral(nodeFormulas, inputs[i], negs[i], lit)) {
+                            allAvailable = false;
+                            break;
+                        }
+                        inputFormulas.push_back(lit);
                     }
-                    inputFormulas.push_back(negs[i] ? formulaManager.makeNot(it->second) : it->second);
-                }
 
-                if (!allAvailable) {
-                    worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
-                    cycleInWorklists[cid].insert(edge);
-                    debugger.endIteration();
-                    continue;
-                }
+                    if (!allAvailable) {
+                        worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
+                        cycleInWorklists[cid].insert(edge);
+                        debugger.endIteration();
+                        continue;
+                    }
 
-                FormulaNodeRef newEdge = formulaManager.makeAnd(inputFormulas);
+                    newEdge = formulaManager.makeAnd(inputFormulas);
+                }
                 if (formulaManager.isSame(edgeFormulas[edge], newEdge)) {
                     debugger.endIteration();
                     continue;
@@ -1671,15 +1851,21 @@ void buildFormulasIncRegionalCyclewise(
                     continue;
                 }
 
-                std::vector<FormulaNodeRef> incoming;
-                for (EdgePtr e : view.getIncomingEdges(output)) {
-                    if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
-                        incoming.push_back(edgeFormulas[e]);
+                FormulaNodeRef newNode;
+                bool hasNewNode = constAccess.nodeFormula(output, newNode);
+                if (!hasNewNode) {
+                    std::vector<FormulaNodeRef> incoming;
+                    for (EdgePtr e : view.getIncomingEdges(output)) {
+                        if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
+                            incoming.push_back(edgeFormulas[e]);
+                        }
+                    }
+                    if (!incoming.empty()) {
+                        newNode = formulaManager.makeOr(incoming);
+                        hasNewNode = true;
                     }
                 }
-
-                FormulaNodeRef newNode = formulaManager.makeOr(incoming);
-                if (!formulaManager.isSame(nodeFormulas[output], newNode)) {
+                if (hasNewNode && !formulaManager.isSame(nodeFormulas[output], newNode)) {
                     nodeFormulas[output] = newNode;
                     changedNodes.insert(output);
                     for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
@@ -1718,7 +1904,7 @@ void buildFormulasIncRegionalCyclewise(
 
     using FMType = std::remove_reference_t<decltype(formulaManager)>;
     RegionalIncrementalForwardCompilation<FMType, FormulaNodeRef> orchestrator;
-    orchestrator.applyUpdate(view, formulaManager, nodeFormulas, edgeFormulas, changedNodes);
+    orchestrator.applyUpdate(view, formulaManager, nodeFormulas, edgeFormulas, changedNodes, constInfoPtr);
     formulaManager.dumpProfilingStatistics();
     for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
         debugger.addInfo(key, value);

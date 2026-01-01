@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cassert>
 #include "souffle/problog/DerivationGraph.h"
+#include "souffle/problog/ConstAnalysis.h"
 #include "souffle/problog/IncRegionAnalyzer.h"
 #include "souffle/problog/formula/FormulaManager.h"
 
@@ -140,7 +141,8 @@ public:
         FormulaManagerT& formulaManager,
         std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
         std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
-        const RegionalInsertPlan& plan) {
+        const RegionalInsertPlan& plan,
+        const ConstAnalysisResult* constInfo = nullptr) {
         Result res;
         auto nowMs = []{ return std::chrono::steady_clock::now(); };
         auto toMs = [](auto dur){
@@ -148,6 +150,7 @@ public:
         };
         auto t0 = nowMs();
         double reorderStartSec = getReorderSeconds(formulaManager, 0);
+        ConstFormulaAccess<FormulaNodeRef> constAccess{constInfo, formulaManager};
 
         // Snapshot old boundary formulas
         auto tSnapshotStart = nowMs();
@@ -251,46 +254,55 @@ public:
                 worklist.pop();
                 res.timing.edgesProcessed += 1;
                 inWorklist.erase(edge);
-                FormulaNodeRef base = edge->isDeterministic()
-                    ? formulaManager.getTrue()
-                    : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
-                std::vector<FormulaNodeRef> inputs{base};
                 const auto& ins = view.getInputs(edge);
                 const auto& negs = view.getBodyNegations(edge);
+                FormulaNodeRef newEdge;
+                bool edgeIsConst = constAccess.edgeFormula(edge, newEdge);
                 bool allAvail = true;
                 bool missingInsideRegion = false;
-                for (size_t i = 0; i < ins.size(); ++i) {
-                    auto it = nodeFormulas.find(ins[i]);
-                    if (it == nodeFormulas.end()) {
-                        allAvail = false;
-                        if (plan.regionNodes.count(ins[i])) {
-                            missingInsideRegion = true;
+                if (!edgeIsConst) {
+                    FormulaNodeRef base = edge->isDeterministic()
+                        ? formulaManager.getTrue()
+                        : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
+                    std::vector<FormulaNodeRef> inputs{base};
+                    for (size_t i = 0; i < ins.size(); ++i) {
+                        FormulaNodeRef lit;
+                        if (!constAccess.inputLiteral(nodeFormulas, ins[i], negs[i], lit)) {
+                            allAvail = false;
+                            if (plan.regionNodes.count(ins[i])) {
+                                missingInsideRegion = true;
+                            }
+                            break;
                         }
-                        break;
+                        inputs.push_back(lit);
                     }
-                    inputs.push_back(negs[i] ? formulaManager.makeNot(it->second) : it->second);
-                }
-                if (!allAvail) {
-                    // If missing inputs are outside the region, do not requeue forever.
-                    if (missingInsideRegion) {
-                        if (!inWorklist.count(edge)) worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), seq++});
+                    if (!allAvail) {
+                        // If missing inputs are outside the region, do not requeue forever.
+                        if (missingInsideRegion) {
+                            if (!inWorklist.count(edge)) worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), seq++});
+                        }
+                        continue;
                     }
-                    continue;
+                    newEdge = (inputs.size()==1) ? inputs[0] : formulaManager.makeAnd(inputs);
                 }
-                FormulaNodeRef newEdge = (inputs.size()==1) ? inputs[0] : formulaManager.makeAnd(inputs);
                 if (!edgeFormulas.count(edge) || !formulaManager.isSame(edgeFormulas[edge], newEdge)) {
                     edgeFormulas[edge] = newEdge;
                     res.rebuiltEdges.insert(edge);
                     NodePtr out = view.getOutput(edge);
                     if (!out || out->isFact) continue;
-                    std::vector<FormulaNodeRef> incoming;
-                    for (auto eIn : view.getIncomingEdges(out)) {
-                        auto it = edgeFormulas.find(eIn);
-                        if (it != edgeFormulas.end() && it->second.get()) incoming.push_back(it->second);
+                    FormulaNodeRef newNode;
+                    bool hasNewNode = constAccess.nodeFormula(out, newNode);
+                    if (!hasNewNode) {
+                        std::vector<FormulaNodeRef> incoming;
+                        for (auto eIn : view.getIncomingEdges(out)) {
+                            auto it = edgeFormulas.find(eIn);
+                            if (it != edgeFormulas.end() && it->second.get()) incoming.push_back(it->second);
+                        }
+                        if (incoming.empty()) continue;
+                        newNode = (incoming.size()==1) ? incoming[0] : formulaManager.makeOr(incoming);
+                        hasNewNode = true;
                     }
-                    if (incoming.empty()) continue;
-                    FormulaNodeRef newNode = (incoming.size()==1) ? incoming[0] : formulaManager.makeOr(incoming);
-                    if (!nodeFormulas.count(out) || !formulaManager.isSame(nodeFormulas[out], newNode)) {
+                    if (hasNewNode && (!nodeFormulas.count(out) || !formulaManager.isSame(nodeFormulas[out], newNode))) {
                         nodeFormulas[out] = newNode;
                         res.changedNodes.insert(out);
                         nodesUpdated += 1;
@@ -447,7 +459,8 @@ public:
         FormulaManagerT& formulaManager,
         std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
         std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
-        std::set<NodePtr>& changedNodes) {
+        std::set<NodePtr>& changedNodes,
+        const ConstAnalysisResult* constInfo = nullptr) {
         Debugger& debugger = Debugger::getInstance();
         const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
         const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
@@ -507,7 +520,7 @@ public:
 
         // === 4) Regional rebuild ===
         auto rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegion(
-            view, formulaManager, nodeFormulas, edgeFormulas, plan);
+            view, formulaManager, nodeFormulas, edgeFormulas, plan, constInfo);
         changedNodes.insert(rebuildRes.changedNodes.begin(), rebuildRes.changedNodes.end());
         const auto& rt = rebuildRes.timing;
         std::cout << "[inc-regional rebuild] timing(ms):"

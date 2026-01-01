@@ -14,6 +14,7 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 - `README.rewrite.impl.md` — experiment logs and insights collected so far.
 - `README.siso.md` — SISO definition/assumptions.
 - `README.eval.md` — how to run full experiments and compare outputs/timings.
+- `README.const.md` — const pre-analysis design and FC integration details.
 
 ## Key Docs (online incremental)
 - `README.eval.inc.md` — how to run incremental evals and compare outputs/timings.

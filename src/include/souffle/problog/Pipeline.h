@@ -195,6 +195,7 @@ inline void runBddPipeline(
                   << std::chrono::duration_cast<std::chrono::milliseconds>(t6 - t5).count()
                   << " ms\n";
 
+        debugger.endStage();
         debugger.startStage(StageKind::IO_DUMP_FULL);
         auto tDumpStart = std::chrono::steady_clock::now();
         dumpProbabilities(probResult, opt.getOutputFileDir());
@@ -275,7 +276,6 @@ inline void runSddPipeline(
         probResult.clear();
         for (const auto& [node, sdd] : nodeFormulas) {
             double prob = 0.0;
-
             if (resolvedEvs.empty()) {
                 prob = sddManager.computeWeightedModelCount(sdd);
             } else if (evidenceWeight == 0.0) {
@@ -305,6 +305,7 @@ inline void runSddPipeline(
                   << std::chrono::duration_cast<std::chrono::milliseconds>(t6 - t5).count()
                   << " ms\n";
 
+        debugger.endStage();
         debugger.startStage(StageKind::IO_DUMP_FULL);
         auto tDumpStart = std::chrono::steady_clock::now();
         dumpProbabilities(probResult, opt.getOutputFileDir());
@@ -341,6 +342,8 @@ inline void runPipeline(
     DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
     DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());
     DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
+    DerivationGraph::setConstFoldEnabled(opt.isConstFoldEnabled());
+    DerivationGraph::setConstDumpEnabled(opt.isDumpConstEnabled());
     bool rewritePerformed = false;
 
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);

@@ -50,3 +50,4 @@ done
 - SISO detection/rewrite timing vs BDD phases.
 - Node/edge and region counts in DOTs; confirm SI/SO highlighting.
 - Output equality (`facts.prob`).
+- Debugger JSON stage timings (`log.txt_*.json`) should be non-negative; WMC timing is now properly closed.
