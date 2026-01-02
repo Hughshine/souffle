@@ -1278,9 +1278,10 @@ public:
         const SISORegionInfo& r,
         const std::string& filename)
     {
-        std::ofstream out(filename);
+        const std::string path = DerivationGraphViewInterface::qualifyDumpPath(filename);
+        std::ofstream out(path);
         if (!out.is_open()) {
-            std::cerr << "Cannot open dot file: " << filename << "\n";
+            std::cerr << "Cannot open dot file: " << path << "\n";
             return;
         }
 
@@ -1368,9 +1369,10 @@ public:
         if (!DerivationGraphViewInterface::isDumpDotEnabled()) {
             return;
         }
-        std::ofstream out(filename);
+        const std::string path = DerivationGraphViewInterface::qualifyDumpPath(filename);
+        std::ofstream out(path);
         if (!out.is_open()) {
-            std::cerr << "Cannot open dot file: " << filename << "\n";
+            std::cerr << "Cannot open dot file: " << path << "\n";
             return;
         }
         std::vector<std::string> palette = {
