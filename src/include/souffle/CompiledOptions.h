@@ -75,6 +75,7 @@ protected:
     bool merge_bi_imp = true;  // enable merging mutually implying deterministic nodes
     bool fold_const = false;  // enable deterministic constant pre-analysis (no prune rewrite)
     bool enable_rewrite = false;  // enable SISO-based graph rewriting
+    std::string split_mode = "naive-split";  // split mode for rewrite: no-split/naive-split/complete-split
     bool dump_json = false;  // dump derivation graph JSON after prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
     bool dump_stat = false;  // dump derivation graph stats after prune
@@ -84,10 +85,12 @@ public:
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
             std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc",
             bool merge_bi = true, bool foldconst = false, bool rewrite = false,
-            bool dumpjson = false, bool dumpdot = false, bool dumpstat = false, bool dumpconst = false)
+            bool dumpjson = false, bool dumpdot = false, bool dumpstat = false, bool dumpconst = false,
+            const std::string& splitmode = "naive-split")
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
     , incMode(mode), merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
-      dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst) {}
+      dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
+      split_mode(splitmode) {}
 
     CmdOptions() {}
     /**
@@ -137,6 +140,9 @@ public:
     }
     bool isRewriteEnabled() const {
         return enable_rewrite;
+    }
+    const std::string& getSplitMode() const {
+        return split_mode;
     }
     bool isDumpJsonEnabled() const {
         return dump_json;
@@ -200,6 +206,7 @@ public:
                 {"derv-only", true, nullptr, 'd'}, {"setmode", true, nullptr, 'm'},
                 {"merge-bi-imp", false, nullptr, 'e'}, {"fold-const", false, nullptr, 'C'},
                 {"rewrite", false, nullptr, 'r'},
+                {"split-mode", true, nullptr, 'P'},
                 {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
                 {"dumpstat", false, nullptr, 'S'},
                 {"dumpconst", false, nullptr, 'U'},
@@ -210,7 +217,7 @@ public:
         bool ok = true;
         knowledge_representation = "bdd";  // default knowledge representation
         int c; /* command-line arguments processing */
-        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d:em:C:rJTSU", longOptions, nullptr)) != EOF) {
+        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d:em:C:rP:JTSU", longOptions, nullptr)) != EOF) {
             switch (c) {
                 /* Fact directories */
                 case 'F':
@@ -304,6 +311,20 @@ public:
                 case 'r':
                     enable_rewrite = true;
                     break;
+                case 'P': {
+                    std::string modeArg(optarg);
+                    if (modeArg == "no-split" || modeArg == "none") {
+                        split_mode = "no-split";
+                    } else if (modeArg == "naive-split" || modeArg == "naive") {
+                        split_mode = "naive-split";
+                    } else if (modeArg == "complete-split" || modeArg == "complete") {
+                        split_mode = "complete-split";
+                    } else {
+                        std::cerr << "Invalid split mode [-P|--split-mode]: " << optarg << "\n";
+                        ok = false;
+                    }
+                    break;
+                }
                 case 'J':
                     dump_json = true;
                     break;
@@ -352,6 +373,7 @@ private:
         std::cerr << "    -e, --merge-bi-imp           -- Enable merging mutually implying deterministic nodes during pruning\n";
         std::cerr << "    -C, --fold-const             -- Enable deterministic constant pre-analysis (no prune rewrite; negation ignored)\n";
         std::cerr << "    -r, --rewrite                -- Enable SISO-based graph rewriting\n";
+        std::cerr << "    --split-mode=<MODE>          -- Split mode for rewrite: no-split, naive-split, complete-split\n";
         std::cerr << "    --dumpjson                   -- Dump derivation graph JSON after prune\n";
         std::cerr << "    --dumpdot                    -- Dump derivation graph DOT after prune\n";
         std::cerr << "    --dumpstat                   -- Dump derivation graph stats after prune\n";
