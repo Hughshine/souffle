@@ -61,7 +61,7 @@ struct RewriteFeatureFlags {
     bool enableSingleHyperedge  = true;
     bool enableAllFactsToSO     = true;
     bool enableLinearTwoEdge    = true;
-    bool enableParallelEdge     = true;   ///< detection only; rewrite is still placeholder
+    bool enableParallelEdge     = true;   ///< enable parallel single-input edge detection/rewrite
     bool enableFanOutConverge   = true;
     bool enableGeneral          = true;   ///< fallback BDD-based rewrite
     bool enableCompaction       = true;   ///< edge compaction after each SISO pass
@@ -447,11 +447,80 @@ public:
                         ++stats.numRegionsRewritten;
                         continue;
                     }
-                    case SISORegionKind::ParallelEdge:
-                        if (debug) {
-                            // Fast-path placeholder logging elided to reduce overhead.
+                    case SISORegionKind::ParallelEdge: {
+                        if (region.internalEdges.size() < 2) continue;
+                        if (!region.entry || !region.exit) continue;
+                        NodePtr entryNode = region.entry;
+                        NodePtr exitNode = region.exit;
+                        bool bad = false;
+                        bool negInit = false;
+                        bool negFlag = false;
+                        double prod = 1.0;
+                        size_t regionRandomVars = 0;
+                        for (auto e : region.internalEdges) {
+                            if (!e) {
+                                bad = true;
+                                break;
+                            }
+                            auto inputs = view.getInputs(e);
+                            if (inputs.size() != 1 || inputs[0] != entryNode) {
+                                bad = true;
+                                break;
+                            }
+                            if (view.getOutput(e) != exitNode) {
+                                bad = true;
+                                break;
+                            }
+                            auto negs = view.getBodyNegations(e);
+                            if (negs.size() > 1) {
+                                bad = true;
+                                break;
+                            }
+                            bool isNeg = (!negs.empty() && negs[0]);
+                            if (!negInit) {
+                                negFlag = isNeg;
+                                negInit = true;
+                            } else if (negFlag != isNeg) {
+                                bad = true;
+                                break;
+                            }
+                            double p = e->getProbability();
+                            if (p < 0.0) p = 0.0;
+                            if (p > 1.0) p = 1.0;
+                            prod *= (1.0 - p);
+                            if (p > 0.0 && p < 1.0) ++regionRandomVars;
                         }
-                        continue;  // skip default handling for now
+                        if (bad) continue;
+                        double pEff = 1.0 - prod;
+                        if (pEff < 0.0) pEff = 0.0;
+                        if (pEff > 1.0) pEff = 1.0;
+
+                        std::vector<NodePtr> newInputs = {entryNode};
+                        std::vector<bool> newNegs = {negFlag};
+                        EdgePtr newEdge = graph.createHyperedge(newInputs, exitNode, nullptr, newNegs);
+                        if (!newEdge) continue;
+                        newEdge->setProbability(pEff);
+
+                        auto& edges = view.mutableEdges();
+                        size_t removedEdges = 0;
+                        for (auto e : region.internalEdges) {
+                            if (!e) continue;
+                            removedEdges += edges.erase(e);
+                        }
+                        edges.insert(newEdge);
+
+                        stats.numEdgesRemoved += removedEdges;
+                        stats.numEdgesAdded += 1;
+                        stats.totalRandomVars += regionRandomVars;
+                        stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
+                        view.invalidateCaches();
+                        if (debug) {
+                            // Fast-path parallel-edge debug logging elided to reduce overhead.
+                        }
+                        ++rewrittenThisRound;
+                        ++stats.numRegionsRewritten;
+                        continue;
+                    }
                     case SISORegionKind::FanOutConverge: {
                         if (region.internalEdges.size() < 3) continue;
                         if (!region.entry || !region.exit) continue;
