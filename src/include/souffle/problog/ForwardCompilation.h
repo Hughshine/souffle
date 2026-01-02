@@ -241,15 +241,17 @@ void buildFormulasCyclewise(
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
     const std::unordered_set<NodePtr>& seedTrueNodes = {},
-    std::vector<double>* roundTimingsMs = nullptr
+    std::vector<double>* roundTimingsMs = nullptr,
+    bool allowConst = true,
+    bool allowDumpConst = true
 ) {
      FunctionTimer timer("Build Formulas Cyclewise using DAG + Depth");
      auto toMs = [](auto d) {
          return std::chrono::duration<double, std::milli>(d).count();
      };
      auto overallStart = std::chrono::steady_clock::now();
-     const bool useConst = DerivationGraph::isConstFoldEnabled();
-     const bool dumpConst = DerivationGraph::isConstDumpEnabled();
+     const bool useConst = allowConst && DerivationGraph::isConstFoldEnabled();
+     const bool dumpConst = allowDumpConst && DerivationGraph::isConstDumpEnabled();
      ConstAnalysisResult constInfo;
      const ConstAnalysisResult* constInfoPtr = nullptr;
      if (useConst || dumpConst) {

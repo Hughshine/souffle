@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <limits>
 #include <map>
 #include <queue>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <iostream>
@@ -45,6 +47,12 @@ struct GraphRewriteStats {
     size_t randomVarsAfter = 0;        ///< Random vars in the view after rewrite
 };
 
+enum class SplitMode {
+    None = 0,
+    Naive,
+    Complete,
+};
+
 /**
  * Feature switches for SISO detection / rewrite passes.
  * All flags default to true to preserve current behavior.
@@ -57,7 +65,11 @@ struct RewriteFeatureFlags {
     bool enableFanOutConverge   = true;
     bool enableGeneral          = true;   ///< fallback BDD-based rewrite
     bool enableCompaction       = true;   ///< edge compaction after each SISO pass
-    bool enableSplitFanout      = true;   ///< split disjoint fan-out branches into shadow facts
+    SplitMode splitMode         = SplitMode::Naive;  ///< split disjoint fan-out branches into shadow facts
+    size_t splitMaxNewNodesPerPass = 5000;  ///< complete-split budget: max new shadow nodes per pass
+    size_t splitMaxNewEdgesPerPass = 50000; ///< complete-split budget: max rewired edges per pass
+    size_t splitMaxGroupsPerNode = 2;       ///< complete-split cap: max groups kept per node (incl. original)
+    size_t splitMinGroupEdges = 1;          ///< complete-split threshold: min edges in a split group
     bool enableCleanupIsolated  = true;   ///< drop isolated fact/shadow nodes at end of iteration
 };
 
@@ -99,6 +111,32 @@ public:
         bool firstRegionTiming = true;
 
         auto rewriteStart = std::chrono::steady_clock::now();
+
+        auto runSplitPass = [&]() -> bool {
+            if (flags.splitMode == SplitMode::None) {
+                return false;
+            }
+            SplitStats splitStats = (flags.splitMode == SplitMode::Naive)
+                    ? splitFanoutNaive(graph, view, stats)
+                    : splitFanoutComplete(graph, view, stats, flags);
+            std::cout << "[GraphRewriter]   split(" << splitModeToString(flags.splitMode)
+                      << "): nodes=" << splitStats.nodesAdded
+                      << " edges=" << splitStats.edgesRewritten
+                      << " time=" << splitStats.elapsedMs << " ms"
+                      << std::endl;
+            if (debug && (splitStats.nodesAdded > 0 || splitStats.edgesRewritten > 0)) {
+                std::cout << "[GraphRewriter]   Fan-out split(" << splitModeToString(flags.splitMode)
+                          << "): newNodes=" << splitStats.nodesAdded
+                          << " edgesRewritten=" << splitStats.edgesRewritten
+                          << " time=" << splitStats.elapsedMs << " ms"
+                          << std::endl;
+            }
+            if (splitStats.nodesAdded > 0 || splitStats.edgesRewritten > 0) {
+                view.invalidateCaches();
+                return true;
+            }
+            return false;
+        };
 
         while (true) {
             auto iterStart = std::chrono::steady_clock::now();
@@ -178,8 +216,11 @@ public:
                           << ", delta=" << iterDelta
                           << ", ratio=" << iterRatio << std::endl;
                 if (debug) {
-                    std::cout << "[GraphRewriter] No SISO regions found, stop at iteration "
+                    std::cout << "[GraphRewriter] No SISO regions found; rewrite fixpoint at iteration "
                               << stats.numIterations << std::endl;
+                }
+                if (runSplitPass()) {
+                    continue;
                 }
                 break;
             }
@@ -750,151 +791,6 @@ public:
                 }
             }
 
-            // Optional post-pass: split a fact's fan-out when some outgoing branches are disjoint.
-            double splitMs = 0.0;
-            size_t splitNodes = 0, splitEdges = 0;
-            if (flags.enableSplitFanout) {
-                auto splitStart = std::chrono::steady_clock::now();
-                // Max reachable nodes per branch; if exceeded, skip splitting this fact.
-                size_t maxReachable = 50;
-                if (const char* env = std::getenv("SOUFFLE_SPLIT_MAX_REACH")) {
-                    try {
-                        maxReachable = std::stoul(env);
-                    } catch (...) {
-                        maxReachable = 50;
-                    }
-                }
-                auto nodesList = view.getNodes();
-                for (auto fact : nodesList) {
-                    if (!fact || !fact->isFact || fact->hasEvidence() || fact->needOutput) continue;
-                    auto outs = view.getOutgoingEdges(fact);
-                    if (outs.size() < 2) continue;
-
-                    // Compute reachable sets for each outgoing edge's output.
-                    std::vector<std::unordered_set<NodePtr>> reachSets;
-                    reachSets.reserve(outs.size());
-                    bool skipFact = false;
-                    for (auto e : outs) {
-                        if (!e) {
-                            skipFact = true;
-                            break;
-                        }
-                        NodePtr start = view.getOutput(e);
-                        if (!start) {
-                            skipFact = true;
-                            break;
-                        }
-                        std::unordered_set<NodePtr> visited;
-                        std::queue<NodePtr> q;
-                        visited.insert(start);
-                        q.push(start);
-                        while (!q.empty()) {
-                            NodePtr cur = q.front();
-                            q.pop();
-                            auto nextEdges = view.getOutgoingEdges(cur);
-                            for (auto ne : nextEdges) {
-                                if (!ne) continue;
-                                NodePtr outNode = view.getOutput(ne);
-                                if (!outNode) continue;
-                                if (visited.insert(outNode).second) {
-                                    if (visited.size() > maxReachable) {
-                                        skipFact = true;
-                                        break;
-                                    }
-                                    q.push(outNode);
-                                }
-                            }
-                            if (skipFact) break;
-                        }
-                        if (skipFact) break;
-                        reachSets.push_back(std::move(visited));
-                    }
-                    if (skipFact || reachSets.size() != outs.size()) continue;
-
-                    // Identify branches disjoint from all others.
-                    std::vector<size_t> independentIdx;
-                    for (size_t i = 0; i < reachSets.size(); ++i) {
-                        bool disjoint = true;
-                        for (size_t j = 0; j < reachSets.size(); ++j) {
-                            if (i == j) continue;
-                            const auto& a = reachSets[i];
-                            const auto& b = reachSets[j];
-                            // Check intersection (iterate smaller set).
-                            const auto& small = (a.size() < b.size()) ? a : b;
-                            const auto& large = (a.size() < b.size()) ? b : a;
-                            for (auto n : small) {
-                                if (large.count(n)) {
-                                    disjoint = false;
-                                    break;
-                                }
-                            }
-                            if (!disjoint) break;
-                        }
-                        if (disjoint) independentIdx.push_back(i);
-                    }
-                    if (independentIdx.empty()) continue;
-
-                    auto& edges = view.mutableEdges();
-                    auto& nodes = view.mutableNodes();
-
-                    for (size_t idx : independentIdx) {
-                        EdgePtr edge = outs[idx];
-                        if (!edge) continue;
-                        auto inputs = view.getInputs(edge);
-                        if (inputs.empty()) continue;
-                        auto negs = view.getBodyNegations(edge);
-
-                        // Create a shadow fact node (unique tuple to bypass tuple-based interning).
-                        UntypedTuple shadowTuple;
-                        const auto& origTuple = fact->getTuple();
-                        shadowTuple.relation_name =
-                                "Shadow_" + origTuple.relation_name + "_" +
-                                std::to_string(fact->getId()) + "_" + std::to_string(edge->getId());
-                        shadowTuple.fields = origTuple.fields;
-                        NodePtr shadow = graph.createNode(shadowTuple);
-                        if (!shadow) continue;
-                        shadow->setProbability(fact->getProbability());
-                        shadow->isFact = true;
-                        shadow->needOutput = false;
-                        shadow->isShadow = true;
-
-                        std::vector<NodePtr> newInputs = inputs;
-                        bool replaced = false;
-                        for (size_t k = 0; k < newInputs.size(); ++k) {
-                            if (newInputs[k] == fact) {
-                                newInputs[k] = shadow;
-                                replaced = true;
-                            }
-                        }
-                        if (!replaced) continue;
-
-                        EdgePtr newEdge = graph.createHyperedge(
-                                newInputs, edge->getOutput(), edge->getRule(), negs, edge->getRuleApp());
-                        if (!newEdge) continue;
-                        newEdge->setProbability(edge->getProbability());
-
-                        if (edges.erase(edge) > 0) {
-                            ++splitEdges;
-                            ++stats.numEdgesRemoved;
-                        }
-                        edges.insert(newEdge);
-                        ++stats.numEdgesAdded;
-                        nodes.insert(shadow);
-                        ++splitNodes;
-                    }
-                    if (splitNodes > 0 || splitEdges > 0) {
-                        view.invalidateCaches();
-                    }
-                }
-                splitMs = toMs(std::chrono::steady_clock::now() - splitStart);
-                if (debug && (splitNodes > 0 || splitEdges > 0)) {
-                    std::cout << "[GraphRewriter]   Fan-out split: newNodes=" << splitNodes
-                              << " edgesRewritten=" << splitEdges
-                              << " time=" << splitMs << " ms"
-                              << std::endl;
-                }
-            }
-
             // Cleanup isolated fact/shadow nodes at end of iteration.
             double cleanupMs = 0.0;
             size_t cleanupRemovedNodes = 0;
@@ -959,7 +855,6 @@ public:
                       << " loopSkip=" << loopSkipMs
                       << " edgeList=" << edgeListMs
                       << " compact=" << compactMs
-                      << " split=" << splitMs
                       << " cleanup=" << cleanupMs
                       << " countAfter=" << countAfterMs
                       << " preLog=" << preLogPrepMs
@@ -973,7 +868,6 @@ public:
                     - dumpAfterDotMs
                     - edgeListMs
                     - compactMs
-                    - splitMs
                     - cleanupMs
                     - countAfterMs
                     - preLogPrepMs
@@ -990,8 +884,11 @@ public:
             if (rewrittenThisRound == 0) {
                 if (debug) {
                     std::cout << "[GraphRewriter] No region rewritten in iteration "
-                              << stats.numIterations << " (fixpoint reached in "
+                              << stats.numIterations << " (rewrite fixpoint reached in "
                               << iterMs << " ms)." << std::endl;
+                }
+                if (runSplitPass()) {
+                    continue;
                 }
                 break;
             }
@@ -1038,6 +935,12 @@ public:
     }
 
 private:
+    struct SplitStats {
+        size_t nodesAdded = 0;
+        size_t edgesRewritten = 0;
+        double elapsedMs = 0.0;
+    };
+
     struct RegionTiming {
         double mgrInitMs = 0.0;
         double buildMs = 0.0;
@@ -1047,6 +950,481 @@ private:
         size_t liveNodes = 0;
         double memMb = 0.0;
     };
+
+    static const char* splitModeToString(SplitMode mode) {
+        switch (mode) {
+            case SplitMode::None: return "none";
+            case SplitMode::Naive: return "naive";
+            case SplitMode::Complete: return "complete";
+        }
+        return "unknown";
+    }
+
+    static bool isRandomVarNode(const NodePtr& node) {
+        if (!node) return false;
+        double p = node->getProbability();
+        return p > 0.0 && p < 1.0;
+    }
+
+    static bool isRandomVarEdge(const EdgePtr& edge) {
+        if (!edge) return false;
+        double p = edge->getProbability();
+        return p > 0.0 && p < 1.0;
+    }
+
+    static NodePtr createShadowFact(IncrementalDerivationGraph& graph, const NodePtr& fact,
+            const EdgePtr& edgeHint) {
+        if (!fact || !edgeHint) return nullptr;
+        UntypedTuple shadowTuple;
+        const auto& origTuple = fact->getTuple();
+        shadowTuple.relation_name =
+                "Shadow_" + origTuple.relation_name + "_" +
+                std::to_string(fact->getId()) + "_" + std::to_string(edgeHint->getId());
+        shadowTuple.fields = origTuple.fields;
+        NodePtr shadow = graph.createNode(shadowTuple);
+        if (!shadow) return nullptr;
+        shadow->setProbability(fact->getProbability());
+        shadow->isFact = true;
+        shadow->needOutput = false;
+        shadow->isShadow = true;
+        return shadow;
+    }
+
+    SplitStats splitFanoutNaive(IncrementalDerivationGraph& graph, IncSubgraphView& view,
+            GraphRewriteStats& stats) const {
+        SplitStats out;
+        auto splitStart = std::chrono::steady_clock::now();
+        constexpr size_t kMaxReachable = 50;
+        auto nodesList = view.getNodes();
+        for (auto fact : nodesList) {
+            if (!fact || !fact->isFact || fact->hasEvidence() || fact->needOutput) continue;
+            auto outs = view.getOutgoingEdges(fact);
+            if (outs.size() < 2) continue;
+
+            // Compute reachable sets for each outgoing edge's output.
+            std::vector<std::unordered_set<NodePtr>> reachSets;
+            reachSets.reserve(outs.size());
+            bool skipFact = false;
+            for (auto e : outs) {
+                if (!e) {
+                    skipFact = true;
+                    break;
+                }
+                NodePtr start = view.getOutput(e);
+                if (!start) {
+                    skipFact = true;
+                    break;
+                }
+                std::unordered_set<NodePtr> visited;
+                std::queue<NodePtr> q;
+                visited.insert(start);
+                q.push(start);
+                while (!q.empty()) {
+                    NodePtr cur = q.front();
+                    q.pop();
+                    auto nextEdges = view.getOutgoingEdges(cur);
+                    for (auto ne : nextEdges) {
+                        if (!ne) continue;
+                        NodePtr outNode = view.getOutput(ne);
+                        if (!outNode) continue;
+                        if (visited.insert(outNode).second) {
+                            if (visited.size() > kMaxReachable) {
+                                skipFact = true;
+                                break;
+                            }
+                            q.push(outNode);
+                        }
+                    }
+                    if (skipFact) break;
+                }
+                if (skipFact) break;
+                reachSets.push_back(std::move(visited));
+            }
+            if (skipFact || reachSets.size() != outs.size()) continue;
+
+            // Identify branches disjoint from all others.
+            std::vector<size_t> independentIdx;
+            for (size_t i = 0; i < reachSets.size(); ++i) {
+                bool disjoint = true;
+                for (size_t j = 0; j < reachSets.size(); ++j) {
+                    if (i == j) continue;
+                    const auto& a = reachSets[i];
+                    const auto& b = reachSets[j];
+                    // Check intersection (iterate smaller set).
+                    const auto& small = (a.size() < b.size()) ? a : b;
+                    const auto& large = (a.size() < b.size()) ? b : a;
+                    for (auto n : small) {
+                        if (large.count(n)) {
+                            disjoint = false;
+                            break;
+                        }
+                    }
+                    if (!disjoint) break;
+                }
+                if (disjoint) independentIdx.push_back(i);
+            }
+            if (independentIdx.empty()) continue;
+
+            auto& edges = view.mutableEdges();
+            auto& nodes = view.mutableNodes();
+            bool changed = false;
+
+            for (size_t idx : independentIdx) {
+                EdgePtr edge = outs[idx];
+                if (!edge) continue;
+                auto inputs = view.getInputs(edge);
+                if (inputs.empty()) continue;
+                auto negs = view.getBodyNegations(edge);
+
+                NodePtr shadow = createShadowFact(graph, fact, edge);
+                if (!shadow) continue;
+
+                std::vector<NodePtr> newInputs = inputs;
+                bool replaced = false;
+                for (size_t k = 0; k < newInputs.size(); ++k) {
+                    if (newInputs[k] == fact) {
+                        newInputs[k] = shadow;
+                        replaced = true;
+                    }
+                }
+                if (!replaced) continue;
+
+                EdgePtr newEdge = graph.createHyperedge(
+                        newInputs, edge->getOutput(), edge->getRule(), negs, edge->getRuleApp());
+                if (!newEdge) continue;
+                newEdge->setProbability(edge->getProbability());
+
+                if (edges.erase(edge) > 0) {
+                    ++out.edgesRewritten;
+                    ++stats.numEdgesRemoved;
+                }
+                edges.insert(newEdge);
+                ++stats.numEdgesAdded;
+                nodes.insert(shadow);
+                ++out.nodesAdded;
+                changed = true;
+            }
+            if (changed) {
+                view.invalidateCaches();
+            }
+        }
+        out.elapsedMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - splitStart).count();
+        return out;
+    }
+
+    SplitStats splitFanoutComplete(IncrementalDerivationGraph& graph, IncSubgraphView& view,
+            GraphRewriteStats& stats, const RewriteFeatureFlags& flags) const {
+        SplitStats out;
+        auto splitStart = std::chrono::steady_clock::now();
+        const auto& nodeSet = view.getNodes();
+        if (nodeSet.empty()) {
+            out.elapsedMs = 0.0;
+            return out;
+        }
+
+        std::vector<NodePtr> nodesList;
+        nodesList.reserve(nodeSet.size());
+        for (const auto& n : nodeSet) {
+            nodesList.push_back(n);
+        }
+
+        std::unordered_map<NodePtr, size_t> nodeIndex;
+        nodeIndex.reserve(nodesList.size() * 2);
+        for (size_t i = 0; i < nodesList.size(); ++i) {
+            if (nodesList[i]) nodeIndex[nodesList[i]] = i;
+        }
+
+        std::vector<char> hasRvReach(nodesList.size(), 0);
+        std::queue<size_t> q;
+        auto markNode = [&](const NodePtr& n) {
+            auto it = nodeIndex.find(n);
+            if (it == nodeIndex.end()) return;
+            size_t idx = it->second;
+            if (!hasRvReach[idx]) {
+                hasRvReach[idx] = 1;
+                q.push(idx);
+            }
+        };
+
+        for (const auto& n : nodesList) {
+            if (isRandomVarNode(n)) {
+                markNode(n);
+            }
+        }
+        for (const auto& e : view.getEdges()) {
+            if (!isRandomVarEdge(e)) continue;
+            for (const auto& in : view.getInputs(e)) {
+                markNode(in);
+            }
+        }
+        while (!q.empty()) {
+            size_t idx = q.front();
+            q.pop();
+            NodePtr cur = nodesList[idx];
+            if (!cur) continue;
+            for (auto inEdge : view.getIncomingEdges(cur)) {
+                if (!inEdge) continue;
+                for (auto in : view.getInputs(inEdge)) {
+                    markNode(in);
+                }
+            }
+        }
+
+        struct UnionFind {
+            std::vector<int> parent;
+            std::vector<int> size;
+            explicit UnionFind(size_t n) : parent(n), size(n, 1) {
+                for (size_t i = 0; i < n; ++i) parent[i] = static_cast<int>(i);
+            }
+            int find(int x) {
+                if (parent[x] == x) return x;
+                parent[x] = find(parent[x]);
+                return parent[x];
+            }
+            void unite(int a, int b) {
+                a = find(a);
+                b = find(b);
+                if (a == b) return;
+                if (size[a] < size[b]) std::swap(a, b);
+                parent[b] = a;
+                size[a] += size[b];
+            }
+        };
+
+        std::vector<int> seenToken(nodesList.size(), 0);
+        std::vector<int> owner(nodesList.size(), 0);
+        std::vector<int> rep(nodesList.size(), 0);
+        int token = 1;
+
+        auto& edges = view.mutableEdges();
+        auto& nodes = view.mutableNodes();
+
+        const size_t maxGroups = flags.splitMaxGroupsPerNode;
+        const size_t minGroupEdges = std::max<size_t>(1, flags.splitMinGroupEdges);
+        size_t remainingNodes = flags.splitMaxNewNodesPerPass;
+        size_t remainingEdges = flags.splitMaxNewEdgesPerPass;
+
+        if (maxGroups < 2 || remainingNodes == 0 || remainingEdges == 0) {
+            out.elapsedMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - splitStart).count();
+            return out;
+        }
+
+        // Simple candidate queue seeded once per split pass; can be made incremental later.
+        std::deque<NodePtr> queue;
+        std::unordered_set<NodePtr> inQueue;
+        auto enqueueFact = [&](const NodePtr& n) {
+            if (!n || !n->isFact || n->hasEvidence() || n->needOutput) return;
+            if (view.getOutgoingEdges(n).size() < 2) return;
+            auto it = nodeIndex.find(n);
+            if (it == nodeIndex.end()) return;
+            if (!hasRvReach[it->second]) return;
+            if (inQueue.insert(n).second) {
+                queue.push_back(n);
+            }
+        };
+
+        for (auto fact : nodesList) {
+            enqueueFact(fact);
+        }
+
+        while (!queue.empty()) {
+            if (remainingNodes == 0 || remainingEdges == 0) break;
+            NodePtr fact = queue.front();
+            queue.pop_front();
+            inQueue.erase(fact);
+            if (!fact || !fact->isFact || fact->hasEvidence() || fact->needOutput) continue;
+            if (view.getNodes().count(fact) == 0) continue;
+            auto outs = view.getOutgoingEdges(fact);
+            if (outs.size() < 2) continue;
+            auto itFact = nodeIndex.find(fact);
+            if (itFact == nodeIndex.end()) continue;
+            if (!hasRvReach[itFact->second]) continue;
+
+            const int kNone = -1;
+            const int kMulti = -2;
+            ++token;
+            if (token == std::numeric_limits<int>::max()) {
+                token = 1;
+                std::fill(seenToken.begin(), seenToken.end(), 0);
+            }
+
+            UnionFind uf(outs.size());
+            std::queue<size_t> work;
+
+            auto touchNode = [&](size_t idx) {
+                if (seenToken[idx] != token) {
+                    seenToken[idx] = token;
+                    owner[idx] = kNone;
+                    rep[idx] = kNone;
+                }
+            };
+
+            auto assign = [&](size_t idx, int incomingOwner, int incomingRep) {
+                touchNode(idx);
+                if (owner[idx] == kNone) {
+                    owner[idx] = incomingOwner;
+                    rep[idx] = (incomingOwner == kMulti) ? incomingRep : incomingOwner;
+                    work.push(idx);
+                    return;
+                }
+                if (owner[idx] == incomingOwner) return;
+
+                int oldRep = rep[idx];
+                if (owner[idx] != kMulti) {
+                    owner[idx] = kMulti;
+                    rep[idx] = oldRep;
+                    work.push(idx);
+                }
+                if (hasRvReach[idx]) {
+                    int incRep = (incomingOwner == kMulti) ? incomingRep : incomingOwner;
+                    uf.unite(oldRep, incRep);
+                }
+            };
+
+            for (size_t i = 0; i < outs.size(); ++i) {
+                EdgePtr e = outs[i];
+                if (!e) continue;
+                NodePtr v = view.getOutput(e);
+                if (!v) continue;
+                auto it = nodeIndex.find(v);
+                if (it == nodeIndex.end()) continue;
+                assign(it->second, static_cast<int>(i), static_cast<int>(i));
+            }
+
+            while (!work.empty()) {
+                size_t idx = work.front();
+                work.pop();
+                int ox = owner[idx];
+                int rx = rep[idx];
+                NodePtr node = nodesList[idx];
+                if (!node) continue;
+                for (auto eId : view.getOutgoingEdges(node)) {
+                    if (!eId) continue;
+                    NodePtr outNode = view.getOutput(eId);
+                    if (!outNode) continue;
+                    auto itOut = nodeIndex.find(outNode);
+                    if (itOut == nodeIndex.end()) continue;
+                    if (ox == kMulti) {
+                        assign(itOut->second, kMulti, rx);
+                    } else {
+                        assign(itOut->second, ox, ox);
+                    }
+                }
+            }
+
+            std::unordered_map<int, size_t> rootIndex;
+            std::vector<std::vector<EdgePtr>> groups;
+            groups.reserve(outs.size());
+            for (size_t i = 0; i < outs.size(); ++i) {
+                int root = uf.find(static_cast<int>(i));
+                auto it = rootIndex.find(root);
+                if (it == rootIndex.end()) {
+                    rootIndex[root] = groups.size();
+                    groups.push_back({});
+                    it = rootIndex.find(root);
+                }
+                groups[it->second].push_back(outs[i]);
+            }
+
+            if (groups.size() <= 1) continue;
+            std::sort(groups.begin(), groups.end(),
+                    [](const std::vector<EdgePtr>& a, const std::vector<EdgePtr>& b) {
+                        return a.size() > b.size();
+                    });
+
+            if (minGroupEdges > 1 && groups.size() > 1) {
+                std::vector<std::vector<EdgePtr>> filtered;
+                filtered.reserve(groups.size());
+                filtered.push_back(std::move(groups[0]));
+                for (size_t i = 1; i < groups.size(); ++i) {
+                    if (groups[i].size() < minGroupEdges) {
+                        filtered[0].insert(filtered[0].end(), groups[i].begin(), groups[i].end());
+                    } else {
+                        filtered.push_back(std::move(groups[i]));
+                    }
+                }
+                groups.swap(filtered);
+            }
+
+            if (groups.size() <= 1) continue;
+            if (groups.size() > maxGroups) {
+                for (size_t i = maxGroups; i < groups.size(); ++i) {
+                    groups[0].insert(groups[0].end(), groups[i].begin(), groups[i].end());
+                }
+                groups.resize(maxGroups);
+            }
+
+            if (groups.size() <= 1) continue;
+            std::vector<std::vector<EdgePtr>> selected;
+            selected.reserve(groups.size());
+            selected.push_back(std::move(groups[0]));
+            for (size_t i = 1; i < groups.size(); ++i) {
+                const auto& group = groups[i];
+                if (remainingNodes == 0 || remainingEdges < group.size()) {
+                    selected[0].insert(selected[0].end(), group.begin(), group.end());
+                    continue;
+                }
+                selected.push_back(std::move(groups[i]));
+                --remainingNodes;
+                remainingEdges -= selected.back().size();
+            }
+            groups.swap(selected);
+            if (groups.size() <= 1) continue;
+
+            bool changed = false;
+            for (size_t gi = 1; gi < groups.size(); ++gi) {
+                const auto& group = groups[gi];
+                if (group.empty()) continue;
+                NodePtr shadow = createShadowFact(graph, fact, group.front());
+                if (!shadow) continue;
+                size_t rewired = 0;
+                for (auto edge : group) {
+                    if (!edge) continue;
+                    auto inputs = view.getInputs(edge);
+                    if (inputs.empty()) continue;
+                    auto negs = view.getBodyNegations(edge);
+
+                    std::vector<NodePtr> newInputs = inputs;
+                    bool replaced = false;
+                    for (size_t k = 0; k < newInputs.size(); ++k) {
+                        if (newInputs[k] == fact) {
+                            newInputs[k] = shadow;
+                            replaced = true;
+                        }
+                    }
+                    if (!replaced) continue;
+
+                    EdgePtr newEdge = graph.createHyperedge(
+                            newInputs, edge->getOutput(), edge->getRule(), negs, edge->getRuleApp());
+                    if (!newEdge) continue;
+                    newEdge->setProbability(edge->getProbability());
+
+                    if (edges.erase(edge) > 0) {
+                        ++out.edgesRewritten;
+                        ++stats.numEdgesRemoved;
+                        ++rewired;
+                    }
+                    edges.insert(newEdge);
+                    ++stats.numEdgesAdded;
+                }
+                if (rewired > 0) {
+                    nodes.insert(shadow);
+                    ++out.nodesAdded;
+                    changed = true;
+                }
+            }
+
+            if (changed) {
+                view.invalidateCaches();
+            }
+        }
+
+        out.elapsedMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - splitStart).count();
+        return out;
+    }
 
     bool isRegionNonTrivial(const SISORegionInfo& region) const {
         constexpr size_t kDefaultMaxEdges = 5;
@@ -1175,7 +1553,8 @@ private:
 
         auto t0 = std::chrono::steady_clock::now();
         buildFormulasCyclewise(regionView, bddManager, nodeFormulas, edgeFormulas, seedTrue,
-                               debug ? &roundTimings : nullptr);
+                               debug ? &roundTimings : nullptr, /*allowConst=*/false,
+                               /*allowDumpConst=*/false);
         auto t1 = std::chrono::steady_clock::now();
         double buildMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
