@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <fstream>
 #include <unordered_map>
+#include <stdexcept>
 #include <readline/readline.h>
 #include <readline/history.h>
 #include "souffle/SouffleInterface.h"
@@ -336,6 +337,32 @@ public:
     void setDerivationOnly(bool val) {
         derivationOnly = val;
     }
+
+private:
+    std::vector<std::pair<NodePtr, bool>> resolveEvidenceNodes() const {
+        if (!graph) {
+            throw std::runtime_error("IncrementalCLI: graph is null for evidence resolution");
+        }
+        return graph->resolveEvidenceNodes();
+    }
+
+    NodeRef buildEvidenceFormula(const std::vector<std::pair<NodePtr, bool>>& resolved) const {
+        NodeRef evidenceNode = ddManager->getTrue();
+        for (const auto& [node, val] : resolved) {
+            auto it = nodeFormulas->find(node);
+            if (it == nodeFormulas->end()) {
+                throw std::runtime_error("Evidence node has no formula: " + node->getTuple().toString());
+            }
+            NodeRef lit = it->second;
+            if (!val) {
+                lit = ddManager->makeNot(lit);
+            }
+            evidenceNode = ddManager->makeAnd(evidenceNode, lit);
+        }
+        return evidenceNode;
+    }
+
+public:
     bool processCommand(const std::string& command) {
         // Skip empty commands
         if (command.empty()) {
@@ -726,12 +753,83 @@ public:
                     debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
                     FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(changedNodes.size()));
                     std::unordered_map<NodePtr, double> newProbResult;
-                    for (const auto& node: view.getValidNodes()) {
-                        if (changedNodes.find(node) == changedNodes.end()) {
-                            newProbResult[node] = probResult[node];
-                        } else {
-                            newProbResult[node] = ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                    auto& depGraph = view.getCycleDependencyGraph();
+                    size_t componentCount = depGraph.getComponentCount();
+                    std::vector<NodeRef> componentEvidence(componentCount, ddManager->getTrue());
+                    std::vector<double> componentEvidenceWeight(componentCount, 1.0);
+                    std::vector<bool> componentHasEvidence(componentCount, false);
+                    std::vector<bool> componentEvidenceChanged(componentCount, false);
+
+                    for (size_t cid = 0; cid < componentCount; ++cid) {
+                        const auto& evidences = depGraph.getComponentEvidences(cid);
+                        if (evidences.empty()) {
+                            continue;
                         }
+                        componentHasEvidence[cid] = true;
+                        NodeRef evidenceNode = ddManager->getTrue();
+                        for (const auto& [node, val] : evidences) {
+                            if (changedNodes.find(node) != changedNodes.end()) {
+                                componentEvidenceChanged[cid] = true;
+                            }
+                            auto it = nodeFormulas->find(node);
+                            if (it == nodeFormulas->end()) {
+                                throw std::runtime_error("Evidence node has no formula: " + node->getTuple().toString());
+                            }
+                            NodeRef lit = it->second;
+                            if (!val) {
+                                lit = ddManager->makeNot(lit);
+                            }
+                            evidenceNode = ddManager->makeAnd(evidenceNode, lit);
+                        }
+                        componentEvidence[cid] = evidenceNode;
+                    }
+
+                    for (size_t cid = 0; cid < componentCount; ++cid) {
+                        if (componentHasEvidence[cid]) {
+                            componentEvidenceWeight[cid] =
+                                    ddManager->computeWeightedModelCount(componentEvidence[cid]);
+                        }
+                    }
+
+                    for (const auto& node : view.getValidNodes()) {
+                        if (!node->needOutput) {
+                            continue;
+                        }
+                        size_t cid = depGraph.getComponentId(node);
+                        if (!componentHasEvidence[cid]) {
+                            if (changedNodes.find(node) == changedNodes.end()) {
+                                auto it = probResult.find(node);
+                                if (it != probResult.end()) {
+                                    newProbResult[node] = it->second;
+                                } else {
+                                    newProbResult[node] =
+                                            ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                                }
+                            } else {
+                                newProbResult[node] = ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                            }
+                            continue;
+                        }
+                        if (componentEvidenceWeight[cid] == 0.0) {
+                            newProbResult[node] = 0.0;
+                            continue;
+                        }
+                        if (!componentEvidenceChanged[cid] &&
+                                changedNodes.find(node) == changedNodes.end()) {
+                            auto it = probResult.find(node);
+                            if (it != probResult.end()) {
+                                newProbResult[node] = it->second;
+                            } else {
+                                auto joint =
+                                        ddManager->makeAnd((*nodeFormulas)[node], componentEvidence[cid]);
+                                double jointW = ddManager->computeWeightedModelCount(joint);
+                                newProbResult[node] = jointW / componentEvidenceWeight[cid];
+                            }
+                            continue;
+                        }
+                        auto joint = ddManager->makeAnd((*nodeFormulas)[node], componentEvidence[cid]);
+                        double jointW = ddManager->computeWeightedModelCount(joint);
+                        newProbResult[node] = jointW / componentEvidenceWeight[cid];
                     }
                     probResult.clear();
                     probResult = newProbResult;
@@ -799,8 +897,58 @@ public:
 
                 debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
                 probResult.clear();
-                for (auto& [node, formula]: *nodeFormulas) {
-                    probResult[node] = ddManager->computeWeightedModelCount(formula);
+                {
+                    auto& depGraph = view.getCycleDependencyGraph();
+                    size_t componentCount = depGraph.getComponentCount();
+                    std::vector<NodeRef> componentEvidence(componentCount, ddManager->getTrue());
+                    std::vector<double> componentEvidenceWeight(componentCount, 1.0);
+                    std::vector<bool> componentHasEvidence(componentCount, false);
+
+                    for (size_t cid = 0; cid < componentCount; ++cid) {
+                        const auto& evidences = depGraph.getComponentEvidences(cid);
+                        if (evidences.empty()) {
+                            continue;
+                        }
+                        componentHasEvidence[cid] = true;
+                        NodeRef evidenceNode = ddManager->getTrue();
+                        for (const auto& [node, val] : evidences) {
+                            auto it = nodeFormulas->find(node);
+                            if (it == nodeFormulas->end()) {
+                                throw std::runtime_error("Evidence node has no formula: " + node->getTuple().toString());
+                            }
+                            NodeRef lit = it->second;
+                            if (!val) {
+                                lit = ddManager->makeNot(lit);
+                            }
+                            evidenceNode = ddManager->makeAnd(evidenceNode, lit);
+                        }
+                        componentEvidence[cid] = evidenceNode;
+                    }
+
+                    for (size_t cid = 0; cid < componentCount; ++cid) {
+                        if (componentHasEvidence[cid]) {
+                            componentEvidenceWeight[cid] =
+                                    ddManager->computeWeightedModelCount(componentEvidence[cid]);
+                        }
+                    }
+
+                    for (auto& [node, formula] : *nodeFormulas) {
+                        if (!node->needOutput) {
+                            continue;
+                        }
+                        size_t cid = depGraph.getComponentId(node);
+                        if (!componentHasEvidence[cid]) {
+                            probResult[node] = ddManager->computeWeightedModelCount(formula);
+                            continue;
+                        }
+                        if (componentEvidenceWeight[cid] == 0.0) {
+                            probResult[node] = 0.0;
+                            continue;
+                        }
+                        auto joint = ddManager->makeAnd(formula, componentEvidence[cid]);
+                        double jointW = ddManager->computeWeightedModelCount(joint);
+                        probResult[node] = jointW / componentEvidenceWeight[cid];
+                    }
                 }
                 debugger.endStage();
                 debugger.startStage(StageKind::IO_DUMP_FULL);
@@ -987,12 +1135,83 @@ public:
                     debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
                     FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(changedNodes.size()));
                     std::unordered_map<NodePtr, double> newProbResult;
-                    for (const auto& node: view.getValidNodes()) {
-                        if (changedNodes.find(node) == changedNodes.end()) {
-                            newProbResult[node] = probResult[node];
-                        } else {
-                            newProbResult[node] = ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                    auto& depGraph = view.getCycleDependencyGraph();
+                    size_t componentCount = depGraph.getComponentCount();
+                    std::vector<NodeRef> componentEvidence(componentCount, ddManager->getTrue());
+                    std::vector<double> componentEvidenceWeight(componentCount, 1.0);
+                    std::vector<bool> componentHasEvidence(componentCount, false);
+                    std::vector<bool> componentEvidenceChanged(componentCount, false);
+
+                    for (size_t cid = 0; cid < componentCount; ++cid) {
+                        const auto& evidences = depGraph.getComponentEvidences(cid);
+                        if (evidences.empty()) {
+                            continue;
                         }
+                        componentHasEvidence[cid] = true;
+                        NodeRef evidenceNode = ddManager->getTrue();
+                        for (const auto& [node, val] : evidences) {
+                            if (changedNodes.find(node) != changedNodes.end()) {
+                                componentEvidenceChanged[cid] = true;
+                            }
+                            auto it = nodeFormulas->find(node);
+                            if (it == nodeFormulas->end()) {
+                                throw std::runtime_error("Evidence node has no formula: " + node->getTuple().toString());
+                            }
+                            NodeRef lit = it->second;
+                            if (!val) {
+                                lit = ddManager->makeNot(lit);
+                            }
+                            evidenceNode = ddManager->makeAnd(evidenceNode, lit);
+                        }
+                        componentEvidence[cid] = evidenceNode;
+                    }
+
+                    for (size_t cid = 0; cid < componentCount; ++cid) {
+                        if (componentHasEvidence[cid]) {
+                            componentEvidenceWeight[cid] =
+                                    ddManager->computeWeightedModelCount(componentEvidence[cid]);
+                        }
+                    }
+
+                    for (const auto& node : view.getValidNodes()) {
+                        if (!node->needOutput) {
+                            continue;
+                        }
+                        size_t cid = depGraph.getComponentId(node);
+                        if (!componentHasEvidence[cid]) {
+                            if (changedNodes.find(node) == changedNodes.end()) {
+                                auto it = probResult.find(node);
+                                if (it != probResult.end()) {
+                                    newProbResult[node] = it->second;
+                                } else {
+                                    newProbResult[node] =
+                                            ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                                }
+                            } else {
+                                newProbResult[node] = ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                            }
+                            continue;
+                        }
+                        if (componentEvidenceWeight[cid] == 0.0) {
+                            newProbResult[node] = 0.0;
+                            continue;
+                        }
+                        if (!componentEvidenceChanged[cid] &&
+                                changedNodes.find(node) == changedNodes.end()) {
+                            auto it = probResult.find(node);
+                            if (it != probResult.end()) {
+                                newProbResult[node] = it->second;
+                            } else {
+                                auto joint =
+                                        ddManager->makeAnd((*nodeFormulas)[node], componentEvidence[cid]);
+                                double jointW = ddManager->computeWeightedModelCount(joint);
+                                newProbResult[node] = jointW / componentEvidenceWeight[cid];
+                            }
+                            continue;
+                        }
+                        auto joint = ddManager->makeAnd((*nodeFormulas)[node], componentEvidence[cid]);
+                        double jointW = ddManager->computeWeightedModelCount(joint);
+                        newProbResult[node] = jointW / componentEvidenceWeight[cid];
                     }
                     probResult.clear();
                     probResult = newProbResult;
@@ -1028,7 +1247,13 @@ public:
                 // TODO: write delta inc to original
                 debugger.startStage(StageKind::SEMINAIVE_FULL);
                 program->runAll(opt.getInputFileDir(), opt.getOutputFileDir(), false);
-                graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, *ruleManager, *queryManager, fact_prob);
+                std::vector<std::pair<UntypedTuple, bool>> evidenceList;
+                if (graph) {
+                    evidenceList = graph->getEvidences();
+                }
+                graph = IncrementalDerivationGraph::createFrom(
+                        DerivationManager::untypedTuple2RuleApplications, *ruleManager, *queryManager,
+                        fact_prob, evidenceList);
                 debugger.endStage();
                 {
                     if (opt.isDumpDotEnabled()) {
@@ -1072,8 +1297,58 @@ public:
                 // compute probabilities
                 debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
                 probResult.clear();
-                for (auto& [node, formula]: *nodeFormulas) {
-                    probResult[node] = ddManager->computeWeightedModelCount(formula);
+                {
+                    auto& depGraph = view.getCycleDependencyGraph();
+                    size_t componentCount = depGraph.getComponentCount();
+                    std::vector<NodeRef> componentEvidence(componentCount, ddManager->getTrue());
+                    std::vector<double> componentEvidenceWeight(componentCount, 1.0);
+                    std::vector<bool> componentHasEvidence(componentCount, false);
+
+                    for (size_t cid = 0; cid < componentCount; ++cid) {
+                        const auto& evidences = depGraph.getComponentEvidences(cid);
+                        if (evidences.empty()) {
+                            continue;
+                        }
+                        componentHasEvidence[cid] = true;
+                        NodeRef evidenceNode = ddManager->getTrue();
+                        for (const auto& [node, val] : evidences) {
+                            auto it = nodeFormulas->find(node);
+                            if (it == nodeFormulas->end()) {
+                                throw std::runtime_error("Evidence node has no formula: " + node->getTuple().toString());
+                            }
+                            NodeRef lit = it->second;
+                            if (!val) {
+                                lit = ddManager->makeNot(lit);
+                            }
+                            evidenceNode = ddManager->makeAnd(evidenceNode, lit);
+                        }
+                        componentEvidence[cid] = evidenceNode;
+                    }
+
+                    for (size_t cid = 0; cid < componentCount; ++cid) {
+                        if (componentHasEvidence[cid]) {
+                            componentEvidenceWeight[cid] =
+                                    ddManager->computeWeightedModelCount(componentEvidence[cid]);
+                        }
+                    }
+
+                    for (auto& [node, formula] : *nodeFormulas) {
+                        if (!node->needOutput) {
+                            continue;
+                        }
+                        size_t cid = depGraph.getComponentId(node);
+                        if (!componentHasEvidence[cid]) {
+                            probResult[node] = ddManager->computeWeightedModelCount(formula);
+                            continue;
+                        }
+                        if (componentEvidenceWeight[cid] == 0.0) {
+                            probResult[node] = 0.0;
+                            continue;
+                        }
+                        auto joint = ddManager->makeAnd(formula, componentEvidence[cid]);
+                        double jointW = ddManager->computeWeightedModelCount(joint);
+                        probResult[node] = jointW / componentEvidenceWeight[cid];
+                    }
                 }
                 debugger.endStage();
                 debugger.startStage(StageKind::IO_DUMP_FULL);

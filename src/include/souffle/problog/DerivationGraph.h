@@ -21,6 +21,8 @@
 #include <filesystem>
 #include <algorithm>
 #include <optional>
+#include <stdexcept>
+#include <limits>
 #include "souffle/utility/json11.h"
 #include <cassert>
 #include <chrono>
@@ -898,7 +900,23 @@ public:
             }
         }
     }
+    const std::vector<std::pair<UntypedTuple, bool>>& getEvidences() const {
+        return evidences;
+    }
+    std::vector<std::pair<NodePtr, bool>> resolveEvidenceNodes() const {
+        std::vector<std::pair<NodePtr, bool>> resolved;
+        resolved.reserve(evidences.size());
+        for (const auto& [tup, val] : evidences) {
+            NodePtr node = findNode(tup);
+            if (!node) {
+                throw std::runtime_error("Evidence " + tup.toString() + " is not found in the graph.");
+            }
+            resolved.emplace_back(node, val);
+        }
+        return resolved;
+    }
     void attachEvidence(const std::vector<std::pair<UntypedTuple,bool>>& evidenceList) {
+        evidences = evidenceList;
         for (const auto& [tuple, value] : evidenceList) {
             NodePtr node = findNode(tuple);
             if (node) {
@@ -1114,9 +1132,11 @@ public:
                 newOutgoingEdges.push_back(edge);
             }
         }
-        node->incomingEdges = std::move(newIncomingEdges);
-        node->outgoingEdges = std::move(newOutgoingEdges);
-    }
+    node->incomingEdges = std::move(newIncomingEdges);
+    node->outgoingEdges = std::move(newOutgoingEdges);
+}
+
+    pruneOutputlessComponents(newNodes, newEdges);
 
     // eqrel merge (if enabled) and cleanup
     mergeBiImpEquivalences(newNodes, newEdges);
@@ -1181,6 +1201,12 @@ public:
     }
 
 protected:
+    static void pruneOutputlessComponents(
+            std::unordered_set<NodePtr>& liveNodes,
+            std::unordered_set<EdgePtr>& liveEdges,
+            std::unordered_set<NodePtr>* reachableNodes = nullptr,
+            std::unordered_set<EdgePtr>* reachableEdges = nullptr);
+
 //    std::vector<NodePtr> nodes;
 //    std::vector<EdgePtr> edges;
     std::unordered_set<NodePtr> nodes;
@@ -1201,6 +1227,7 @@ protected:
 
     // Map edge keys to edges.
     std::map<std::string, EdgePtr> edgeKeyToEdgeMap;
+    std::vector<std::pair<UntypedTuple, bool>> evidences;
 
     // Create a unique key for an edge.
     std::string createEdgeKey(souffle::RamDomain ruleId,
@@ -1298,6 +1325,7 @@ public:
             graph->createQuery(node, queryManager);
         }
 
+        graph->attachEvidence(evidences);
         return graph;
     }
 
@@ -1887,6 +1915,8 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     }
     std::cout << "[prune-inc] delta-delete counts (post-mark-pruned): nodes=" << deltaDeleteNodes.size()
               << " edges=" << deltaDeleteEdges.size() << std::endl;
+
+    pruneOutputlessComponents(newNodes, newEdges, &reachableNodes, &reachableEdges);
 
     // Filter nodes and edges.
     std::set<NodePtr> newDeltaDeletedNodes;
@@ -2734,10 +2764,38 @@ struct CycleDependencyGraph {
     std::unordered_map<NodePtr, size_t> nodeDepthsGlobal;
     std::unordered_map<EdgePtr, size_t> edgeDepthsGlobal;
 
+    std::vector<size_t> cycleToComponent;
+    std::unordered_map<NodePtr, size_t> nodeToComponent;
+    std::vector<std::vector<std::pair<NodePtr, bool>>> componentEvidences;
+
     explicit CycleDependencyGraph(const DerivationGraphViewInterface& g) : graph(g) {
         computeSCCs();
         computeDependencies();
+        computeComponents();
         computeDepths();
+    }
+
+    size_t getComponentId(const NodePtr& node) const {
+        auto it = nodeToComponent.find(node);
+        if (it == nodeToComponent.end()) {
+            throw std::runtime_error("Node not found in component map: " + node->toString());
+        }
+        return it->second;
+    }
+
+    const std::vector<std::pair<NodePtr, bool>>& getComponentEvidences(size_t componentId) const {
+        if (componentId >= componentEvidences.size()) {
+            throw std::runtime_error("Component id out of range: " + std::to_string(componentId));
+        }
+        return componentEvidences[componentId];
+    }
+
+    const std::vector<std::pair<NodePtr, bool>>& getComponentEvidencesForNode(const NodePtr& node) const {
+        return getComponentEvidences(getComponentId(node));
+    }
+
+    size_t getComponentCount() const {
+        return componentEvidences.size();
     }
 
     void dumpCycles(std::ostream& out = std::cout) const {
@@ -2885,6 +2943,55 @@ private:
             }
         }
     }
+    void computeComponents() {
+        const size_t n = nodeCycles.size();
+        cycleToComponent.assign(n, std::numeric_limits<size_t>::max());
+        std::vector<bool> visited(n, false);
+        componentEvidences.clear();
+        nodeToComponent.clear();
+
+        for (size_t cid = 0; cid < n; ++cid) {
+            if (visited[cid]) {
+                continue;
+            }
+            size_t componentId = componentEvidences.size();
+            std::vector<size_t> stack;
+            std::vector<size_t> componentCycles;
+            stack.push_back(cid);
+            visited[cid] = true;
+
+            while (!stack.empty()) {
+                size_t cur = stack.back();
+                stack.pop_back();
+                componentCycles.push_back(cur);
+
+                for (size_t nb : dependencies[cur]) {
+                    if (!visited[nb]) {
+                        visited[nb] = true;
+                        stack.push_back(nb);
+                    }
+                }
+                for (size_t nb : reverseDependencies[cur]) {
+                    if (!visited[nb]) {
+                        visited[nb] = true;
+                        stack.push_back(nb);
+                    }
+                }
+            }
+
+            std::vector<std::pair<NodePtr, bool>> evidences;
+            for (size_t cycleId : componentCycles) {
+                cycleToComponent[cycleId] = componentId;
+                for (const auto& node : nodeCycles[cycleId]) {
+                    nodeToComponent[node] = componentId;
+                    if (node->hasEvidence()) {
+                        evidences.emplace_back(node, node->getEvidenceValue());
+                    }
+                }
+            }
+            componentEvidences.push_back(std::move(evidences));
+        }
+    }
     void computeDepths() {
         nodeDepthsGlobal.clear();
         edgeDepthsGlobal.clear();
@@ -2937,6 +3044,82 @@ private:
         }
     }
 };
+
+void DerivationGraph::pruneOutputlessComponents(
+        std::unordered_set<NodePtr>& liveNodes,
+        std::unordered_set<EdgePtr>& liveEdges,
+        std::unordered_set<NodePtr>* reachableNodes,
+        std::unordered_set<EdgePtr>* reachableEdges) {
+    if (liveNodes.empty()) {
+        return;
+    }
+    struct LocalView : DerivationGraphViewInterface {
+        std::unordered_set<NodePtr>& nodes;
+        std::unordered_set<EdgePtr>& edges;
+        LocalView(std::unordered_set<NodePtr>& n, std::unordered_set<EdgePtr>& e)
+                : nodes(n), edges(e) {}
+        const std::unordered_set<NodePtr>& getNodes() const override { return nodes; }
+        const std::unordered_set<EdgePtr>& getEdges() const override { return edges; }
+    };
+    LocalView view(liveNodes, liveEdges);
+    auto& depGraph = view.getCycleDependencyGraph();
+    size_t componentCount = depGraph.getComponentCount();
+    if (componentCount == 0) {
+        return;
+    }
+    std::vector<bool> componentHasOutput(componentCount, false);
+    for (const auto& node : liveNodes) {
+        if (node->needOutput) {
+            componentHasOutput[depGraph.getComponentId(node)] = true;
+        }
+    }
+
+    bool removed = false;
+    std::unordered_set<NodePtr> keptNodes;
+    keptNodes.reserve(liveNodes.size());
+    for (const auto& node : liveNodes) {
+        if (componentHasOutput[depGraph.getComponentId(node)]) {
+            keptNodes.insert(node);
+        } else {
+            node->pruned = true;
+            removed = true;
+        }
+    }
+    if (!removed) {
+        return;
+    }
+
+    std::unordered_set<EdgePtr> keptEdges;
+    keptEdges.reserve(liveEdges.size());
+    for (const auto& edge : liveEdges) {
+        NodePtr out = edge->getOutput();
+        if (!keptNodes.count(out)) {
+            edge->pruned = true;
+            continue;
+        }
+        bool keep = true;
+        for (const auto& in : edge->getInputs()) {
+            if (!keptNodes.count(in)) {
+                keep = false;
+                break;
+            }
+        }
+        if (keep) {
+            keptEdges.insert(edge);
+        } else {
+            edge->pruned = true;
+        }
+    }
+
+    liveNodes.swap(keptNodes);
+    liveEdges.swap(keptEdges);
+    if (reachableNodes) {
+        *reachableNodes = liveNodes;
+    }
+    if (reachableEdges) {
+        *reachableEdges = liveEdges;
+    }
+}
 
 CycleDependencyGraph& DerivationGraphViewInterface::getCycleDependencyGraph() const {
     if (!cachedCycleDependencyGraph_) {

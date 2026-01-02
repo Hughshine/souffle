@@ -37,24 +37,6 @@ inline std::string makeOutputPath(const CmdOptions& opt, const std::string& file
     return dir + "/" + filename;
 }
 
-inline std::vector<std::pair<NodePtr, bool>> applyEvidence(
-        IncrementalDerivationGraph& graph,
-        const std::vector<std::pair<UntypedTuple, bool>>& evidences) {
-
-    std::vector<std::pair<NodePtr, bool>> resolved;
-    resolved.reserve(evidences.size());
-
-    for (const auto& [tup, val] : evidences) {
-        NodePtr node = graph.findNode(tup);
-        if (!node) {
-            throw std::runtime_error("Evidence " + tup.toString() + " is not found in the graph.");
-        }
-
-        resolved.emplace_back(node, val);
-    };
-    return resolved;
-}
-
 inline void dumpSisoRegions(const DerivationGraphViewInterface& view) {
     auto start = std::chrono::steady_clock::now();
     auto regions = GraphAnalyzer::detectAllSISOStrictFromExit(view);
@@ -112,7 +94,6 @@ inline void runBddPipeline(
         QueryManager& queryManager,
         IncrementalDerivationGraph& graph,
         SubgraphView& view,
-        const std::vector<std::pair<UntypedTuple, bool>>& evidences,
         bool enableOnlineCli) {
     Debugger& debugger = Debugger::getInstance();
 
@@ -134,65 +115,71 @@ inline void runBddPipeline(
         debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
 
         auto t2 = std::chrono::steady_clock::now();
-        auto resolvedEvs = applyEvidence(graph, evidences);
+        auto& depGraph = view.getCycleDependencyGraph();
+        size_t componentCount = depGraph.getComponentCount();
+        std::vector<BddNodeRef> componentEvidenceBdd(componentCount, bddManager.getTrue());
+        std::vector<double> componentEvidenceWeight(componentCount, 1.0);
+        std::vector<bool> componentHasEvidence(componentCount, false);
+
+        for (size_t cid = 0; cid < componentCount; ++cid) {
+            const auto& evidences = depGraph.getComponentEvidences(cid);
+            if (evidences.empty()) {
+                continue;
+            }
+            componentHasEvidence[cid] = true;
+            BddNodeRef evidenceBdd = bddManager.getTrue();
+            for (const auto& [eNode, val] : evidences) {
+                auto it = nodeFormulas.find(eNode);
+                if (it == nodeFormulas.end()) {
+                    throw std::runtime_error("Evidence node has no formula: " + eNode->getTuple().toString());
+                }
+                auto lit = it->second;
+                if (!val) {
+                    lit = bddManager.makeNot(lit);
+                }
+                evidenceBdd = bddManager.makeAnd(evidenceBdd, lit);
+            }
+            componentEvidenceBdd[cid] = evidenceBdd;
+        }
         auto t3 = std::chrono::steady_clock::now();
 
-        auto evidenceBdd = bddManager.getTrue();
-
-        for (const auto& [eNode, val] : resolvedEvs) {
-            auto it = nodeFormulas.find(eNode);
-            if (it == nodeFormulas.end()) {
-                throw std::runtime_error("Evidence node has no formula: " + eNode->getTuple().toString());
+        for (size_t cid = 0; cid < componentCount; ++cid) {
+            if (componentHasEvidence[cid]) {
+                componentEvidenceWeight[cid] =
+                        bddManager.computeWeightedModelCount(componentEvidenceBdd[cid]);
             }
-
-            auto lit = it->second;
-            if (!val) {
-                lit = bddManager.makeNot(lit);
-            }
-            evidenceBdd = bddManager.makeAnd(evidenceBdd, lit);
         }
-
         auto t4 = std::chrono::steady_clock::now();
-
-        double evidenceWeight = 1.0;
-        if (!resolvedEvs.empty()) {
-            evidenceWeight = bddManager.computeWeightedModelCount(evidenceBdd);
-        }
-
-
-        auto t5 = std::chrono::steady_clock::now();
 
         probResult.clear();
         for (const auto& [node, bdd] : nodeFormulas) {
-            double prob = 0.0;
-
-            // Unconditional
-            if (resolvedEvs.empty()) {
-                prob = bddManager.computeWeightedModelCount(bdd);
-            } else if (evidenceWeight == 0.0) {
-                prob = 0.0; // inconsistent evidence
-            } else {
-                auto joint = bddManager.makeAnd(bdd, evidenceBdd);
-                double jointW = bddManager.computeWeightedModelCount(joint);
-                prob = jointW / evidenceWeight;
+            if (!node->needOutput) {
+                continue;
             }
-
+            double prob = 0.0;
+            size_t cid = depGraph.getComponentId(node);
+            if (!componentHasEvidence[cid]) {
+                prob = bddManager.computeWeightedModelCount(bdd);
+            } else if (componentEvidenceWeight[cid] == 0.0) {
+                prob = 0.0; // inconsistent evidence in this component
+            } else {
+                auto joint = bddManager.makeAnd(bdd, componentEvidenceBdd[cid]);
+                double jointW = bddManager.computeWeightedModelCount(joint);
+                prob = jointW / componentEvidenceWeight[cid];
+            }
             probResult[node] = prob;
         }
 
-        auto t6 = std::chrono::steady_clock::now();
+        auto t5 = std::chrono::steady_clock::now();
 
-        std::cout << "[pipeline] evidence resolve/tag took "
+        std::cout << "[pipeline] component evidence build took "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
                   << " ms\n";
-        std::cout << "[pipeline] evidence BDD build took "
+        std::cout << "[pipeline] component evidence WMC took "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count()
                   << " ms\n";
-        std::cout << "[pipeline] evidence WMC took "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(t5 - t4).count()
-                  << " ms\n";
         std::cout << "[pipeline] per-node conditional WMC took "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(t6 - t5).count()
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(t5 - t4).count()
                   << " ms\n";
 
         debugger.endStage();
@@ -227,7 +214,6 @@ inline void runSddPipeline(
         QueryManager& queryManager,
         IncrementalDerivationGraph& graph,
         SubgraphView& view,
-        const std::vector<std::pair<UntypedTuple, bool>>& evidences,
         bool enableOnlineCli) {
     Debugger& debugger = Debugger::getInstance();
 
@@ -249,60 +235,72 @@ inline void runSddPipeline(
         debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
 
         auto t2 = std::chrono::steady_clock::now();
-        auto resolvedEvs = applyEvidence(graph, evidences);
+        auto& depGraph = view.getCycleDependencyGraph();
+        size_t componentCount = depGraph.getComponentCount();
+        std::vector<SddNodeRef> componentEvidenceSdd(componentCount, sddManager.getTrue());
+        std::vector<double> componentEvidenceWeight(componentCount, 1.0);
+        std::vector<bool> componentHasEvidence(componentCount, false);
+
+        for (size_t cid = 0; cid < componentCount; ++cid) {
+            const auto& evidences = depGraph.getComponentEvidences(cid);
+            if (evidences.empty()) {
+                continue;
+            }
+            componentHasEvidence[cid] = true;
+            SddNodeRef evidenceSdd = sddManager.getTrue();
+            for (const auto& [eNode, val] : evidences) {
+                auto it = nodeFormulas.find(eNode);
+                if (it == nodeFormulas.end()) {
+                    throw std::runtime_error("Evidence node has no formula: " + eNode->getTuple().toString());
+                }
+                auto lit = it->second;
+                if (!val) {
+                    lit = sddManager.makeNot(lit);
+                }
+                evidenceSdd = sddManager.makeAnd(evidenceSdd, lit);
+            }
+            componentEvidenceSdd[cid] = evidenceSdd;
+        }
         auto t3 = std::chrono::steady_clock::now();
 
-        auto evidenceSdd = sddManager.getTrue();
-        for (const auto& [eNode, val] : resolvedEvs) {
-            auto it = nodeFormulas.find(eNode);
-            if (it == nodeFormulas.end()) {
-                throw std::runtime_error("Evidence node has no formula: " + eNode->getTuple().toString());
+        for (size_t cid = 0; cid < componentCount; ++cid) {
+            if (componentHasEvidence[cid]) {
+                componentEvidenceWeight[cid] =
+                        sddManager.computeWeightedModelCount(componentEvidenceSdd[cid]);
             }
-
-            auto lit = it->second;
-            if (!val) {
-                lit = sddManager.makeNot(lit);
-            }
-            evidenceSdd = sddManager.makeAnd(evidenceSdd, lit);
         }
         auto t4 = std::chrono::steady_clock::now();
 
-        double evidenceWeight = 1.0;
-        if (!resolvedEvs.empty()) {
-            evidenceWeight = sddManager.computeWeightedModelCount(evidenceSdd);
-        }
-        auto t5 = std::chrono::steady_clock::now();
-
         probResult.clear();
         for (const auto& [node, sdd] : nodeFormulas) {
+            if (!node->needOutput) {
+                continue;
+            }
             double prob = 0.0;
-            if (resolvedEvs.empty()) {
+            size_t cid = depGraph.getComponentId(node);
+            if (!componentHasEvidence[cid]) {
                 prob = sddManager.computeWeightedModelCount(sdd);
-            } else if (evidenceWeight == 0.0) {
+            } else if (componentEvidenceWeight[cid] == 0.0) {
                 prob = 0.0;
             } else {
-                auto joint = sddManager.makeAnd(sdd, evidenceSdd);
+                auto joint = sddManager.makeAnd(sdd, componentEvidenceSdd[cid]);
                 double jointW = sddManager.computeWeightedModelCount(joint);
-                prob = jointW / evidenceWeight;
+                prob = jointW / componentEvidenceWeight[cid];
             }
-
             probResult[node] = prob;
         }
 
-        auto t6 = std::chrono::steady_clock::now();
+        auto t5 = std::chrono::steady_clock::now();
 
         view.dumpStatistics(std::cout);
-        std::cout << "[pipeline] evidence resolve/tag took "
+        std::cout << "[pipeline] component evidence build took "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
                   << " ms\n";
-        std::cout << "[pipeline] evidence SDD build took "
+        std::cout << "[pipeline] component evidence WMC took "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count()
                   << " ms\n";
-        std::cout << "[pipeline] evidence WMC took "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(t5 - t4).count()
-                  << " ms\n";
         std::cout << "[pipeline] per-node conditional WMC took "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(t6 - t5).count()
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(t5 - t4).count()
                   << " ms\n";
 
         debugger.endStage();
@@ -380,7 +378,16 @@ inline void runPipeline(
         debugger.startStage(StageKind::PRECONFIG_FULL);
         auto rewriteStart = std::chrono::steady_clock::now();
         GraphRewriter rewriter;
-        auto rewriteStats = rewriter.rewriteUntilFixpoint(*graph, view, opt.isProfiling());
+        RewriteFeatureFlags rewriteFlags;
+        const auto& splitMode = opt.getSplitMode();
+        if (splitMode == "no-split") {
+            rewriteFlags.splitMode = SplitMode::None;
+        } else if (splitMode == "complete-split") {
+            rewriteFlags.splitMode = SplitMode::Complete;
+        } else {
+            rewriteFlags.splitMode = SplitMode::Naive;
+        }
+        auto rewriteStats = rewriter.rewriteUntilFixpoint(*graph, view, opt.isProfiling(), rewriteFlags);
         auto rewriteMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now() - rewriteStart)
                                  .count();
@@ -414,11 +421,9 @@ inline void runPipeline(
     }
 
     if (program.getKnowledge() == souffle::Knowledge::BDD) {
-        runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences,
-                allowOnlineCli);
+        runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, allowOnlineCli);
     } else if (program.getKnowledge() == souffle::Knowledge::SDD) {
-        runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences,
-                allowOnlineCli);
+        runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, allowOnlineCli);
     } else {
         std::cerr << "Unknown knowledge representation" << std::endl;
     }

@@ -106,6 +106,7 @@ public:
 
         stats.randomVarsBefore = countRandomVarsInView(view);
         stats.randomVarsAfter = stats.randomVarsBefore;
+        const auto evidenceAffectedNodes = collectEvidenceAffectedNodes(view);
 
         // Only the first region should attribute manager init time; subsequent regions reuse the same manager.
         bool firstRegionTiming = true;
@@ -117,8 +118,8 @@ public:
                 return false;
             }
             SplitStats splitStats = (flags.splitMode == SplitMode::Naive)
-                    ? splitFanoutNaive(graph, view, stats)
-                    : splitFanoutComplete(graph, view, stats, flags);
+                    ? splitFanoutNaive(graph, view, stats, evidenceAffectedNodes)
+                    : splitFanoutComplete(graph, view, stats, flags, evidenceAffectedNodes);
             std::cout << "[GraphRewriter]   split(" << splitModeToString(flags.splitMode)
                       << "): nodes=" << splitStats.nodesAdded
                       << " edges=" << splitStats.edgesRewritten
@@ -1041,6 +1042,28 @@ private:
         return p > 0.0 && p < 1.0;
     }
 
+    std::unordered_set<NodePtr> collectEvidenceAffectedNodes(const IncSubgraphView& view) const {
+        std::unordered_set<NodePtr> affected;
+        auto& depGraph = view.getCycleDependencyGraph();
+        size_t componentCount = depGraph.getComponentCount();
+        if (componentCount == 0) {
+            return affected;
+        }
+        std::vector<char> componentHasEvidence(componentCount, 0);
+        for (size_t cid = 0; cid < componentCount; ++cid) {
+            if (!depGraph.getComponentEvidences(cid).empty()) {
+                componentHasEvidence[cid] = 1;
+            }
+        }
+        for (const auto& node : view.getNodes()) {
+            if (!node) continue;
+            if (componentHasEvidence[depGraph.getComponentId(node)]) {
+                affected.insert(node);
+            }
+        }
+        return affected;
+    }
+
     static NodePtr createShadowFact(IncrementalDerivationGraph& graph, const NodePtr& fact,
             const EdgePtr& edgeHint) {
         if (!fact || !edgeHint) return nullptr;
@@ -1060,13 +1083,16 @@ private:
     }
 
     SplitStats splitFanoutNaive(IncrementalDerivationGraph& graph, IncSubgraphView& view,
-            GraphRewriteStats& stats) const {
+            GraphRewriteStats& stats,
+            const std::unordered_set<NodePtr>& evidenceAffectedNodes) const {
         SplitStats out;
         auto splitStart = std::chrono::steady_clock::now();
         constexpr size_t kMaxReachable = 50;
         auto nodesList = view.getNodes();
         for (auto fact : nodesList) {
             if (!fact || !fact->isFact || fact->hasEvidence() || fact->needOutput) continue;
+            if (evidenceAffectedNodes.count(fact)) continue;
+            if (hasEvidenceInComponent(view, fact)) continue;
             auto outs = view.getOutgoingEdges(fact);
             if (outs.size() < 2) continue;
 
@@ -1183,7 +1209,8 @@ private:
     }
 
     SplitStats splitFanoutComplete(IncrementalDerivationGraph& graph, IncSubgraphView& view,
-            GraphRewriteStats& stats, const RewriteFeatureFlags& flags) const {
+            GraphRewriteStats& stats, const RewriteFeatureFlags& flags,
+            const std::unordered_set<NodePtr>& evidenceAffectedNodes) const {
         SplitStats out;
         auto splitStart = std::chrono::steady_clock::now();
         const auto& nodeSet = view.getNodes();
@@ -1285,6 +1312,7 @@ private:
         std::unordered_set<NodePtr> inQueue;
         auto enqueueFact = [&](const NodePtr& n) {
             if (!n || !n->isFact || n->hasEvidence() || n->needOutput) return;
+            if (evidenceAffectedNodes.count(n)) return;
             if (view.getOutgoingEdges(n).size() < 2) return;
             auto it = nodeIndex.find(n);
             if (it == nodeIndex.end()) return;
@@ -1304,6 +1332,7 @@ private:
             queue.pop_front();
             inQueue.erase(fact);
             if (!fact || !fact->isFact || fact->hasEvidence() || fact->needOutput) continue;
+            if (evidenceAffectedNodes.count(fact)) continue;
             if (view.getNodes().count(fact) == 0) continue;
             auto outs = view.getOutgoingEdges(fact);
             if (outs.size() < 2) continue;
