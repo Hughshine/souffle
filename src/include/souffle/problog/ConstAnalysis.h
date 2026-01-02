@@ -22,155 +22,236 @@ struct ConstAnalysisResult {
     size_t ignoredEdges = 0;
 };
 
-inline bool edgeHasNegation(const DerivationGraphViewInterface& view, EdgePtr edge) {
-    const auto negs = view.getBodyNegations(edge);
-    for (bool neg : negs) {
-        if (neg) {
-            return true;
-        }
+enum class ConstTruth {
+    Unknown,
+    True,
+    False,
+};
+
+inline ConstTruth negateTruth(ConstTruth value) {
+    if (value == ConstTruth::True) {
+        return ConstTruth::False;
     }
-    return false;
+    if (value == ConstTruth::False) {
+        return ConstTruth::True;
+    }
+    return ConstTruth::Unknown;
+}
+
+inline ConstTruth literalTruth(ConstTruth nodeTruth, bool negated) {
+    return negated ? negateTruth(nodeTruth) : nodeTruth;
 }
 
 inline ConstAnalysisResult analyzeConstants(const DerivationGraphViewInterface& view, bool computeFalse = true) {
     ConstAnalysisResult result;
     std::queue<NodePtr> trueWork;
     std::queue<NodePtr> falseWork;
-    std::unordered_map<EdgePtr, size_t> remainingTrueInputs;
+    std::unordered_map<NodePtr, ConstTruth> nodeTruth;
+    std::unordered_map<NodePtr, bool> hasUnknownFact;
     std::unordered_map<NodePtr, size_t> remainingNonFalseIncoming;
-    std::unordered_set<NodePtr> hasIneligibleIncoming;
-    std::vector<EdgePtr> zeroProbEdges;
+
+    struct EdgeTruthInfo {
+        ConstTruth state = ConstTruth::Unknown;
+        size_t unresolvedTrueLits = 0;
+        size_t falseLits = 0;
+        bool baseTrue = false;
+        bool baseFalse = false;
+    };
+
+    std::unordered_map<EdgePtr, EdgeTruthInfo> edgeInfo;
 
     for (const auto& node : view.getNodes()) {
-        if (!node || !node->isFact) {
+        if (!node) {
+            continue;
+        }
+        nodeTruth.emplace(node, ConstTruth::Unknown);
+        if (!node->isFact) {
             continue;
         }
         if (node->getProbability() == 1.0) {
-            if (result.trueNodes.insert(node).second) {
-                trueWork.push(node);
-            }
-        } else if (computeFalse && node->getProbability() == 0.0) {
-            if (result.falseNodes.insert(node).second) {
-                falseWork.push(node);
-            }
+            nodeTruth[node] = ConstTruth::True;
+            result.trueNodes.insert(node);
+        } else if (node->getProbability() > 0.0) {
+            hasUnknownFact[node] = true;
         }
     }
+
+    auto hasNonDetFact = [&](NodePtr node) {
+        auto it = hasUnknownFact.find(node);
+        return it != hasUnknownFact.end() && it->second;
+    };
+
+    auto markNodeTrue = [&](NodePtr node) {
+        if (!node) {
+            return;
+        }
+        auto it = nodeTruth.find(node);
+        if (it == nodeTruth.end() || it->second != ConstTruth::Unknown) {
+            return;
+        }
+        it->second = ConstTruth::True;
+        result.trueNodes.insert(node);
+        trueWork.push(node);
+    };
+
+    auto markNodeFalse = [&](NodePtr node) {
+        if (!computeFalse || !node) {
+            return;
+        }
+        auto it = nodeTruth.find(node);
+        if (it == nodeTruth.end() || it->second != ConstTruth::Unknown) {
+            return;
+        }
+        if (hasNonDetFact(node)) {
+            return;
+        }
+        it->second = ConstTruth::False;
+        result.falseNodes.insert(node);
+        falseWork.push(node);
+    };
+
+    auto maybeMarkNodeFalse = [&](NodePtr node) {
+        if (!computeFalse || !node) {
+            return;
+        }
+        auto it = nodeTruth.find(node);
+        if (it == nodeTruth.end() || it->second != ConstTruth::Unknown) {
+            return;
+        }
+        if (hasNonDetFact(node)) {
+            return;
+        }
+        auto countIt = remainingNonFalseIncoming.find(node);
+        if (countIt == remainingNonFalseIncoming.end() || countIt->second == 0) {
+            markNodeFalse(node);
+        }
+    };
+
+    auto resolveEdge = [&](EdgePtr edge, EdgeTruthInfo& info) {
+        if (!edge || info.state != ConstTruth::Unknown) {
+            return;
+        }
+        if (computeFalse && (info.baseFalse || info.falseLits > 0)) {
+            info.state = ConstTruth::False;
+            result.falseEdges.insert(edge);
+            NodePtr out = view.getOutput(edge);
+            if (out) {
+                auto it = remainingNonFalseIncoming.find(out);
+                if (it != remainingNonFalseIncoming.end() && it->second > 0) {
+                    it->second -= 1;
+                }
+                if (it == remainingNonFalseIncoming.end()) {
+                    remainingNonFalseIncoming[out] = 0;
+                }
+                maybeMarkNodeFalse(out);
+            }
+            return;
+        }
+        if (info.baseTrue && info.unresolvedTrueLits == 0) {
+            info.state = ConstTruth::True;
+            result.trueEdges.insert(edge);
+            NodePtr out = view.getOutput(edge);
+            if (out) {
+                markNodeTrue(out);
+            }
+        }
+    };
 
     for (const auto& edge : view.getEdges()) {
         if (!edge) {
             continue;
         }
-        if (edgeHasNegation(view, edge)) {
+        NodePtr out = view.getOutput(edge);
+        if (!out) {
             result.ignoredEdges++;
-            NodePtr out = view.getOutput(edge);
-            if (out) {
-                hasIneligibleIncoming.insert(out);
-            }
             continue;
         }
         result.eligibleEdges++;
-        NodePtr out = view.getOutput(edge);
-        if (computeFalse && out) {
+        if (computeFalse) {
             remainingNonFalseIncoming[out] += 1;
         }
-        if (edge->isDeterministic()) {
-            size_t remaining = 0;
-            for (const auto& in : view.getInputs(edge)) {
-                if (!result.trueNodes.count(in)) {
-                    remaining++;
-                }
+        EdgeTruthInfo info;
+        info.baseTrue = edge->isDeterministic();
+        info.baseFalse = edge->getProbability() == 0.0;
+        const auto& inputs = view.getInputs(edge);
+        const auto& negs = view.getBodyNegations(edge);
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            ConstTruth inputTruth = ConstTruth::Unknown;
+            auto it = nodeTruth.find(inputs[i]);
+            if (it != nodeTruth.end()) {
+                inputTruth = it->second;
             }
-            remainingTrueInputs.emplace(edge, remaining);
+            ConstTruth lit = literalTruth(inputTruth, negs[i]);
+            if (lit != ConstTruth::True) {
+                info.unresolvedTrueLits += 1;
+            }
+            if (lit == ConstTruth::False) {
+                info.falseLits += 1;
+            }
         }
-        if (computeFalse && edge->getProbability() == 0.0) {
-            zeroProbEdges.push_back(edge);
-        }
+        edgeInfo.emplace(edge, info);
     }
 
-    for (const auto& [edge, remaining] : remainingTrueInputs) {
-        if (remaining == 0) {
-            result.trueEdges.insert(edge);
-            NodePtr out = view.getOutput(edge);
-            if (out && result.trueNodes.insert(out).second) {
-                trueWork.push(out);
-            }
-        }
-    }
-
-    while (!trueWork.empty()) {
-        NodePtr node = trueWork.front();
-        trueWork.pop();
-        for (const auto& edge : view.getOutgoingEdges(node)) {
-            auto it = remainingTrueInputs.find(edge);
-            if (it == remainingTrueInputs.end()) {
-                continue;
-            }
-            if (it->second == 0) {
-                continue;
-            }
-            it->second -= 1;
-            if (it->second == 0) {
-                result.trueEdges.insert(edge);
-                NodePtr out = view.getOutput(edge);
-                if (out && result.trueNodes.insert(out).second) {
-                    trueWork.push(out);
-                }
-            }
-        }
+    for (auto& [edge, info] : edgeInfo) {
+        resolveEdge(edge, info);
     }
 
     if (computeFalse) {
-        auto maybeMarkNodeFalse = [&](NodePtr node) {
-            if (!node || result.falseNodes.count(node) || result.trueNodes.count(node)) {
-                return;
-            }
-            if (node->isFact && node->getProbability() > 0.0) {
-                return;
-            }
-            if (hasIneligibleIncoming.count(node)) {
-                return;
-            }
-            auto it = remainingNonFalseIncoming.find(node);
-            if (it == remainingNonFalseIncoming.end() || it->second != 0) {
-                return;
-            }
-            result.falseNodes.insert(node);
-            falseWork.push(node);
-        };
-
-        auto markEdgeFalse = [&](EdgePtr edge) {
-            if (!edge || result.falseEdges.count(edge)) {
-                return;
-            }
-            if (edgeHasNegation(view, edge)) {
-                return;
-            }
-            result.falseEdges.insert(edge);
-            NodePtr out = view.getOutput(edge);
-            if (!out) {
-                return;
-            }
-            auto it = remainingNonFalseIncoming.find(out);
-            if (it != remainingNonFalseIncoming.end()) {
-                if (it->second > 0) {
-                    it->second -= 1;
-                }
-                if (it->second == 0) {
-                    maybeMarkNodeFalse(out);
-                }
-            }
-        };
-
-        for (const auto& edge : zeroProbEdges) {
-            markEdgeFalse(edge);
+        for (const auto& node : view.getNodes()) {
+            maybeMarkNodeFalse(node);
         }
+    }
 
-        while (!falseWork.empty()) {
+    auto updateEdgesForNode = [&](NodePtr node, ConstTruth newTruth) {
+        ConstTruth oldTruth = ConstTruth::Unknown;
+        for (const auto& edge : view.getOutgoingEdges(node)) {
+            auto it = edgeInfo.find(edge);
+            if (it == edgeInfo.end()) {
+                continue;
+            }
+            EdgeTruthInfo& info = it->second;
+            if (info.state != ConstTruth::Unknown) {
+                continue;
+            }
+            const auto& inputs = view.getInputs(edge);
+            const auto& negs = view.getBodyNegations(edge);
+            for (size_t i = 0; i < inputs.size(); ++i) {
+                if (inputs[i] != node) {
+                    continue;
+                }
+                ConstTruth oldLit = literalTruth(oldTruth, negs[i]);
+                ConstTruth newLit = literalTruth(newTruth, negs[i]);
+                if (oldLit == newLit) {
+                    continue;
+                }
+                if (oldLit == ConstTruth::True) {
+                    info.unresolvedTrueLits += 1;
+                } else if (oldLit == ConstTruth::False) {
+                    if (info.falseLits > 0) {
+                        info.falseLits -= 1;
+                    }
+                }
+                if (newLit == ConstTruth::True) {
+                    if (info.unresolvedTrueLits > 0) {
+                        info.unresolvedTrueLits -= 1;
+                    }
+                } else if (newLit == ConstTruth::False) {
+                    info.falseLits += 1;
+                }
+            }
+            resolveEdge(edge, info);
+        }
+    };
+
+    while (!trueWork.empty() || !falseWork.empty()) {
+        if (!trueWork.empty()) {
+            NodePtr node = trueWork.front();
+            trueWork.pop();
+            updateEdgesForNode(node, ConstTruth::True);
+        } else {
             NodePtr node = falseWork.front();
             falseWork.pop();
-            for (const auto& edge : view.getOutgoingEdges(node)) {
-                markEdgeFalse(edge);
-            }
+            updateEdgesForNode(node, ConstTruth::False);
         }
     }
 

@@ -9,14 +9,20 @@ formula construction when nodes/edges are provably constant.
 - Shared across full and incremental FC; no incremental maintenance.
 - Safe fallback: if no constants are found or `--fold-const` is disabled, FC behaves as before.
 
-## Analysis (positive-only, conservative)
+## Analysis (negation-aware, conservative)
+- Three-valued logic per node/edge: TRUE, FALSE, UNKNOWN.
 - Seed TRUE: fact nodes with p=1.0.
-- Seed FALSE (optional): fact nodes with p=0.0 and edges with p=0.0.
-- Deterministic edges: an edge is TRUE if all its inputs are TRUE.
-- FALSE propagation: an edge is FALSE if any input is FALSE; a node is FALSE if all incoming eligible
-  edges are FALSE and it is not a fact with p>0.
-- Negation is ignored: any edge with a negated input is skipped and counted as "ignored".
-  Nodes with any ineligible incoming edge are never marked FALSE.
+- Facts with 0<p<1 are treated as UNKNOWN and prevent the node from becoming FALSE.
+- Edge base value:
+  - p==0 => edge is FALSE.
+  - p==1 => edge is deterministic (can become TRUE if all literals are TRUE).
+  - 0<p<1 => edge is UNKNOWN unless a literal is FALSE.
+- Literals respect negation: for `!X`, TRUE/FALSE are flipped; UNKNOWN stays UNKNOWN.
+- Edge TRUE: base is deterministic and all literals are TRUE.
+- Edge FALSE: base is FALSE or any literal is FALSE.
+- Node TRUE: any incoming edge TRUE or fact p==1.
+- Node FALSE: all incoming edges are FALSE and the node has no non-deterministic fact.
+- Negation cycles are handled conservatively: if a node/edge cannot be proven TRUE/FALSE, it stays UNKNOWN.
 
 ## Output and flags
 - `--fold-const`: enable FC short-circuiting using the analysis results.
@@ -60,6 +66,6 @@ Only top-level FC calls log/dump (`seedTrueNodes` is empty).
   legacy reference.
 
 ## TODO / limitations
-- Negation-aware constant propagation (three-valued logic).
-- Better FALSE-node handling with negation/evidence.
+- Evidence-aware constant propagation.
+- Negative-cycle diagnostics (optional stratification guard).
 - Decide whether const analysis should treat `seedTrueNodes` as additional TRUE seeds.

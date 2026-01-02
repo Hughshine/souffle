@@ -51,3 +51,14 @@ done
 - Node/edge and region counts in DOTs; confirm SI/SO highlighting.
 - Output equality (`facts.prob`).
 - Debugger JSON stage timings (`log.txt_*.json`) should be non-negative; WMC timing is now properly closed.
+
+## Recent local results (P4-P19)
+Run variants (full-only, merge-bi-imp always on):
+- no-rewrite: `./compute_eval --merge-bi-imp -F ./input -D ./output_eval_norewrite`
+- rewrite: `./compute_eval --merge-bi-imp --rewrite -F ./input -D ./output_eval_rewrite`
+- rewrite+fold-const: `./compute_eval --merge-bi-imp --rewrite --fold-const -F ./input -D ./output_eval_rewrite_const`
+
+Summary (local, not committed):
+- Metrics table: `experiments/side_channel_full/eval_rewrite_const_metrics.tsv`.
+- Rewrite provides large speedups on bigger cases (e.g., P16-P18 are 16x-19x faster than no-rewrite).
+- fold-const adds only milliseconds and is largely neutral vs rewrite alone.
