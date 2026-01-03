@@ -146,209 +146,19 @@ public:
     Debugger(const Debugger&) = delete;
     Debugger& operator=(const Debugger&) = delete;
 
-    TurnInfo* startTurn(const std::string& mode = "DEFAULT") {
-        std::lock_guard<std::mutex> lock(mtx_);
-        assert (mode == "DEFAULT" || mode == "FULL" || mode == "FULL-HARD" ||
-                mode == "FULL-SOFT" || mode == "INC");
-        std::string realMode;
-        if (mode == "DEFAULT") {
-            realMode = (turnCount_ == 0) ? "FULL-HARD" : "INC";
-        } else if (mode == "FULL" || mode == "FULL-HARD" || mode == "FULL-SOFT") {
-            realMode = mode;
-        } else {
-            realMode = "INC";
-        }
-        turns_.emplace_back(++turnCount_, realMode);
-        TurnInfo& turn = turns_.back();
-        turn.setMemStart(getCurrentMemoryUsage());
-        turn.markStartTime();
-        currentTurn_ = &turn;
-        return &turn;
-    }
-
-    void endTurn() {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (!currentTurn_) return;
-        currentTurn_->setMemEnd(getCurrentMemoryUsage());
-        currentTurn_->setMemPeak(getPeakMemoryUsage());
-        currentTurn_->markEndTime();
-        // std::cout << "Turn " << turnCount_ << " completed: "
-        //           << currentTurn_->getDurationSeconds() << "s, PeakMem=" << currentTurn_->getMemPeak() << "KB\n";
-        currentTurn_ = nullptr;
-    }
-
-
-    StageInfo* startStage(StageKind kind) {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (!currentTurn_) return nullptr;
-        currentTurn_->stages.emplace_back(kind);
-        StageInfo& stage = currentTurn_->stages.back();
-        stage.setMemStart(getCurrentMemoryUsage());
-        stage.markStartTime();
-        currentStage_ = &stage;
-        return &stage;
-    }
-
-    void endStage() {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (!currentStage_ || !currentTurn_) return;
-        currentStage_->setMemEnd(getCurrentMemoryUsage());
-        currentStage_->setMemPeak(getPeakMemoryUsage());
-        currentStage_->markEndTime();
-        currentStage_ = nullptr;
-    }
-
-    IterationInfo* startIteration() {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (!currentStage_) return nullptr;
-        size_t idx = currentStage_->iterations.size();
-        currentStage_->iterations.emplace_back(static_cast<int>(idx));
-        IterationInfo& iter = currentStage_->iterations.back();
-        iter.setMemStart(getCurrentMemoryUsage());
-        iter.markStartTime();
-        currentIteration_ = &iter;
-        return &iter;
-    }
-
-    void endIteration() {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (!currentIteration_) return;
-        currentIteration_->setMemEnd(getCurrentMemoryUsage());
-        currentIteration_->setMemPeak(getPeakMemoryUsage());
-        currentIteration_->markEndTime();
-        currentIteration_ = nullptr;
-    }
-
-    void addInfo(const std::string& key, const std::string& value) const {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (currentIteration_) currentIteration_->setInfo(key, value);
-        else if (currentStage_) currentStage_->setInfo(key, value);
-        else if (currentTurn_) currentTurn_->setInfo(key, value);
-    }
-
-    void logMessage(Level level, const std::string& message) const {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (currentIteration_) currentIteration_->logMessage(level, message);
-        else if (currentStage_) currentStage_->logMessage(level, message);
-        else if (currentTurn_) currentTurn_->logMessage(level, message);
-    }
-
-    void printReport(std::ostream& os) {
-        std::lock_guard<std::mutex> lock(mtx_);
-        for (const auto& turn : turns_) {
-            os << "Turn " << turn.turnIndex << " [" << turn.algMode << "]: "
-               << "Time=" << turn.getDurationSeconds() << "s, PeakMem=" << turn.getMemPeak() << "KB\n";
-            for (const auto& [k, v] : turn.getInfoMap()) {
-                os << "    " << k << ": " << v << "\n";
-            }
-            for (const auto& [lvl, msgs] : turn.getLogs()) {
-                for (const auto& msg : msgs) {
-                    os << "    [" << levelToString(lvl) << "] " << msg << "\n";
-                }
-            }
-            for (const auto& stage : turn.stages) {
-                os << "  Stage " << stageKindToString(stage.kind) << ": Time=" << stage.getDurationSeconds()
-                   << "s, PeakMem=" << stage.getMemPeak() << "KB\n";
-                for (const auto& [k, v] : stage.getInfoMap()) {
-                    os << "    " << k << ": " << v << "\n";
-                }
-                for (const auto& [lvl, msgs] : stage.getLogs()) {
-                    for (const auto& msg : msgs) {
-                        os << "    [" << levelToString(lvl) << "] " << msg << "\n";
-                    }
-                }
-                // TODO: temporarily disable detailed iteration logs
-                if (false) {
-                    for (const auto& iter : stage.iterations) {
-                        os << "    Iteration " << iter.iterationIndex << ": Time=" << iter.getDurationSeconds()
-                           << "s, MemUsage=" << iter.getMemEnd() << "KB, Peak=" << iter.getMemPeak() << "KB\n";
-                        for (const auto& [k, v] : iter.getInfoMap()) {
-                            os << "      " << k << ": " << v << "\n";
-                        }
-                        for (const auto& [lvl, msgs] : iter.getLogs()) {
-                            for (const auto& msg : msgs) {
-                                os << "      [" << levelToString(lvl) << "] " << msg << "\n";
-                            }
-                        }
-                    }
-                }
-
-            }
-        }
-    }
-
-
-
-
-    void printReportJson(std::ostream& os) {
-        using namespace json11;
-
-        Json::array json_turns;
-
-        for (const auto& turn : turns_) {
-            Json::object jturn;
-            jturn["index"] = Json(static_cast<int>(turn.turnIndex));
-            jturn["mode"] = Json(turn.algMode);
-            jturn["time_seconds"] = Json(turn.getDurationSeconds());
-            // jturn["peak_mem_kb"] = Json(static_cast<long long>(turn.getMemPeak()));
-
-            // Turn-level info map
-            Json::object info_map;
-            for (const auto& [key, value] : turn.getInfoMap()) {
-                info_map[key] = Json(value);
-            }
-            jturn["info"] = info_map;
-
-            // Turn-level logs
-            Json::object logs_obj;
-            for (const auto& [lvl, msgs] : turn.getLogs()) {
-                Json::array log_array;
-                for (const auto& msg : msgs) {
-                    log_array.push_back(Json(msg));
-                }
-                logs_obj[levelToString(lvl)] = log_array;
-            }
-            jturn["logs"] = logs_obj;
-
-            // Stages
-            Json::array stages_array;
-            for (const auto& stage : turn.stages) {
-                Json::object jstage;
-                jstage["name"] = Json(stageKindToString(stage.kind));
-                jstage["time_seconds"] = Json(stage.getDurationSeconds());
-                jstage["peak_mem_kb"] = Json(static_cast<long long>(stage.getMemPeak()));
-
-                // Stage-level info
-                Json::object stage_info;
-                for (const auto& [key, value] : stage.getInfoMap()) {
-                    stage_info[key] = Json(value);
-                }
-                jstage["info"] = stage_info;
-
-                // Stage-level logs
-                Json::object stage_logs;
-                for (const auto& [lvl, msgs] : stage.getLogs()) {
-                    Json::array log_array;
-                    for (const auto& msg : msgs) {
-                        log_array.push_back(Json(msg));
-                    }
-                    stage_logs[levelToString(lvl)] = log_array;
-                }
-                jstage["logs"] = stage_logs;
-
-                stages_array.push_back(jstage);
-            }
-
-            jturn["stages"] = stages_array;
-            json_turns.push_back(jturn);
-        }
-
-        Json report_json = Json::object{{"turns", json_turns}};
-        os << report_json.dump() << std::endl;
-    }
+    TurnInfo* startTurn(const std::string& mode = "DEFAULT");
+    void endTurn();
+    StageInfo* startStage(StageKind kind);
+    void endStage();
+    IterationInfo* startIteration();
+    void endIteration();
+    void addInfo(const std::string& key, const std::string& value) const;
+    void logMessage(Level level, const std::string& message) const;
+    void printReport(std::ostream& os);
+    void printReportJson(std::ostream& os);
 
 private:
-    Debugger() : turnCount_(0), currentTurn_(nullptr), currentStage_(nullptr), currentIteration_(nullptr) {}
+    Debugger();
 
     mutable std::mutex mtx_;
     int turnCount_;
@@ -357,33 +167,8 @@ private:
     StageInfo* currentStage_;
     IterationInfo* currentIteration_;
 
-    size_t getCurrentMemoryUsage() const {
-        std::ifstream status("/proc/self/status");
-        std::string line;
-        while (std::getline(status, line)) {
-            if (line.rfind("VmRSS:", 0) == 0) {
-                std::istringstream iss(line);
-                std::string label, value, unit;
-                iss >> label >> value >> unit;
-                return std::stoul(value);
-            }
-        }
-        return 0;
-    }
-
-    size_t getPeakMemoryUsage() const {
-        std::ifstream status("/proc/self/status");
-        std::string line;
-        while (std::getline(status, line)) {
-            if (line.rfind("VmHWM:", 0) == 0) {
-                std::istringstream iss(line);
-                std::string label, value, unit;
-                iss >> label >> value >> unit;
-                return std::stoul(value);
-            }
-        }
-        return 0;
-    }
+    size_t getCurrentMemoryUsage() const;
+    size_t getPeakMemoryUsage() const;
 };
 
 #endif // DEBUGGER_HPP

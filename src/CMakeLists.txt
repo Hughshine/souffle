@@ -230,6 +230,16 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/souffle DESTINATION includ
 
 add_library(compiled STATIC dummy.cpp)
 
+target_sources(compiled PRIVATE
+  Derivation.cpp
+  problog/Atom.cpp
+  problog/Pipeline.cpp
+  problog/QueryManager.cpp
+  problog/Rule.cpp
+  problog/RuleManager.cpp
+  problog/debug/Debugger.cpp
+)
+
 target_include_directories(compiled PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 # Set C++ standard to C++17
@@ -509,6 +519,8 @@ if (SOUFFLE_USE_CURSES)
   endif ()
   list(APPEND SOUFFLE_COMPILED_RPATHS ${NCURSES_RPATH})
 endif()
+
+list(INSERT SOUFFLE_COMPILED_LIBS 0 "$<TARGET_FILE:compiled>")
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   # using Python3 PEP 3101 Format String:

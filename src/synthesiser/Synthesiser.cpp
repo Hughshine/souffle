@@ -4033,7 +4033,6 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     hook << "\n#ifndef __EMBEDDED_SOUFFLE__\n";
     hook << "#include \"souffle/CompiledOptions.h\"\n";
-    hook << "#include \"souffle/problog/DerivationGraph.h\"\n";
 
     hook << "int main(int argc, char** argv)\n{\n";
     hook << "try{\n";
@@ -4067,7 +4066,6 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << ");\n";
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";
-    hook << "DerivationGraph::setMergeBiImpEnabled(opt.isMergeBiImpEnabled());\n";
 
     if (!db.getNS(false).empty()) {
         hook << db.getNS(false) << "::";
@@ -4102,6 +4100,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << R"_(souffle::ProfileEventSingleton::instance().makeConfigRecord("version", ")_"
              << glb.config().get("version") << R"_(");)_" << '\n';
     }
+    hook << "Debugger& debugger = Debugger::getInstance();\n";
     // if (glb.config().has("inc")) {
     // hook << "{\n";
     // hook << "FunctionTimer timer(\"reading derivations\");\n";
@@ -4160,10 +4159,6 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     db.addGlobalInclude("\"souffle/problog/QueryManager.h\"");
     db.addGlobalInclude("\"souffle/problog/Pipeline.h\"");
     db.addGlobalInclude("\"souffle/problog/debug/Debugger.h\"");
-    if (glb.config().has("online")) {
-        db.addGlobalInclude("\"souffle/cli/Cli.h\"");
-    }
-
     // synthesize rules
     // TODO: should make this pure static?
     hook << "debugger.startStage(StageKind::CONSTRUCT_RULE_FULL);\n";
@@ -4173,7 +4168,6 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     emitProblogPipeline(hook);
 
-    hook << "Debugger& debugger = Debugger::getInstance();\n";
     hook << "std::string logBase = basenameFromPath(opt.getLogFileName());\n";
     hook << "std::string reportFileName = generateFilename(logBase, \".json\");\n";
     hook << "std::string reportFile = souffle::problog::makeOutputPath(opt, reportFileName);\n";
