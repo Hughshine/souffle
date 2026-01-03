@@ -71,6 +71,7 @@ Compiler notes:
 - Online CLI support and `_inc` strata are always enabled; `--online` is optional.
 - `--full-only` disables incremental code generation but still uses the online compiler path.
 - `-o` controls the output binary name.
+- Generated programs link against the precompiled runtime library built by CMake (`compiled`); keep the build tree (or install the library) available for `souffle-compile.py`.
 
 ## Runtime Options (Compiled Program)
 Defaults are baked into each generated binary. Typical defaults in this repo (e.g., P12) are listed below; use `-h` for the authoritative values.

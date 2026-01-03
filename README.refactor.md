@@ -16,6 +16,11 @@ This file captures refactor opportunities after re-reading the core online pipel
 - `src/ast2ram/utility/TranslatorContext.cpp`
 - `src/include/souffle/CompiledOptions.h`
 
+## Status Update (2025-02-14)
+- Implemented a precompiled runtime library (`compiled`) and moved non-template runtime code into `.cpp` files.
+- `souffle-compile.py` now links `$<TARGET_FILE:compiled>` via `SOUFFLE_COMPILED_LIBS`.
+- Generated `main` no longer includes `souffle/cli/Cli.h` or `souffle/problog/DerivationGraph.h`, reducing header load.
+
 ## High-Impact Refactor Candidates
 
 1) Remove header-level global state and make it explicit in a context object.
@@ -38,6 +43,8 @@ This file captures refactor opportunities after re-reading the core online pipel
 
 5) Move heavy inline implementations out of headers to reduce build time.
 - Many non-template implementations live in headers: `src/include/souffle/problog/DerivationGraph.h`, `src/include/souffle/problog/ForwardCompilation.h`, `src/include/souffle/problog/Pipeline.h`, `src/include/souffle/problog/RuleManager.h`, `src/include/souffle/problog/QueryManager.h`, `src/include/souffle/problog/Rule.h`, `src/include/souffle/Derivation.h`.
+- Status (2025-02-14): partially implemented. Runtime code moved into `src/*.cpp` (Derivation, Atom, Rule/RuleManager/QueryManager, Pipeline, Debugger) and linked via the `compiled` static library; generated code no longer includes `Cli.h` or `DerivationGraph.h`.
+- Remaining heavy headers: `DerivationGraph.h`, `ForwardCompilation.h`, `GraphAnalyzer.h`, `GraphRewriter.h`.
 - Suggestion: keep only declarations and small inline helpers in headers; move large function bodies to `.cpp`. Keep templates in headers where necessary.
 
 6) Centralize output naming and output-dir handling.
@@ -78,6 +85,11 @@ This file captures refactor opportunities after re-reading the core online pipel
 5) Move heavy inline implementations into `.cpp` to improve build time.
 
 ## Precompiled Runtime Library (Detailed Notes)
+Status (2025-02-14):
+- Implemented using the `compiled` static library in `src/CMakeLists.txt`.
+- CMake injects `$<TARGET_FILE:compiled>` into `SOUFFLE_COMPILED_LIBS`, and `souffle-compile.py` links it via `link_options`.
+- The proposal below is historical context; current wiring does not add custom JSON fields.
+
 If header implementations are split into `.cpp`, a precompiled runtime library is the safest path. The generated program must link against it; otherwise you will see unresolved symbols at link time.
 
 ### Recommended shape

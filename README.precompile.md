@@ -5,6 +5,11 @@
 - Build a precompiled runtime library and link it from `souffle-compile.py`.
 - Preserve runtime behavior and CLI outputs.
 
+## Current Wiring (2025-02-14)
+- Runtime implementations moved into `.cpp` files and built into the `compiled` static library (see `src/CMakeLists.txt`).
+- `souffle-compile.py` links `$<TARGET_FILE:compiled>` via `SOUFFLE_COMPILED_LIBS`; no extra runtime flags are required.
+- Generated `main` no longer includes `souffle/cli/Cli.h` or `souffle/problog/DerivationGraph.h`, reducing header load.
+
 ## Scope (initial)
 - Runtime/problog headers currently compiled into generated programs:
   - `src/include/souffle/Derivation.h`
@@ -24,7 +29,7 @@
 - Compile timing (P3 compute.cpp, compile-only):
   - Command: `/usr/bin/c++ -c -DUSE_NCURSES -DUSE_LIBZ -DUSE_SQLITE -I/home/hugh/research/datalog/souffle/src/include -I/usr/include -std=c++17 -fopenmp -O3 -I/home/hugh/research/datalog/souffle/src/include -o precompile_tmp/compute_baseline.o precompile_tmp/compute.cpp`
   - Wall time: 58.699s
-  - Notes: compile-only (no link) due to missing CUDD/SDD libs for link on this machine.
+  - Notes: baseline compile-only; link step was not attempted in that run.
 
 ## Latest Measurement
 - Compile timing (P3 compute.cpp regenerated with `--online --full-only`, compile-only):
@@ -33,11 +38,12 @@
   - Delta: ~3.8x faster vs baseline
   - Notes: compile-only; see worklog for link test.
 
-## Plan
+## Plan (completed 2025-02-14)
 1) Measure baseline compile time for a representative generated program.
 2) Add a runtime library target and wire `souffle-compile.py` to link it.
 3) Move non-template implementations out of headers into `.cpp` files and keep headers as declarations.
 4) Re-measure compile time and verify correctness with a small run.
+Status: completed; remaining work is optional (e.g., further header splits/explicit instantiations).
 
 ## Worklog
 - 2025-02-14: Initialized log and scope for precompile refactor.

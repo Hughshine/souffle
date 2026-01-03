@@ -5,6 +5,7 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 ## Scope
 - Online translation is the only implementation; `--online` is default and the legacy `--inc` backend is removed.
 - No interpreter path; `souffle file.dl` defaults to compile-only `-o <basename>`.
+- Generated programs now link against the precompiled runtime library built by CMake (see `README.precompile.md`).
 - Incremental modes skip rewrite; rewrite docs apply to full-mode runs.
 - Full mode now has `full-hard` (default) and `full-soft`; `full` maps to `full-hard`.
 
@@ -14,6 +15,7 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 - `README.rewrite.impl.md` — experiment logs and insights collected so far.
 - `README.siso.md` — SISO definition/assumptions.
 - `README.eval.md` — how to run full experiments and compare outputs/timings.
+- `README.precompile.md` — precompiled runtime library refactor log and timing deltas.
 - `README.const.md` — const pre-analysis design and FC integration details.
 
 ## Key Docs (online incremental)
@@ -24,7 +26,8 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 ## Core Code (full/rewrite)
 - `src/include/souffle/problog/GraphRewriter.h` — rewrite logic (SISO detection loop, local DD/WMC, edge summarization).
 - `src/include/souffle/problog/GraphAnalyzer.h` — SISO detection, heuristics/filters.
-- `src/include/souffle/problog/Pipeline.h` + `ForwardCompilation.h` — orchestration and BDD construction.
+- `src/include/souffle/problog/Pipeline.h` + `src/problog/Pipeline.cpp` + `ForwardCompilation.h` — orchestration and BDD construction.
+- `src/synthesiser/Synthesiser.cpp` — generated `main`/includes for compiled programs.
 
 ## Core Code (online incremental)
 - `src/include/souffle/problog/RegionalIncremental.h` — inc-regional pipeline.
@@ -33,11 +36,12 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 - `src/ast2ram/online/*` — online translation for DRed-like delta relations and `_inc` strata.
 
 ## Experiment How-To (full/rewrite; side_channel_full)
-- Per benchmark dir (e.g., `experiments/side_channel_full/P12`):
-  - No rewrite: `./compute_new -F ./input -D ./output_no_rewrite_xx > run_no_rewrite_xx.log`
-  - With rewrite: `./compute_new -r -F ./input -D ./output_rewrite_xx > run_rewrite_xx.log`
+- Per benchmark dir (see `README.eval.md` for canonical generators; e.g., `experiments/side_channel_full_eval/P12`):
+  - No rewrite: `./compute -F ./input -D ./output_no_rewrite_xx > run_no_rewrite_xx.log`
+  - With rewrite: `./compute -r -F ./input -D ./output_rewrite_xx > run_rewrite_xx.log`
   - Outputs should match: `diff output_no_rewrite_xx/facts.prob output_rewrite_xx/facts.prob`
   - Logs contain `[pipeline]` timings (create graph, pruning, SISO detection/rewrite, BDD init/build, WMC).
+  - Historical logs sometimes use `compute_new`; use the binary that exists in the case directory.
 
 ## Experiment How-To (online incremental; side_channel_inc_eval)
 - Per benchmark dir (e.g., `experiments/side_channel_inc_eval/P9`):
@@ -64,13 +68,13 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 - Keep changes small; test on both small (P5) and larger (P12/P1x) cases and report timings plus BDD sizes.
 
 ## Context Dump (2025-12-20)
+Historical snapshot; may be stale. Prefer `README.rewrite.md` and git history for current behavior.
 - Recent code changes:
   - `src/include/souffle/cli/Cli.h`: iter probability dumps now use `opt.getOutputFileDir()` (no hardcoded `./output/`), with iter filenames tagged `-inc-naive`, `-inc-regional`, `-full`.
   - `src/include/souffle/problog/IncRegionAnalyzer.h`: emits per-step timing line `[inc-analyze]` (leastParents, scopes, reach, expand, deltaReach, mergeable, total).
   - `src/include/souffle/problog/RegionalIncremental.h`: regional pipeline asserts baseline formulas exist before update; tracks region/boundary stats.
   - `src/include/souffle/problog/formula/SddManager.h`: raw-to-internal var mapping (`rawToInternalIndex`) and related caches.
   - `src/include/souffle/problog/DerivationGraph.h` + `IncRegionAnalyzer.h`: impacted maps use `unordered_set`, and delta-insert reachable union cache is built during prune-inc and reused by `deltaReachable_`.
-  - Other files currently modified in worktree include `ForwardCompilation.h`, `CuddManager.h`, `FormulaManager.h`, `MainDriver.cpp`, `CompiledOptions.h` (check `git status` for full list).
 - Incremental/full runs (no rewrite; this session focuses on incremental pipelines only):
   - Regenerated P4–P13 (skip P1/P3) with cleanup, then recompiled:
     - `python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py --base-dir experiments/side_channel_inc_eval generate --cases 4-13 --cleanup`
