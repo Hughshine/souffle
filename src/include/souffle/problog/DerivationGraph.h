@@ -2722,6 +2722,7 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
     out.close();
 }
 
+inline std::unordered_map<NodePtr, double> precomputedProbResult;
 inline std::unordered_map<NodePtr, double> probResult;
 
 void dumpProbabilities(
@@ -2732,16 +2733,34 @@ void dumpProbabilities(
     );
     outputFile << std::setprecision(8);
     std::vector<NodePtr> sortedNodes;
+    std::unordered_set<NodePtr> seen;
     for (const auto& [node, prob] : nodeProbabilities) {
-        sortedNodes.push_back(node);
+        if (seen.insert(node).second) {
+            sortedNodes.push_back(node);
+        }
+    }
+    for (const auto& [node, prob] : precomputedProbResult) {
+        if (seen.insert(node).second) {
+            sortedNodes.push_back(node);
+        }
     }
     std::sort(sortedNodes.begin(), sortedNodes.end(),
               [](const NodePtr& a, const NodePtr& b) {
                   return a->getTuple().toString() < b->getTuple().toString();
               });
     for (auto& node: sortedNodes) {
-        auto prob = nodeProbabilities[node];
-        if (node->needOutput) {
+        double prob = 0.0;
+        auto it = nodeProbabilities.find(node);
+        if (it != nodeProbabilities.end()) {
+            prob = it->second;
+        } else {
+            auto itPre = precomputedProbResult.find(node);
+            if (itPre == precomputedProbResult.end()) {
+                continue;
+            }
+            prob = itPre->second;
+        }
+        if (node->needOutput || precomputedProbResult.count(node)) {
             outputFile << node->getTuple().toString() << " : " << prob << std::endl;
         }
     }

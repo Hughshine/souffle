@@ -41,6 +41,7 @@ RamDomain GroundSynthesiser::convertConstant(const ast::Constant& constant) cons
 }
 
 void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
+#if 0
     ast::Program& program = translationUnit.getProgram();
     const auto& groundInfo = program.getGroundnessInfo();
 
@@ -352,6 +353,11 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     hook << "}\n";
     hook << "#endif\n";
 
+#else
+    (void)db;
+    (void)id;
+    // GroundSynthesiser is currently disabled; keep logic under #if 0 for reference.
+#endif
 }
 
 }  // namespace souffle::synthesiser

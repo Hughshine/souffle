@@ -96,6 +96,7 @@ public:
                                            const RewriteFeatureFlags& flags = RewriteFeatureFlags{}) const {
         GraphRewriteStats stats;
         view.invalidateCaches();
+        precomputedProbResult.clear();
         std::unique_ptr<WeightedBDDManager> bddManager;
         double managerInitMs = 0.0;
         bool managerInitialized = false;
@@ -208,6 +209,11 @@ public:
             }
 
             if (regions.empty()) {
+                size_t precomputedNow = precomputeOutputFacts(view, evidenceAffectedNodes);
+                if (debug && precomputedNow > 0) {
+                    std::cout << "[GraphRewriter]   Precomputed output facts: "
+                              << precomputedNow << std::endl;
+                }
                 stats.randomVarsAfter = iterRandomVarsBefore;
                 long long iterDelta = 0;
                 double iterRatio = iterRandomVarsBefore == 0 ? 0.0 : 1.0;
@@ -888,6 +894,12 @@ public:
                 }
             }
 
+            size_t precomputedNow = precomputeOutputFacts(view, evidenceAffectedNodes);
+            if (debug && precomputedNow > 0) {
+                std::cout << "[GraphRewriter]   Precomputed output facts: "
+                          << precomputedNow << std::endl;
+            }
+
             auto countAfterStart = std::chrono::steady_clock::now();
             size_t iterRandomVarsAfter = countRandomVarsInView(view);
             double countAfterMs = toMs(std::chrono::steady_clock::now() - countAfterStart);
@@ -1082,6 +1094,31 @@ private:
         return shadow;
     }
 
+    static bool canPrecomputeOutputFact(const IncSubgraphView& view, const NodePtr& node,
+            const std::unordered_set<NodePtr>& evidenceAffectedNodes) {
+        if (!node || !node->needOutput || !node->isFact) return false;
+        if (node->hasEvidence()) return false;
+        if (evidenceAffectedNodes.count(node)) return false;
+        if (!view.getIncomingEdges(node).empty()) return false;
+        if (precomputedProbResult.count(node)) return false;
+        return true;
+    }
+
+    static size_t precomputeOutputFacts(IncSubgraphView& view,
+            const std::unordered_set<NodePtr>& evidenceAffectedNodes) {
+        size_t count = 0;
+        for (auto node : view.getNodes()) {
+            if (!canPrecomputeOutputFact(view, node, evidenceAffectedNodes)) {
+                continue;
+            }
+            precomputedProbResult[node] = node->getProbability();
+            node->needOutput = false;
+            node->isQuery = false;
+            ++count;
+        }
+        return count;
+    }
+
     SplitStats splitFanoutNaive(IncrementalDerivationGraph& graph, IncSubgraphView& view,
             GraphRewriteStats& stats,
             const std::unordered_set<NodePtr>& evidenceAffectedNodes) const {
@@ -1092,7 +1129,6 @@ private:
         for (auto fact : nodesList) {
             if (!fact || !fact->isFact || fact->hasEvidence() || fact->needOutput) continue;
             if (evidenceAffectedNodes.count(fact)) continue;
-            if (hasEvidenceInComponent(view, fact)) continue;
             auto outs = view.getOutgoingEdges(fact);
             if (outs.size() < 2) continue;
 

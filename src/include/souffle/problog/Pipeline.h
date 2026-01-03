@@ -169,6 +169,9 @@ inline void runBddPipeline(
             }
             probResult[node] = prob;
         }
+        for (const auto& [node, prob] : precomputedProbResult) {
+            probResult.emplace(node, prob);
+        }
 
         auto t5 = std::chrono::steady_clock::now();
 
@@ -289,6 +292,9 @@ inline void runSddPipeline(
             }
             probResult[node] = prob;
         }
+        for (const auto& [node, prob] : precomputedProbResult) {
+            probResult.emplace(node, prob);
+        }
 
         auto t5 = std::chrono::steady_clock::now();
 
@@ -342,6 +348,7 @@ inline void runPipeline(
     DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
     DerivationGraph::setConstFoldEnabled(opt.isConstFoldEnabled());
     DerivationGraph::setConstDumpEnabled(opt.isDumpConstEnabled());
+    precomputedProbResult.clear();
     bool rewritePerformed = false;
 
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);

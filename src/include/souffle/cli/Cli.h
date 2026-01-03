@@ -833,6 +833,9 @@ public:
                     }
                     probResult.clear();
                     probResult = newProbResult;
+                    for (const auto& [node, prob] : precomputedProbResult) {
+                        probResult.emplace(node, prob);
+                    }
                     debugger.endStage();
                 }
 
@@ -948,6 +951,9 @@ public:
                         auto joint = ddManager->makeAnd(formula, componentEvidence[cid]);
                         double jointW = ddManager->computeWeightedModelCount(joint);
                         probResult[node] = jointW / componentEvidenceWeight[cid];
+                    }
+                    for (const auto& [node, prob] : precomputedProbResult) {
+                        probResult.emplace(node, prob);
                     }
                 }
                 debugger.endStage();
@@ -1348,6 +1354,9 @@ public:
                         auto joint = ddManager->makeAnd(formula, componentEvidence[cid]);
                         double jointW = ddManager->computeWeightedModelCount(joint);
                         probResult[node] = jointW / componentEvidenceWeight[cid];
+                    }
+                    for (const auto& [node, prob] : precomputedProbResult) {
+                        probResult.emplace(node, prob);
                     }
                 }
                 debugger.endStage();

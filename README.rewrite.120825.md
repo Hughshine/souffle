@@ -24,6 +24,13 @@
 - Similarly for no-rewrite: drop `-r` and change output to `_no_rewrite_prof`.
 - Diff after running: `for p in P13 P14 P15 P16 P17; do diff experiments/side_channel_full/$p/output_no_rewrite_prof/facts.prob experiments/side_channel_full/$p/output_rewrite_prof/facts.prob || echo "$p differs"; done`
 
+1. LinearTwoEdge的rewrite还没写
+2. a -> b, a' -> b (disj)
+3. split 和 evidence 的耦合需要fix. 
+4. split 算法可以优化
+5. rewrite并发化（每次找的siso集合是彼此独立的，那么有可能可以并发rewrite）
+
+
 ## Implemented SISO RegionKind (fast path)
 - `SingleHyperedge`: one hyperedge with exactly 1 SI (non-fact), the rest absorbable facts (primitive, single outgoing edge). Rewrite: absorb fact probability (consider negation only when absorbing facts via p/(1-p)), create a new SI->SO edge.
 - `AllFactsToSO`: single edge whose inputs are all facts (no incoming edges, single outgoing edge, non-evidence/needOutput), SO becomes a fact, probability is edge coin * product of inputs (consider negation via p/(1-p)).

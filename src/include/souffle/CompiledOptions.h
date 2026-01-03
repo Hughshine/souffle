@@ -75,7 +75,7 @@ protected:
     bool merge_bi_imp = true;  // enable merging mutually implying deterministic nodes
     bool fold_const = false;  // enable deterministic constant pre-analysis (no prune rewrite)
     bool enable_rewrite = false;  // enable SISO-based graph rewriting
-    std::string split_mode = "naive-split";  // split mode for rewrite: no-split/naive-split/complete-split
+    std::string split_mode = "complete-split";  // split mode for rewrite: no-split/naive-split/complete-split
     bool dump_json = false;  // dump derivation graph JSON after prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
     bool dump_stat = false;  // dump derivation graph stats after prune
