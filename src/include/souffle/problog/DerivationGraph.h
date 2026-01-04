@@ -350,7 +350,8 @@ public:
     virtual const std::unordered_set<EdgePtr>& getEdges() const = 0;
     void dumpDot(const std::string& filename) const;
     void dumpJson(const std::string& filename) const;
-    void writeGraphStatsJson() const;
+    // include_heavy=true enables SCC-based cycle stats (expensive on large graphs).
+    void writeGraphStatsJson(bool include_heavy = false) const;
 
     std::vector<EdgePtr> getIncomingEdges(NodePtr node) const;
     std::vector<EdgePtr> getOutgoingEdges(NodePtr node) const;
@@ -362,6 +363,8 @@ public:
     std::vector<bool> getBodyNegationsStable(EdgePtr edge) const;
     static void setDumpDotEnabled(bool enabled) { dumpDotEnabled = enabled; }
     static bool isDumpDotEnabled() { return dumpDotEnabled; }
+    static void setDumpJsonEnabled(bool enabled) { dumpJsonEnabled = enabled; }
+    static bool isDumpJsonEnabled() { return dumpJsonEnabled; }
     static void setDumpStatsEnabled(bool enabled) { dumpStatsEnabled = enabled; }
     static bool isDumpStatsEnabled() { return dumpStatsEnabled; }
     static void setDumpOutputDir(const std::string& dir) { dumpOutputDir = dir; }
@@ -394,6 +397,7 @@ public:
 protected:
     mutable std::shared_ptr<CycleDependencyGraph> cachedCycleDependencyGraph_;
     static inline bool dumpDotEnabled = false;
+    static inline bool dumpJsonEnabled = false;
     static inline bool dumpStatsEnabled = false;
     static inline std::string dumpOutputDir = "";
 };
@@ -516,6 +520,9 @@ protected:
 };
 
 void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
+    if (!isDumpJsonEnabled()) {
+        return;
+    }
     const std::string path = qualifyDumpPath(filename);
     std::ofstream out(path);
     if (!out.is_open()) {
@@ -631,7 +638,7 @@ void DerivationGraphViewInterface::dumpDot(const std::string& filename) const {
     out.close();
 }
 
-inline void writeGraphStatsJson(const DerivationGraphViewInterface& g);
+inline void writeGraphStatsJson(const DerivationGraphViewInterface& g, bool include_heavy = false);
 
 class IncrementalDerivationGraphViewInterface : virtual public DerivationGraphViewInterface {
 public:
@@ -841,6 +848,56 @@ public:
         return constFolded;
     }
 
+    struct EdgeLookupTiming {
+        size_t find_calls;
+        double find_key_s;
+        double find_map_s;
+        size_t insert_calls;
+        double insert_key_s;
+        double insert_map_s;
+
+        EdgeLookupTiming()
+                : find_calls(0),
+                  find_key_s(0.0),
+                  find_map_s(0.0),
+                  insert_calls(0),
+                  insert_key_s(0.0),
+                  insert_map_s(0.0) {}
+    };
+
+    struct EdgeBuildTiming {
+        size_t calls;
+        size_t existing_hits;
+        size_t body_atoms;
+        double total_s;
+        double rule_lookup_s;
+        double get_vars_s;
+        double find_existing_s;
+        double head_instantiate_s;
+        double head_node_s;
+        double body_instantiate_s;
+        double body_node_s;
+        double body_neg_s;
+        double create_edge_s;
+        double insert_total_s;
+
+        EdgeBuildTiming()
+                : calls(0),
+                  existing_hits(0),
+                  body_atoms(0),
+                  total_s(0.0),
+                  rule_lookup_s(0.0),
+                  get_vars_s(0.0),
+                  find_existing_s(0.0),
+                  head_instantiate_s(0.0),
+                  head_node_s(0.0),
+                  body_instantiate_s(0.0),
+                  body_node_s(0.0),
+                  body_neg_s(0.0),
+                  create_edge_s(0.0),
+                  insert_total_s(0.0) {}
+    };
+
     DerivationGraph() : nextNodeId(0), nextEdgeId(0) {}
     DerivationGraph(const RuleManager* rm) : nextNodeId(0), nextEdgeId(0), ruleManager(rm) {}
     void dumpStatistics(std::ostream& out) const {
@@ -934,41 +991,136 @@ public:
 
 
     EdgePtr createHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& rm) {
+        const bool timing = DerivationGraphViewInterface::isDumpStatsEnabled();
+
+        if (!timing) {
+            // Check if the corresponding edge already exists.
+            const Rule* rule = rm.getRule(ruleApp.ruleId);
+            assert(rule != nullptr && "Rule not found");
+            std::vector<std::string> vars = rule->getVars();
+
+            EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, vars);
+            if (existingEdge) {
+                return existingEdge;
+            }
+
+            // Create output tuple from rule head and variable values.
+            UntypedTuple headTuple{rule->getHead().getRelation(),
+                    rule->getHead().instantiatedFields(vars, ruleApp.varValuesPure)};
+            auto headNode = createNode(headTuple);
+
+            // Create input nodes.
+            std::vector<NodePtr> bodyNodes;
+            std::vector<bool> bodyNegations;
+            for (const auto& bodyAtom : rule->getBodyAtoms()) {
+                UntypedTuple bodyTuple{bodyAtom.getRelation(),
+                        bodyAtom.instantiatedFields(vars, ruleApp.varValuesPure)};
+                auto bodyNode = createNode(bodyTuple);
+                bodyNodes.push_back(bodyNode);
+                bodyNegations.push_back(bodyAtom.isNegatedAtom());
+            }
+            auto newEdge = createHyperedge(bodyNodes, headNode, rule, bodyNegations, ruleApp);
+
+            // Add the new edge to the map.
+            std::string key = createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure);
+            edgeKeyToEdgeMap[key] = newEdge;
+
+            return newEdge;
+        }
+
+        const auto t_begin = std::chrono::steady_clock::now();
+        const auto t_rule0 = t_begin;
         // Check if the corresponding edge already exists.
         const Rule* rule = rm.getRule(ruleApp.ruleId);
         assert(rule != nullptr && "Rule not found");
-        const std::vector<std::string>& vars = rule->getVars();
+        const auto t_rule1 = std::chrono::steady_clock::now();
+        const auto t_vars0 = t_rule1;
+        std::vector<std::string> vars = rule->getVars();
+        const auto t_vars1 = std::chrono::steady_clock::now();
 
+        const auto t_find0 = t_vars1;
         EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, vars);
+        const auto t_find1 = std::chrono::steady_clock::now();
         if (existingEdge) {
+            const auto t_end = std::chrono::steady_clock::now();
+            edgeBuildTiming.calls++;
+            edgeBuildTiming.existing_hits++;
+            edgeBuildTiming.total_s += std::chrono::duration<double>(t_end - t_begin).count();
+            edgeBuildTiming.rule_lookup_s += std::chrono::duration<double>(t_rule1 - t_rule0).count();
+            edgeBuildTiming.get_vars_s += std::chrono::duration<double>(t_vars1 - t_vars0).count();
+            edgeBuildTiming.find_existing_s += std::chrono::duration<double>(t_find1 - t_find0).count();
             return existingEdge;
         }
 
-
         // Create output tuple from rule head and variable values.
+        const auto t_head_inst0 = std::chrono::steady_clock::now();
         UntypedTuple headTuple{rule->getHead().getRelation(),
-                rule->getHead().instantiatedFields(rule->getVars(), ruleApp.varValuesPure)};
+                rule->getHead().instantiatedFields(vars, ruleApp.varValuesPure)};
+        const auto t_head_inst1 = std::chrono::steady_clock::now();
+        const auto t_head_node0 = t_head_inst1;
         auto headNode = createNode(headTuple);
+        const auto t_head_node1 = std::chrono::steady_clock::now();
 
         // Create input nodes.
         std::vector<NodePtr> bodyNodes;
         std::vector<bool> bodyNegations;
+        size_t body_atoms = 0;
+        double body_inst_s = 0.0;
+        double body_node_s = 0.0;
+        double body_neg_s = 0.0;
         for (const auto& bodyAtom : rule->getBodyAtoms()) {
-            UntypedTuple bodyTuple{bodyAtom.getRelation(), bodyAtom.instantiatedFields(rule->getVars(), ruleApp.varValuesPure)};
+            const auto t_body_inst0 = std::chrono::steady_clock::now();
+            UntypedTuple bodyTuple{bodyAtom.getRelation(),
+                    bodyAtom.instantiatedFields(vars, ruleApp.varValuesPure)};
+            const auto t_body_inst1 = std::chrono::steady_clock::now();
             auto bodyNode = createNode(bodyTuple);
+            const auto t_body_node1 = std::chrono::steady_clock::now();
             bodyNodes.push_back(bodyNode);
+            const auto t_body_neg0 = std::chrono::steady_clock::now();
             bodyNegations.push_back(bodyAtom.isNegatedAtom());
+            const auto t_body_neg1 = std::chrono::steady_clock::now();
+            body_inst_s += std::chrono::duration<double>(t_body_inst1 - t_body_inst0).count();
+            body_node_s += std::chrono::duration<double>(t_body_node1 - t_body_inst1).count();
+            body_neg_s += std::chrono::duration<double>(t_body_neg1 - t_body_neg0).count();
+            body_atoms++;
         }
 //        std::cout << "creating hyperedge from ruleApp: " << ruleApp.ruleId << std::endl;
 //        for (size_t i = 0; i < bodyNodes.size(); ++i) {
 //            std::cout << "bodyNode: " << bodyNodes[i]->toString() << std::endl;
 //            std::cout << "isNegated: " << bodyNegations[i] << std::endl;
 //        }
+        const auto t_edge0 = std::chrono::steady_clock::now();
         auto newEdge = createHyperedge(bodyNodes, headNode, rule, bodyNegations, ruleApp);
+        const auto t_edge1 = std::chrono::steady_clock::now();
 
         // Add the new edge to the map.
-        std::string key = createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure);
-        edgeKeyToEdgeMap[key] = newEdge;
+        double insert_total_s = 0.0;
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            std::string key = createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure);
+            const auto t1 = std::chrono::steady_clock::now();
+            edgeKeyToEdgeMap[key] = newEdge;
+            const auto t2 = std::chrono::steady_clock::now();
+            edgeLookupTiming.insert_calls++;
+            edgeLookupTiming.insert_key_s += std::chrono::duration<double>(t1 - t0).count();
+            edgeLookupTiming.insert_map_s += std::chrono::duration<double>(t2 - t1).count();
+            insert_total_s = std::chrono::duration<double>(t2 - t0).count();
+        }
+
+        const auto t_end = std::chrono::steady_clock::now();
+        edgeBuildTiming.calls++;
+        edgeBuildTiming.body_atoms += body_atoms;
+        edgeBuildTiming.total_s += std::chrono::duration<double>(t_end - t_begin).count();
+        edgeBuildTiming.rule_lookup_s += std::chrono::duration<double>(t_rule1 - t_rule0).count();
+        edgeBuildTiming.get_vars_s += std::chrono::duration<double>(t_vars1 - t_vars0).count();
+        edgeBuildTiming.find_existing_s += std::chrono::duration<double>(t_find1 - t_find0).count();
+        edgeBuildTiming.head_instantiate_s += std::chrono::duration<double>(t_head_inst1 - t_head_inst0).count();
+        edgeBuildTiming.head_node_s += std::chrono::duration<double>(t_head_node1 - t_head_node0).count();
+        edgeBuildTiming.body_instantiate_s += body_inst_s;
+        edgeBuildTiming.body_node_s += body_node_s;
+        edgeBuildTiming.body_neg_s += body_neg_s;
+        edgeBuildTiming.create_edge_s += std::chrono::duration<double>(t_edge1 - t_edge0).count();
+        edgeBuildTiming.insert_total_s += insert_total_s;
 
         return newEdge;
     }
@@ -984,6 +1136,20 @@ public:
     EdgePtr findHyperedge(souffle::RamDomain ruleId,
                          const std::vector<std::string>& vars,
                             const std::vector<souffle::RamDomain>& values) const {
+        if (DerivationGraphViewInterface::isDumpStatsEnabled()) {
+            const auto t0 = std::chrono::steady_clock::now();
+            std::string key = createEdgeKey(ruleId, vars, values);
+            const auto t1 = std::chrono::steady_clock::now();
+            auto it = edgeKeyToEdgeMap.find(key);
+            const auto t2 = std::chrono::steady_clock::now();
+            edgeLookupTiming.find_calls++;
+            edgeLookupTiming.find_key_s += std::chrono::duration<double>(t1 - t0).count();
+            edgeLookupTiming.find_map_s += std::chrono::duration<double>(t2 - t1).count();
+            if (it != edgeKeyToEdgeMap.end()) {
+                return it->second;
+            }
+            return nullptr;
+        }
         std::string key = createEdgeKey(ruleId, vars, values);
         auto it = edgeKeyToEdgeMap.find(key);
         if (it != edgeKeyToEdgeMap.end()) {
@@ -1002,24 +1168,60 @@ public:
     static DerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {})  {
         std::cout << "[Debug] Enter DerivationGraph::createFrom()" << std::endl;
         FunctionTimer timer(" creating derivation graph ");
-        auto graph = new DerivationGraph(&ruleManager);
-        for (const auto& [tuple, prob] : fact_prob) {
-            auto node = graph->createNode(tuple);  // actually "find node" here
-            node->probability = prob;
-            node->isFact = true;
+        if (DerivationGraphViewInterface::isDumpStatsEnabled()) {
+            resetEdgeLookupTiming();
+            resetEdgeBuildTiming();
         }
-        for (const auto& [tuple, ruleAppSet] : ruleApps) {
-            auto node = graph->createNode(tuple);
-//            if (node->isFact) {
-//                std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
-//                continue;  // skip fact nodes currently
-//            }
-            for (const auto& ruleApp : *ruleAppSet) {
-				auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
+        auto graph = new DerivationGraph(&ruleManager);
+        {
+            FunctionTimer scopeTimer("create graph: init fact nodes");
+            for (const auto& [tuple, prob] : fact_prob) {
+                auto node = graph->createNode(tuple);  // actually "find node" here
+                node->probability = prob;
+                node->isFact = true;
+            }
+        }
+        {
+            FunctionTimer scopeTimer("create graph: build rule apps");
+            for (const auto& [tuple, ruleAppSet] : ruleApps) {
+                auto node = graph->createNode(tuple);
+                // if (node->isFact) {
+                //     // std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
+                //     continue;  // skip fact nodes currently
+                // }
+                for (const auto& ruleApp : *ruleAppSet) {
+                    auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
+                }
             }
         }
         std::cout << "[Debug] Current nodes in graph:" << std::endl;
-        graph->attachEvidence(evidences);
+        {
+            FunctionTimer scopeTimer("create graph: attach evidence");
+            graph->attachEvidence(evidences);
+        }
+        if (DerivationGraphViewInterface::isDumpStatsEnabled()) {
+            dumpEdgeLookupTiming("create graph");
+            const EdgeBuildTiming& t = edgeBuildTiming;
+            const double avg_ms = t.calls ? (t.total_s * 1000.0 / t.calls) : 0.0;
+            const double avg_body = t.calls ? (static_cast<double>(t.body_atoms) / t.calls) : 0.0;
+            std::cout << "[timing] create graph edgeBuild: calls=" << t.calls
+                      << " hits=" << t.existing_hits
+                      << " body_atoms=" << t.body_atoms
+                      << " avg_body=" << avg_body
+                      << " total_s=" << t.total_s
+                      << " avg_ms=" << avg_ms
+                      << " rule_s=" << t.rule_lookup_s
+                      << " vars_s=" << t.get_vars_s
+                      << " find_s=" << t.find_existing_s
+                      << " head_inst_s=" << t.head_instantiate_s
+                      << " head_node_s=" << t.head_node_s
+                      << " body_inst_s=" << t.body_instantiate_s
+                      << " body_node_s=" << t.body_node_s
+                      << " body_neg_s=" << t.body_neg_s
+                      << " edge_s=" << t.create_edge_s
+                      << " insert_s=" << t.insert_total_s
+                      << std::endl;
+        }
         for (const auto& node : graph->getNodes()) {
             std::cout << "  " << node->getTuple().toString() << std::endl;
         }
@@ -1274,6 +1476,36 @@ protected:
             std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges);
     void removeSelfLoopEdges(std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges);
 
+    static void resetEdgeLookupTiming() {
+        edgeLookupTiming = EdgeLookupTiming();
+    }
+
+    static void resetEdgeBuildTiming() {
+        edgeBuildTiming = EdgeBuildTiming();
+    }
+
+    static void dumpEdgeLookupTiming(const char* label) {
+        const EdgeLookupTiming& t = edgeLookupTiming;
+        const double find_avg_key_ms = t.find_calls ? (t.find_key_s * 1000.0 / t.find_calls) : 0.0;
+        const double find_avg_map_ms = t.find_calls ? (t.find_map_s * 1000.0 / t.find_calls) : 0.0;
+        const double insert_avg_key_ms = t.insert_calls ? (t.insert_key_s * 1000.0 / t.insert_calls) : 0.0;
+        const double insert_avg_map_ms = t.insert_calls ? (t.insert_map_s * 1000.0 / t.insert_calls) : 0.0;
+        std::cout << "[timing] " << label
+                  << " edgeKey lookup: find_calls=" << t.find_calls
+                  << " find_key_s=" << t.find_key_s
+                  << " find_map_s=" << t.find_map_s
+                  << " find_avg_key_ms=" << find_avg_key_ms
+                  << " find_avg_map_ms=" << find_avg_map_ms
+                  << " insert_calls=" << t.insert_calls
+                  << " insert_key_s=" << t.insert_key_s
+                  << " insert_map_s=" << t.insert_map_s
+                  << " insert_avg_key_ms=" << insert_avg_key_ms
+                  << " insert_avg_map_ms=" << insert_avg_map_ms
+                  << std::endl;
+    }
+
+    static inline EdgeLookupTiming edgeLookupTiming;
+    static inline EdgeBuildTiming edgeBuildTiming;
 
 };
 
@@ -1304,28 +1536,66 @@ public:
 
     static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {}) {
         FunctionTimer timer(" creating derivation graph ");
-        auto graph = new IncrementalDerivationGraph(&ruleManager);
-        for (const auto& [tuple, prob] : fact_prob) {
-            auto node = graph->createNode(tuple);  // actually "find node" here
-            node->setProbability(prob);
-            node->isFact = true;
+        if (DerivationGraphViewInterface::isDumpStatsEnabled()) {
+            resetEdgeLookupTiming();
+            resetEdgeBuildTiming();
         }
-        for (const auto& [tuple, ruleAppSet] : ruleApps) {
-            auto node = graph->createNode(tuple, 0.0);
+        auto graph = new IncrementalDerivationGraph(&ruleManager);
+        {
+            FunctionTimer scopeTimer("create graph: init fact nodes");
+            for (const auto& [tuple, prob] : fact_prob) {
+                auto node = graph->createNode(tuple);  // actually "find node" here
+                node->setProbability(prob);
+                node->isFact = true;
+            }
+        }
+        {
+            FunctionTimer scopeTimer("create graph: build rule apps");
+            for (const auto& [tuple, ruleAppSet] : ruleApps) {
+                auto node = graph->createNode(tuple, 0.0);
 //            if (node->isFact) {
 //                std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
 //                continue;  // skip fact nodes currently
 //            }
-            for (const auto& ruleApp : *ruleAppSet) {
-                auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
+                for (const auto& ruleApp : *ruleAppSet) {
+                    auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
+                }
             }
         }
 
-        for (auto& node : graph->getNodes()) {
-            graph->createQuery(node, queryManager);
+        {
+            FunctionTimer scopeTimer("create graph: attach queries");
+            for (auto& node : graph->getNodes()) {
+                graph->createQuery(node, queryManager);
+            }
         }
-
-        graph->attachEvidence(evidences);
+        {
+            FunctionTimer scopeTimer("create graph: attach evidence");
+            graph->attachEvidence(evidences);
+        }
+        if (DerivationGraphViewInterface::isDumpStatsEnabled()) {
+            dumpEdgeLookupTiming("create graph");
+            const EdgeBuildTiming& t = edgeBuildTiming;
+            const double avg_ms = t.calls ? (t.total_s * 1000.0 / t.calls) : 0.0;
+            const double avg_body = t.calls ? (static_cast<double>(t.body_atoms) / t.calls) : 0.0;
+            std::cout << "[timing] create graph edgeBuild: calls=" << t.calls
+                      << " hits=" << t.existing_hits
+                      << " body_atoms=" << t.body_atoms
+                      << " avg_body=" << avg_body
+                      << " total_s=" << t.total_s
+                      << " avg_ms=" << avg_ms
+                      << " rule_s=" << t.rule_lookup_s
+                      << " vars_s=" << t.get_vars_s
+                      << " find_s=" << t.find_existing_s
+                      << " head_inst_s=" << t.head_instantiate_s
+                      << " head_node_s=" << t.head_node_s
+                      << " body_inst_s=" << t.body_instantiate_s
+                      << " body_node_s=" << t.body_node_s
+                      << " body_neg_s=" << t.body_neg_s
+                      << " edge_s=" << t.create_edge_s
+                      << " insert_s=" << t.insert_total_s
+                      << std::endl;
+        }
         return graph;
     }
 
@@ -1811,7 +2081,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         // Initialize: start from all output relation nodes.
         for (const auto& node : nodes) {
             if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
-                std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
+                // std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
                 reachableNodes.insert(node);
                 workQueue.push(node);
                 node->setQuery();
@@ -3151,7 +3421,10 @@ void DerivationGraphViewInterface::clearCycleDependencyGraphCache() const {
     cachedCycleDependencyGraph_.reset();
 }
 
-void DerivationGraphViewInterface::writeGraphStatsJson() const {
+void DerivationGraphViewInterface::writeGraphStatsJson(bool include_heavy) const {
+    if (!isDumpStatsEnabled()) {
+        return;
+    }
     static size_t s_idx = 0;  // Controls output file index
     const bool hasOutputDir = !dumpOutputDir.empty();
     const std::string dir = hasOutputDir ? dumpOutputDir : "output";
@@ -3219,19 +3492,6 @@ void DerivationGraphViewInterface::writeGraphStatsJson() const {
     }
     const double avg_hyperedge_inputs = inp_cnt ? static_cast<double>(inp_sum) / inp_cnt : 0.0;
 
-    // Cycle stats (based on SCC; only non-trivial cycles |SCC|>=2)
-    CycleDependencyGraph cdg(*this);
-    size_t cycles = 0, cyc_size_sum = 0, cyc_size_max = 0;
-    for (const auto& scc : cdg.nodeCycles) {
-        const size_t s = scc.size();
-        if (s >= 2) {
-            ++cycles;
-            cyc_size_sum += s;
-            if (s > cyc_size_max) cyc_size_max = s;
-        }
-    }
-    const double avg_cycle_size = cycles ? static_cast<double>(cyc_size_sum) / cycles : 0.0;
-
     // Only output numeric values (keys are strings, values are numbers)
     out.setf(std::ios::fixed);
     out << std::setprecision(6);
@@ -3244,16 +3504,34 @@ void DerivationGraphViewInterface::writeGraphStatsJson() const {
         << "  \"avg_out_degree\": " << avg_out_degree << ",\n"
         << "  \"max_out_degree\": " << outdeg_max << ",\n"
         << "  \"avg_hyperedge_inputs\": " << avg_hyperedge_inputs << ",\n"
-        << "  \"max_hyperedge_inputs\": " << inp_max << ",\n"
-        << "  \"cycles\": " << cycles << ",\n"
-        << "  \"avg_cycle_size\": " << avg_cycle_size << ",\n"
-        << "  \"max_cycle_size\": " << cyc_size_max << "\n"
-        << "}\n";
+        << "  \"max_hyperedge_inputs\": " << inp_max;
+    if (include_heavy) {
+        // Cycle stats (based on SCC; only non-trivial cycles |SCC|>=2)
+        CycleDependencyGraph cdg(*this);
+        size_t cycles = 0, cyc_size_sum = 0, cyc_size_max = 0;
+        for (const auto& scc : cdg.nodeCycles) {
+            const size_t s = scc.size();
+            if (s >= 2) {
+                ++cycles;
+                cyc_size_sum += s;
+                if (s > cyc_size_max) cyc_size_max = s;
+            }
+        }
+        const double avg_cycle_size = cycles ? static_cast<double>(cyc_size_sum) / cycles : 0.0;
+        out << ",\n"
+            << "  \"cycles\": " << cycles << ",\n"
+            << "  \"avg_cycle_size\": " << avg_cycle_size << ",\n"
+            << "  \"max_cycle_size\": " << cyc_size_max;
+    }
+    out << "\n}\n";
 }
 
 // ====================== dumpJsonInc implementation ======================
 void IncrementalDerivationGraphViewInterface::dumpJsonInc(const std::string& filename) const {
     using json11::Json;
+    if (!DerivationGraphViewInterface::isDumpJsonEnabled()) {
+        return;
+    }
 
     auto fact_to_json = [](const NodePtr& n) -> Json {
         return Json::object{

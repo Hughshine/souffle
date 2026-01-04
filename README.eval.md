@@ -12,8 +12,10 @@ ProbLog vs Souffle (no rewrite vs rewrite), WMC scaling, and end-to-end comparis
   only toggle `--rewrite` when comparing rewrite vs no-rewrite.
 
 ## Prerequisites
-- Build release Souffle:
+- Build release Souffle and the precompiled runtime library (required if runtime
+  headers changed):
   ```bash
+  cmake --build cmake-build-release --target compiled -j4
   cmake --build cmake-build-release --target souffle -j4
   ```
 - Put the release binary on PATH:

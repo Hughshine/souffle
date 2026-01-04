@@ -306,6 +306,7 @@ public:
         DerivationGraph::setConstFoldEnabled(options.isConstFoldEnabled());
         DerivationGraph::setConstDumpEnabled(options.isDumpConstEnabled());
         DerivationGraphViewInterface::setDumpDotEnabled(options.isDumpDotEnabled());
+        DerivationGraphViewInterface::setDumpJsonEnabled(options.isDumpJsonEnabled());
         DerivationGraphViewInterface::setDumpStatsEnabled(options.isDumpStatEnabled());
         auto& mode = options.getIncMode();
         if (mode == "full" || mode == "full-hard") {
@@ -515,6 +516,7 @@ public:
             iss >> key;
             if (key == "dumpjson") {
                 opt.setDumpJsonEnabled(true);
+                DerivationGraphViewInterface::setDumpJsonEnabled(true);
                 std::cout << "Set dumpjson to true" << std::endl;
             } else if (key == "dumpdot") {
                 opt.setDumpDotEnabled(true);
@@ -532,6 +534,7 @@ public:
             iss >> key;
             if (key == "dumpjson") {
                 opt.setDumpJsonEnabled(false);
+                DerivationGraphViewInterface::setDumpJsonEnabled(false);
                 std::cout << "Set dumpjson to false" << std::endl;
             } else if (key == "dumpdot") {
                 opt.setDumpDotEnabled(false);

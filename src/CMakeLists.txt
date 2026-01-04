@@ -347,6 +347,7 @@ set_target_properties(libsouffle PROPERTIES OUTPUT_NAME "souffle")
 add_executable(souffle
                souffle.cpp)
 target_link_libraries(souffle libsouffle)
+add_dependencies(souffle compiled)
 install(TARGETS souffle DESTINATION bin)
 
 if (EMSCRIPTEN)
