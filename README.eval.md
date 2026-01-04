@@ -58,6 +58,70 @@ Artifacts:
 - Per-case logs under `P?/output/`: `problog.meta.json`, `souffle.full.meta.json`,
   `log_P?_full*.json`, and any `graph-*.json` files.
 
+## Trimmed runs (no ProbLog, P1..P20 without P2)
+Use trimmed rules only and compare Souffle no-rewrite vs rewrite.
+```bash
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed generate \
+  --cases 1,3-20 --cleanup --force-smt --rule-set trimmed
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed compile \
+  --cases 1,3-20 --timeout 300
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed run \
+  --cases 1,3-20 --timeout 600 --souffle-only --souffle-arg=--merge-bi-imp
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed collect --cases 1,3-20
+mv experiments/side_channel_full_eval_trimmed/results-souffle.tsv \
+  experiments/side_channel_full_eval_trimmed/results-souffle-norewrite.tsv
+
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed run \
+  --cases 1,3-20 --timeout 600 --souffle-only --souffle-arg=--merge-bi-imp \
+  --souffle-arg=--rewrite
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed collect --cases 1,3-20
+mv experiments/side_channel_full_eval_trimmed/results-souffle.tsv \
+  experiments/side_channel_full_eval_trimmed/results-souffle-rewrite.tsv
+```
+Latest run summary (2026-01-03, trimmed):
+- Speedup = no-rewrite / rewrite.
+- Median speedup ~1.03x, average ~1.49x, range 0.56x to 2.83x.
+- Rewrite is slower on P3 and P9; larger cases (P14-P16) show ~2.6x to 2.8x.
+- Data files: `experiments/side_channel_full_eval_trimmed/results-souffle-norewrite.tsv`,
+  `experiments/side_channel_full_eval_trimmed/results-souffle-rewrite.tsv`.
+Interpretation: the trimmed side-channel rule set further reduces the number of random variables,
+and the analysis itself is relatively simple/legacy, so even large benchmarks remain easy.
+As a result, rewrite's linear advantage versus forward compilation's exponential growth
+does not fully surface, and the speedup is not consistently dramatic.
+
+TODO (full rule set):
+- 对确定性 relation 尽早做优化，最好在 semi-naive evaluation 阶段就避免计算多个 derivation（无必要），使 create graph 时自然被简化。
+- 需要更复杂的 benchmark；等待 PLDI'18 的提取。
+
+Per-case timing (Elapsed_s, trimmed):
+| Case | No-rewrite Elapsed_s | Rewrite Elapsed_s | Speedup (NR/RW) |
+| --- | --- | --- | --- |
+| P1 | 0.609571 | 0.601245 | 1.014 |
+| P3 | 0.358692 | 0.645138 | 0.556 |
+| P4 | 0.090040 | 0.088789 | 1.014 |
+| P5 | 0.089176 | 0.090256 | 0.988 |
+| P6 | 0.089702 | 0.091347 | 0.982 |
+| P7 | 0.093044 | 0.092103 | 1.010 |
+| P8 | 0.095404 | 0.099170 | 0.962 |
+| P9 | 0.098901 | 0.141231 | 0.700 |
+| P10 | 0.163559 | 0.113158 | 1.445 |
+| P11 | 0.113185 | 0.110342 | 1.026 |
+| P12 | 0.154320 | 0.153959 | 1.002 |
+| P13 | 0.482895 | 0.246416 | 1.960 |
+| P14 | 0.917989 | 0.354718 | 2.588 |
+| P15 | 2.935720 | 1.043847 | 2.812 |
+| P16 | 5.302365 | 1.875912 | 2.827 |
+| P17 | 6.489348 | 2.783795 | 2.331 |
+| P18 | 6.760182 | 4.256490 | 1.588 |
+| P19 | 10.555435 | 5.666979 | 1.863 |
+| P20 | 6.640608 | 3.994600 | 1.662 |
+
 ## Measurements
 
 ### 1) Derivation graph generation vs ProbLog grounding
