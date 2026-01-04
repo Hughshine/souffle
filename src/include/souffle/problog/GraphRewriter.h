@@ -87,7 +87,7 @@ public:
     *
     * @param graph   Underlying derivation graph. Only extended (new hyperedges).
     * @param view    Working view mutated in-place (nodes/edges removed or added).
-    * @param debug   If true, emit per-region tracing to stdout.
+    * @param debug   Legacy flag (ignored for output); use --dumpstat/--dumpdot instead.
     * @param flags   Feature switches controlling which SISO kinds / passes are enabled.
     */
     GraphRewriteStats rewriteUntilFixpoint(IncrementalDerivationGraph& graph,
@@ -104,6 +104,10 @@ public:
         auto toMs = [](auto duration) {
             return std::chrono::duration<double, std::milli>(duration).count();
         };
+
+        const bool dumpStats = DerivationGraphViewInterface::isDumpStatsEnabled();
+        const bool dumpDot = DerivationGraphViewInterface::isDumpDotEnabled();
+        (void)debug;
 
         stats.randomVarsBefore = countRandomVarsInView(view);
         stats.randomVarsAfter = stats.randomVarsBefore;
@@ -126,7 +130,7 @@ public:
                       << " edges=" << splitStats.edgesRewritten
                       << " time=" << splitStats.elapsedMs << " ms"
                       << std::endl;
-            if (debug && (splitStats.nodesAdded > 0 || splitStats.edgesRewritten > 0)) {
+            if (dumpStats && (splitStats.nodesAdded > 0 || splitStats.edgesRewritten > 0)) {
                 std::cout << "[GraphRewriter]   Fan-out split(" << splitModeToString(flags.splitMode)
                           << "): newNodes=" << splitStats.nodesAdded
                           << " edgesRewritten=" << splitStats.edgesRewritten
@@ -141,6 +145,16 @@ public:
         };
 
         while (true) {
+            const auto& nodeSet = view.getNodes();
+            const auto& edgeSet = view.getEdges();
+            if (nodeSet.empty() || edgeSet.empty()) {
+                if (dumpStats) {
+                    std::cout << "[GraphRewriter] Empty view (nodes=" << nodeSet.size()
+                              << ", edges=" << edgeSet.size() << "); stop rewrite." << std::endl;
+                }
+                stats.randomVarsAfter = 0;
+                break;
+            }
             auto iterStart = std::chrono::steady_clock::now();
             ++stats.numIterations;
             auto countBeforeStart = std::chrono::steady_clock::now();
@@ -149,14 +163,16 @@ public:
 
             view.cachedSortedIncomingEdges.clear();
             double dumpBeforeDotMs = 0.0;
-            if (debug) {
+            if (dumpDot) {
                 std::ostringstream dotBefore;
                 dotBefore << "rewrite_iter" << stats.numIterations << "_before.dot";
                 auto dotBeforeStart = std::chrono::steady_clock::now();
                 view.dumpDot(dotBefore.str());
                 dumpBeforeDotMs = toMs(std::chrono::steady_clock::now() - dotBeforeStart);
-                std::cout << "[GraphRewriter] dumpDot(before) took "
-                          << dumpBeforeDotMs << " ms" << std::endl;
+                if (dumpStats) {
+                    std::cout << "[GraphRewriter] dumpDot(before) took "
+                              << dumpBeforeDotMs << " ms" << std::endl;
+                }
             }
             auto detectStart = std::chrono::steady_clock::now();
             auto regions = GraphAnalyzer::detectAllSISOStrictFromExit(view);
@@ -210,7 +226,7 @@ public:
 
             if (regions.empty()) {
                 size_t precomputedNow = precomputeOutputFacts(view, evidenceAffectedNodes);
-                if (debug && precomputedNow > 0) {
+                if (dumpStats && precomputedNow > 0) {
                     std::cout << "[GraphRewriter]   Precomputed output facts: "
                               << precomputedNow << std::endl;
                 }
@@ -222,7 +238,7 @@ public:
                           << ", after=" << stats.randomVarsAfter
                           << ", delta=" << iterDelta
                           << ", ratio=" << iterRatio << std::endl;
-                if (debug) {
+                if (dumpStats) {
                     std::cout << "[GraphRewriter] No SISO regions found; rewrite fixpoint at iteration "
                               << stats.numIterations << std::endl;
                 }
@@ -233,17 +249,21 @@ public:
             }
 
             double dumpRegionsMs = 0.0;
-            if (debug) {
+            if (dumpStats) {
                 std::cout << "[GraphRewriter] Iteration " << stats.numIterations
                           << " : detected " << regions.size()
                           << " SISO region(s)." << std::endl;
+            }
+            if (dumpDot) {
                 std::ostringstream sisoDot;
                 sisoDot << "siso_regions_iter" << stats.numIterations << ".dot";
                 auto dotStart = std::chrono::steady_clock::now();
                 GraphAnalyzer::dumpAllRegionsAsDot(view, regions, sisoDot.str());
                 dumpRegionsMs = toMs(std::chrono::steady_clock::now() - dotStart);
-                std::cout << "[GraphRewriter] dumpAllRegionsAsDot took "
-                          << dumpRegionsMs << " ms" << std::endl;
+                if (dumpStats) {
+                    std::cout << "[GraphRewriter] dumpAllRegionsAsDot took "
+                              << dumpRegionsMs << " ms" << std::endl;
+                }
             }
 
             size_t rewrittenThisRound = 0;
@@ -299,13 +319,28 @@ public:
                                 }
                             }
                         }
+                        // If exit becomes isolated, precompute it (if eligible) and drop it from the view.
+                        if (view.getIncomingEdges(exit).empty() && view.getOutgoingEdges(exit).empty()) {
+                            bool removedExit = false;
+                            if (canPrecomputeOutputFact(view, exit, evidenceAffectedNodes)) {
+                                precomputedProbResult[exit] = exit->getProbability();
+                                exit->needOutput = false;
+                                exit->isQuery = false;
+                                removedExit = nodes.erase(exit) > 0;
+                            } else if (!exit->needOutput && !exit->hasEvidence()) {
+                                removedExit = nodes.erase(exit) > 0;
+                            }
+                            if (removedExit) {
+                                ++removedNodes;
+                            }
+                        }
                         stats.numEdgesRemoved += removedEdges;
                         stats.numNodesRemoved += removedNodes;
                         stats.totalRandomVars += regionRandomVars;
                         stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
                         view.invalidateCaches();
 
-                        if (debug) {
+                        if (dumpStats) {
                             // Fast-path all-facts debug logging elided to reduce overhead.
                         }
                         ++rewrittenThisRound;
@@ -372,7 +407,7 @@ public:
                         stats.numEdgesAdded += 1;
                         stats.numNodesRemoved += removedNodes;
                         view.invalidateCaches();
-                        if (debug) {
+                        if (dumpStats) {
                             // Fast-path single-hyperedge debug logging elided to reduce overhead.
                         }
                         ++rewrittenThisRound;
@@ -447,7 +482,7 @@ public:
                         stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
                         view.invalidateCaches();
 
-                        if (debug) {
+                        if (dumpStats) {
                             // Fast-path linear-two-edge debug logging elided to reduce overhead.
                         }
                         ++rewrittenThisRound;
@@ -521,7 +556,7 @@ public:
                         stats.totalRandomVars += regionRandomVars;
                         stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
                         view.invalidateCaches();
-                        if (debug) {
+                        if (dumpStats) {
                             // Fast-path parallel-edge debug logging elided to reduce overhead.
                         }
                         ++rewrittenThisRound;
@@ -653,7 +688,7 @@ public:
                 auto regionStart = std::chrono::steady_clock::now();
 
                 if (!isRegionNonTrivial(region)) {
-                    if (debug) {
+                    if (dumpStats) {
                         std::cout << "[GraphRewriter]   Skip trivial SISO: "
                                   << regionToString(region) << std::endl;
                     }
@@ -677,7 +712,7 @@ public:
                 if (isSimple && region.internalEdges.size() == 1) {
                     oldSimpleEdge = region.internalEdges.front();
                     if (oldSimpleEdge && simpleProcessedEdges_.count(oldSimpleEdge->getId()) > 0) {
-                        if (debug) {
+                        if (dumpStats) {
                             std::cout << "[GraphRewriter]   Skip already processed simple SISO "
                                       << regionToString(region) << std::endl;
                         }
@@ -692,7 +727,7 @@ public:
                     if (pEdge < 0.0) pEdge = 0.0;
                     if (pEdge > 1.0) pEdge = 1.0;
                     condProb = pEntry * pEdge;
-                    if (debug) {
+                    if (dumpStats) {
                         std::cout << "[GraphRewriter]   Simple fact region "
                                   << regionToString(region)
                                   << " with pEntry=" << pEntry
@@ -713,21 +748,21 @@ public:
                                                 managerEnd - managerStart)
                                                 .count();
                         managerInitialized = true;
-                        if (debug) {
+                        if (dumpStats) {
                             std::cout << "[GraphRewriter] CUDD manager init took "
                                       << managerInitMs << " ms" << std::endl;
                         }
                     }
                     double effectiveMgrInitMs = managerInitialized ? managerInitMs : 0.0;
                     condProb = computeRegionConditionalProbability(
-                        *bddManager, effectiveMgrInitMs, regionView, region.entry, region.exit, debug, &timing);
+                        *bddManager, effectiveMgrInitMs, regionView, region.entry, region.exit, dumpStats, &timing);
                 }
                 double condMs = toMs(std::chrono::steady_clock::now() - condStart);
                 loopCondMs += condMs;
                 firstRegionTiming = false;
 
                 if (condProb <= 0.0) {
-                    if (debug) {
+                    if (dumpStats) {
                         std::cout << "[GraphRewriter]   Skip SISO with Pr(exit|entry)=0: "
                                   << regionToString(region) << std::endl;
                     }
@@ -735,12 +770,12 @@ public:
                 }
 
                 auto applyStart = std::chrono::steady_clock::now();
-                EdgePtr newEdge = applyRegionRewrite(graph, view, region, condProb, stats, debug, isSimple);
+                EdgePtr newEdge = applyRegionRewrite(graph, view, region, condProb, stats, dumpStats, isSimple);
                 double applyMs = toMs(std::chrono::steady_clock::now() - applyStart);
                 timing.applyMs = applyMs;
                 loopRewrittenMs += applyMs;
 
-                if (debug) {
+                if (dumpStats) {
                     auto regionMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - regionStart).count();
                     std::cout << "[GraphRewriter]   Region rewrite time: "
@@ -856,7 +891,7 @@ public:
                     stats.numEdgesAdded += compactAddedEdges;
                     stats.numNodesRemoved += compactRemovedNodes;
                     view.invalidateCaches();
-                    if (debug) {
+                    if (dumpStats) {
                         std::cout << "[GraphRewriter]   Edge compaction: compacted=" << compactedEdges
                                   << " removedEdges=" << compactRemovedEdges
                                   << " addedEdges=" << compactAddedEdges
@@ -887,7 +922,7 @@ public:
                     view.invalidateCaches();
                 }
                 cleanupMs = toMs(std::chrono::steady_clock::now() - cleanupStart);
-                if (debug && cleanupRemovedNodes > 0) {
+                if (dumpStats && cleanupRemovedNodes > 0) {
                     std::cout << "[GraphRewriter]   Cleanup isolated nodes: removed="
                               << cleanupRemovedNodes << " time=" << cleanupMs << " ms"
                               << std::endl;
@@ -895,7 +930,7 @@ public:
             }
 
             size_t precomputedNow = precomputeOutputFacts(view, evidenceAffectedNodes);
-            if (debug && precomputedNow > 0) {
+            if (dumpStats && precomputedNow > 0) {
                 std::cout << "[GraphRewriter]   Precomputed output facts: "
                           << precomputedNow << std::endl;
             }
@@ -957,14 +992,14 @@ public:
             if (remainderMs < 0) remainderMs = 0.0;
             std::cout << " log=" << logMs
                       << " other=" << remainderMs
-                      << " (apply includes dot if debug)" << std::endl;
+                      << " (apply includes dot if dumpdot)" << std::endl;
             std::cout << "[GraphRewriter]   random vars: before=" << iterRandomVarsBefore
                       << ", after=" << iterRandomVarsAfter
                       << ", delta=" << iterDelta
                       << ", ratio=" << iterRatio << std::endl;
 
             if (rewrittenThisRound == 0) {
-                if (debug) {
+                if (dumpStats) {
                     std::cout << "[GraphRewriter] No region rewritten in iteration "
                               << stats.numIterations << " (rewrite fixpoint reached in "
                               << iterMs << " ms)." << std::endl;
@@ -977,16 +1012,20 @@ public:
 
             stats.numRegionsRewritten += rewrittenThisRound;
 
-            if (debug) {
+            if (dumpDot) {
                 if (rewrittenThisRound > 0) {
                     std::ostringstream dotAfter;
                     dotAfter << "rewrite_iter" << stats.numIterations << "_after.dot";
                     auto dotAfterStart = std::chrono::steady_clock::now();
                     view.dumpDot(dotAfter.str());
                     dumpAfterDotMs = toMs(std::chrono::steady_clock::now() - dotAfterStart);
-                    std::cout << "[GraphRewriter]   dumpDot(after) took "
-                              << dumpAfterDotMs << " ms" << std::endl;
+                    if (dumpStats) {
+                        std::cout << "[GraphRewriter]   dumpDot(after) took "
+                                  << dumpAfterDotMs << " ms" << std::endl;
+                    }
                 }
+            }
+            if (dumpStats) {
                 std::cout << "[GraphRewriter]   Rewrote " << rewrittenThisRound
                           << " region(s) in iteration " << stats.numIterations
                           << " in " << iterMs << " ms. Current stats: "

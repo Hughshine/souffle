@@ -222,9 +222,9 @@ public:
                 auto cvStart = steady_clock::now();
                 createVar(idx, *node);
                 double cvMs = toMs(steady_clock::now() - cvStart);
-                std::cout << "[CUDD] createVar(fact " << node->getId()
-                          << " -> idx " << idx << ") took "
-                          << cvMs << " ms" << std::endl;
+                // std::cout << "[CUDD] createVar(fact " << node->getId()
+                //           << " -> idx " << idx << ") took "
+                //           << cvMs << " ms" << std::endl;
                 ++factVars;
             }
         }
@@ -237,9 +237,9 @@ public:
                 auto cvStart = steady_clock::now();
                 createVar(idx, *edge);
                 double cvMs = toMs(steady_clock::now() - cvStart);
-                std::cout << "[CUDD] createVar(edge " << edge->getId()
-                          << " -> idx " << idx << ") took "
-                          << cvMs << " ms" << std::endl;
+                // std::cout << "[CUDD] createVar(edge " << edge->getId()
+                //           << " -> idx " << idx << ") took "
+                //           << cvMs << " ms" << std::endl;
                 ++edgeVars;
             }
         }
@@ -292,9 +292,9 @@ public:
     void printInfo(const BddNodeRef& node, const std::string& name) override;
     DdManager* getManager() const { return manager.get(); }
     void dumpProfilingStatistics() override {
-            std::cout << "Current live nodes: " << Cudd_ReadNodeCount(manager.get()) << std::endl;
-            std::cout << "Memory usage: " << Cudd_ReadMemoryInUse(manager.get()) / (1024.0 * 1024) << " MB" << std::endl;
-            std::cout << "current error code = " << Cudd_ReadErrorCode(manager.get()) << "\n";
+//            std::cout << "Current live nodes: " << Cudd_ReadNodeCount(manager.get()) << std::endl;
+//            std::cout << "Memory usage: " << Cudd_ReadMemoryInUse(manager.get()) / (1024.0 * 1024) << " MB" << std::endl;
+//            std::cout << "current error code = " << Cudd_ReadErrorCode(manager.get()) << "\n";
 //            Cudd_PrintInfo(manager.get(), stdout);
     };
     std::map<std::string, std::string> getProfilingStatistics() override {

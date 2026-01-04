@@ -27,7 +27,7 @@
 Debugger& debugger = Debugger::getInstance();
 
 inline void assertProbabilityInRange(double p, const std::string& ctx) {
-    std::cout << "[ForwardCompilation] probability check " << p << " at " << ctx << std::endl;
+//    std::cout << "[ForwardCompilation] probability check " << p << " at " << ctx << std::endl;
     if (p < 0.0 || p > 1.0) {
         std::cerr << "[ForwardCompilation] invalid probability " << p << " at " << ctx << std::endl;
         assert(false && "probability out of [0,1]");
@@ -285,7 +285,7 @@ void buildFormulasCyclewise(
     std::map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
     size_t round = 0;
     auto assertProb = [](double p, const std::string& ctx) {
-        std::cout << "[ForwardCompilation] probability check " << p << " at " << ctx << std::endl;
+//        std::cout << "[ForwardCompilation] probability check " << p << " at " << ctx << std::endl;
         if (p < 0.0 || p > 1.0) {
             std::cerr << "[ForwardCompilation] invalid probability " << p << " at " << ctx << std::endl;
             assert(false && "probability out of [0,1]");
@@ -362,14 +362,14 @@ void buildFormulasCyclewise(
         while (!worklist.empty()) {
             auto roundStart = std::chrono::steady_clock::now();
             round++;
-            std::cout << "Round: " << round << std::endl;
-            std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
+//            std::cout << "Round: " << round << std::endl;
+//            std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
             formulaManager.dumpProfilingStatistics();
 
             EdgePtr edge = worklist.top().edge;
             size_t depth = worklist.top().priority;
 
-            std::cout << edge->toString() << " with depth " << depth << std::endl;
+//            std::cout << edge->toString() << " with depth " << depth << std::endl;
             worklist.pop();
             inWorklist.erase(edge);
 //            std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
@@ -1191,7 +1191,7 @@ void buildFormulasIncCyclewise(
                 round++;
                 std::cout << "  [INSERTION ROUND " << round << "] Cycle " << cid
                           << ", Worklist size: " << worklist.size() << std::endl;
-                std::cout << edge->toString() << " with depth " << depth << std::endl;
+//                std::cout << edge->toString() << " with depth " << depth << std::endl;
 
                 const auto& inputs = view.getInputs(edge);
                 const auto& negs = view.getBodyNegations(edge);

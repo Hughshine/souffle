@@ -86,7 +86,7 @@ public:
             std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc",
             bool merge_bi = true, bool foldconst = false, bool rewrite = false,
             bool dumpjson = false, bool dumpdot = false, bool dumpstat = false, bool dumpconst = false,
-            const std::string& splitmode = "naive-split")
+            const std::string& splitmode = "complete-split")
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
     , incMode(mode), merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
       dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
