@@ -412,6 +412,13 @@ private:
             if (!allFacts) continue;
             NodePtr exit = g.getOutput(e);
             if (!exit) continue;
+            auto exitIns = g.getIncomingEdges(exit);
+            if (exitIns.size() != 1 || exitIns[0] != e) {
+                if (debug) {
+                    std::cout << "  skip: exit has multiple incoming edges\n";
+                }
+                continue;
+            }
             NodePtr entry = inputs[0];
             auto region = makeRegion(entry, exit, {e}, SISORegionKind::AllFactsToSO);
             regions.push_back(std::move(region));

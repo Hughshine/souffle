@@ -423,6 +423,9 @@ void dumpInputFacts(std::ostream& os) {
 }
 
 std::unordered_map<UntypedTuple, double> fact_prob;
+std::unordered_map<std::string, bool> relationHasProbFact;
+bool detOptEnabled = false;
+std::unordered_map<std::string, bool> relationIsDet;
 
 std::map<std::string, std::set<UntypedTuple>> initialInputRelations;
 

@@ -1450,10 +1450,9 @@ private:
                     rep[idx] = oldRep;
                     work.push(idx);
                 }
-                if (hasRvReach[idx]) {
-                    int incRep = (incomingOwner == kMulti) ? incomingRep : incomingOwner;
-                    uf.unite(oldRep, incRep);
-                }
+                // Merge on any intersection to preserve correlations across branches.
+                int incRep = (incomingOwner == kMulti) ? incomingRep : incomingOwner;
+                uf.unite(oldRep, incRep);
             };
 
             for (size_t i = 0; i < outs.size(); ++i) {

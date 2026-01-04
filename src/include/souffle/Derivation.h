@@ -175,6 +175,13 @@ bool isInputFact(UntypedTuple tuple);
 void dumpInputFacts(std::ostream& os = std::cout);
 
 extern std::unordered_map<UntypedTuple, double> fact_prob;
+extern std::unordered_map<std::string, bool> relationHasProbFact;
+extern bool detOptEnabled;
+extern std::unordered_map<std::string, bool> relationIsDet;
+inline bool isDetRelation(const std::string& rel) {
+    auto it = relationIsDet.find(rel);
+    return it != relationIsDet.end() && it->second;
+}
 
 extern std::map<std::string, std::set<UntypedTuple>> initialInputRelations;
 void dumpInitialInputRelations(std::string filename = "");

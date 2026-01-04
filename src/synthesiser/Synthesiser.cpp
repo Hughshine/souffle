@@ -107,6 +107,11 @@
 #include "souffle/utility/StringUtil.h"
 #include "souffle/utility/json11.h"
 #include "souffle/utility/tinyformat.h"
+#include "ast/TranslationUnit.h"
+#include "ast/analysis/SCCGraph.h"
+#include "ast/analysis/TopologicallySortedSCCGraph.h"
+#include "reports/DebugReport.h"
+#include "reports/ErrorReport.h"
 #include "synthesiser/GenDb.h"
 #include "synthesiser/Relation.h"
 #include "synthesiser/Utils.h"
@@ -118,6 +123,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <unordered_set>
 #include <ranges>
 #include <sstream>
 #include <tuple>
@@ -280,6 +286,82 @@ std::optional<std::size_t> Synthesiser::compileRegex(const std::string& pattern)
         std::cerr << "warning: wrong pattern provided \"" << pattern << "\"\n";
         return std::nullopt;
     }
+}
+
+struct DetOptMeta {
+    std::vector<std::string> relNames;
+    std::vector<std::size_t> relToScc;
+    std::vector<std::vector<std::size_t>> sccSucc;
+    std::vector<std::size_t> sccTopo;
+    std::vector<int> ruleSeed;
+    std::vector<std::string> evidenceRels;
+};
+
+static DetOptMeta buildDetOptMeta(const ast::Program& program, Global& glb) {
+    DetOptMeta meta;
+    auto* programPtr = dynamic_cast<ast::Program*>(program.cloneImpl().release());
+    if (programPtr == nullptr) {
+        return meta;
+    }
+    Own<ast::Program> programClone(programPtr);
+    ErrorReport errors;
+    DebugReport debug;
+    ast::TranslationUnit tu(glb, std::move(programClone), errors, debug);
+    auto& scc = tu.getAnalysis<ast::analysis::SCCGraphAnalysis>();
+    auto& topo = tu.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>();
+    auto& prog = tu.getProgram();
+
+    auto relations = prog.getRelations();
+    meta.relNames.reserve(relations.size());
+    meta.relToScc.reserve(relations.size());
+    meta.ruleSeed.assign(relations.size(), 0);
+
+    std::unordered_map<const ast::Relation*, std::size_t> relIndex;
+    relIndex.reserve(relations.size());
+    std::size_t idx = 0;
+    for (const auto* rel : relations) {
+        relIndex.emplace(rel, idx++);
+        meta.relNames.push_back(rel->getQualifiedName().toString());
+        meta.relToScc.push_back(scc.getSCC(rel));
+    }
+
+    for (const auto* clause : prog.getClauses()) {
+        if (clause == nullptr) {
+            continue;
+        }
+        double p = clause->getProbability();
+        if (p <= 0.0 || p >= 1.0) {
+            continue;
+        }
+        const auto* headAtom = as<ast::Atom>(clause->getHead());
+        if (headAtom == nullptr) {
+            continue;
+        }
+        const auto* headRel = prog.getRelation(*headAtom);
+        auto it = relIndex.find(headRel);
+        if (it != relIndex.end()) {
+            meta.ruleSeed[it->second] = 1;
+        }
+    }
+
+    meta.sccSucc.resize(scc.getNumberOfSCCs());
+    for (std::size_t sid = 0; sid < meta.sccSucc.size(); ++sid) {
+        for (auto succ : scc.getSuccessorSCCs(sid)) {
+            meta.sccSucc[sid].push_back(succ);
+        }
+    }
+    meta.sccTopo = topo.order();
+
+    std::unordered_set<std::string> evidenceSet;
+    for (const auto& evi : prog.getEvidences()) {
+        if (!evi) {
+            continue;
+        }
+        evidenceSet.insert(evi->getAtomName().toString());
+    }
+    meta.evidenceRels.assign(evidenceSet.begin(), evidenceSet.end());
+    std::sort(meta.evidenceRels.begin(), meta.evidenceRels.end());
+    return meta;
 }
 
 void Synthesiser::emitRules (std::ostream& out) {
@@ -2203,6 +2285,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
         void visit_(type_identity<RecordDerivation>, const RecordDerivation& recordDerivation, std::ostream& out) override {
             auto relName = getBaseRelationName(recordDerivation.getRelation());
             bool isRecursive = recordDerivation.isRecursive;
+            out << "if (!detOptEnabled || !isDetRelation(\"" << relName << "\")) {\n";
             out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << relName << "\",tuple);\n";
             if (recordDerivation.isComplete()) {
                 out << "auto*& ruleSet = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
@@ -2278,6 +2361,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     out << "}\n";
                 }
             }
+            out << "}\n";
         }
 
         void visit_(type_identity<EmptyStatement>, const EmptyStatement& emptyStmt, std::ostream& out) override {
@@ -4012,6 +4096,10 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     std::ostream& hook = mainClass.hooks();
     std::ostream& factory_hook = factory.hooks();
+    DetOptMeta detMeta;
+    if (newAstProgram) {
+        detMeta = buildDetOptMeta(*newAstProgram, glb);
+    }
 
     // hidden hooks
     hook << "namespace souffle {\n";
@@ -4033,6 +4121,59 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     hook << "\n#ifndef __EMBEDDED_SOUFFLE__\n";
     hook << "#include \"souffle/CompiledOptions.h\"\n";
+    auto emitStringVector = [&](const std::string& name, const std::vector<std::string>& values) {
+        hook << "static const std::vector<std::string> " << name << " = {";
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            hook << "\"" << values[i] << "\"";
+            if (i + 1 != values.size()) {
+                hook << ",";
+            }
+        }
+        hook << "};\n";
+    };
+    auto emitSizeVector = [&](const std::string& name, const std::vector<std::size_t>& values) {
+        hook << "static const std::vector<std::size_t> " << name << " = {";
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            hook << values[i];
+            if (i + 1 != values.size()) {
+                hook << ",";
+            }
+        }
+        hook << "};\n";
+    };
+    auto emitIntVector = [&](const std::string& name, const std::vector<int>& values) {
+        hook << "static const std::vector<int> " << name << " = {";
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            hook << values[i];
+            if (i + 1 != values.size()) {
+                hook << ",";
+            }
+        }
+        hook << "};\n";
+    };
+    auto emitSccSucc = [&](const std::string& name, const std::vector<std::vector<std::size_t>>& values) {
+        hook << "static const std::vector<std::vector<std::size_t>> " << name << " = {";
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            hook << "{";
+            for (std::size_t j = 0; j < values[i].size(); ++j) {
+                hook << values[i][j];
+                if (j + 1 != values[i].size()) {
+                    hook << ",";
+                }
+            }
+            hook << "}";
+            if (i + 1 != values.size()) {
+                hook << ",";
+            }
+        }
+        hook << "};\n";
+    };
+    emitStringVector("det_rel_names", detMeta.relNames);
+    emitSizeVector("det_rel_to_scc", detMeta.relToScc);
+    emitSccSucc("det_scc_succ", detMeta.sccSucc);
+    emitSizeVector("det_scc_topo", detMeta.sccTopo);
+    emitIntVector("det_rule_seed", detMeta.ruleSeed);
+    emitStringVector("det_evidence_rels", detMeta.evidenceRels);
 
     hook << "int main(int argc, char** argv)\n{\n";
     hook << "try{\n";
@@ -4066,6 +4207,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << ");\n";
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";
+    hook << "detOptEnabled = opt.isDetOptEnabled();\n";
 
     if (!db.getNS(false).empty()) {
         hook << db.getNS(false) << "::";
@@ -4108,10 +4250,134 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // hook << "}\n";
     // }
     hook << "debugger.startTurn();\n";
+    hook << "try {\n";
+    hook << "if (opt.isDetOptEnabled()) {\n";
+    hook << "auto* detStage = debugger.startStage(StageKind::IO_LOAD_FULL);\n";
+    hook << "auto detNowMs = [](auto start) {\n";
+    hook << "    return std::chrono::duration_cast<std::chrono::milliseconds>(\n";
+    hook << "            std::chrono::steady_clock::now() - start).count();\n";
+    hook << "};\n";
+    hook << "{\n";
+    hook << "auto preStart = std::chrono::steady_clock::now();\n";
+    hook << "fact_prob.clear();\n";
+    hook << "relationHasProbFact.clear();\n";
+    for (auto input : loadIOs) {
+        auto rel = input->getRelation();
+        hook << "{\n";
+        hook << "std::string rel = \"" << rel << "\";\n";
+        hook << "relationHasProbFact[rel] = false;\n";
+        hook << "std::cout << \"reading: \" << opt.getInputFileDir() << \"/\" << rel << \".facts and \" << opt.getInputFileDir() << \"/\" << rel << \".prob\" << std::endl;\n";
+        hook << "std::ifstream factFile(opt.getInputFileDir() + \"/\" + rel + \".facts\");";
+        hook << "std::ifstream probFile(opt.getInputFileDir() + \"/\" + rel + \".prob\");\n";
+        hook << "if (!factFile.is_open()) {\n";
+        hook << "    std::cerr << \"Missing facts file for relation: \" << rel << std::endl;\n";
+        hook << "    assert(false && \"facts file not found\");\n";
+        hook << "}\n";
+        hook << "bool probExists = probFile.is_open();\n";
+        hook << "if (!probExists) {\n";
+        hook << "    std::cerr << \"[Warning] Missing prob file for relation: \" << rel << \", defaulting probabilities to 1.0\" << std::endl;\n";
+        hook << "}\n";
+        hook << "std::string factLine, probLine;\n";
+        hook << "while (std::getline(factFile, factLine)) {\n";
+        hook << "std::istringstream fs(factLine);";
+        hook << "    double prob = 1.0;\n";
+        hook << "    if (probExists && std::getline(probFile, probLine)) {\n";
+        hook << "        std::istringstream ps(probLine);\n";
+        hook << "        if (!(ps >> prob) || prob < 0 || prob > 1) {\n";
+        hook << "            std::cerr << \"[Warning] Invalid probability in \" << rel << \".prob, defaulting to 1.0\" << std::endl;\n";
+        hook << "            prob = 1.0;\n";
+        hook << "        }\n";
+        hook << "    }\n";
+        hook << "souffle::RamDomain field;\n";
+        hook << "std::vector<souffle::RamDomain> fields;\n";
+        hook << "while (fs >> field) {fields.push_back(field);}\n";
+        hook << "UntypedTuple tuple{rel, fields};\n";
+        hook << "fact_prob[tuple] = prob;\n";
+        hook << "if (prob > 0.0 && prob < 1.0) { relationHasProbFact[rel] = true; }\n";
+        hook << "}\n";
+        hook << "}\n";
+    }
+    hook << "auto preMs = detNowMs(preStart);\n";
+    hook << "std::cout << \"[det-opt] prepass took \" << preMs << \" ms\" << std::endl;\n";
+    hook << "if (detStage) detStage->logMessage(Level::INFO, \"prepass_ms=\" + std::to_string(preMs));\n";
+    hook << "}\n";
+    hook << "{\n";
+    hook << "auto analyzeStart = std::chrono::steady_clock::now();\n";
+    hook << "std::unordered_map<std::string, std::size_t> detRelIndex;\n";
+    hook << "detRelIndex.reserve(det_rel_names.size());\n";
+    hook << "for (std::size_t i = 0; i < det_rel_names.size(); ++i) {\n";
+    hook << "    detRelIndex.emplace(det_rel_names[i], i);\n";
+    hook << "}\n";
+    hook << "std::vector<bool> probScc(det_scc_succ.size(), false);\n";
+    hook << "for (std::size_t i = 0; i < det_rel_names.size(); ++i) {\n";
+    hook << "    if (det_rule_seed[i]) { probScc[det_rel_to_scc[i]] = true; }\n";
+    hook << "    auto it = relationHasProbFact.find(det_rel_names[i]);\n";
+    hook << "    if (it != relationHasProbFact.end() && it->second) {\n";
+    hook << "        probScc[det_rel_to_scc[i]] = true;\n";
+    hook << "    }\n";
+    hook << "}\n";
+    hook << "for (auto sccId : det_scc_topo) {\n";
+    hook << "    if (!probScc[sccId]) continue;\n";
+    hook << "    for (auto succ : det_scc_succ[sccId]) {\n";
+    hook << "        probScc[succ] = true;\n";
+    hook << "    }\n";
+    hook << "}\n";
+    hook << "std::vector<bool> relIsDet(det_rel_names.size(), false);\n";
+    hook << "for (std::size_t i = 0; i < det_rel_names.size(); ++i) {\n";
+    hook << "    relIsDet[i] = !probScc[det_rel_to_scc[i]];\n";
+    hook << "}\n";
+    hook << "for (const auto& rel : det_evidence_rels) {\n";
+    hook << "    auto it = detRelIndex.find(rel);\n";
+    hook << "    if (it != detRelIndex.end()) {\n";
+    hook << "        relIsDet[it->second] = true;\n";
+    hook << "    }\n";
+    hook << "}\n";
+    hook << "relationIsDet.clear();\n";
+    hook << "relationIsDet.reserve(det_rel_names.size());\n";
+    hook << "for (std::size_t i = 0; i < det_rel_names.size(); ++i) {\n";
+    hook << "    relationIsDet[det_rel_names[i]] = relIsDet[i];\n";
+    hook << "}\n";
+    hook << "auto analyzeMs = detNowMs(analyzeStart);\n";
+    hook << "std::cout << \"[det-opt] analyze took \" << analyzeMs << \" ms\" << std::endl;\n";
+    hook << "if (detStage) detStage->logMessage(Level::INFO, \"analyze_ms=\" + std::to_string(analyzeMs));\n";
+    hook << "\n";
+    hook << "auto dumpStart = std::chrono::steady_clock::now();\n";
+    hook << "std::string detPath = souffle::problog::makeOutputPath(opt, \"det-relations.txt\");\n";
+    hook << "std::ofstream detOut(detPath);\n";
+    hook << "detOut << \"relation\\tscc\\trule_seed\\tfact_seed\\tprob_scc\\tdet\\n\";\n";
+    hook << "for (std::size_t i = 0; i < det_rel_names.size(); ++i) {\n";
+    hook << "    bool factSeed = false;\n";
+    hook << "    auto it = relationHasProbFact.find(det_rel_names[i]);\n";
+    hook << "    if (it != relationHasProbFact.end() && it->second) { factSeed = true; }\n";
+    hook << "    std::size_t sccId = det_rel_to_scc[i];\n";
+    hook << "    detOut << det_rel_names[i] << \"\\t\" << sccId << \"\\t\" << det_rule_seed[i]\n";
+    hook << "           << \"\\t\" << (factSeed ? 1 : 0) << \"\\t\" << (probScc[sccId] ? 1 : 0)\n";
+    hook << "           << \"\\t\" << (relIsDet[i] ? 1 : 0) << \"\\n\";\n";
+    hook << "}\n";
+    hook << "std::string detSccPath = souffle::problog::makeOutputPath(opt, \"det-scc.txt\");\n";
+    hook << "std::ofstream detSccOut(detSccPath);\n";
+    hook << "detSccOut << \"scc\\tprob\\trelations\\n\";\n";
+    hook << "for (std::size_t sccId = 0; sccId < det_scc_succ.size(); ++sccId) {\n";
+    hook << "    detSccOut << sccId << \"\\t\" << (probScc[sccId] ? 1 : 0) << \"\\t\";\n";
+    hook << "    bool first = true;\n";
+    hook << "    for (std::size_t i = 0; i < det_rel_names.size(); ++i) {\n";
+    hook << "        if (det_rel_to_scc[i] != sccId) continue;\n";
+    hook << "        if (!first) detSccOut << \",\";\n";
+    hook << "        detSccOut << det_rel_names[i];\n";
+    hook << "        first = false;\n";
+    hook << "    }\n";
+    hook << "    detSccOut << \"\\n\";\n";
+    hook << "}\n";
+    hook << "auto dumpMs = detNowMs(dumpStart);\n";
+    hook << "std::cout << \"[det-opt] dump took \" << dumpMs << \" ms\" << std::endl;\n";
+    hook << "if (detStage) detStage->logMessage(Level::INFO, \"dump_ms=\" + std::to_string(dumpMs));\n";
+    hook << "}\n";
+    hook << "debugger.endStage();\n";
+    hook << "}\n";
     hook << "debugger.startStage(StageKind::SEMINAIVE_FULL);\n";
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
     hook << "debugger.endStage();\n";
-    hook << "try {\n";
+    hook << "if (!opt.isDetOptEnabled()) {\n";
     hook << "debugger.startStage(StageKind::IO_LOAD_FULL);\n";
     hook << "{\n";
     hook << "FunctionTimer timer(\"Reading fact probability from \" + opt.getInputFileDir());\n";
@@ -4152,6 +4418,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     }
     hook << "}\n";
     hook << "debugger.endStage();\n";
+    hook << "}\n";
     db.addGlobalInclude("\"souffle/problog/Atom.h\"");
     db.addGlobalInclude("\"souffle/problog/Rule.h\"");
     db.addGlobalInclude("\"souffle/problog/RuleManager.h\"");

@@ -75,18 +75,19 @@ protected:
     bool merge_bi_imp = true;  // enable merging mutually implying deterministic nodes
     bool fold_const = false;  // enable deterministic constant pre-analysis (no prune rewrite)
     bool enable_rewrite = false;  // enable SISO-based graph rewriting
-    std::string split_mode = "complete-split";  // split mode for rewrite: no-split/naive-split/complete-split
+    std::string split_mode = "naive-split";  // split mode for rewrite: no-split/naive-split/complete-split
     bool dump_json = false;  // dump derivation graph JSON after prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
     bool dump_stat = false;  // dump derivation graph stats after prune
     bool dump_const = false;  // dump constant pre-analysis details
+    bool det_opt = false;  // enable deterministic-relation analysis and det gating
 public:
     // all argument constructor
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
             std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc",
             bool merge_bi = true, bool foldconst = false, bool rewrite = false,
             bool dumpjson = false, bool dumpdot = false, bool dumpstat = false, bool dumpconst = false,
-            const std::string& splitmode = "complete-split")
+            const std::string& splitmode = "naive-split")
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
     , incMode(mode), merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
       dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
@@ -165,6 +166,9 @@ public:
     bool isDumpConstEnabled() const {
         return dump_const;
     }
+    bool isDetOptEnabled() const {
+        return det_opt;
+    }
 
     /**
      * get filename of profile
@@ -210,6 +214,7 @@ public:
                 {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
                 {"dumpstat", false, nullptr, 'S'},
                 {"dumpconst", false, nullptr, 'U'},
+                {"det-opt", false, nullptr, 'Z'},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -217,7 +222,7 @@ public:
         bool ok = true;
         knowledge_representation = "bdd";  // default knowledge representation
         int c; /* command-line arguments processing */
-        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d:em:C:rP:JTSU", longOptions, nullptr)) != EOF) {
+        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d:em:C:rP:JTSUZ", longOptions, nullptr)) != EOF) {
             switch (c) {
                 /* Fact directories */
                 case 'F':
@@ -337,6 +342,9 @@ public:
                 case 'U':
                     dump_const = true;
                     break;
+                case 'Z':
+                    det_opt = true;
+                    break;
                 default: printHelpPage(exec_name); return false;
             }
         }
@@ -378,6 +386,7 @@ private:
         std::cerr << "    --dumpdot                    -- Dump derivation graph DOT after prune\n";
         std::cerr << "    --dumpstat                   -- Dump derivation graph stats after prune\n";
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
+        std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
 #ifdef _OPENMP
         std::cerr << "    -j <NUM>, --jobs=<NUM>       -- Specify number of threads\n";
         if (num_jobs > 0) {

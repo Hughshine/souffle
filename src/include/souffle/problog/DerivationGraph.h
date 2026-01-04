@@ -920,6 +920,9 @@ public:
         nodes.insert(node);
         nodeRepMap[node->getId()] = node;
         node->setProbability(weight);
+        if (detOptEnabled && isDetRelation(tuple.relation_name)) {
+            node->isFact = true;
+        }
 
         // Add to the map.
         tupleToNodeMap[tuple] = node;
