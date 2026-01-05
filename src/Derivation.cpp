@@ -257,11 +257,11 @@ std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>
 
 bool DerivationManager::ruleAppExistsInCompleteSet(
         const UntypedTuple& untypedTuple, const RuleApplication& ruleAppl) {
-    if (untypedTuple2RuleApplications[untypedTuple] == nullptr) {
+    auto it = untypedTuple2RuleApplications.find(untypedTuple);
+    if (it == untypedTuple2RuleApplications.end() || it->second == nullptr) {
         return false;
     }
-    if (untypedTuple2RuleApplications[untypedTuple]->find(ruleAppl) !=
-            untypedTuple2RuleApplications[untypedTuple]->end()) {
+    if (it->second->find(ruleAppl) != it->second->end()) {
         return true;
     }
     return false;

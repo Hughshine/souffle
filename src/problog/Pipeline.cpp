@@ -15,6 +15,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <unordered_map>
 #include <utility>
 
@@ -111,13 +112,22 @@ static void runBddPipeline(
 
     std::map<NodePtr, BddNodeRef> nodeFormulas;
     std::map<EdgePtr, BddNodeRef> edgeFormulas;
-    WeightedBDDManager bddManager;
+    std::unique_ptr<WeightedBDDManager> bddManager;
     const bool computeProbabilities = !opt.isDerivationOnly();
 
     if (computeProbabilities) {
-        debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+        auto* stage = debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+        auto initStart = std::chrono::steady_clock::now();
+        bddManager = std::make_unique<WeightedBDDManager>();
+        auto initMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - initStart)
+                              .count();
+        debugger.addInfo("manager_init_ms", std::to_string(initMs));
+        if (stage) {
+            stage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMs));
+        }
         auto t0 = std::chrono::steady_clock::now();
-        buildFormulasCyclewise(view, bddManager, nodeFormulas, edgeFormulas);
+        buildFormulasCyclewise(view, *bddManager, nodeFormulas, edgeFormulas);
         auto t1 = std::chrono::steady_clock::now();
         std::cout << "[pipeline] BDD formula build took "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
@@ -130,7 +140,7 @@ static void runBddPipeline(
         auto resolvedEvs = applyEvidence(graph, evidences);
         auto t3 = std::chrono::steady_clock::now();
 
-        auto evidenceBdd = bddManager.getTrue();
+        auto evidenceBdd = bddManager->getTrue();
 
         for (const auto& [eNode, val] : resolvedEvs) {
             auto it = nodeFormulas.find(eNode);
@@ -140,16 +150,16 @@ static void runBddPipeline(
 
             auto lit = it->second;
             if (!val) {
-                lit = bddManager.makeNot(lit);
+                lit = bddManager->makeNot(lit);
             }
-            evidenceBdd = bddManager.makeAnd(evidenceBdd, lit);
+            evidenceBdd = bddManager->makeAnd(evidenceBdd, lit);
         }
 
         auto t4 = std::chrono::steady_clock::now();
 
         double evidenceWeight = 1.0;
         if (!resolvedEvs.empty()) {
-            evidenceWeight = bddManager.computeWeightedModelCount(evidenceBdd);
+            evidenceWeight = bddManager->computeWeightedModelCount(evidenceBdd);
         }
 
         auto t5 = std::chrono::steady_clock::now();
@@ -159,12 +169,12 @@ static void runBddPipeline(
             double prob = 0.0;
 
             if (resolvedEvs.empty()) {
-                prob = bddManager.computeWeightedModelCount(bdd);
+                prob = bddManager->computeWeightedModelCount(bdd);
             } else if (evidenceWeight == 0.0) {
                 prob = 0.0;
             } else {
-                auto joint = bddManager.makeAnd(bdd, evidenceBdd);
-                double jointW = bddManager.computeWeightedModelCount(joint);
+                auto joint = bddManager->makeAnd(bdd, evidenceBdd);
+                double jointW = bddManager->computeWeightedModelCount(joint);
                 prob = jointW / evidenceWeight;
             }
 
@@ -205,7 +215,7 @@ static void runBddPipeline(
 
     if (enableOnlineCli) {
         IncrementalCLI<BddNodeRef> cli(
-                &program, &graph, &ruleManager, &queryManager, &bddManager, &nodeFormulas,
+                &program, &graph, &ruleManager, &queryManager, bddManager.get(), &nodeFormulas,
                 &edgeFormulas, false);
         cli.setCmdOptions(opt);
         cli.run();
@@ -225,13 +235,22 @@ static void runSddPipeline(
 
     std::map<NodePtr, SddNodeRef> nodeFormulas;
     std::map<EdgePtr, SddNodeRef> edgeFormulas;
-    SddFormulaManager sddManager;
+    std::unique_ptr<SddFormulaManager> sddManager;
     const bool computeProbabilities = !opt.isDerivationOnly();
 
     if (computeProbabilities) {
-        debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+        auto* stage = debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+        auto initStart = std::chrono::steady_clock::now();
+        sddManager = std::make_unique<SddFormulaManager>();
+        auto initMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - initStart)
+                              .count();
+        debugger.addInfo("manager_init_ms", std::to_string(initMs));
+        if (stage) {
+            stage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMs));
+        }
         auto t0 = std::chrono::steady_clock::now();
-        buildFormulasCyclewise(view, sddManager, nodeFormulas, edgeFormulas);
+        buildFormulasCyclewise(view, *sddManager, nodeFormulas, edgeFormulas);
         auto t1 = std::chrono::steady_clock::now();
         std::cout << "[pipeline] SDD formula build took "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
@@ -244,7 +263,7 @@ static void runSddPipeline(
         auto resolvedEvs = applyEvidence(graph, evidences);
         auto t3 = std::chrono::steady_clock::now();
 
-        auto evidenceSdd = sddManager.getTrue();
+        auto evidenceSdd = sddManager->getTrue();
         for (const auto& [eNode, val] : resolvedEvs) {
             auto it = nodeFormulas.find(eNode);
             if (it == nodeFormulas.end()) {
@@ -252,16 +271,16 @@ static void runSddPipeline(
             }
             auto lit = it->second;
             if (!val) {
-                lit = sddManager.makeNot(lit);
+                lit = sddManager->makeNot(lit);
             }
-            evidenceSdd = sddManager.makeAnd(evidenceSdd, lit);
+            evidenceSdd = sddManager->makeAnd(evidenceSdd, lit);
         }
 
         auto t4 = std::chrono::steady_clock::now();
 
         double evidenceWeight = 1.0;
         if (!resolvedEvs.empty()) {
-            evidenceWeight = sddManager.computeWeightedModelCount(evidenceSdd);
+            evidenceWeight = sddManager->computeWeightedModelCount(evidenceSdd);
         }
 
         auto t5 = std::chrono::steady_clock::now();
@@ -271,12 +290,12 @@ static void runSddPipeline(
             double prob = 0.0;
 
             if (resolvedEvs.empty()) {
-                prob = sddManager.computeWeightedModelCount(sdd);
+                prob = sddManager->computeWeightedModelCount(sdd);
             } else if (evidenceWeight == 0.0) {
                 prob = 0.0;
             } else {
-                auto joint = sddManager.makeAnd(sdd, evidenceSdd);
-                double jointW = sddManager.computeWeightedModelCount(joint);
+                auto joint = sddManager->makeAnd(sdd, evidenceSdd);
+                double jointW = sddManager->computeWeightedModelCount(joint);
                 prob = jointW / evidenceWeight;
             }
 
@@ -315,7 +334,7 @@ static void runSddPipeline(
 
     if (enableOnlineCli) {
         IncrementalCLI<SddNodeRef> cli(
-                &program, &graph, &ruleManager, &queryManager, &sddManager, &nodeFormulas,
+                &program, &graph, &ruleManager, &queryManager, sddManager.get(), &nodeFormulas,
                 &edgeFormulas, false);
         cli.setCmdOptions(opt);
         cli.run();
