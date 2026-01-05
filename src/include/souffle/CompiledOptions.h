@@ -81,6 +81,7 @@ protected:
     bool dump_stat = false;  // dump derivation graph stats after prune
     bool dump_const = false;  // dump constant pre-analysis details
     bool det_opt = false;  // enable deterministic-relation analysis and det gating
+    bool single_rand_fast = true;  // enable single-randvar fast path in component FC
 public:
     // all argument constructor
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
@@ -169,6 +170,9 @@ public:
     bool isDetOptEnabled() const {
         return det_opt;
     }
+    bool isSingleRandFastEnabled() const {
+        return single_rand_fast;
+    }
 
     /**
      * get filename of profile
@@ -215,6 +219,7 @@ public:
                 {"dumpstat", false, nullptr, 'S'},
                 {"dumpconst", false, nullptr, 'U'},
                 {"det-opt", false, nullptr, 'Z'},
+                {"no-single-rand-fast", false, nullptr, 1001},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -345,6 +350,9 @@ public:
                 case 'Z':
                     det_opt = true;
                     break;
+                case 1001:
+                    single_rand_fast = false;
+                    break;
                 default: printHelpPage(exec_name); return false;
             }
         }
@@ -387,6 +395,7 @@ private:
         std::cerr << "    --dumpstat                   -- Dump derivation graph stats after prune\n";
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
         std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
+        std::cerr << "    --no-single-rand-fast        -- Disable single-randvar fast path in component FC\n";
 #ifdef _OPENMP
         std::cerr << "    -j <NUM>, --jobs=<NUM>       -- Specify number of threads\n";
         if (num_jobs > 0) {

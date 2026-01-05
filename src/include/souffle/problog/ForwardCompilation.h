@@ -13,12 +13,14 @@
 #include <queue>
 #include <set>
 #include <map>
+#include <memory>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
 #include <climits>
 #include <type_traits>
+#include <utility>
 #include <fstream>
 #include "souffle/problog/debug/Debugger.h"
 #include "souffle/problog/RegionalIncremental.h"
@@ -484,6 +486,294 @@ void buildFormulasCyclewise(
               << std::endl;
 
 //    std::cout << "✅ buildFormulasCyclewiseNew completed using global depth info.\n";
+}
+
+struct ComponentSubgraph {
+    size_t id;
+    std::unordered_set<NodePtr> nodes;
+    std::unordered_set<EdgePtr> edges;
+};
+
+inline std::size_t countComponentRandomVars(const ComponentSubgraph& comp) {
+    std::size_t count = 0;
+    for (const auto& node : comp.nodes) {
+        if (node->isFact && node->getProbability() != 1.0) {
+            ++count;
+        }
+    }
+    for (const auto& edge : comp.edges) {
+        if (!edge->isDeterministic()) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+inline std::vector<ComponentSubgraph> buildComponentSubgraphs(const DerivationGraphViewInterface& view) {
+    auto& depGraph = view.getCycleDependencyGraph();
+    const size_t componentCount = depGraph.getComponentCount();
+    std::vector<std::unordered_set<NodePtr>> nodesByComponent(componentCount);
+    std::vector<std::unordered_set<EdgePtr>> edgesByComponent(componentCount);
+
+    for (const auto& node : view.getNodes()) {
+        size_t cid = depGraph.getComponentId(node);
+        nodesByComponent[cid].insert(node);
+    }
+    for (const auto& edge : view.getEdges()) {
+        NodePtr out = view.getOutput(edge);
+        if (!out) {
+            continue;
+        }
+        size_t cid = depGraph.getComponentId(out);
+        edgesByComponent[cid].insert(edge);
+    }
+
+    std::vector<ComponentSubgraph> components;
+    components.reserve(componentCount);
+    for (size_t cid = 0; cid < componentCount; ++cid) {
+        if (nodesByComponent[cid].empty() && edgesByComponent[cid].empty()) {
+            continue;
+        }
+        components.push_back(ComponentSubgraph{cid, std::move(nodesByComponent[cid]),
+                std::move(edgesByComponent[cid])});
+    }
+    return components;
+}
+
+struct SingleRandVarInfo {
+    NodePtr node;
+    EdgePtr edge;
+    double probability = 1.0;
+};
+
+inline bool findSingleRandVar(const ComponentSubgraph& comp, SingleRandVarInfo& out) {
+    std::size_t count = 0;
+    out = SingleRandVarInfo{};
+
+    for (const auto& node : comp.nodes) {
+        if (node->isFact && node->getProbability() != 1.0) {
+            ++count;
+            if (count > 1) {
+                return false;
+            }
+            out.node = node;
+            out.edge.reset();
+            out.probability = node->getProbability();
+        }
+    }
+    for (const auto& edge : comp.edges) {
+        if (!edge->isDeterministic()) {
+            ++count;
+            if (count > 1) {
+                return false;
+            }
+            out.node.reset();
+            out.edge = edge;
+            out.probability = edge->getProbability();
+        }
+    }
+    return count == 1;
+}
+
+struct BoolNodeRef {
+    bool value = false;
+    bool valid = false;
+    void* get() const { return valid ? const_cast<BoolNodeRef*>(this) : nullptr; }
+};
+
+class BoolFormulaManager final : public FormulaManager<BoolNodeRef> {
+public:
+    BoolFormulaManager(NodePtr targetNode, EdgePtr targetEdge, bool varValue)
+            : targetNode(std::move(targetNode)), targetEdge(std::move(targetEdge)), varValue(varValue) {}
+
+    BoolNodeRef createVar(int) override {
+        return markVar(nullptr, nullptr);
+    }
+    BoolNodeRef createVar(int, const Node& node) override {
+        return markVar(&node, nullptr);
+    }
+    BoolNodeRef createVar(int, const Hyperedge& edge) override {
+        return markVar(nullptr, &edge);
+    }
+
+    BoolNodeRef makeAnd(const BoolNodeRef& a, const BoolNodeRef& b) override {
+        return BoolNodeRef{a.value && b.value, true};
+    }
+    BoolNodeRef makeAnd(const std::vector<BoolNodeRef>& nodes) override {
+        bool value = true;
+        for (const auto& node : nodes) {
+            value = value && node.value;
+            if (!value) break;
+        }
+        return BoolNodeRef{value, true};
+    }
+    BoolNodeRef makeOr(const BoolNodeRef& a, const BoolNodeRef& b) override {
+        return BoolNodeRef{a.value || b.value, true};
+    }
+    BoolNodeRef makeOr(const std::vector<BoolNodeRef>& nodes) override {
+        bool value = false;
+        for (const auto& node : nodes) {
+            value = value || node.value;
+            if (value) break;
+        }
+        return BoolNodeRef{value, true};
+    }
+    BoolNodeRef makeNot(const BoolNodeRef& a) override {
+        return BoolNodeRef{!a.value, true};
+    }
+    BoolNodeRef makeCondition(const BoolNodeRef& f, const std::vector<int>&,
+            const std::vector<int>&) override {
+        return f;
+    }
+    BoolNodeRef getTrue() override {
+        return BoolNodeRef{true, true};
+    }
+    BoolNodeRef getFalse() override {
+        return BoolNodeRef{false, true};
+    }
+    bool isSame(const BoolNodeRef& a, const BoolNodeRef& b) override {
+        return a.valid == b.valid && a.value == b.value;
+    }
+    std::string toString(const BoolNodeRef& node) override {
+        return node.value ? "true" : "false";
+    }
+    void setVariableWeight(int, double, double) override {}
+    double computeWeightedModelCount(const BoolNodeRef& node) override {
+        return node.value ? 1.0 : 0.0;
+    }
+    int getVarIndex(const Node&) override { return 0; }
+    int getVarIndex(const Hyperedge&) override { return 0; }
+    void printInfo(const BoolNodeRef&, const std::string&) override {}
+    void dumpProfilingStatistics() override {}
+
+    bool isValid() const { return !invalid && sawVar; }
+
+private:
+    BoolNodeRef markVar(const Node* node, const Hyperedge* edge) {
+        if (sawVar) {
+            invalid = true;
+            return BoolNodeRef{varValue, true};
+        }
+        if (node != nullptr) {
+            if (!targetNode || targetNode.get() != node) {
+                invalid = true;
+            }
+        } else if (edge != nullptr) {
+            if (!targetEdge || targetEdge.get() != edge) {
+                invalid = true;
+            }
+        } else {
+            invalid = true;
+        }
+        sawVar = true;
+        return BoolNodeRef{varValue, true};
+    }
+
+    NodePtr targetNode;
+    EdgePtr targetEdge;
+    bool varValue = false;
+    bool sawVar = false;
+    bool invalid = false;
+};
+
+inline bool evaluateSingleRandComponent(
+        const ComponentSubgraph& comp,
+        const SingleRandVarInfo& var,
+        bool varValue,
+        std::unordered_map<NodePtr, bool>& nodeValues,
+        long long* evalMs = nullptr) {
+    BoolFormulaManager manager(var.node, var.edge, varValue);
+    SubgraphView subview(comp.nodes, comp.edges);
+    std::map<NodePtr, BoolNodeRef> nodeFormulas;
+    std::map<EdgePtr, BoolNodeRef> edgeFormulas;
+    auto start = std::chrono::steady_clock::now();
+    buildFormulasCyclewise(subview, manager, nodeFormulas, edgeFormulas, {}, nullptr, true, false);
+    auto end = std::chrono::steady_clock::now();
+    if (evalMs) {
+        *evalMs = static_cast<long long>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+    }
+    if (!manager.isValid()) {
+        return false;
+    }
+    nodeValues.clear();
+    nodeValues.reserve(comp.nodes.size());
+    for (const auto& node : comp.nodes) {
+        auto it = nodeFormulas.find(node);
+        bool value = (it != nodeFormulas.end()) ? it->second.value : false;
+        nodeValues.emplace(node, value);
+    }
+    return true;
+}
+
+template <typename ManagerT, typename FormulaRef>
+struct ComponentFormulaBundle {
+    size_t id;
+    std::unique_ptr<ManagerT> manager;
+    std::map<NodePtr, FormulaRef> nodeFormulas;
+};
+
+template <typename ManagerT, typename FormulaRef, typename ManagerFactory>
+inline std::vector<ComponentFormulaBundle<ManagerT, FormulaRef>>
+buildFormulasCyclewiseByComponentList(
+        std::vector<ComponentSubgraph> components,
+        ManagerFactory&& makeManager,
+        long long* initMsTotal = nullptr,
+        long long* initMsMax = nullptr) {
+    std::vector<ComponentFormulaBundle<ManagerT, FormulaRef>> bundles;
+    bundles.reserve(components.size());
+    if (initMsTotal) *initMsTotal = 0;
+    if (initMsMax) *initMsMax = 0;
+
+    for (auto& comp : components) {
+        auto compId = comp.id;
+        auto nodeCount = comp.nodes.size();
+        auto edgeCount = comp.edges.size();
+        auto randVars = countComponentRandomVars(comp);
+
+        SubgraphView subview(std::move(comp.nodes), std::move(comp.edges));
+        auto initStart = std::chrono::steady_clock::now();
+        auto manager = makeManager(subview);
+        long long initMs = static_cast<long long>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - initStart)
+                        .count());
+        if (initMsTotal) *initMsTotal += initMs;
+        if (initMsMax) *initMsMax = std::max(*initMsMax, initMs);
+
+        auto buildStart = std::chrono::steady_clock::now();
+        std::map<NodePtr, FormulaRef> nodeFormulas;
+        std::map<EdgePtr, FormulaRef> edgeFormulas;
+        buildFormulasCyclewise(subview, *manager, nodeFormulas, edgeFormulas);
+        auto buildMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - buildStart)
+                               .count();
+
+        std::cout << "[fc-component] id=" << compId
+                  << " nodes=" << nodeCount
+                  << " edges=" << edgeCount
+                  << " rand_vars=" << randVars
+                  << " init_ms=" << initMs
+                  << " build_ms=" << buildMs
+                  << " total_ms=" << (initMs + buildMs)
+                  << std::endl;
+
+        bundles.push_back(ComponentFormulaBundle<ManagerT, FormulaRef>{
+                compId, std::move(manager), std::move(nodeFormulas)});
+    }
+    return bundles;
+}
+
+template <typename ManagerT, typename FormulaRef, typename ManagerFactory>
+inline std::vector<ComponentFormulaBundle<ManagerT, FormulaRef>>
+buildFormulasCyclewiseByComponent(
+        const DerivationGraphViewInterface& view,
+        ManagerFactory&& makeManager,
+        long long* initMsTotal = nullptr,
+        long long* initMsMax = nullptr) {
+    return buildFormulasCyclewiseByComponentList<ManagerT, FormulaRef>(
+            buildComponentSubgraphs(view), std::forward<ManagerFactory>(makeManager), initMsTotal,
+            initMsMax);
 }
 
 template<typename FormulaNodeRef>

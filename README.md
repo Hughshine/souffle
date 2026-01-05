@@ -136,6 +136,7 @@ Example (batch from delta file):
 - Probabilistic semantics: derivation graph, pruning, forward compilation, weighted model counting.
 - Knowledge backend selection via `-k bdd|sdd`.
 - Optional SISO rewrite (`-r`) for full-mode runs only.
+- Rewrite path uses component-wise FC with a single reused BDD manager and logs `FC_WMC_HYBRID`.
 - Deterministic-first derivation gating (`--det-opt`) to skip recording derivations for deterministic relations.
 - Optional deterministic constant pre-analysis in FC (`--fold-const`); use `--dumpconst` to write true/false nodes and edges (see `README.const.md`).
 - Debug/profiling outputs: JSON/DOT/stats dumps after prune.

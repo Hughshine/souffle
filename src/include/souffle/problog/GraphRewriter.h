@@ -312,9 +312,18 @@ public:
                         size_t removedNodes = 0;
                         for (auto n : inputs) {
                             if (!n) continue;
-                            // Drop isolated fact inputs to avoid keeping pruned nodes alive.
+                            // Drop isolated fact inputs; preserve output/evidence facts via precompute.
                             if (view.getIncomingEdges(n).empty() && view.getOutgoingEdges(n).empty()) {
-                                if (nodes.erase(n) > 0) {
+                                bool removedInput = false;
+                                if (canPrecomputeOutputFact(view, n, evidenceAffectedNodes)) {
+                                    precomputedProbResult[n] = n->getProbability();
+                                    n->needOutput = false;
+                                    n->isQuery = false;
+                                    removedInput = nodes.erase(n) > 0;
+                                } else if (!n->needOutput && !n->hasEvidence()) {
+                                    removedInput = nodes.erase(n) > 0;
+                                }
+                                if (removedInput) {
                                     ++removedNodes;
                                 }
                             }

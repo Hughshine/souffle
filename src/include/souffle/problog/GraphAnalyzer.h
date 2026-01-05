@@ -393,10 +393,10 @@ private:
             }
             bool allFacts = true;
             for (auto n : inputs) {
-                if (!n || !n->isFact || n->hasEvidence() || n->needOutput) {
+                if (!n || !n->isFact || n->hasEvidence()) {
                     allFacts = false;
                     if (debug) {
-                        std::cout << "  skip: input not pure fact or evidence/output" << std::endl;
+                        std::cout << "  skip: input not pure fact or evidence" << std::endl;
                     }
                     break;
                 }

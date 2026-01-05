@@ -194,8 +194,10 @@ for each facts line:
 - Large wins for deterministic transitive or eqrel-style relations such as
   assign/equal_assign in side_channel.
 
-## Evaluation (2026-01-04, full rule set)
+## Evaluation (2026-01-05, full rule set)
 - All runs use `--det-opt`, full-only compilation, and default `naive-split`.
+- Rewrite runs use component-wise FC with `FC_WMC_HYBRID`; `dd_live_nodes` for
+  rewrite is a summed, approximate count.
 - Full per-case timing table (including `rand_vars`) is recorded in
   `README.eval.md` and `README.rewrite.md`.
 
