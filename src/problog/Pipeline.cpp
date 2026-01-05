@@ -19,6 +19,7 @@
 #include <map>
 #include <memory>
 #include <limits>
+#include <string>
 #include <unordered_map>
 #include <utility>
 
@@ -63,12 +64,24 @@ static WeightedBDDManager::InitConfig makeCuddInitConfig(std::size_t varCount) {
     return cfg;
 }
 
+static std::string join(const std::vector<std::string>& parts, const char* sep) {
+    std::string out;
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) {
+            out += sep;
+        }
+        out += parts[i];
+    }
+    return out;
+}
+
 static std::vector<std::vector<std::pair<NodePtr, bool>>> groupEvidencesByComponent(
         const DerivationGraphViewInterface& view,
         const std::vector<std::pair<NodePtr, bool>>& evidences) {
     auto& depGraph = view.getCycleDependencyGraph();
     const size_t componentCount = depGraph.getComponentCount();
     std::vector<std::vector<std::pair<NodePtr, bool>>> byComponent(componentCount);
+    std::vector<std::unordered_map<NodePtr, bool>> seen(componentCount);
 
     for (const auto& ev : evidences) {
         const NodePtr& node = ev.first;
@@ -77,22 +90,18 @@ static std::vector<std::vector<std::pair<NodePtr, bool>>> groupEvidencesByCompon
                     (node ? node->toString() : std::string("null")));
         }
         size_t cid = depGraph.getComponentId(node);
+        auto& seenMap = seen[cid];
+        auto it = seenMap.find(node);
+        if (it != seenMap.end()) {
+            if (it->second != ev.second) {
+                throw std::runtime_error("Conflicting evidence for node: " + node->toString());
+            }
+            continue;
+        }
+        seenMap.emplace(node, ev.second);
         byComponent[cid].push_back(ev);
     }
     return byComponent;
-}
-
-static bool evidenceSatisfied(
-        const std::vector<std::pair<NodePtr, bool>>& evidences,
-        const std::unordered_map<NodePtr, bool>& values) {
-    for (const auto& [node, expected] : evidences) {
-        auto it = values.find(node);
-        bool actual = (it != values.end()) ? it->second : false;
-        if (actual != expected) {
-            return false;
-        }
-    }
-    return true;
 }
 
 struct FastComponentEval {
@@ -102,6 +111,21 @@ struct FastComponentEval {
     std::unordered_map<NodePtr, bool> valuesFalse;
     long long evalMsTrue = 0;
     long long evalMsFalse = 0;
+};
+
+struct ConjComponentEval {
+    ComponentSubgraph comp;
+    std::unordered_map<NodePtr, double> probabilities;
+    long long evalMs = 0;
+};
+
+struct ComponentAnalysis {
+    ComponentSubgraph comp;
+    SingleRandVarInfo singleRand;
+    std::size_t randVars = 0;
+    bool hasNegation = false;
+    bool hasOr = false;
+    bool hasCycle = false;
 };
 
 struct SlowComponentEval {
@@ -116,54 +140,101 @@ struct FastComponentStats {
     long long evalMs = 0;
 };
 
-static std::vector<ComponentSubgraph> collectSingleRandFastComponents(
-        std::vector<ComponentSubgraph> components,
-        bool enableFast,
-        std::vector<FastComponentEval>& fastComponents,
-        FastComponentStats& stats) {
-    if (!enableFast) {
-        return components;
-    }
+struct ConjFastStats {
+    size_t candidates = 0;
+    size_t used = 0;
+    size_t skipped = 0;
+    long long evalMs = 0;
+};
 
-    std::vector<ComponentSubgraph> slowComponents;
-    slowComponents.reserve(components.size());
+struct ComponentDecision {
+    size_t id = 0;
+    size_t nodes = 0;
+    size_t edges = 0;
+    size_t randVars = 0;
+    bool hasEvidence = false;
+    bool hasNegation = false;
+    bool hasOr = false;
+    bool hasCycle = false;
+    std::string mode;
+    std::string reason;
+};
+
+static std::vector<ComponentAnalysis> analyzeComponents(
+        const DerivationGraphViewInterface& view,
+        std::vector<ComponentSubgraph> components) {
+    auto& depGraph = view.getCycleDependencyGraph();
+    std::vector<ComponentAnalysis> analyses;
+    analyses.reserve(components.size());
 
     for (auto& comp : components) {
-        SingleRandVarInfo var;
-        if (!findSingleRandVar(comp, var)) {
-            slowComponents.push_back(std::move(comp));
-            continue;
+        ComponentAnalysis analysis;
+        analysis.comp = std::move(comp);
+        analysis.singleRand = SingleRandVarInfo{};
+        std::unordered_map<NodePtr, size_t> incomingCounts;
+        incomingCounts.reserve(analysis.comp.nodes.size());
+
+        for (const auto& node : analysis.comp.nodes) {
+            if (node->isFact && node->getProbability() != 1.0) {
+                analysis.randVars++;
+                if (analysis.randVars == 1) {
+                    analysis.singleRand.node = node;
+                    analysis.singleRand.edge.reset();
+                    analysis.singleRand.probability = node->getProbability();
+                }
+            }
+            auto it = depGraph.nodeToCycleIndex.find(node);
+            if (it != depGraph.nodeToCycleIndex.end()) {
+                if (depGraph.nodeCycles[it->second].size() > 1) {
+                    analysis.hasCycle = true;
+                }
+            }
         }
 
-        stats.candidates++;
-        FastComponentEval eval;
-        eval.comp = std::move(comp);
-        eval.var = var;
-
-        if (!evaluateSingleRandComponent(
-                    eval.comp, eval.var, true, eval.valuesTrue, &eval.evalMsTrue) ||
-                !evaluateSingleRandComponent(
-                        eval.comp, eval.var, false, eval.valuesFalse, &eval.evalMsFalse)) {
-            stats.skipped++;
-            slowComponents.push_back(std::move(eval.comp));
-            continue;
+        for (const auto& edge : analysis.comp.edges) {
+            if (!edge->isDeterministic()) {
+                analysis.randVars++;
+                if (analysis.randVars == 1) {
+                    analysis.singleRand.node.reset();
+                    analysis.singleRand.edge = edge;
+                    analysis.singleRand.probability = edge->getProbability();
+                }
+            }
+            auto negs = view.getBodyNegations(edge);
+            for (bool neg : negs) {
+                if (neg) {
+                    analysis.hasNegation = true;
+                    break;
+                }
+            }
+            NodePtr out = view.getOutput(edge);
+            if (out) {
+                incomingCounts[out]++;
+                for (const auto& in : view.getInputs(edge)) {
+                    if (in == out) {
+                        analysis.hasCycle = true;
+                        break;
+                    }
+                }
+            }
         }
 
-        stats.used++;
-        stats.evalMs += eval.evalMsTrue + eval.evalMsFalse;
-        std::cout << "[fc-component] id=" << eval.comp.id
-                  << " fast_path=1"
-                  << " nodes=" << eval.comp.nodes.size()
-                  << " edges=" << eval.comp.edges.size()
-                  << " rand_vars=" << countComponentRandomVars(eval.comp)
-                  << " eval_ms_true=" << eval.evalMsTrue
-                  << " eval_ms_false=" << eval.evalMsFalse
-                  << " total_ms=" << (eval.evalMsTrue + eval.evalMsFalse)
-                  << std::endl;
-        fastComponents.push_back(std::move(eval));
+        for (const auto& node : analysis.comp.nodes) {
+            auto it = incomingCounts.find(node);
+            if (it != incomingCounts.end()) {
+                if (it->second > 1) {
+                    analysis.hasOr = true;
+                }
+                if (node->isFact && it->second > 0) {
+                    analysis.hasOr = true;
+                }
+            }
+        }
+
+        analyses.push_back(std::move(analysis));
     }
 
-    return slowComponents;
+    return analyses;
 }
 
 } // namespace
@@ -254,7 +325,8 @@ static void runBddPipeline(
         IncrementalDerivationGraph& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        bool enableOnlineCli) {
+        bool enableOnlineCli,
+        StageInfo* rewriteHybridStage) {
     Debugger& debugger = Debugger::getInstance();
 
     std::map<NodePtr, BddNodeRef> nodeFormulas;
@@ -263,39 +335,238 @@ static void runBddPipeline(
     const bool computeProbabilities = !opt.isDerivationOnly();
 
     if (computeProbabilities) {
-        auto* stage = debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
-        auto varEstimate = estimateBddVarCount(view);
-        debugger.addInfo("rand_vars", std::to_string(varEstimate));
-        if (stage) {
-            stage->logMessage(Level::INFO, "rand_vars=" + std::to_string(varEstimate));
-        }
-
         if (opt.isRewriteEnabled()) {
-            auto components = buildComponentSubgraphs(view);
-            std::vector<FastComponentEval> fastComponents;
-            FastComponentStats fastStats;
-            auto slowComponents = collectSingleRandFastComponents(
-                    std::move(components), opt.isSingleRandFastEnabled(), fastComponents, fastStats);
-
-            std::vector<SlowComponentEval> slowEvals;
-            slowEvals.reserve(slowComponents.size());
-            for (auto& comp : slowComponents) {
-                SlowComponentEval eval;
-                eval.randVars = countComponentRandomVars(comp);
-                eval.comp = std::move(comp);
-                slowEvals.push_back(std::move(eval));
+            auto* hybridStage = rewriteHybridStage;
+            if (!hybridStage) {
+                hybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
             }
+            auto varEstimate = estimateBddVarCount(view);
+            debugger.addInfo("rand_vars", std::to_string(varEstimate));
+            if (hybridStage) {
+                hybridStage->logMessage(Level::INFO, "rand_vars=" + std::to_string(varEstimate));
+            }
+
+            auto components = buildComponentSubgraphs(view);
+            auto analyses = analyzeComponents(view, std::move(components));
+            long long initMsTotal = 0;
+            long long initMsMax = 0;
+            long long buildMs = 0;
+            WeightedBDDManager::InitConfig initConfig;
+            auto t2 = std::chrono::steady_clock::now();
+            auto resolvedEvs = applyEvidence(graph, evidences);
+            auto t3 = std::chrono::steady_clock::now();
+            auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
+            long long evidenceBuildMs = 0;
+            long long evidenceWmcMs = 0;
+            long long perNodeWmcMs = 0;
+            long long fastPathMs = 0;
+            long long liveNodesSum = 0;
+
+            FastComponentStats fastStats;
+            ConjFastStats conjStats;
+            std::vector<FastComponentEval> fastComponents;
+            std::vector<ConjComponentEval> conjComponents;
+            std::vector<SlowComponentEval> slowEvals;
+            const bool logFastReasons = opt.isDumpDotEnabled();
+            std::vector<ComponentDecision> decisions;
+            decisions.reserve(analyses.size());
+
+            probResult.clear();
+            const bool enableFast = opt.isSingleRandFastEnabled();
+            for (auto& analysis : analyses) {
+                const auto& comp = analysis.comp;
+                const auto& compEvs = evidencesByComponent[comp.id];
+                const bool hasEvidence = !compEvs.empty();
+                const bool singleCandidate = analysis.randVars == 1;
+                const bool conjCandidate = !singleCandidate && !analysis.hasNegation &&
+                        !analysis.hasOr && !analysis.hasCycle;  // fast path excludes cycles/OR/negation
+                ComponentDecision decision{
+                        comp.id,
+                        comp.nodes.size(),
+                        comp.edges.size(),
+                        analysis.randVars,
+                        hasEvidence,
+                        analysis.hasNegation,
+                        analysis.hasOr,
+                        analysis.hasCycle,
+                        "",
+                        "",
+                };
+
+                if (enableFast) {
+                    if (singleCandidate) fastStats.candidates++;
+                    if (conjCandidate) conjStats.candidates++;
+                }
+                if (logFastReasons) {
+                    std::vector<std::string> singleReasons;
+                    if (!enableFast) singleReasons.emplace_back("fast_disabled");
+                    if (!singleCandidate) singleReasons.emplace_back("randvars!=1");
+                    if (hasEvidence) singleReasons.emplace_back("has_evidence");
+                    if (!singleReasons.empty()) {
+                        std::cout << "[fc-component] id=" << comp.id
+                                  << " single_skip=" << join(singleReasons, ",")
+                                  << " rand_vars=" << analysis.randVars
+                                  << " has_negation=" << analysis.hasNegation
+                                  << " has_or=" << analysis.hasOr
+                                  << " has_cycle=" << analysis.hasCycle
+                                  << std::endl;
+                    }
+                    std::vector<std::string> conjReasons;
+                    if (!enableFast) conjReasons.emplace_back("fast_disabled");
+                    if (singleCandidate) conjReasons.emplace_back("single_randvar");
+                    if (analysis.hasNegation) conjReasons.emplace_back("negation");
+                    if (analysis.hasOr) conjReasons.emplace_back("or");
+                    if (analysis.hasCycle) conjReasons.emplace_back("cycle");
+                    if (hasEvidence) conjReasons.emplace_back("has_evidence");
+                    if (!conjReasons.empty()) {
+                        std::cout << "[fc-component] id=" << comp.id
+                                  << " conj_skip=" << join(conjReasons, ",")
+                                  << " rand_vars=" << analysis.randVars
+                                  << " has_negation=" << analysis.hasNegation
+                                  << " has_or=" << analysis.hasOr
+                                  << " has_cycle=" << analysis.hasCycle
+                                  << std::endl;
+                    }
+                }
+
+                if (!enableFast || hasEvidence) {
+                    if (enableFast && singleCandidate) fastStats.skipped++;
+                    if (enableFast && conjCandidate) conjStats.skipped++;
+                    decision.mode = "slow";
+                    decision.reason = !enableFast ? "fast_disabled" : "has_evidence";
+                    decisions.push_back(decision);
+                    SlowComponentEval slow;
+                    slow.randVars = analysis.randVars;
+                    slow.comp = std::move(analysis.comp);
+                    slowEvals.push_back(std::move(slow));
+                    continue;
+                }
+
+                if (singleCandidate) {
+                    FastComponentEval eval;
+                    eval.var = analysis.singleRand;
+                    if (!evaluateSingleRandComponent(
+                                analysis.comp, eval.var, true, eval.valuesTrue, &eval.evalMsTrue) ||
+                            !evaluateSingleRandComponent(
+                                    analysis.comp, eval.var, false, eval.valuesFalse, &eval.evalMsFalse)) {
+                        if (logFastReasons) {
+                            std::cout << "[fc-component] id=" << comp.id
+                                      << " single_skip=eval_failed"
+                                      << " rand_vars=" << analysis.randVars
+                                      << std::endl;
+                        }
+                        fastStats.skipped++;
+                        decision.mode = "slow";
+                        decision.reason = "eval_failed";
+                        decisions.push_back(decision);
+                        SlowComponentEval slow;
+                        slow.randVars = analysis.randVars;
+                        slow.comp = std::move(analysis.comp);
+                        slowEvals.push_back(std::move(slow));
+                        continue;
+                    }
+                    eval.comp = std::move(analysis.comp);
+                    fastStats.used++;
+                    fastStats.evalMs += eval.evalMsTrue + eval.evalMsFalse;
+                    decision.mode = "fast_single";
+                    decisions.push_back(decision);
+                    std::cout << "[fc-component] id=" << eval.comp.id
+                              << " fast_path=1"
+                              << " nodes=" << eval.comp.nodes.size()
+                              << " edges=" << eval.comp.edges.size()
+                              << " rand_vars=" << analysis.randVars
+                              << " eval_ms_true=" << eval.evalMsTrue
+                              << " eval_ms_false=" << eval.evalMsFalse
+                              << " total_ms=" << (eval.evalMsTrue + eval.evalMsFalse)
+                              << std::endl;
+                    if (hybridStage) {
+                        hybridStage->logMessage(Level::INFO,
+                                "component id=" + std::to_string(eval.comp.id) +
+                                        " fast_path=single" +
+                                        " nodes=" + std::to_string(eval.comp.nodes.size()) +
+                                        " edges=" + std::to_string(eval.comp.edges.size()) +
+                                        " rand_vars=" + std::to_string(analysis.randVars) +
+                                        " eval_ms_true=" + std::to_string(eval.evalMsTrue) +
+                                        " eval_ms_false=" + std::to_string(eval.evalMsFalse) +
+                                        " total_ms=" + std::to_string(eval.evalMsTrue + eval.evalMsFalse));
+                    }
+                    fastComponents.push_back(std::move(eval));
+                    continue;
+                }
+
+                if (conjCandidate) {
+                    ConjComponentEval eval;
+                    if (!evaluateConjComponent(analysis.comp, eval.probabilities, &eval.evalMs)) {
+                        if (logFastReasons) {
+                            std::cout << "[fc-component] id=" << comp.id
+                                      << " conj_skip=eval_failed"
+                                      << " rand_vars=" << analysis.randVars
+                                      << std::endl;
+                        }
+                        conjStats.skipped++;
+                        decision.mode = "slow";
+                        decision.reason = "eval_failed";
+                        decisions.push_back(decision);
+                        SlowComponentEval slow;
+                        slow.randVars = analysis.randVars;
+                        slow.comp = std::move(analysis.comp);
+                        slowEvals.push_back(std::move(slow));
+                        continue;
+                    }
+                    eval.comp = std::move(analysis.comp);
+                    conjStats.used++;
+                    conjStats.evalMs += eval.evalMs;
+                    decision.mode = "fast_conj";
+                    decisions.push_back(decision);
+                    std::cout << "[fc-component] id=" << eval.comp.id
+                              << " fast_path=conj"
+                              << " nodes=" << eval.comp.nodes.size()
+                              << " edges=" << eval.comp.edges.size()
+                              << " rand_vars=" << analysis.randVars
+                              << " eval_ms=" << eval.evalMs
+                              << " total_ms=" << eval.evalMs
+                              << std::endl;
+                    if (hybridStage) {
+                        hybridStage->logMessage(Level::INFO,
+                                "component id=" + std::to_string(eval.comp.id) +
+                                        " fast_path=conj" +
+                                        " nodes=" + std::to_string(eval.comp.nodes.size()) +
+                                        " edges=" + std::to_string(eval.comp.edges.size()) +
+                                        " rand_vars=" + std::to_string(analysis.randVars) +
+                                        " eval_ms=" + std::to_string(eval.evalMs));
+                    }
+                    conjComponents.push_back(std::move(eval));
+                    continue;
+                }
+
+                SlowComponentEval slow;
+                slow.randVars = analysis.randVars;
+                decision.mode = "slow";
+                if (analysis.hasOr) {
+                    decision.reason = "or";
+                } else if (analysis.hasNegation) {
+                    decision.reason = "negation";
+                } else if (analysis.hasCycle) {
+                    decision.reason = "cycle";
+                } else {
+                    decision.reason = "other";
+                }
+                decisions.push_back(decision);
+                slow.comp = std::move(analysis.comp);
+                slowEvals.push_back(std::move(slow));
+            }
+
             std::sort(slowEvals.begin(), slowEvals.end(),
                     [](const SlowComponentEval& a, const SlowComponentEval& b) {
                         return a.randVars > b.randVars;
                     });
 
-            long long initMsTotal = 0;
-            long long initMsMax = 0;
-            long long buildMs = 0;
-            WeightedBDDManager::InitConfig initConfig;
+            std::size_t maxRandVars = 0;
+            for (const auto& slow : slowEvals) {
+                maxRandVars = std::max(maxRandVars, slow.randVars);
+            }
             if (!slowEvals.empty()) {
-                initConfig = makeCuddInitConfig(slowEvals.front().randVars);
+                initConfig = makeCuddInitConfig(maxRandVars);
                 auto initStart = std::chrono::steady_clock::now();
                 bddManager = std::make_unique<WeightedBDDManager>(initConfig);
                 initMsTotal = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -318,65 +589,108 @@ static void runBddPipeline(
             debugger.addInfo("manager_init_ms", std::to_string(initMsTotal));
             debugger.addInfo("manager_init_ms_max", std::to_string(initMsMax));
             debugger.addInfo("manager_init_components", std::to_string(slowEvals.empty() ? 0 : 1));
+            if (hybridStage) {
+                hybridStage->logMessage(Level::INFO, "manager_init_vars=" + std::to_string(initConfig.numVars));
+                hybridStage->logMessage(Level::INFO, "manager_init_slots=" + std::to_string(initConfig.numSlots));
+                hybridStage->logMessage(Level::INFO, "manager_init_cache=" + std::to_string(initConfig.cacheSize));
+                hybridStage->logMessage(Level::INFO, "manager_init_maxmem_mb=" +
+                        std::to_string(initConfig.maxMemory / (1024UL * 1024UL)));
+                hybridStage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMsTotal));
+                hybridStage->logMessage(Level::INFO, "manager_init_ms_max=" + std::to_string(initMsMax));
+                hybridStage->logMessage(Level::INFO, "manager_init_components=" +
+                        std::to_string(slowEvals.empty() ? 0 : 1));
+            }
+
             debugger.addInfo("slow_components", std::to_string(slowEvals.size()));
             debugger.addInfo("fastpath_components", std::to_string(fastStats.used));
             debugger.addInfo("fastpath_candidates", std::to_string(fastStats.candidates));
             debugger.addInfo("fastpath_skipped", std::to_string(fastStats.skipped));
             debugger.addInfo("fastpath_eval_ms", std::to_string(fastStats.evalMs));
-            if (stage) {
-                stage->logMessage(Level::INFO, "manager_init_vars=" + std::to_string(initConfig.numVars));
-                stage->logMessage(Level::INFO, "manager_init_slots=" + std::to_string(initConfig.numSlots));
-                stage->logMessage(Level::INFO, "manager_init_cache=" + std::to_string(initConfig.cacheSize));
-                stage->logMessage(Level::INFO, "manager_init_maxmem_mb=" +
-                        std::to_string(initConfig.maxMemory / (1024UL * 1024UL)));
-                stage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMsTotal));
-                stage->logMessage(Level::INFO, "manager_init_ms_max=" + std::to_string(initMsMax));
-                stage->logMessage(Level::INFO, "manager_init_components=" +
-                        std::to_string(slowEvals.empty() ? 0 : 1));
-                stage->logMessage(Level::INFO, "slow_components=" + std::to_string(slowEvals.size()));
-                stage->logMessage(Level::INFO, "fastpath_components=" + std::to_string(fastStats.used));
-                stage->logMessage(Level::INFO, "fastpath_candidates=" + std::to_string(fastStats.candidates));
-                stage->logMessage(Level::INFO, "fastpath_skipped=" + std::to_string(fastStats.skipped));
-                stage->logMessage(Level::INFO, "fastpath_eval_ms=" + std::to_string(fastStats.evalMs));
+            debugger.addInfo("fastpath_conj_components", std::to_string(conjStats.used));
+            debugger.addInfo("fastpath_conj_candidates", std::to_string(conjStats.candidates));
+            debugger.addInfo("fastpath_conj_skipped", std::to_string(conjStats.skipped));
+            debugger.addInfo("fastpath_conj_eval_ms", std::to_string(conjStats.evalMs));
+
+            if (hybridStage) {
+                hybridStage->logMessage(Level::INFO, "slow_components=" +
+                        std::to_string(slowEvals.size()));
+                hybridStage->logMessage(Level::INFO, "fastpath_components=" +
+                        std::to_string(fastStats.used));
+                hybridStage->logMessage(Level::INFO, "fastpath_candidates=" +
+                        std::to_string(fastStats.candidates));
+                hybridStage->logMessage(Level::INFO, "fastpath_skipped=" +
+                        std::to_string(fastStats.skipped));
+                hybridStage->logMessage(Level::INFO, "fastpath_eval_ms=" +
+                        std::to_string(fastStats.evalMs));
+                hybridStage->logMessage(Level::INFO, "fastpath_conj_components=" +
+                        std::to_string(conjStats.used));
+                hybridStage->logMessage(Level::INFO, "fastpath_conj_candidates=" +
+                        std::to_string(conjStats.candidates));
+                hybridStage->logMessage(Level::INFO, "fastpath_conj_skipped=" +
+                        std::to_string(conjStats.skipped));
+                hybridStage->logMessage(Level::INFO, "fastpath_conj_eval_ms=" +
+                        std::to_string(conjStats.evalMs));
+            }
+            if (logFastReasons) {
+                std::size_t fastSingle = 0;
+                std::size_t fastConj = 0;
+                std::size_t slowCount = 0;
+                for (const auto& decision : decisions) {
+                    if (decision.mode == "fast_single") {
+                        fastSingle++;
+                    } else if (decision.mode == "fast_conj") {
+                        fastConj++;
+                    } else {
+                        slowCount++;
+                    }
+                }
+                std::cout << "[fc-component-info] total=" << decisions.size()
+                          << " fast_single=" << fastSingle
+                          << " fast_conj=" << fastConj
+                          << " slow=" << slowCount
+                          << std::endl;
+                for (const auto& decision : decisions) {
+                    std::cout << "[fc-component-info] id=" << decision.id
+                              << " nodes=" << decision.nodes
+                              << " edges=" << decision.edges
+                              << " rand_vars=" << decision.randVars
+                              << " has_negation=" << decision.hasNegation
+                              << " has_or=" << decision.hasOr
+                              << " has_cycle=" << decision.hasCycle
+                              << " has_evidence=" << decision.hasEvidence
+                              << " mode=" << decision.mode
+                              << " reason=" << decision.reason
+                              << std::endl;
+                }
             }
 
-            debugger.endStage();
-
-            debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
-            auto t2 = std::chrono::steady_clock::now();
-            auto resolvedEvs = applyEvidence(graph, evidences);
-            auto t3 = std::chrono::steady_clock::now();
-            auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
-            long long evidenceBuildMs = 0;
-            long long evidenceWmcMs = 0;
-            long long perNodeWmcMs = 0;
-            long long fastPathMs = 0;
-            long long liveNodesSum = 0;
-
-            probResult.clear();
             if (!fastComponents.empty()) {
-                auto fastStart = std::chrono::steady_clock::now();
                 for (const auto& fast : fastComponents) {
-                    const auto& compEvs = evidencesByComponent[fast.comp.id];
-                    bool eTrue = evidenceSatisfied(compEvs, fast.valuesTrue);
-                    bool eFalse = evidenceSatisfied(compEvs, fast.valuesFalse);
                     double p = fast.var.probability;
-                    double evidenceWeight = (eTrue ? p : 0.0) + (eFalse ? (1.0 - p) : 0.0);
-
                     for (const auto& node : fast.comp.nodes) {
+                        if (!node->needOutput) {
+                            continue;
+                        }
                         auto itTrue = fast.valuesTrue.find(node);
                         bool vTrue = (itTrue != fast.valuesTrue.end()) ? itTrue->second : false;
                         auto itFalse = fast.valuesFalse.find(node);
                         bool vFalse = (itFalse != fast.valuesFalse.end()) ? itFalse->second : false;
-                        double numerator = (eTrue && vTrue ? p : 0.0) +
-                                (eFalse && vFalse ? (1.0 - p) : 0.0);
-                        double prob = (evidenceWeight == 0.0) ? 0.0 : numerator / evidenceWeight;
+                        double numerator = (vTrue ? p : 0.0) + (vFalse ? (1.0 - p) : 0.0);
+                        probResult[node] = numerator;
+                    }
+                }
+            }
+            if (!conjComponents.empty()) {
+                for (const auto& conj : conjComponents) {
+                    for (const auto& [node, prob] : conj.probabilities) {
+                        if (!node->needOutput) {
+                            continue;
+                        }
                         probResult[node] = prob;
                     }
                 }
-                fastPathMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - fastStart).count();
             }
+            fastPathMs = fastStats.evalMs + conjStats.evalMs;
             for (auto& slow : slowEvals) {
                 if (!bddManager) {
                     throw std::runtime_error("Missing BDD manager for slow components.");
@@ -432,7 +746,15 @@ static void runBddPipeline(
                 evidenceWmcMs += evidenceWmcMsComp;
 
                 auto perNodeStart = std::chrono::steady_clock::now();
-                for (const auto& [node, bdd] : compNodeFormulas) {
+                for (const auto& node : subview.getNodes()) {
+                    if (!node->needOutput) {
+                        continue;
+                    }
+                    auto it = compNodeFormulas.find(node);
+                    if (it == compNodeFormulas.end()) {
+                        continue;
+                    }
+                    const auto& bdd = it->second;
                     double prob = 0.0;
                     if (componentEvs.empty()) {
                         prob = bddManager->computeWeightedModelCount(bdd);
@@ -483,8 +805,8 @@ static void runBddPipeline(
             std::cout << "[pipeline] evidence BDD build took " << evidenceBuildMs << " ms\n";
             std::cout << "[pipeline] evidence WMC took " << evidenceWmcMs << " ms\n";
             std::cout << "[pipeline] per-node conditional WMC took " << perNodeWmcMs << " ms\n";
-            if (fastStats.used > 0) {
-                std::cout << "[pipeline] fastpath single-rand WMC took " << fastPathMs << " ms\n";
+            if (fastStats.used > 0 || conjStats.used > 0) {
+                std::cout << "[pipeline] fastpath WMC took " << fastPathMs << " ms\n";
             }
 
             debugger.endStage();
@@ -497,17 +819,24 @@ static void runBddPipeline(
             std::cout << "[pipeline] probability dump took " << tDumpMs << " ms\n";
             debugger.endStage();
         } else {
+            auto* fcStage = debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+            auto varEstimate = estimateBddVarCount(view);
+            debugger.addInfo("rand_vars", std::to_string(varEstimate));
+            if (fcStage) {
+                fcStage->logMessage(Level::INFO, "rand_vars=" + std::to_string(varEstimate));
+            }
+
             auto initConfig = makeCuddInitConfig(varEstimate);
             debugger.addInfo("manager_init_vars", std::to_string(initConfig.numVars));
             debugger.addInfo("manager_init_slots", std::to_string(initConfig.numSlots));
             debugger.addInfo("manager_init_cache", std::to_string(initConfig.cacheSize));
             debugger.addInfo("manager_init_maxmem_mb",
                     std::to_string(initConfig.maxMemory / (1024UL * 1024UL)));
-            if (stage) {
-                stage->logMessage(Level::INFO, "manager_init_vars=" + std::to_string(initConfig.numVars));
-                stage->logMessage(Level::INFO, "manager_init_slots=" + std::to_string(initConfig.numSlots));
-                stage->logMessage(Level::INFO, "manager_init_cache=" + std::to_string(initConfig.cacheSize));
-                stage->logMessage(Level::INFO, "manager_init_maxmem_mb=" +
+            if (fcStage) {
+                fcStage->logMessage(Level::INFO, "manager_init_vars=" + std::to_string(initConfig.numVars));
+                fcStage->logMessage(Level::INFO, "manager_init_slots=" + std::to_string(initConfig.numSlots));
+                fcStage->logMessage(Level::INFO, "manager_init_cache=" + std::to_string(initConfig.cacheSize));
+                fcStage->logMessage(Level::INFO, "manager_init_maxmem_mb=" +
                         std::to_string(initConfig.maxMemory / (1024UL * 1024UL)));
             }
             auto initStart = std::chrono::steady_clock::now();
@@ -516,8 +845,8 @@ static void runBddPipeline(
                                   std::chrono::steady_clock::now() - initStart)
                                   .count();
             debugger.addInfo("manager_init_ms", std::to_string(initMs));
-            if (stage) {
-                stage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMs));
+            if (fcStage) {
+                fcStage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMs));
             }
             auto t0 = std::chrono::steady_clock::now();
             buildFormulasCyclewise(view, *bddManager, nodeFormulas, edgeFormulas);
@@ -533,65 +862,79 @@ static void runBddPipeline(
             auto resolvedEvs = applyEvidence(graph, evidences);
             auto t3 = std::chrono::steady_clock::now();
 
-            auto evidenceBdd = bddManager->getTrue();
-
-            for (const auto& [eNode, val] : resolvedEvs) {
-                auto it = nodeFormulas.find(eNode);
-                if (it == nodeFormulas.end()) {
-                    throw std::runtime_error("Evidence node has no formula: " +
-                            eNode->getTuple().toString());
-                }
-
-                auto lit = it->second;
-                if (!val) {
-                    lit = bddManager->makeNot(lit);
-                }
-                evidenceBdd = bddManager->makeAnd(evidenceBdd, lit);
-            }
-
-            auto t4 = std::chrono::steady_clock::now();
-
-            double evidenceWeight = 1.0;
-            if (!resolvedEvs.empty()) {
-                evidenceWeight = bddManager->computeWeightedModelCount(evidenceBdd);
-            }
-
-            auto t5 = std::chrono::steady_clock::now();
+            auto components = buildComponentSubgraphs(view);
+            auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
+            long long evidenceBuildMs = 0;
+            long long evidenceWmcMs = 0;
+            long long perNodeWmcMs = 0;
 
             probResult.clear();
-            for (const auto& [node, bdd] : nodeFormulas) {
-                double prob = 0.0;
-
-                if (resolvedEvs.empty()) {
-                    prob = bddManager->computeWeightedModelCount(bdd);
-                } else if (evidenceWeight == 0.0) {
-                    prob = 0.0;
-                } else {
-                    auto joint = bddManager->makeAnd(bdd, evidenceBdd);
-                    double jointW = bddManager->computeWeightedModelCount(joint);
-                    prob = jointW / evidenceWeight;
+            for (const auto& comp : components) {
+                const auto& componentEvs = evidencesByComponent[comp.id];
+                auto evidenceBuildStart = std::chrono::steady_clock::now();
+                auto evidenceBdd = bddManager->getTrue();
+                for (const auto& [eNode, val] : componentEvs) {
+                    auto it = nodeFormulas.find(eNode);
+                    if (it == nodeFormulas.end()) {
+                        throw std::runtime_error("Evidence node has no formula: " +
+                                eNode->getTuple().toString());
+                    }
+                    auto lit = it->second;
+                    if (!val) {
+                        lit = bddManager->makeNot(lit);
+                    }
+                    evidenceBdd = bddManager->makeAnd(evidenceBdd, lit);
                 }
+                evidenceBuildMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now() - evidenceBuildStart)
+                                           .count();
 
-                probResult[node] = prob;
+                auto wmcStart = std::chrono::steady_clock::now();
+                double evidenceWeight = 1.0;
+                if (!componentEvs.empty()) {
+                    evidenceWeight = bddManager->computeWeightedModelCount(evidenceBdd);
+                }
+                evidenceWmcMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - wmcStart)
+                                         .count();
+
+                auto perNodeStart = std::chrono::steady_clock::now();
+                for (const auto& node : comp.nodes) {
+                    if (!node->needOutput) {
+                        continue;
+                    }
+                    auto it = nodeFormulas.find(node);
+                    if (it == nodeFormulas.end()) {
+                        continue;
+                    }
+                    const auto& bdd = it->second;
+                    double prob = 0.0;
+                    if (componentEvs.empty()) {
+                        prob = bddManager->computeWeightedModelCount(bdd);
+                    } else if (evidenceWeight == 0.0) {
+                        prob = 0.0;
+                    } else {
+                        auto joint = bddManager->makeAnd(bdd, evidenceBdd);
+                        double jointW = bddManager->computeWeightedModelCount(joint);
+                        prob = jointW / evidenceWeight;
+                    }
+                    probResult[node] = prob;
+                }
+                perNodeWmcMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now() - perNodeStart)
+                                        .count();
             }
             for (const auto& [node, prob] : precomputedProbResult) {
                 probResult.emplace(node, prob);
             }
 
-            auto t6 = std::chrono::steady_clock::now();
-
             std::cout << "[pipeline] evidence resolve/tag took "
                       << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
                       << " ms\n";
-            std::cout << "[pipeline] evidence BDD build took "
-                      << std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count()
-                      << " ms\n";
-            std::cout << "[pipeline] evidence WMC took "
-                      << std::chrono::duration_cast<std::chrono::milliseconds>(t5 - t4).count()
-                      << " ms\n";
+            std::cout << "[pipeline] component evidence build took " << evidenceBuildMs << " ms\n";
+            std::cout << "[pipeline] component evidence WMC took " << evidenceWmcMs << " ms\n";
             std::cout << "[pipeline] per-node conditional WMC took "
-                      << std::chrono::duration_cast<std::chrono::milliseconds>(t6 - t5).count()
-                      << " ms\n";
+                      << perNodeWmcMs << " ms\n";
 
             debugger.endStage();
             debugger.startStage(StageKind::IO_DUMP_FULL);
@@ -625,7 +968,8 @@ static void runSddPipeline(
         IncrementalDerivationGraph& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        bool enableOnlineCli) {
+        bool enableOnlineCli,
+        StageInfo* rewriteHybridStage) {
     Debugger& debugger = Debugger::getInstance();
 
     std::map<NodePtr, SddNodeRef> nodeFormulas;
@@ -634,13 +978,168 @@ static void runSddPipeline(
     const bool computeProbabilities = !opt.isDerivationOnly();
 
     if (computeProbabilities) {
-        auto* stage = debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
         if (opt.isRewriteEnabled()) {
+            auto* hybridStage = rewriteHybridStage;
+            if (!hybridStage) {
+                hybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
+            }
+            auto varEstimate = estimateBddVarCount(view);
+            debugger.addInfo("rand_vars", std::to_string(varEstimate));
+            if (hybridStage) {
+                hybridStage->logMessage(Level::INFO, "rand_vars=" + std::to_string(varEstimate));
+            }
+
             auto components = buildComponentSubgraphs(view);
+            auto analyses = analyzeComponents(view, std::move(components));
+
+            auto t2 = std::chrono::steady_clock::now();
+            auto resolvedEvs = applyEvidence(graph, evidences);
+            auto t3 = std::chrono::steady_clock::now();
+            auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
+
             std::vector<FastComponentEval> fastComponents;
+            std::vector<ConjComponentEval> conjComponents;
+            std::vector<ComponentSubgraph> slowComponents;
             FastComponentStats fastStats;
-            auto slowComponents = collectSingleRandFastComponents(
-                    std::move(components), opt.isSingleRandFastEnabled(), fastComponents, fastStats);
+            ConjFastStats conjStats;
+            const bool logFastReasons = opt.isDumpDotEnabled();
+            std::vector<ComponentDecision> decisions;
+            decisions.reserve(analyses.size());
+
+            const bool enableFast = opt.isSingleRandFastEnabled();
+            for (auto& analysis : analyses) {
+                const auto& comp = analysis.comp;
+                const auto& compEvs = evidencesByComponent[comp.id];
+                const bool hasEvidence = !compEvs.empty();
+                const bool singleCandidate = analysis.randVars == 1;
+                const bool conjCandidate = !singleCandidate && !analysis.hasNegation &&
+                        !analysis.hasOr && !analysis.hasCycle;  // fast path excludes cycles/OR/negation
+                ComponentDecision decision{
+                        comp.id,
+                        comp.nodes.size(),
+                        comp.edges.size(),
+                        analysis.randVars,
+                        hasEvidence,
+                        analysis.hasNegation,
+                        analysis.hasOr,
+                        analysis.hasCycle,
+                        "",
+                        "",
+                };
+
+                if (enableFast) {
+                    if (singleCandidate) fastStats.candidates++;
+                    if (conjCandidate) conjStats.candidates++;
+                }
+                if (logFastReasons) {
+                    std::vector<std::string> singleReasons;
+                    if (!enableFast) singleReasons.emplace_back("fast_disabled");
+                    if (!singleCandidate) singleReasons.emplace_back("randvars!=1");
+                    if (hasEvidence) singleReasons.emplace_back("has_evidence");
+                    if (!singleReasons.empty()) {
+                        std::cout << "[fc-component] id=" << comp.id
+                                  << " single_skip=" << join(singleReasons, ",")
+                                  << " rand_vars=" << analysis.randVars
+                                  << " has_negation=" << analysis.hasNegation
+                                  << " has_or=" << analysis.hasOr
+                                  << " has_cycle=" << analysis.hasCycle
+                                  << std::endl;
+                    }
+                    std::vector<std::string> conjReasons;
+                    if (!enableFast) conjReasons.emplace_back("fast_disabled");
+                    if (singleCandidate) conjReasons.emplace_back("single_randvar");
+                    if (analysis.hasNegation) conjReasons.emplace_back("negation");
+                    if (analysis.hasOr) conjReasons.emplace_back("or");
+                    if (analysis.hasCycle) conjReasons.emplace_back("cycle");
+                    if (hasEvidence) conjReasons.emplace_back("has_evidence");
+                    if (!conjReasons.empty()) {
+                        std::cout << "[fc-component] id=" << comp.id
+                                  << " conj_skip=" << join(conjReasons, ",")
+                                  << " rand_vars=" << analysis.randVars
+                                  << " has_negation=" << analysis.hasNegation
+                                  << " has_or=" << analysis.hasOr
+                                  << " has_cycle=" << analysis.hasCycle
+                                  << std::endl;
+                    }
+                }
+
+                if (!enableFast || hasEvidence) {
+                    if (enableFast && singleCandidate) fastStats.skipped++;
+                    if (enableFast && conjCandidate) conjStats.skipped++;
+                    decision.mode = "slow";
+                    decision.reason = !enableFast ? "fast_disabled" : "has_evidence";
+                    decisions.push_back(decision);
+                    slowComponents.push_back(std::move(analysis.comp));
+                    continue;
+                }
+
+                if (singleCandidate) {
+                    FastComponentEval eval;
+                    eval.var = analysis.singleRand;
+                    if (!evaluateSingleRandComponent(
+                                analysis.comp, eval.var, true, eval.valuesTrue, &eval.evalMsTrue) ||
+                            !evaluateSingleRandComponent(
+                                    analysis.comp, eval.var, false, eval.valuesFalse, &eval.evalMsFalse)) {
+                        if (logFastReasons) {
+                            std::cout << "[fc-component] id=" << comp.id
+                                      << " single_skip=eval_failed"
+                                      << " rand_vars=" << analysis.randVars
+                                      << std::endl;
+                        }
+                        fastStats.skipped++;
+                        decision.mode = "slow";
+                        decision.reason = "eval_failed";
+                        decisions.push_back(decision);
+                        slowComponents.push_back(std::move(analysis.comp));
+                        continue;
+                    }
+                    eval.comp = std::move(analysis.comp);
+                    fastStats.used++;
+                    fastStats.evalMs += eval.evalMsTrue + eval.evalMsFalse;
+                    decision.mode = "fast_single";
+                    decisions.push_back(decision);
+                    fastComponents.push_back(std::move(eval));
+                    continue;
+                }
+
+                if (conjCandidate) {
+                    ConjComponentEval eval;
+                    if (!evaluateConjComponent(analysis.comp, eval.probabilities, &eval.evalMs)) {
+                        if (logFastReasons) {
+                            std::cout << "[fc-component] id=" << comp.id
+                                      << " conj_skip=eval_failed"
+                                      << " rand_vars=" << analysis.randVars
+                                      << std::endl;
+                        }
+                        conjStats.skipped++;
+                        decision.mode = "slow";
+                        decision.reason = "eval_failed";
+                        decisions.push_back(decision);
+                        slowComponents.push_back(std::move(analysis.comp));
+                        continue;
+                    }
+                    eval.comp = std::move(analysis.comp);
+                    conjStats.used++;
+                    conjStats.evalMs += eval.evalMs;
+                    decision.mode = "fast_conj";
+                    decisions.push_back(decision);
+                    conjComponents.push_back(std::move(eval));
+                    continue;
+                }
+
+                decision.mode = "slow";
+                if (analysis.hasOr) {
+                    decision.reason = "or";
+                } else if (analysis.hasNegation) {
+                    decision.reason = "negation";
+                } else if (analysis.hasCycle) {
+                    decision.reason = "cycle";
+                } else {
+                    decision.reason = "other";
+                }
+                decisions.push_back(decision);
+                slowComponents.push_back(std::move(analysis.comp));
+            }
 
             long long initMsTotal = 0;
             long long initMsMax = 0;
@@ -669,54 +1168,95 @@ static void runSddPipeline(
             debugger.addInfo("fastpath_candidates", std::to_string(fastStats.candidates));
             debugger.addInfo("fastpath_skipped", std::to_string(fastStats.skipped));
             debugger.addInfo("fastpath_eval_ms", std::to_string(fastStats.evalMs));
-            if (stage) {
-                stage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMsTotal));
-                stage->logMessage(Level::INFO, "manager_init_ms_max=" + std::to_string(initMsMax));
-                stage->logMessage(Level::INFO, "manager_init_components=" +
+            debugger.addInfo("fastpath_conj_components", std::to_string(conjStats.used));
+            debugger.addInfo("fastpath_conj_candidates", std::to_string(conjStats.candidates));
+            debugger.addInfo("fastpath_conj_skipped", std::to_string(conjStats.skipped));
+            debugger.addInfo("fastpath_conj_eval_ms", std::to_string(conjStats.evalMs));
+            if (hybridStage) {
+                hybridStage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMsTotal));
+                hybridStage->logMessage(Level::INFO, "manager_init_ms_max=" + std::to_string(initMsMax));
+                hybridStage->logMessage(Level::INFO, "manager_init_components=" +
                         std::to_string(bundles.size()));
-                stage->logMessage(Level::INFO, "fastpath_components=" + std::to_string(fastStats.used));
-                stage->logMessage(Level::INFO, "fastpath_candidates=" + std::to_string(fastStats.candidates));
-                stage->logMessage(Level::INFO, "fastpath_skipped=" + std::to_string(fastStats.skipped));
-                stage->logMessage(Level::INFO, "fastpath_eval_ms=" + std::to_string(fastStats.evalMs));
+                hybridStage->logMessage(Level::INFO, "fastpath_components=" + std::to_string(fastStats.used));
+                hybridStage->logMessage(Level::INFO, "fastpath_candidates=" + std::to_string(fastStats.candidates));
+                hybridStage->logMessage(Level::INFO, "fastpath_skipped=" + std::to_string(fastStats.skipped));
+                hybridStage->logMessage(Level::INFO, "fastpath_eval_ms=" + std::to_string(fastStats.evalMs));
+                hybridStage->logMessage(Level::INFO, "fastpath_conj_components=" +
+                        std::to_string(conjStats.used));
+                hybridStage->logMessage(Level::INFO, "fastpath_conj_candidates=" +
+                        std::to_string(conjStats.candidates));
+                hybridStage->logMessage(Level::INFO, "fastpath_conj_skipped=" +
+                        std::to_string(conjStats.skipped));
+                hybridStage->logMessage(Level::INFO, "fastpath_conj_eval_ms=" +
+                        std::to_string(conjStats.evalMs));
+            }
+            if (logFastReasons) {
+                std::size_t fastSingle = 0;
+                std::size_t fastConj = 0;
+                std::size_t slowCount = 0;
+                for (const auto& decision : decisions) {
+                    if (decision.mode == "fast_single") {
+                        fastSingle++;
+                    } else if (decision.mode == "fast_conj") {
+                        fastConj++;
+                    } else {
+                        slowCount++;
+                    }
+                }
+                std::cout << "[fc-component-info] total=" << decisions.size()
+                          << " fast_single=" << fastSingle
+                          << " fast_conj=" << fastConj
+                          << " slow=" << slowCount
+                          << std::endl;
+                for (const auto& decision : decisions) {
+                    std::cout << "[fc-component-info] id=" << decision.id
+                              << " nodes=" << decision.nodes
+                              << " edges=" << decision.edges
+                              << " rand_vars=" << decision.randVars
+                              << " has_negation=" << decision.hasNegation
+                              << " has_or=" << decision.hasOr
+                              << " has_cycle=" << decision.hasCycle
+                              << " has_evidence=" << decision.hasEvidence
+                              << " mode=" << decision.mode
+                              << " reason=" << decision.reason
+                              << std::endl;
+                }
             }
 
             std::cout << "[pipeline] SDD formula build took " << buildMs << " ms\n";
-            debugger.endStage();
 
-            debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
-
-            auto t2 = std::chrono::steady_clock::now();
-            auto resolvedEvs = applyEvidence(graph, evidences);
-            auto t3 = std::chrono::steady_clock::now();
-            auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
             long long evidenceBuildMs = 0;
             long long evidenceWmcMs = 0;
             long long perNodeWmcMs = 0;
-            long long fastPathMs = 0;
+            long long fastPathMs = fastStats.evalMs + conjStats.evalMs;
 
             probResult.clear();
             if (!fastComponents.empty()) {
-                auto fastStart = std::chrono::steady_clock::now();
                 for (const auto& fast : fastComponents) {
-                    const auto& compEvs = evidencesByComponent[fast.comp.id];
-                    bool eTrue = evidenceSatisfied(compEvs, fast.valuesTrue);
-                    bool eFalse = evidenceSatisfied(compEvs, fast.valuesFalse);
                     double p = fast.var.probability;
-                    double evidenceWeight = (eTrue ? p : 0.0) + (eFalse ? (1.0 - p) : 0.0);
-
                     for (const auto& node : fast.comp.nodes) {
+                        if (!node->needOutput) {
+                            continue;
+                        }
                         auto itTrue = fast.valuesTrue.find(node);
                         bool vTrue = (itTrue != fast.valuesTrue.end()) ? itTrue->second : false;
                         auto itFalse = fast.valuesFalse.find(node);
                         bool vFalse = (itFalse != fast.valuesFalse.end()) ? itFalse->second : false;
-                        double numerator = (eTrue && vTrue ? p : 0.0) +
-                                (eFalse && vFalse ? (1.0 - p) : 0.0);
-                        double prob = (evidenceWeight == 0.0) ? 0.0 : numerator / evidenceWeight;
+                        double numerator = (vTrue ? p : 0.0) + (vFalse ? (1.0 - p) : 0.0);
+                        double prob = numerator;
                         probResult[node] = prob;
                     }
                 }
-                fastPathMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - fastStart).count();
+            }
+            if (!conjComponents.empty()) {
+                for (const auto& conj : conjComponents) {
+                    for (const auto& [node, prob] : conj.probabilities) {
+                        if (!node->needOutput) {
+                            continue;
+                        }
+                        probResult[node] = prob;
+                    }
+                }
             }
             for (auto& bundle : bundles) {
                 auto& manager = *bundle.manager;
@@ -751,6 +1291,9 @@ static void runSddPipeline(
 
                 auto perNodeStart = std::chrono::steady_clock::now();
                 for (const auto& [node, sdd] : bundle.nodeFormulas) {
+                    if (!node->needOutput) {
+                        continue;
+                    }
                     double prob = 0.0;
                     if (componentEvs.empty()) {
                         prob = manager.computeWeightedModelCount(sdd);
@@ -778,8 +1321,8 @@ static void runSddPipeline(
             std::cout << "[pipeline] component evidence build took " << evidenceBuildMs << " ms\n";
             std::cout << "[pipeline] component evidence WMC took " << evidenceWmcMs << " ms\n";
             std::cout << "[pipeline] per-node conditional WMC took " << perNodeWmcMs << " ms\n";
-            if (fastStats.used > 0) {
-                std::cout << "[pipeline] fastpath single-rand WMC took " << fastPathMs << " ms\n";
+            if (fastStats.used > 0 || conjStats.used > 0) {
+                std::cout << "[pipeline] fastpath WMC took " << fastPathMs << " ms\n";
             }
 
             debugger.endStage();
@@ -792,14 +1335,15 @@ static void runSddPipeline(
             std::cout << "[pipeline] probability dump took " << tDumpMs << " ms\n";
             debugger.endStage();
         } else {
+            auto* fcStage = debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
             auto initStart = std::chrono::steady_clock::now();
             sddManager = std::make_unique<SddFormulaManager>();
             auto initMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                   std::chrono::steady_clock::now() - initStart)
                                   .count();
             debugger.addInfo("manager_init_ms", std::to_string(initMs));
-            if (stage) {
-                stage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMs));
+            if (fcStage) {
+                fcStage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMs));
             }
             auto t0 = std::chrono::steady_clock::now();
             buildFormulasCyclewise(view, *sddManager, nodeFormulas, edgeFormulas);
@@ -815,61 +1359,80 @@ static void runSddPipeline(
             auto resolvedEvs = applyEvidence(graph, evidences);
             auto t3 = std::chrono::steady_clock::now();
 
-            auto evidenceSdd = sddManager->getTrue();
-            for (const auto& [eNode, val] : resolvedEvs) {
-                auto it = nodeFormulas.find(eNode);
-                if (it == nodeFormulas.end()) {
-                    throw std::runtime_error("Evidence node has no formula: " +
-                            eNode->getTuple().toString());
-                }
-                auto lit = it->second;
-                if (!val) {
-                    lit = sddManager->makeNot(lit);
-                }
-                evidenceSdd = sddManager->makeAnd(evidenceSdd, lit);
-            }
-
-            auto t4 = std::chrono::steady_clock::now();
-
-            double evidenceWeight = 1.0;
-            if (!resolvedEvs.empty()) {
-                evidenceWeight = sddManager->computeWeightedModelCount(evidenceSdd);
-            }
-
-            auto t5 = std::chrono::steady_clock::now();
+            auto components = buildComponentSubgraphs(view);
+            auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
+            long long evidenceBuildMs = 0;
+            long long evidenceWmcMs = 0;
+            long long perNodeWmcMs = 0;
 
             probResult.clear();
-            for (const auto& [node, sdd] : nodeFormulas) {
-                double prob = 0.0;
-
-                if (resolvedEvs.empty()) {
-                    prob = sddManager->computeWeightedModelCount(sdd);
-                } else if (evidenceWeight == 0.0) {
-                    prob = 0.0;
-                } else {
-                    auto joint = sddManager->makeAnd(sdd, evidenceSdd);
-                    double jointW = sddManager->computeWeightedModelCount(joint);
-                    prob = jointW / evidenceWeight;
+            for (const auto& comp : components) {
+                const auto& componentEvs = evidencesByComponent[comp.id];
+                auto evidenceBuildStart = std::chrono::steady_clock::now();
+                auto evidenceSdd = sddManager->getTrue();
+                for (const auto& [eNode, val] : componentEvs) {
+                    auto it = nodeFormulas.find(eNode);
+                    if (it == nodeFormulas.end()) {
+                        throw std::runtime_error("Evidence node has no formula: " +
+                                eNode->getTuple().toString());
+                    }
+                    auto lit = it->second;
+                    if (!val) {
+                        lit = sddManager->makeNot(lit);
+                    }
+                    evidenceSdd = sddManager->makeAnd(evidenceSdd, lit);
                 }
+                evidenceBuildMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now() - evidenceBuildStart)
+                                           .count();
 
-                probResult[node] = prob;
+                auto wmcStart = std::chrono::steady_clock::now();
+                double evidenceWeight = 1.0;
+                if (!componentEvs.empty()) {
+                    evidenceWeight = sddManager->computeWeightedModelCount(evidenceSdd);
+                }
+                evidenceWmcMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - wmcStart)
+                                         .count();
+
+                auto perNodeStart = std::chrono::steady_clock::now();
+                for (const auto& node : comp.nodes) {
+                    if (!node->needOutput) {
+                        continue;
+                    }
+                    auto it = nodeFormulas.find(node);
+                    if (it == nodeFormulas.end()) {
+                        continue;
+                    }
+                    const auto& sdd = it->second;
+                    double prob = 0.0;
+                    if (componentEvs.empty()) {
+                        prob = sddManager->computeWeightedModelCount(sdd);
+                    } else if (evidenceWeight == 0.0) {
+                        prob = 0.0;
+                    } else {
+                        auto joint = sddManager->makeAnd(sdd, evidenceSdd);
+                        double jointW = sddManager->computeWeightedModelCount(joint);
+                        prob = jointW / evidenceWeight;
+                    }
+                    probResult[node] = prob;
+                }
+                perNodeWmcMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now() - perNodeStart)
+                                        .count();
             }
             for (const auto& [node, prob] : precomputedProbResult) {
                 probResult.emplace(node, prob);
             }
 
-            auto t6 = std::chrono::steady_clock::now();
-
             view.dumpStatistics(std::cout);
-            std::cout << "[pipeline] component evidence build took "
+            std::cout << "[pipeline] evidence resolve/tag took "
                       << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
                       << " ms\n";
-            std::cout << "[pipeline] component evidence WMC took "
-                      << std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count()
-                      << " ms\n";
+            std::cout << "[pipeline] component evidence build took " << evidenceBuildMs << " ms\n";
+            std::cout << "[pipeline] component evidence WMC took " << evidenceWmcMs << " ms\n";
             std::cout << "[pipeline] per-node conditional WMC took "
-                      << std::chrono::duration_cast<std::chrono::milliseconds>(t6 - t5).count()
-                      << " ms\n";
+                      << perNodeWmcMs << " ms\n";
 
             debugger.endStage();
             debugger.startStage(StageKind::IO_DUMP_FULL);
@@ -944,8 +1507,11 @@ void runPipeline(
     if (opt.isDumpJsonEnabled()) {
         view.dumpJson(makeOutputPath(opt, "derivation.json"));
     }
+    StageInfo* rewriteHybridStage = nullptr;
+    if (opt.isRewriteEnabled() && !opt.isDerivationOnly()) {
+        rewriteHybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
+    }
     if (opt.isRewriteEnabled()) {
-        debugger.startStage(StageKind::PRECONFIG_FULL);
         auto rewriteStart = std::chrono::steady_clock::now();
         GraphRewriter rewriter;
         RewriteFeatureFlags rewriteFlags;
@@ -978,10 +1544,13 @@ void runPipeline(
                   << ", randomVarsRatio=" << randomVarsRatio
                   << ", randomVarsRemoved=" << rewriteStats.totalRandomVars
                   << ", simpleFactRegions=" << rewriteStats.simpleFactRegions << std::endl;
+        if (rewriteHybridStage) {
+            debugger.addInfo("rewrite_ms", std::to_string(rewriteMs));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_ms=" + std::to_string(rewriteMs));
+        }
         if (opt.isDumpDotEnabled()) {
             view.dumpDot(makeOutputPath(opt, "rewrite_final.dot"));
         }
-        debugger.endStage();
         rewritePerformed = true;
     }
 
@@ -991,9 +1560,11 @@ void runPipeline(
     }
 
     if (program.getKnowledge() == souffle::Knowledge::BDD) {
-        runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, allowOnlineCli);
+        runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, allowOnlineCli,
+                rewriteHybridStage);
     } else if (program.getKnowledge() == souffle::Knowledge::SDD) {
-        runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, allowOnlineCli);
+        runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, allowOnlineCli,
+                rewriteHybridStage);
     } else {
         std::cerr << "Unknown knowledge representation" << std::endl;
     }

@@ -196,7 +196,10 @@ for each facts line:
 
 ## Evaluation (2026-01-05, full rule set)
 - All runs use `--det-opt`, full-only compilation, and default `naive-split`.
-- Rewrite runs use component-wise FC with `FC_WMC_HYBRID`; `dd_live_nodes` for
+- Rewrite runs use component-wise FC/WMC with `FC_WMC_HYBRID` (now includes
+  rewrite time and reports `rewrite_ms`); BDD init is lazy and skipped when no
+  slow components exist. Probabilities are stored only for `needOutput` nodes
+  (plus precomputed facts) so `IO_DUMP` is comparable. `dd_live_nodes` for
   rewrite is a summed, approximate count.
 - Full per-case timing table (including `rand_vars`) is recorded in
   `README.eval.md` and `README.rewrite.md`.

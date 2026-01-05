@@ -3021,6 +3021,7 @@ void dumpProbabilities(
               [](const NodePtr& a, const NodePtr& b) {
                   return a->getTuple().toString() < b->getTuple().toString();
               });
+    std::size_t outputCount = 0;
     for (auto& node: sortedNodes) {
         double prob = 0.0;
         auto it = nodeProbabilities.find(node);
@@ -3035,8 +3036,14 @@ void dumpProbabilities(
         }
         if (node->needOutput || precomputedProbResult.count(node)) {
             outputFile << node->getTuple().toString() << " : " << prob << std::endl;
+            ++outputCount;
         }
     }
+    std::cout << "[pipeline] dumpProbabilities nodes=" << sortedNodes.size()
+              << " outputs=" << outputCount
+              << " prob_nodes=" << nodeProbabilities.size()
+              << " precomputed_nodes=" << precomputedProbResult.size()
+              << std::endl;
 
 }
 

@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
+#include <limits>
 #include <climits>
 #include <type_traits>
 #include <utility>
@@ -676,6 +677,158 @@ private:
     bool invalid = false;
 };
 
+struct ConjNodeRef {
+    std::vector<int> vars;
+    bool valid = true;
+    bool isFalse = false;
+    void* get() const { return valid ? const_cast<ConjNodeRef*>(this) : nullptr; }
+};
+
+class ConjFormulaManager final : public FormulaManager<ConjNodeRef> {
+public:
+    ConjNodeRef createVar(int idx) override {
+        registerVar(idx, 1.0);
+        return makeVar(idx);
+    }
+    ConjNodeRef createVar(int idx, const Node& node) override {
+        registerVar(idx, node.getProbability());
+        return makeVar(idx);
+    }
+    ConjNodeRef createVar(int idx, const Hyperedge& edge) override {
+        registerVar(idx, edge.getProbability());
+        return makeVar(idx);
+    }
+
+    ConjNodeRef makeAnd(const ConjNodeRef& a, const ConjNodeRef& b) override {
+        if (!a.valid || !b.valid) return invalidRef();
+        if (a.isFalse || b.isFalse) return getFalse();
+        return ConjNodeRef{mergeVars(a.vars, b.vars), true, false};
+    }
+    ConjNodeRef makeAnd(const std::vector<ConjNodeRef>& nodes) override {
+        std::vector<int> vars;
+        for (const auto& node : nodes) {
+            if (!node.valid) return invalidRef();
+            if (node.isFalse) return getFalse();
+            vars = mergeVars(vars, node.vars);
+        }
+        return ConjNodeRef{std::move(vars), true, false};
+    }
+    ConjNodeRef makeOr(const ConjNodeRef& a, const ConjNodeRef& b) override {
+        invalid = true;
+        return invalidRef();
+    }
+    ConjNodeRef makeOr(const std::vector<ConjNodeRef>& nodes) override {
+        if (nodes.size() == 1) {
+            return nodes[0];
+        }
+        invalid = true;
+        return invalidRef();
+    }
+    ConjNodeRef makeNot(const ConjNodeRef& a) override {
+        invalid = true;
+        return invalidRef();
+    }
+    ConjNodeRef makeCondition(const ConjNodeRef& f, const std::vector<int>&,
+            const std::vector<int>&) override {
+        return f;
+    }
+    ConjNodeRef getTrue() override {
+        return ConjNodeRef{{}, true, false};
+    }
+    ConjNodeRef getFalse() override {
+        return ConjNodeRef{{}, true, true};
+    }
+    bool isSame(const ConjNodeRef& a, const ConjNodeRef& b) override {
+        return a.valid == b.valid && a.isFalse == b.isFalse && a.vars == b.vars;
+    }
+    std::string toString(const ConjNodeRef& node) override {
+        if (!node.valid) return "invalid";
+        if (node.isFalse) return "false";
+        if (node.vars.empty()) return "true";
+        return "conj(" + std::to_string(node.vars.size()) + ")";
+    }
+    void setVariableWeight(int idx, double posWeight, double) override {
+        registerVar(idx, posWeight);
+    }
+    double computeWeightedModelCount(const ConjNodeRef& node) override {
+        if (!node.valid) return 0.0;
+        if (node.isFalse) return 0.0;
+        double prob = 1.0;
+        for (int var : node.vars) {
+            if (var < 0 || static_cast<size_t>(var) >= varProb_.size()) {
+                return 0.0;
+            }
+            prob *= varProb_[static_cast<size_t>(var)];
+        }
+        return prob;
+    }
+    int getVarIndex(const Node& node) override {
+        auto it = nodeIndex_.find(&node);
+        if (it != nodeIndex_.end()) return it->second;
+        int idx = nextVarIndex_++;
+        nodeIndex_[&node] = idx;
+        registerVar(idx, node.getProbability());
+        return idx;
+    }
+    int getVarIndex(const Hyperedge& edge) override {
+        auto it = edgeIndex_.find(&edge);
+        if (it != edgeIndex_.end()) return it->second;
+        int idx = nextVarIndex_++;
+        edgeIndex_[&edge] = idx;
+        registerVar(idx, edge.getProbability());
+        return idx;
+    }
+    void printInfo(const ConjNodeRef&, const std::string&) override {}
+    void dumpProfilingStatistics() override {}
+
+    bool isValid() const { return !invalid; }
+
+private:
+    ConjNodeRef makeVar(int idx) {
+        return ConjNodeRef{{idx}, true, false};
+    }
+    ConjNodeRef invalidRef() {
+        return ConjNodeRef{{}, false, false};
+    }
+    void registerVar(int idx, double prob) {
+        if (idx < 0) return;
+        if (static_cast<size_t>(idx) >= varProb_.size()) {
+            varProb_.resize(static_cast<size_t>(idx) + 1, 1.0);
+        }
+        varProb_[static_cast<size_t>(idx)] = prob;
+    }
+    static std::vector<int> mergeVars(const std::vector<int>& a, const std::vector<int>& b) {
+        if (a.empty()) return b;
+        if (b.empty()) return a;
+        std::vector<int> out;
+        out.reserve(a.size() + b.size());
+        size_t i = 0;
+        size_t j = 0;
+        while (i < a.size() || j < b.size()) {
+            int va = (i < a.size()) ? a[i] : std::numeric_limits<int>::max();
+            int vb = (j < b.size()) ? b[j] : std::numeric_limits<int>::max();
+            if (va == vb) {
+                out.push_back(va);
+                ++i;
+                ++j;
+            } else if (va < vb) {
+                out.push_back(va);
+                ++i;
+            } else {
+                out.push_back(vb);
+                ++j;
+            }
+        }
+        return out;
+    }
+
+    std::vector<double> varProb_;
+    int nextVarIndex_ = 0;
+    std::unordered_map<const Node*, int> nodeIndex_;
+    std::unordered_map<const Hyperedge*, int> edgeIndex_;
+    bool invalid = false;
+};
+
 inline bool evaluateSingleRandComponent(
         const ComponentSubgraph& comp,
         const SingleRandVarInfo& var,
@@ -702,6 +855,37 @@ inline bool evaluateSingleRandComponent(
         auto it = nodeFormulas.find(node);
         bool value = (it != nodeFormulas.end()) ? it->second.value : false;
         nodeValues.emplace(node, value);
+    }
+    return true;
+}
+
+inline bool evaluateConjComponent(
+        const ComponentSubgraph& comp,
+        std::unordered_map<NodePtr, double>& nodeProbs,
+        long long* evalMs = nullptr) {
+    ConjFormulaManager manager;
+    SubgraphView subview(comp.nodes, comp.edges);
+    std::map<NodePtr, ConjNodeRef> nodeFormulas;
+    std::map<EdgePtr, ConjNodeRef> edgeFormulas;
+    auto start = std::chrono::steady_clock::now();
+    buildFormulasCyclewise(subview, manager, nodeFormulas, edgeFormulas, {}, nullptr, true, false);
+    auto end = std::chrono::steady_clock::now();
+    if (evalMs) {
+        *evalMs = static_cast<long long>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+    }
+    if (!manager.isValid()) {
+        return false;
+    }
+    nodeProbs.clear();
+    nodeProbs.reserve(comp.nodes.size());
+    for (const auto& node : comp.nodes) {
+        auto it = nodeFormulas.find(node);
+        double prob = 0.0;
+        if (it != nodeFormulas.end() && it->second.get()) {
+            prob = manager.computeWeightedModelCount(it->second);
+        }
+        nodeProbs.emplace(node, prob);
     }
     return true;
 }

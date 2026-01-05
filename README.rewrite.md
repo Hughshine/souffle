@@ -15,11 +15,16 @@ This file summarizes the SISO rewrite pipeline: design, current state (post reve
 - Local inference: build BDD formulas for the region, compute `Pr(exit | entry)` via weighted model counting.
 - Rewrite action: add a new edge `entry -> exit` with that probability; remove internal edges and non‑boundary nodes from the **view** (underlying graph only gains the new edge). Simple SISO currently only updates edge probability; nodes are not folded.
 - Fixpoint: loop detection + rewrite until no region is rewritten. A split pass may run at fixpoint depending on `--split-mode` (default `naive-split`); if split rewires edges, rewrite continues until both rewrite and split reach fixpoint.
-- After rewrite, forward compilation is done component‑wise with a single BDD manager
-  reused across components (largest‑randvar component initializes the manager; each
-  component resets it).
-- A single‑randvar fast path evaluates eligible components without DD managers.
-- Component‑wise FC + WMC are timed together under a new `FC_WMC_HYBRID` stage.
+- After rewrite, component-wise FC/WMC uses a single BDD manager reused across
+  slow components; initialization is delayed until slow components exist.
+- Single‑randvar and conjunctive fast paths evaluate eligible components without
+  DD managers.
+- Component‑wise FC + WMC are timed together under `FC_WMC_HYBRID`, which now
+  starts before rewrite so its wall time includes rewrite + split.
+- Probabilities are stored only for `needOutput` nodes (plus precomputed facts),
+  so `IO_DUMP` no longer sorts large internal node sets.
+- With `--dumpdot`, the pipeline prints `fc-component-info` lines listing each
+  component’s size, rand vars, fast/slow mode, and the slow‑path reason.
 - Logging: pipeline logs timings; rewrite stats include iterations, region counts, nodes/edges removed/added.
 
 ## Latest evaluation (2026-01-05, full rule set)
@@ -29,51 +34,53 @@ Settings:
 - Split mode: default `naive-split`.
 - Backend: BDD (CUDD); bucketed init for small/medium graphs and defaults for large graphs.
 - `rand_vars` counts probabilistic facts + probabilistic edges in the pruned view used for FC.
-- `hybrid_s` is `FC_WMC_HYBRID` wall time; `fc_s`/`wmc_s` come from `fc_build_ms`
-  and `wmc_ms` recorded in the hybrid stage.
+- `rewrite_s` is derived from `rewrite_ms` recorded inside `FC_WMC_HYBRID`.
+- `hybrid_s` is `FC_WMC_HYBRID` wall time; it includes rewrite + component FC/WMC.
+- `fc_s`/`wmc_s` come from `fc_build_ms` and `wmc_ms` recorded in the hybrid stage.
+- `manager_init_ms` is `0` when no slow components exist.
 - `dd_live_nodes` for rewrite is the sum of per‑component live nodes; treat it as
   approximate (not directly comparable to the no‑rewrite single‑manager count).
 
 | case | variant | rand_vars | total_s | seminaive_s | create_s | prune_s | rewrite_s | hybrid_s | fc_s | wmc_s | manager_init_ms | reorder_s | dd_live_nodes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| P1 | norewrite | 2 | 0.025 | 0.015 | 0.000 | 0.000 |  |  | 0.009 | 0.000 | 8 | 0.000 | 3 |
-| P1 | rewrite | 2 | 0.015 | 0.013 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0 |  | 0 |
-| P3 | norewrite | 2 | 0.018 | 0.013 | 0.000 | 0.000 |  |  | 0.004 | 0.000 | 3 | 0.000 | 3 |
-| P3 | rewrite | 2 | 0.015 | 0.013 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0 |  | 0 |
-| P4 | norewrite | 1 | 0.008 | 0.002 | 0.000 | 0.000 |  |  | 0.005 | 0.000 | 4 | 0.000 | 2 |
-| P4 | rewrite | 0 | 0.004 | 0.002 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0 |  | 0 |
-| P5 | norewrite | 12 | 0.008 | 0.003 | 0.000 | 0.000 |  |  | 0.004 | 0.000 | 3 | 0.000 | 33 |
-| P5 | rewrite | 0 | 0.005 | 0.003 | 0.000 | 0.000 | 0.001 | 0.000 | 0.000 | 0.000 | 0 |  | 0 |
-| P6 | norewrite | 39 | 0.011 | 0.004 | 0.000 | 0.001 |  |  | 0.005 | 0.000 | 3 | 0.000 | 117 |
-| P6 | rewrite | 6 | 0.012 | 0.004 | 0.000 | 0.001 | 0.002 | 0.000 | 0.000 | 0.000 | 4 | 0.000 | 16 |
-| P7 | norewrite | 56 | 0.013 | 0.005 | 0.001 | 0.001 |  |  | 0.004 | 0.000 | 3 | 0.000 | 194 |
-| P7 | rewrite | 18 | 0.016 | 0.007 | 0.001 | 0.001 | 0.002 | 0.000 | 0.000 | 0.000 | 3 | 0.000 | 55 |
-| P8 | norewrite | 53 | 0.018 | 0.008 | 0.001 | 0.001 |  |  | 0.005 | 0.000 | 3 | 0.000 | 187 |
-| P8 | rewrite | 18 | 0.019 | 0.008 | 0.001 | 0.001 | 0.003 | 0.001 | 0.000 | 0.000 | 3 | 0.000 | 58 |
-| P9 | norewrite | 113 | 0.016 | 0.006 | 0.001 | 0.001 |  |  | 0.005 | 0.000 | 3 | 0.000 | 432 |
-| P9 | rewrite | 31 | 0.019 | 0.006 | 0.001 | 0.002 | 0.004 | 0.001 | 0.000 | 0.000 | 3 | 0.000 | 92 |
-| P10 | norewrite | 32 | 0.047 | 0.024 | 0.013 | 0.001 |  |  | 0.005 | 0.000 | 3 | 0.000 | 49 |
-| P10 | rewrite | 0 | 0.043 | 0.023 | 0.013 | 0.001 | 0.001 | 0.000 | 0.000 | 0.000 | 0 |  | 0 |
-| P11 | norewrite | 16 | 0.054 | 0.029 | 0.015 | 0.001 |  |  | 0.004 | 0.000 | 3 | 0.000 | 17 |
-| P11 | rewrite | 0 | 0.041 | 0.022 | 0.013 | 0.001 | 0.000 | 0.000 | 0.000 | 0.000 | 0 |  | 0 |
-| P12 | norewrite | 466 | 0.141 | 0.062 | 0.014 | 0.012 |  |  | 0.039 | 0.000 | 27 | 0.000 | 1693 |
-| P12 | rewrite | 0 | 0.119 | 0.063 | 0.014 | 0.012 | 0.023 | 0.000 | 0.000 | 0.000 | 0 |  | 0 |
-| P13 | norewrite | 1143 | 0.544 | 0.113 | 0.029 | 0.032 |  |  | 0.339 | 0.002 | 91 | 0.210 | 4107 |
-| P13 | rewrite | 0 | 0.238 | 0.118 | 0.026 | 0.029 | 0.054 | 0.000 | 0.000 | 0.000 | 0 |  | 0 |
-| P14 | norewrite | 1643 | 0.930 | 0.168 | 0.048 | 0.046 |  |  | 0.623 | 0.002 | 25 | 0.520 | 7090 |
-| P14 | rewrite | 449 | 0.386 | 0.164 | 0.047 | 0.051 | 0.086 | 0.008 | 0.006 | 0.000 | 10 | 0.000 | 1952 |
-| P15 | norewrite | 3262 | 3.107 | 0.372 | 0.093 | 0.126 |  |  | 2.414 | 0.006 | 71 | 2.030 | 28140 |
-| P15 | rewrite | 1225 | 1.499 | 0.385 | 0.097 | 0.135 | 0.148 | 0.621 | 0.614 | 0.001 | 64 | 0.560 | 5402 |
-| P16 | norewrite | 5635 | 6.051 | 0.591 | 0.202 | 0.380 |  |  | 4.687 | 0.012 | 296 | 4.000 | 73245 |
-| P16 | rewrite | 2210 | 2.970 | 0.600 | 0.193 | 0.335 | 0.362 | 1.314 | 1.302 | 0.002 | 83 | 1.160 | 12416 |
-| P17 | norewrite | 7635 | 6.948 | 0.815 | 0.281 | 0.509 |  |  | 5.065 | 0.025 | 320 | 4.240 | 136607 |
-| P17 | rewrite | 3010 | 5.082 | 0.872 | 0.264 | 0.533 | 0.481 | 2.733 | 2.717 | 0.003 | 80 | 2.430 | 22908 |
-| P18 | norewrite | 9641 | 6.997 | 1.039 | 0.406 | 0.758 |  |  | 4.420 | 0.038 | 321 | 3.030 | 236563 |
-| P18 | rewrite | 3806 | 5.413 | 1.092 | 0.372 | 0.789 | 0.647 | 2.281 | 2.261 | 0.005 | 77 | 1.950 | 40088 |
-| P19 | norewrite | 12143 | 10.787 | 1.348 | 0.524 | 1.331 |  |  | 7.106 | 0.046 | 325 | 5.410 | 380873 |
-| P19 | rewrite | 4810 | 8.974 | 1.359 | 0.481 | 1.152 | 0.851 | 4.623 | 4.595 | 0.008 | 320 | 4.280 | 61378 |
-| P20 | norewrite | 17852 | 6.652 | 1.023 | 0.465 | 0.616 |  |  | 4.016 | 0.028 | 318 | 1.620 | 75871 |
-| P20 | rewrite | 3632 | 3.876 | 1.026 | 0.469 | 0.814 | 1.334 | 0.054 | 0.005 | 0.000 | 0 | 0.000 | 11996 |
+| P1 | norewrite | 2 | 0.027135 | 0.014387 | 0.000382 | 0.000447 |  |  | 0.010204 | 0.000055 | 9 |  | 3 |
+| P1 | rewrite | 2 | 0.016597 | 0.013901 | 0.000397 | 0.000363 | 0.000000 | 0.000862 | 0.000000 | 0.000000 | 0 |  | 0 |
+| P3 | norewrite | 2 | 0.024102 | 0.017207 | 0.000364 | 0.000365 |  |  | 0.004686 | 0.000044 | 4 |  | 3 |
+| P3 | rewrite | 2 | 0.017603 | 0.014799 | 0.000329 | 0.000468 | 0.000000 | 0.000972 | 0.000000 | 0.000000 | 0 |  | 0 |
+| P4 | norewrite | 1 | 0.010230 | 0.002478 | 0.000308 | 0.000249 |  |  | 0.005823 | 0.000038 | 5 |  | 2 |
+| P4 | rewrite | 0 | 0.003259 | 0.001687 | 0.000235 | 0.000120 | 0.000000 | 0.000140 | 0.000000 | 0.000000 | 0 |  | 0 |
+| P5 | norewrite | 12 | 0.010050 | 0.002981 | 0.000297 | 0.000336 |  |  | 0.004732 | 0.000065 | 4 |  | 35 |
+| P5 | rewrite | 0 | 0.004404 | 0.002201 | 0.000236 | 0.000267 | 0.000000 | 0.000573 | 0.000000 | 0.000000 | 0 |  | 0 |
+| P6 | norewrite | 39 | 0.017001 | 0.007366 | 0.000583 | 0.000798 |  |  | 0.006356 | 0.000058 | 5 |  | 117 |
+| P6 | rewrite | 6 | 0.009012 | 0.004329 | 0.000460 | 0.000632 | 0.001000 | 0.002142 | 0.000000 | 0.000000 | 0 |  | 0 |
+| P7 | norewrite | 56 | 0.017641 | 0.006540 | 0.001445 | 0.000918 |  |  | 0.007017 | 0.000093 | 5 |  | 196 |
+| P7 | rewrite | 18 | 0.021883 | 0.004536 | 0.001278 | 0.001889 | 0.003000 | 0.012404 | 0.000000 | 0.000000 | 8 |  | 18 |
+| P8 | norewrite | 53 | 0.020783 | 0.009727 | 0.001683 | 0.001290 |  |  | 0.005608 | 0.000093 | 4 |  | 188 |
+| P8 | rewrite | 18 | 0.027677 | 0.012210 | 0.001701 | 0.001570 | 0.004000 | 0.010268 | 0.000000 | 0.000000 | 5 |  | 17 |
+| P9 | norewrite | 113 | 0.021801 | 0.010571 | 0.001167 | 0.001619 |  |  | 0.006001 | 0.000134 | 4 |  | 432 |
+| P9 | rewrite | 31 | 0.025470 | 0.008693 | 0.001375 | 0.001926 | 0.004000 | 0.011391 | 0.000000 | 0.000000 | 5 |  | 18 |
+| P10 | norewrite | 32 | 0.056855 | 0.027486 | 0.016697 | 0.001642 |  |  | 0.005771 | 0.000061 | 5 |  | 49 |
+| P10 | rewrite | 0 | 0.049272 | 0.025122 | 0.015693 | 0.001507 | 0.000000 | 0.000785 | 0.000000 | 0.000000 | 0 |  | 0 |
+| P11 | norewrite | 16 | 0.055691 | 0.025361 | 0.016603 | 0.002846 |  |  | 0.005606 | 0.000111 | 4 |  | 17 |
+| P11 | rewrite | 0 | 0.070663 | 0.040482 | 0.020363 | 0.004089 | 0.000000 | 0.000375 | 0.000000 | 0.000000 | 0 |  | 0 |
+| P12 | norewrite | 466 | 0.154763 | 0.071156 | 0.017927 | 0.012741 |  |  | 0.045361 | 0.000774 | 31 |  | 1693 |
+| P12 | rewrite | 0 | 0.129627 | 0.066559 | 0.014860 | 0.014257 | 0.027000 | 0.027580 | 0.000000 | 0.000000 | 0 |  | 0 |
+| P13 | norewrite | 1143 | 0.566284 | 0.125265 | 0.032700 | 0.030995 |  |  | 0.359206 | 0.004237 | 80 |  | 4056 |
+| P13 | rewrite | 0 | 0.271306 | 0.123768 | 0.034156 | 0.035865 | 0.065000 | 0.065386 | 0.000000 | 0.000000 | 0 |  | 0 |
+| P14 | norewrite | 1643 | 1.057596 | 0.186317 | 0.064414 | 0.069485 |  |  | 0.710356 | 0.005460 | 33 |  | 7112 |
+| P14 | rewrite | 449 | 0.414165 | 0.181824 | 0.049822 | 0.057444 | 0.097000 | 0.108727 | 0.000000 | 0.005000 | 0 |  | 0 |
+| P15 | norewrite | 3262 | 3.587351 | 0.426634 | 0.131338 | 0.168988 |  |  | 2.805829 | 0.013068 | 49 |  | 28063 |
+| P15 | rewrite | 1225 | 0.953004 | 0.400168 | 0.109871 | 0.169324 | 0.200000 | 0.237010 | 0.000000 | 0.021000 | 0 |  | 0 |
+| P16 | norewrite | 5635 | 6.571363 | 0.642035 | 0.250246 | 0.397444 |  |  | 5.191910 | 0.025387 | 413 |  | 73472 |
+| P16 | rewrite | 2210 | 1.896653 | 0.652436 | 0.229598 | 0.443999 | 0.430000 | 0.507301 | 0.000000 | 0.040000 | 0 |  | 0 |
+| P17 | norewrite | 7635 | 8.543895 | 0.910980 | 0.292407 | 0.725272 |  |  | 6.472285 | 0.042987 | 426 |  | 136403 |
+| P17 | rewrite | 3010 | 2.800648 | 0.905866 | 0.322921 | 0.668448 | 0.689000 | 0.811796 | 0.000000 | 0.061000 | 0 |  | 0 |
+| P18 | norewrite | 9641 | 8.511692 | 1.182473 | 0.503956 | 1.037593 |  |  | 5.590781 | 0.056403 | 396 |  | 236625 |
+| P18 | rewrite | 3806 | 3.823239 | 1.150737 | 0.467236 | 0.996635 | 0.906000 | 1.091150 | 0.000000 | 0.096000 | 0 |  | 0 |
+| P19 | norewrite | 12143 | 12.326357 | 1.530985 | 0.607021 | 1.453568 |  |  | 8.480337 | 0.078253 | 374 |  | 380558 |
+| P19 | rewrite | 4810 | 5.252128 | 1.487400 | 0.572956 | 1.511006 | 1.273000 | 1.538884 | 0.000000 | 0.147000 | 0 |  | 0 |
+| P20 | norewrite | 17852 | 8.326195 | 1.143798 | 0.624185 | 0.995282 |  |  | 5.290098 | 0.080939 | 370 |  | 75932 |
+| P20 | rewrite | 3632 | 4.892494 | 1.147562 | 0.639239 | 0.972134 | 1.848000 | 1.974036 | 0.001000 | 0.005000 | 1 |  | 319 |
 
 ## Observed issues
 - Rewrite can be slower on larger graphs (e.g., P12) because detection + per‑region forward comp dominate; global BDD build may not shrink enough to offset that cost.
