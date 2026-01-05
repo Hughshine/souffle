@@ -14,7 +14,8 @@ This file summarizes the SISO rewrite pipeline: design, current state (post reve
 - Non‑trivial filter: regions with `edgeCount >= 1` or `nodeCount > 2` and at most `kMaxEdges` (default 5) are considered; random variable count is **not** enforced after the revert.
 - Local inference: build BDD formulas for the region, compute `Pr(exit | entry)` via weighted model counting.
 - Rewrite action: add a new edge `entry -> exit` with that probability; remove internal edges and non‑boundary nodes from the **view** (underlying graph only gains the new edge). Simple SISO currently only updates edge probability; nodes are not folded.
-- Fixpoint: loop detection + rewrite until no region is rewritten. Final global forward compilation runs on the rewritten view.
+- Fixpoint: loop detection + rewrite until no region is rewritten. A split pass may run at fixpoint depending on `--split-mode` (default `naive-split`); if split rewires edges, rewrite continues until both rewrite and split reach fixpoint.
+- Final global forward compilation runs on the rewritten view.
 - Logging: pipeline logs timings; rewrite stats include iterations, region counts, nodes/edges removed/added.
 
 ## Recent measurements

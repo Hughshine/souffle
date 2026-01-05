@@ -1,17 +1,17 @@
 # Derivation Graph Split 优化设计文档（伪代码为主，Codex 可直接实现）
 
-版本：v1.0（面向当前 “rewrite/split 暴露 SISO 结构” 的工程化优化）
+版本：v1.1（complete-split 合并语义修复，面向当前 “rewrite/split 暴露 SISO 结构” 的工程化优化）
 范围：**split 机会发现 + split 变换本身 + 增量维护**（不依赖你现有源码结构，按可落地数据结构与伪代码描述）
 
 ---
 
-## 0.1 当前实现状态（2026-01）
+## 0.1 当前实现状态（2026-01-04）
 
 **实现与文档设想存在差异，先记录“已落地版本”的真实行为：**
 
 * CLI 选项：`--split-mode={no-split|naive-split|complete-split}`（短名 `-P`），默认 `naive-split`。
 * split 目前**只拆 fact 节点**；尚未对中间节点复制 incoming edges。
-* complete-split 使用 **multi-source union-find** 对 outgoing 分组，依赖 `hasRVReach` 标记来避免在“无 RV 下游”的汇合点错误合并分支。
+* complete-split 使用 **multi-source union-find** 对 outgoing 分组；**任何下游交汇都会合并分支**（不再用 `hasRVReach` 放过确定性汇合），以保证相关性不被破坏。`hasRVReach` 仅用于过滤候选 fact（下游无 RV 时不 split）。
 * `hasRVReach` 目前每轮 split **全图重算**（从 RV 节点/边反向可达），尚未做增量维护。
 * split 预算已接入：`splitMaxNewNodesPerPass`、`splitMaxNewEdgesPerPass`、`splitMaxGroupsPerNode`、`splitMinGroupEdges`。
 * 调度已改为：**每次 rewrite 到 fixpoint 都尝试 split；若 split 发生则继续 rewrite 到 fixpoint，直到 split 也不再发生**（split 不再嵌入每轮 rewrite）。
@@ -21,6 +21,7 @@
 
 **结论摘要：**
 
+* 语义更新（2026-01-04）：complete-split 已改为“任何交汇即合并”。以下表格为旧语义的历史结果，仅供参考；需按新语义重跑。P20 已验证修复后 rewrite 与 no-rewrite 一致。
 * 输出一致：`facts.prob` 在所有 P4–P19 case 下三种 split 模式完全一致。
 * naive-split 在多数大实例上几乎不触发（split=0），收益接近 no-split。
 * complete-split 触发 split 更多：在启用“多轮 split”后，P17–P19 的 RV 比例显著下降、pipeline 总时间明显改善，但 rewrite 迭代/regions 成本上升。
@@ -119,6 +120,8 @@
 > split 判定（核心）
 > 对 `u` 的 outgoing 边集合 `{e_i: u->v_i}`，若存在划分使得不同组的 `DownRV(e)` 互不相交，则可以把这些 outgoing 分配到不同 clone 上。
 
+**实现注记（当前版本）**：complete-split 为保证语义安全，采用“下游结构交汇即合并”的保守判定（即只要两分支在图上相交，就认为相关），而不是显式计算 `DownRV` 交集。这会减少可拆分机会，但保证不破坏相关性。
+
 ---
 
 ## 3. 总体设计思路（回答你的核心诉求）
@@ -133,21 +136,21 @@
 
 现有常见实现会做 `O(k^2)` 的集合相交或抽样；我们改成 **worklist + union-find** 的线性分组：
 
-* 思想：只要两个 outgoing 分支在下游某处**汇合到同一段（且该段能到达 RV）**，它们的 RV support 必然相交 ⇒ 属于同一组。
+* 思想：只要两个 outgoing 分支在下游某处**汇合到同一段**，就视为相关 ⇒ 属于同一组（complete-split 采用该严格语义）。
 * 用一次多源遍历（multi-source traversal）在下游传播 “来自哪个 outgoing 分支”，发现冲突就 union。
 * 复杂度近似 `O(|V_reachable| + |E_reachable|)`（每个节点最多经历 `NONE -> SINGLE -> MULTI` 两次状态变化）。
 
 这能避免对 `k` 很大时的 `k*support_size` 或 `k^2` 相交；尤其当下游有大量共享子图时，优势更明显。
 
-### 3.2 预处理/增量维护：只维护一个布尔量 `hasRVReach[n]`（而不是大集合）
+### 3.2 预处理/增量维护：`hasRVReach[n]` 用于候选过滤（而不是分组合并）
 
 你担心“每个节点都重新算支持集很贵”。关键观察：
 
 * 进行 **分组/拆分** 并不一定需要显式 `DownRV(n)` 全集合；
 * 我们只需要一个布尔量：`hasRVReach[n]` = 从 `n` 往前是否能到达任何 RV。
 
-  * 若两个分支在某个节点 `x` 汇合，但 `hasRVReach[x]==false`，说明它们在该汇合点之后没有任何 RV，下游变量集合为空，不会造成变量交集冲突；这种汇合不应阻止 split。
-  * 若 `hasRVReach[x]==true`，汇合意味着两分支共享至少一个下游 RV，必须 union。
+* **当前实现采用更严格语义**：只要两个分支在下游任何节点发生交汇，就必须 union（不再用 `hasRVReach` 放过“确定性汇合”）。这样可保证 split 后的相关性不被破坏。
+* `hasRVReach` 仍保留为**候选过滤**：若某个 fact 完全无法到达 RV，则不做 split（无收益）。
 
 并且 `hasRVReach` 可以用 **计数器增量维护**（适配你的“rewrite 多为单调减少，split 会增加”）：
 
@@ -368,11 +371,9 @@ function partitionOutgoingByRVOverlap(G, u: NodeId) -> list<list<EdgeId>>:
       rep[x] = oldRep
       push(queue, x)
 
-    // 冲突是否意味着 RV overlap？用 hasRVReach[x] 做 gating
-    if G.nodes[x].hasRVReach:
-      // 将 incoming 的代表与 oldRep union
-      incRep = (incomingOwner == MULTI) ? incomingRep : incomingOwner
-      uf.union(oldRep, incRep)
+    // 任何交汇都表示相关，直接 union
+    incRep = (incomingOwner == MULTI) ? incomingRep : incomingOwner
+    uf.union(oldRep, incRep)
 
   // 初始化：从每条 outgoing 的 dst 作为源点开始传播
   for i in 0..k-1:
@@ -406,10 +407,7 @@ function partitionOutgoingByRVOverlap(G, u: NodeId) -> list<list<EdgeId>>:
 
 #### 解释与性质
 
-* 当两个 outgoing 分支在下游某节点 `x` 汇合：
-
-  * 若 `hasRVReach[x]==true`，则它们共享某个下游 RV ⇒ 必须分到同组（union）
-  * 若 `hasRVReach[x]==false`，说明从 `x` 往后没有任何 RV，汇合不会导致 RV 交集 ⇒ 不必 union
+* 当两个 outgoing 分支在下游某节点 `x` 汇合时，一律视为相关并 union（保证 split 语义不改变相关性）。
 * 不需要枚举 `outgoing` 的 50 个子集；也不需要做 `k^2` 相交；扇出再大，也只是在 reachable cone 内传播一次。
 
 > 这类“结构分组/把相关变量放近”的工程思想，在 BDD/SAT 里非常经典：结构与变量关联性是性能关键，且应避免为了优化本身消耗过多资源。
@@ -510,7 +508,7 @@ function applySplit(G, u: NodeId, groups: list<list<EdgeId>>, mode: IncomingClon
 候选节点条件（默认）：
 
 * `outDegree(u) >= 2`
-* `hasRVReach[u] == true`（下游有 RV 才可能产生 RV overlap；否则 split 多半无收益）
+* `hasRVReach[u] == true`（下游无 RV 时 split 无收益）
 
 触发入队事件：
 
@@ -624,7 +622,7 @@ function optimizeSplits(G):
 
 2. **信息能否一次预处理？rewrite/split 会不会破坏？**
 
-* 我们只预处理/增量维护一个很便宜的 `hasRVReach`（计数器维护），用于保证分组判定不会因为“无 RV 汇合点”产生假阴性/假阳性；
+* 我们只预处理/增量维护一个很便宜的 `hasRVReach`（计数器维护），用于过滤候选节点、避免在无 RV 下游的分支上浪费 split 开销；
 * split 机会发现只在候选节点上触发，不会在线性图上累积；
 * rewrite/split 引起的结构变更通过 worklist 局部传播更新，不需要全图重算。
 

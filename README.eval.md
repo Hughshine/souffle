@@ -8,8 +8,11 @@ ProbLog vs Souffle (no rewrite vs rewrite), WMC scaling, and end-to-end comparis
 - Full computation only; no incremental modes.
 - Compile with `--full-only` so reordering strategy stays consistent (default CUDD sift).
 - Cover P1-P20 from SMT sources in `side_channel_benchmark/data/smt`.
-- Keep other Souffle optimizations on across variants (e.g., `--merge-bi-imp`), and
-  only toggle `--rewrite` when comparing rewrite vs no-rewrite.
+- Always enable `--det-opt` for all Souffle runs (deterministic-first derivation gating).
+- Avoid `--merge-bi-imp` unless explicitly testing eqrel; keep comparisons focused
+  on rewrite/split behavior.
+- When comparing rewrite vs no-rewrite, record the split mode (`--split-mode=...`);
+  default is `naive-split`.
 
 ## Prerequisites
 - Build release Souffle and the precompiled runtime library (required if runtime
@@ -49,7 +52,8 @@ evaluation with a consistent reordering strategy.
 ## Baseline full runs (ProbLog + Souffle)
 ```bash
 python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
-  --base-dir experiments/side_channel_full_eval run --cases 1-20 --timeout 600
+  --base-dir experiments/side_channel_full_eval run --cases 1-20 --timeout 600 \
+  --souffle-arg=--det-opt
 python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
   --base-dir experiments/side_channel_full_eval collect --cases 1-20
 ```
@@ -69,7 +73,7 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
   --cases 1,3-20 --timeout 300
 python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
   --base-dir experiments/side_channel_full_eval_trimmed run \
-  --cases 1,3-20 --timeout 600 --souffle-only --souffle-arg=--merge-bi-imp
+  --cases 1,3-20 --timeout 600 --souffle-only --souffle-arg=--det-opt
 python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
   --base-dir experiments/side_channel_full_eval_trimmed collect --cases 1,3-20
 mv experiments/side_channel_full_eval_trimmed/results-souffle.tsv \
@@ -77,7 +81,7 @@ mv experiments/side_channel_full_eval_trimmed/results-souffle.tsv \
 
 python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
   --base-dir experiments/side_channel_full_eval_trimmed run \
-  --cases 1,3-20 --timeout 600 --souffle-only --souffle-arg=--merge-bi-imp \
+  --cases 1,3-20 --timeout 600 --souffle-only --souffle-arg=--det-opt \
   --souffle-arg=--rewrite
 python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
   --base-dir experiments/side_channel_full_eval_trimmed collect --cases 1,3-20
@@ -85,6 +89,9 @@ mv experiments/side_channel_full_eval_trimmed/results-souffle.tsv \
   experiments/side_channel_full_eval_trimmed/results-souffle-rewrite.tsv
 ```
 Latest run summary (2026-01-03, trimmed):
+Note: these numbers predate `--det-opt` and the complete-split correctness fix;
+re-run is required for current pipeline behavior.
+
 - Speedup = no-rewrite / rewrite.
 - Median speedup ~1.03x, average ~1.49x, range 0.56x to 2.83x.
 - Rewrite is slower on P3 and P9; larger cases (P14-P16) show ~2.6x to 2.8x.
@@ -96,7 +103,8 @@ As a result, rewrite's linear advantage versus forward compilation's exponential
 does not fully surface, and the speedup is not consistently dramatic.
 
 TODO (full rule set):
-- 对确定性 relation 尽早做优化，最好在 semi-naive evaluation 阶段就避免计算多个 derivation（无必要），使 create graph 时自然被简化。
+- 已完成：对确定性 relation 尽早做优化（`--det-opt` gating RecordDerivation）。
+- 需要重跑全量评测（带 `--det-opt`，并分别记录 `--split-mode` 影响）。
 - 需要更复杂的 benchmark；等待 PLDI'18 的提取。
 
 Per-case timing (Elapsed_s, trimmed):
@@ -131,7 +139,7 @@ Souffle derivation graph only:
 ```bash
 for p in experiments/side_channel_full_eval/P{1..20}; do
   [ -x "$p/compute" ] || continue
-  (cd "$p" && ./compute --derv-only --setmode full -F input -D output_dg \
+  (cd "$p" && ./compute --derv-only -F input -D output_dg \
     --logfile log_$(basename "$p")_derv)
 done
 ```
@@ -150,16 +158,15 @@ done
 
 ### 2) ProbLog vs Souffle no-rewrite vs rewrite
 Compare three variants: ProbLog baseline, Souffle full without rewrite, and Souffle
-full with rewrite. Keep `--merge-bi-imp` (and any other default optimizations) on
-in both Souffle variants.
+full with rewrite. Avoid `--merge-bi-imp` unless explicitly testing eqrel.
 
 Manual run (keeps outputs separate):
 ```bash
 for p in experiments/side_channel_full_eval/P{1..20}; do
   [ -x "$p/compute" ] || continue
-  (cd "$p" && ./compute --merge-bi-imp -F input -D output_norewrite \
+  (cd "$p" && ./compute --det-opt -F input -D output_norewrite \
     --logfile log_$(basename "$p")_norewrite)
-  (cd "$p" && ./compute --merge-bi-imp --rewrite -F input -D output_rewrite \
+  (cd "$p" && ./compute --det-opt --rewrite -F input -D output_rewrite \
     --logfile log_$(basename "$p")_rewrite)
 done
 ```
@@ -175,13 +182,13 @@ Python runner alternative:
   ```bash
   python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
     --base-dir experiments/side_channel_full_eval run --cases 1-20 \
-    --souffle-only --souffle-arg --merge-bi-imp --timeout 600
+    --souffle-only --souffle-arg --det-opt --timeout 600
   ```
 - Souffle rewrite:
   ```bash
   python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
     --base-dir experiments/side_channel_full_eval run --cases 1-20 \
-    --souffle-only --souffle-arg --merge-bi-imp --souffle-arg --rewrite --timeout 600
+    --souffle-only --souffle-arg --det-opt --souffle-arg --rewrite --timeout 600
   ```
 After each run, call `collect` and rename the TSVs (e.g.,
 `results-souffle-norewrite.tsv`, `results-souffle-rewrite.tsv`) to avoid overwrite.

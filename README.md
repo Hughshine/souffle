@@ -86,6 +86,8 @@ Defaults are baked into each generated binary. Typical defaults in this repo (e.
   - `full` maps to `full-hard` (hard reset each turn); `full-soft` reuses the DD manager state
 - `-e, --merge-bi-imp`: default `false`
 - `-r, --rewrite`: default `false`
+- `--det-opt`: default `false` (enable deterministic-first derivation gating)
+- `--split-mode=<no-split|naive-split|complete-split>`: default `naive-split` (rewrite only)
 - `--dumpjson`: default `false`
 - `--dumpdot`: default `false`
 - `--dumpstat`: default `false`
@@ -134,6 +136,7 @@ Example (batch from delta file):
 - Probabilistic semantics: derivation graph, pruning, forward compilation, weighted model counting.
 - Knowledge backend selection via `-k bdd|sdd`.
 - Optional SISO rewrite (`-r`) for full-mode runs only.
+- Deterministic-first derivation gating (`--det-opt`) to skip recording derivations for deterministic relations.
 - Optional deterministic constant pre-analysis in FC (`--fold-const`); use `--dumpconst` to write true/false nodes and edges (see `README.const.md`).
 - Debug/profiling outputs: JSON/DOT/stats dumps after prune.
 
@@ -150,6 +153,7 @@ Example (batch from delta file):
 - `README.eval.md`: full-mode rewrite evaluation commands.
 - `README.rewrite.md`: current rewrite pipeline behavior and performance.
 - `README.rewrite.impl.md`: historical rewrite experiments and logs.
+- `README.split.md`: split modes and split rewrite behavior.
 - `README.rewrite.120725.md`: historical notes (2025-12-07).
 - `README.rewrite.120825.md`: historical notes (2025-12-08).
 - `README.rewrite.2.md`: alternative rewrite plan (historical).
