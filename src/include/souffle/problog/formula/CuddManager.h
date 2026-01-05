@@ -149,7 +149,19 @@ struct VariableWeight {
 };
 class WeightedBDDManager: public DDManager<BddNodeRef> {
 public:
-    WeightedBDDManager();
+    struct InitConfig {
+        unsigned int numVars;
+        unsigned int numVarsZ;
+        unsigned int numSlots;
+        unsigned int cacheSize;
+        unsigned long maxMemory;
+
+        InitConfig()
+                : numVars(1000), numVarsZ(0), numSlots(4096), cacheSize(1u << 24),
+                  maxMemory(32UL * 1024 * 1024 * 1024) {}
+    };
+
+    explicit WeightedBDDManager(InitConfig config = InitConfig());
     ~WeightedBDDManager() override = default;
 
     int getVarIndex(const Node& node) override {
@@ -335,6 +347,7 @@ private:
     std::unordered_map<int, BddNodeRef> variableRegistry;
     std::unordered_map<DdNode*, double> wmcCache_;
     long last_reordering_time_ = 0;
+    InitConfig initConfig_;
 
 
 };
@@ -440,7 +453,7 @@ int myVRFunc(DdManager* dd, const char* str, void* data) {
     return 1;
 }
 // Implementation
-WeightedBDDManager::WeightedBDDManager() {
+WeightedBDDManager::WeightedBDDManager(InitConfig config) : initConfig_(config) {
     manager = initManager();
 }
 
@@ -452,7 +465,8 @@ std::shared_ptr<DdManager> WeightedBDDManager::initManager() {
 //    DdManager* m = Cudd_Init(0, 0, 4096, 1 << 24, 32UL * 1024 * 1024 * 1024);
 //    Cudd_SetMaxCacheHard(m, 10000000);
     // Preallocate ~1000 BDD vars to reduce ithVar expansions.
-    DdManager* m = Cudd_Init(1000, 0, 4096, 1 << 24, 32UL * 1024 * 1024 * 1024);
+    DdManager* m = Cudd_Init(initConfig_.numVars, initConfig_.numVarsZ, initConfig_.numSlots,
+            initConfig_.cacheSize, initConfig_.maxMemory);
 
 //    Cudd_EnableGarbageCollection(m);
 //    Cudd_DisableGarbageCollection(m);

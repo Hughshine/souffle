@@ -150,8 +150,8 @@ Example (batch from delta file):
 - `README.dred.md`: online DRed internals, deletion bottlenecks, code pointers.
 - `README.eval.inc.md`: incremental benchmark workflow and logs.
 - `README.inc.region.md`: inc-regional pipeline design and profiling notes.
-- `README.eval.md`: full-mode rewrite evaluation commands.
-- `README.rewrite.md`: current rewrite pipeline behavior and performance.
+- `README.eval.md`: full-mode rewrite evaluation commands and latest full-rule table.
+- `README.rewrite.md`: current rewrite pipeline behavior and full-rule timing table.
 - `README.rewrite.impl.md`: historical rewrite experiments and logs.
 - `README.split.md`: split modes and split rewrite behavior.
 - `README.rewrite.120725.md`: historical notes (2025-12-07).

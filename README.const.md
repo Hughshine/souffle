@@ -194,6 +194,11 @@ for each facts line:
 - Large wins for deterministic transitive or eqrel-style relations such as
   assign/equal_assign in side_channel.
 
+## Evaluation (2026-01-04, full rule set)
+- All runs use `--det-opt`, full-only compilation, and default `naive-split`.
+- Full per-case timing table (including `rand_vars`) is recorded in
+  `README.eval.md` and `README.rewrite.md`.
+
 ## Relation to current Const-FC
 - The existing const pre-analysis in `ForwardCompilation.h` is a late-stage
   micro-optimization that does not address graph size.

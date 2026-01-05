@@ -11,15 +11,59 @@
 #include "souffle/problog/formula/CuddManager.h"
 #include "souffle/problog/formula/SddManager.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
+#include <limits>
 #include <unordered_map>
 #include <utility>
 
 namespace souffle::problog {
+
+namespace {
+
+static std::size_t estimateBddVarCount(const SubgraphView& view) {
+    std::size_t count = 0;
+    for (const auto& node : view.getNodes()) {
+        if (node->isFact && node->getProbability() != 1.0) {
+            ++count;
+        }
+    }
+    for (const auto& edge : view.getEdges()) {
+        if (!edge->isDeterministic()) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static WeightedBDDManager::InitConfig makeCuddInitConfig(std::size_t varCount) {
+    WeightedBDDManager::InitConfig cfg;
+    // Smaller graphs downscale cache/memory; large graphs keep the default (largest) config.
+    if (varCount <= 256) {
+        cfg.numVars = 256;
+        cfg.numSlots = 2048;
+        cfg.cacheSize = 1u << 18;
+        cfg.maxMemory = 1UL << 30;
+    } else if (varCount <= 1024) {
+        cfg.numVars = 512;
+        cfg.numSlots = 4096;
+        cfg.cacheSize = 1u << 20;
+        cfg.maxMemory = 4UL << 30;
+    } else if (varCount <= 4096) {
+        cfg.numVars = 1000;
+        cfg.numSlots = 4096;
+        cfg.cacheSize = 1u << 22;
+        cfg.maxMemory = 8UL << 30;
+    }
+    return cfg;
+}
+
+} // namespace
 
 std::string makeOutputPath(const CmdOptions& opt, const std::string& filename) {
     const std::string& dir = opt.getOutputFileDir();
@@ -117,8 +161,24 @@ static void runBddPipeline(
 
     if (computeProbabilities) {
         auto* stage = debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+        auto varEstimate = estimateBddVarCount(view);
+        auto initConfig = makeCuddInitConfig(varEstimate);
+        debugger.addInfo("rand_vars", std::to_string(varEstimate));
+        debugger.addInfo("manager_init_vars", std::to_string(initConfig.numVars));
+        debugger.addInfo("manager_init_slots", std::to_string(initConfig.numSlots));
+        debugger.addInfo("manager_init_cache", std::to_string(initConfig.cacheSize));
+        debugger.addInfo("manager_init_maxmem_mb",
+                std::to_string(initConfig.maxMemory / (1024UL * 1024UL)));
+        if (stage) {
+            stage->logMessage(Level::INFO, "rand_vars=" + std::to_string(varEstimate));
+            stage->logMessage(Level::INFO, "manager_init_vars=" + std::to_string(initConfig.numVars));
+            stage->logMessage(Level::INFO, "manager_init_slots=" + std::to_string(initConfig.numSlots));
+            stage->logMessage(Level::INFO, "manager_init_cache=" + std::to_string(initConfig.cacheSize));
+            stage->logMessage(Level::INFO, "manager_init_maxmem_mb=" +
+                    std::to_string(initConfig.maxMemory / (1024UL * 1024UL)));
+        }
         auto initStart = std::chrono::steady_clock::now();
-        bddManager = std::make_unique<WeightedBDDManager>();
+        bddManager = std::make_unique<WeightedBDDManager>(initConfig);
         auto initMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - initStart)
                               .count();
