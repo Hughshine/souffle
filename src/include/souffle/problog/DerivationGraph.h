@@ -249,6 +249,7 @@ public:
     RuleApplication getRuleApp() const { return ruleApp; }
     bool pruned = false;
     mutable std::optional<EdgeKey> cachedEdgeKey;
+    mutable std::optional<bool> cachedSelfDependency;
 
     /**
      * @brief Generates a stable, comparable key representing the edge's content.
@@ -282,12 +283,22 @@ public:
         return *cachedEdgeKey;
     }
 
+    bool hasSelfDependency() const {
+        if (cachedSelfDependency.has_value()) {
+            return *cachedSelfDependency;
+        }
+        const bool hasSelf = std::find(inputs.begin(), inputs.end(), output) != inputs.end();
+        cachedSelfDependency = hasSelf;
+        return hasSelf;
+    }
+
     // Rewrite endpoints after eqrel merging; callers must keep node edge lists in sync.
     void replaceOutput(const NodePtr& newOutput) {
         output = newOutput;
         cachedSortedInputs.reset();
         cachedSortedBodyNegations.reset();
         cachedEdgeKey.reset();
+        cachedSelfDependency.reset();
     }
 
     void replaceInput(const NodePtr& oldNode, const NodePtr& newNode) {
@@ -299,6 +310,7 @@ public:
         cachedSortedInputs.reset();
         cachedSortedBodyNegations.reset();
         cachedEdgeKey.reset();
+        cachedSelfDependency.reset();
     }
 
 private:
@@ -606,11 +618,11 @@ void DerivationGraphViewInterface::dumpDot(const std::string& filename) const {
     out << "  node [shape=point, fillcolor=red, width=0.2];\n";
     for (const auto& edge : getEdges()) {
         if (edge->pruned) continue;
-        NodePtr outNode = this->getOutput(edge);
-        auto inputs = this->getInputs(edge);
-        if (std::find(inputs.begin(), inputs.end(), outNode) != inputs.end()) {
+        if (edge->hasSelfDependency()) {
             continue;  // skip edges whose head appears in body (self-loop style)
         }
+        NodePtr outNode = this->getOutput(edge);
+        auto inputs = this->getInputs(edge);
         out << "  edge" << edge->getId() << ";\n";
 
         for (const auto& input : inputs) {
@@ -1258,7 +1270,7 @@ public:
                 continue;  // skip input fact nodes
             }
             for (const auto& edge : current->getIncomingEdges()) {
-                if (std::find(edge->getInputs().begin(), edge->getInputs().end(), current) != edge->getInputs().end()) {
+                if (edge->hasSelfDependency()) {
                     continue;  // if the edge reports self-dependency, then it is redundant
                 }
                 reachableEdges.insert(edge);
@@ -2030,11 +2042,16 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         FunctionTimer scopeTimer("prune-inc: dumpStatisticsInc");
         dumpStatisticsInc(std::cout);
     }
-    std::unordered_set outputRelationNames(outputRelations.begin(), outputRelations.end());
+    std::unordered_set<std::string> outputRelationNames;
+    outputRelationNames.reserve(outputRelations.size());
+    outputRelationNames.insert(outputRelations.begin(), outputRelations.end());
     // Mark reachable nodes and edges.
     std::unordered_set<NodePtr> reachableNodes;
     std::unordered_set<EdgePtr> reachableEdges;
+    reachableNodes.reserve(nodes.size());
+    reachableEdges.reserve(edges.size());
     std::queue<NodePtr> workQueue;
+    std::vector<NodePtr> evidenceNodes;
 
     {
         FunctionTimer scopeTimer("prune-inc: init outputs");
@@ -2046,14 +2063,17 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                 workQueue.push(node);
                 node->setQuery();
             }
+            if (node->hasEvidence()) {
+                evidenceNodes.push_back(node);
+            }
         }
     }
 
     {
         FunctionTimer scopeTimer("prune-inc: evidence + backward BFS");
         // TODO
-        for (const auto& node : nodes) {
-            if (node->hasEvidence() && reachableNodes.insert(node).second) {
+        for (const auto& node : evidenceNodes) {
+            if (reachableNodes.insert(node).second) {
                 std::cout << "Found evidence node: " << node->toString()
                           << " with value " << (node->getEvidenceValue() ? "true" : "false")
                           << std::endl;
@@ -2069,7 +2089,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                 continue;  // currently skip input facts
             }
             for (const auto& edge : current->getIncomingEdges()) {
-                if (std::find(edge->getInputs().begin(), edge->getInputs().end(), current) != edge->getInputs().end()) {
+                if (edge->hasSelfDependency()) {
                     continue;  // if the edge reports self-dependency, then it is redundant
                 }
                 reachableEdges.insert(edge);
@@ -2082,13 +2102,12 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         }
     }
 
-    std::unordered_set<NodePtr> newNodes;
-    std::unordered_set<EdgePtr> newEdges;
+    std::unordered_set<NodePtr> liveNodes = std::move(reachableNodes);
+    std::unordered_set<EdgePtr> liveEdges = std::move(reachableEdges);
     {
         FunctionTimer scopeTimer("prune-inc: mark live/pruned nodes+edges");
         for (const auto& node : nodes) {
-            if (reachableNodes.count(node)){
-                newNodes.insert(node);
+            if (liveNodes.count(node)){
                 if (node->pruned) {
 //                std::cout << "reusing a pruned node: " << node->getTuple().toString() << std::endl;
                     deltaInsertNodes.insert(node);
@@ -2100,8 +2119,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         }
 
         for (const auto& edge : edges) {
-            if (reachableEdges.count(edge)) {
-                newEdges.insert(edge);
+            if (liveEdges.count(edge)) {
                 if (edge->pruned) {
 //                std::cout << "reusing a pruned edge: " << edge->toString() << std::endl;
                     deltaInsertEdges.insert(edge);
@@ -2115,7 +2133,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     std::cout << "[prune-inc] delta-delete counts (post-mark-pruned): nodes=" << deltaDeleteNodes.size()
               << " edges=" << deltaDeleteEdges.size() << std::endl;
 
-    pruneOutputlessComponents(newNodes, newEdges, &reachableNodes, &reachableEdges);
+    pruneOutputlessComponents(liveNodes, liveEdges);
 
     // Filter nodes and edges.
     std::set<NodePtr> newDeltaDeletedNodes;
@@ -2136,13 +2154,27 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     std::cout << "[prune-inc] delta-delete counts (filtered): nodes=" << newDeltaDeletedNodes.size()
               << " edges=" << newDeltaDeletedEdges.size() << std::endl;
 
+    std::set<NodePtr> newDeltaInsertedNodes;
+    std::set<EdgePtr> newDeltaInsertedEdges;
+
+    for (const auto& insertedNode : deltaInsertNodes) {
+        if (liveNodes.count(insertedNode)) {
+            newDeltaInsertedNodes.insert(insertedNode);
+        }
+    }
+    for (const auto& insertedEdge : deltaInsertEdges) {
+        if (liveEdges.count(insertedEdge)) {
+            newDeltaInsertedEdges.insert(insertedEdge);
+        }
+    }
+
     // eqrel merge (if enabled) and cleanup
     {
         FunctionTimer scopeTimer("prune-inc: mergeBiImp + cleanup");
         if (mergeBiImpEnabled) {
-            mergeBiImpEquivalences(newNodes, newEdges);
+            mergeBiImpEquivalences(liveNodes, liveEdges);
         }
-        removeSelfLoopEdges(newNodes, newEdges);
+        removeSelfLoopEdges(liveNodes, liveEdges);
     }
 
     if (mergeBiImpEnabled) {
@@ -2159,36 +2191,22 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
 
 
     // TODO: update nodes incoming and outgoing edges
-//    for (const auto& node : newNodes) {
+//    for (const auto& node : liveNodes) {
 //        std::vector<EdgePtr> newIncomingEdges;
 //        std::vector<EdgePtr> newOutgoingEdges;
 //        for (const auto& edge : node->getIncomingEdges()) {
-//            if (reachableEdges.count(edge)) {
+//            if (liveEdges.count(edge)) {
 //                newIncomingEdges.push_back(edge);
 //            }
 //        }
 //        for (const auto& edge : node->getOutgoingEdges()) {
-//            if (reachableEdges.count(edge)) {
+//            if (liveEdges.count(edge)) {
 //                newOutgoingEdges.push_back(edge);
 //            }
 //        }
 //        node->incomingEdges = std::move(newIncomingEdges);
 //        node->outgoingEdges = std::move(newOutgoingEdges);
 //    }
-
-    std::set<NodePtr> newDeltaInsertedNodes;
-    std::set<EdgePtr> newDeltaInsertedEdges;
-
-    for (const auto& insertedNode : deltaInsertNodes) {
-        if (reachableNodes.count(insertedNode)) {
-            newDeltaInsertedNodes.insert(insertedNode);
-        }
-    }
-    for (const auto& insertedEdge : deltaInsertEdges) {
-        if (reachableEdges.count(insertedEdge)) {
-            newDeltaInsertedEdges.insert(insertedEdge);
-        }
-    }
 
 
     std::unordered_set<NodePtr> newInsertedReachableNodes;
@@ -2197,6 +2215,12 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> newInsertedFactImpactedEdges;
     std::unordered_map<NodePtr, std::unordered_set<NodePtr>> newDeletedFactImpactedNodes;
     std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> newDeletedFactImpactedEdges;
+    newInsertedReachableNodes.reserve(newDeltaInsertedNodes.size());
+    newInsertedReachableEdges.reserve(newDeltaInsertedEdges.size());
+    newInsertedFactImpactedNodes.reserve(newDeltaInsertedNodes.size());
+    newInsertedFactImpactedEdges.reserve(newDeltaInsertedNodes.size());
+    newDeletedFactImpactedNodes.reserve(newDeltaDeletedNodes.size());
+    newDeletedFactImpactedEdges.reserve(newDeltaDeletedNodes.size());
     {
         FunctionTimer scopeTimer("prune-inc: rebuild impacted maps");
         using Clock = std::chrono::steady_clock;
@@ -2207,7 +2231,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                                  std::unordered_set<EdgePtr>& outEdges) -> std::pair<size_t, size_t> {
             std::queue<NodePtr> q;
             std::unordered_set<NodePtr> visited;
-            if (!src || !newNodes.count(src)) {
+            if (!src || !liveNodes.count(src)) {
                 return {0, 0};
             }
             q.push(src);
@@ -2217,12 +2241,12 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                 NodePtr cur = q.front();
                 q.pop();
                 for (const auto& e : cur->getOutgoingEdges()) {
-                    if (!newEdges.count(e)) {
+                    if (!liveEdges.count(e)) {
                         continue;
                     }
                     outEdges.insert(e);
                     NodePtr nxt = e->getOutput();
-                    if (nxt && newNodes.count(nxt) && visited.insert(nxt).second) {
+                    if (nxt && liveNodes.count(nxt) && visited.insert(nxt).second) {
                         outNodes.insert(nxt);
                         q.push(nxt);
                     }
@@ -2272,7 +2296,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
 
     IncSubgraphView view = [&]() {
         FunctionTimer scopeTimer("prune-inc: build view");
-        return IncSubgraphView(std::move(newNodes), std::move(newEdges),
+        return IncSubgraphView(std::move(liveNodes), std::move(liveEdges),
                                std::move(newDeltaInsertedNodes),
                                std::move(newDeltaInsertedEdges),
                                std::move(newDeltaDeletedNodes),
@@ -2471,7 +2495,7 @@ void DerivationGraph::mergeBiImpEquivalences(
     std::unordered_set<EdgePtr> toRemove;
     // remove edges whose body already contains the head (self-loop style)
     for (const auto& e : liveEdges) {
-        if (std::find(e->inputs.begin(), e->inputs.end(), e->getOutput()) != e->inputs.end()) {
+        if (e->hasSelfDependency()) {
             e->pruned = true;
             toRemove.insert(e);
             continue;
@@ -2659,7 +2683,7 @@ void DerivationGraph::removeSelfLoopEdges(
         std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges) {
     std::vector<EdgePtr> toRemove;
     for (const auto& e : liveEdges) {
-        if (std::find(e->inputs.begin(), e->inputs.end(), e->getOutput()) != e->inputs.end()) {
+        if (e->hasSelfDependency()) {
             toRemove.push_back(e);
         }
     }
