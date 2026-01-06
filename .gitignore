@@ -49,6 +49,8 @@ doc
 /compile_commands.json
 gmon.out
 stamp-h1
+.worktrees/
+experiments/
 
 utilities/bash-completion
 debian/changelog
@@ -57,14 +59,28 @@ __pycache__
 
 experiments/**/*.o
 experiments/**/*.txt
+experiments/**/*.log
+experiments/**/*.csv
+experiments/**/*.pdf
 experiments/**/test-*
+experiments/**/test_readline
 experiments/**/*.dot
 experiments/**/main
+experiments/**/demo
 test
 
 experiments/**/output
 experiments/**/test.cpp
 experiments/**/compute
+experiments/**/compute_*
+experiments/**/compute[0-9]*
 experiments/**/compute.cpp
+experiments/**/preDG*
+experiments/**/dg_*
 experiments/**/*.cpp
 experiments/**/*.json
+experiments/inc_regional_demo/
+experiments/side_channel_full*/
+experiments/side_channel_inc_eval/
+experiments/side_channel_inc_mini/*/
+experiments/smokers_*/
