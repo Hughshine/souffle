@@ -101,6 +101,31 @@ void Clause::setHead(Own<Atom> h) {
 void Clause::setBodyLiterals(VecOwn<Literal> body) {
     assert(allValidPtrs(body));
     bodyLiterals = std::move(body);
+
+    variables.clear();
+    isRederive = false;
+    for (auto& lit : bodyLiterals) {
+        ast::Atom* atom = nullptr;
+        if (isA<ast::Atom>(lit)) {
+            atom = as<ast::Atom>(lit);
+        } else if (isA<ast::Negation>(lit)) {
+            atom = as<ast::Negation>(lit)->getAtom();
+        } else {
+            continue;
+        }
+        if (atom->isRederive) {
+            isRederive = true;
+            continue;
+        }
+        for (const auto* arg : atom->getArguments()) {
+            if (const auto* var = as<ast::Variable>(arg)) {
+                const auto& name = var->getName();
+                if (std::find(variables.begin(), variables.end(), name) == variables.end()) {
+                    variables.emplace_back(name);
+                }
+            }
+        }
+    }
 }
 
 std::vector<Literal*> Clause::getBodyLiterals() const {

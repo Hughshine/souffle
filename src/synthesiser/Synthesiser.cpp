@@ -18,7 +18,6 @@
 #include "AggregateOp.h"
 #include "FunctorOps.h"
 #include "GenDb.h"
-#include "RelationTag.h"
 #include "Global.h"
 #include "RelationTag.h"
 #include "config.h"
@@ -36,8 +35,8 @@
 #include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/EmptyStatement.h"
-#include "ram/Evidence.h"
 #include "ram/Erase.h"
+#include "ram/Evidence.h"
 #include "ram/ExistenceCheck.h"
 #include "ram/Exit.h"
 #include "ram/Expression.h"
@@ -100,6 +99,7 @@
 #include "souffle/BinaryConstraintOps.h"
 #include "souffle/RamTypes.h"
 #include "souffle/TypeAttribute.h"
+#include "souffle/problog/Atom.h"
 #include "souffle/utility/ContainerUtil.h"
 #include "souffle/utility/FileUtil.h"
 #include "souffle/utility/MiscUtil.h"
@@ -467,13 +467,14 @@ void Synthesiser::emitRules (std::ostream& out) {
                         assert (false && "No unnamedVariable");
                         auto var = as<ast::Variable>(initialField);
                         fieldVars.push_back(var->getName());
-                    } */else {
+                    } */ else {
                         assert (false && "Not impl yet, atom");
                     }
                 }
                 std::string atomName = "atom_" + std::to_string(ruleId) + "_" + std::to_string(atomId);
+                std::string res = atom->getQualifiedName().toString();
                 atomNames.push_back(atomName);
-                out << "const Atom " << atomName << " = Atom{\"" << atom->getQualifiedName().toString() << "\", {";
+                out << "const Atom " << atomName << " = Atom{\"" << res << "\", {";
                 for (auto var: fieldVars) {
                     out << "SymbolicField::makeVariable(\"" << var << "\"), ";
                 }
@@ -4381,39 +4382,83 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "debugger.startStage(StageKind::IO_LOAD_FULL);\n";
     hook << "{\n";
     hook << "FunctionTimer timer(\"Reading fact probability from \" + opt.getInputFileDir());\n";
-    for (auto input : loadIOs) {
+     for (auto input : loadIOs) {
         auto rel = input->getRelation();
         hook << "{\n";
-        hook << "std::string rel = \"" << rel << "\";\n";
-        hook << "std::cout << \"reading: \" << opt.getInputFileDir() << \"/\" << rel << \".facts and \" << opt.getInputFileDir() << \"/\" << rel << \".prob\" << std::endl;\n";
-        hook << "std::ifstream factFile(opt.getInputFileDir() + \"/\" + rel + \".facts\");";
-        hook << "std::ifstream probFile(opt.getInputFileDir() + \"/\" + rel + \".prob\");\n";
+
+        hook << "std::string ioRel = \"" << rel << "\";\n";
+
+         hook << "auto toFileRel = [&](std::string r) {\n"
+              << "  if (r.rfind(\"@magic.\", 0) == 0) return r; \n"
+              << "  if (r.rfind(\"@neglabel.\", 0) == 0) return r; \n"
+              << "\n"
+              << "  for (;;) {\n"
+              << "    bool changed = false;\n"
+              << "    auto strip = [&](const std::string& p) {\n"
+              << "      if (r.rfind(p, 0) == 0) { r = r.substr(p.size()); changed = true; }\n"
+              << "    };\n"
+              << "    strip(\"@split_in.\");\n"
+              << "    strip(\"@interm_in.\");\n"
+              << "    strip(\"@interm_out.\");\n"
+              << "    if (r.rfind(\"@poscopy_\", 0) == 0) {\n"
+              << "      auto dot = r.find('.');\n"
+              << "      if (dot != std::string::npos) { r = r.substr(dot + 1); changed = true; }\n"
+              << "    }\n"
+              << "    if (!changed) break;\n"
+              << "  }\n"
+              << "\n"
+              << "  if (!r.empty()) {\n"
+              << "    auto dot = r.rfind('.');\n"
+              << "    if (dot != std::string::npos) {\n"
+              << "      auto last = r.substr(dot + 1);\n"
+              << "      if (last.size() >= 2 && last.front() == '{' && last.back() == '}') {\n"
+              << "        bool ok = true;\n"
+              << "        for (size_t i = 1; i + 1 < last.size(); ++i) {\n"
+              << "          if (last[i] != 'b' && last[i] != 'f') { ok = false; break; }\n"
+              << "        }\n"
+              << "        if (ok) r = r.substr(0, dot);\n"
+              << "      }\n"
+              << "    }\n"
+              << "  }\n"
+              << "  return r;\n"
+              << "};\n"
+              << "std::string fileRel = toFileRel(ioRel);\n";
+
+        hook << "std::cout << \"reading: \" << opt.getInputFileDir() << \"/\" << fileRel"
+             << " << \".facts and \" << opt.getInputFileDir() << \"/\" << fileRel"
+             << " << \".prob\" << std::endl;\n";
+
+        hook << "std::ifstream factFile(opt.getInputFileDir() + \"/\" + fileRel + \".facts\");\n";
+        hook << "std::ifstream probFile(opt.getInputFileDir() + \"/\" + fileRel + \".prob\");\n";
+
         hook << "if (!factFile.is_open()) {\n";
-        hook << "    std::cerr << \"Missing facts file for relation: \" << rel << std::endl;\n";
-        hook << "    assert(false && \"facts file not found\");\n";
+        hook << "  std::cerr << \"Missing facts file for relation: \" << fileRel"
+             << "            << \" (ioRel=\" << ioRel << \")\" << std::endl;\n";
+        hook << "  assert(false && \"facts file not found\");\n";
         hook << "}\n";
+
         hook << "bool probExists = probFile.is_open();\n";
         hook << "if (!probExists) {\n";
-        hook << "    std::cerr << \"[Warning] Missing prob file for relation: \" << rel << \", defaulting probabilities to 1.0\" << std::endl;\n";
+        hook << "  std::cerr << \"[Warning] Missing prob file for relation: \" << fileRel"
+             << "            << \" (ioRel=\" << ioRel << \")\""
+             << "            << \", defaulting probabilities to 1.0\" << std::endl;\n";
         hook << "}\n";
+
         hook << "std::string factLine, probLine;\n";
         hook << "while (std::getline(factFile, factLine)) {\n";
-        hook << "std::istringstream fs(factLine);";
-        hook << "std::istringstream ps(probLine);";
-        hook << "    double prob = 1.0;\n";
-        hook << "    if (probExists && std::getline(probFile, probLine)) {\n";
-        hook << "        std::istringstream ps(probLine);\n";
-        hook << "        if (!(ps >> prob) || prob < 0 || prob > 1) {\n";
-        hook << "            std::cerr << \"[Warning] Invalid probability in \" << rel << \".prob, defaulting to 1.0\" << std::endl;\n";
-        hook << "            prob = 1.0;\n";
-        hook << "        }\n";
-        hook << "    }\n";
-        hook << "souffle::RamDomain field;\n";
-        hook << "std::vector<souffle::RamDomain> fields;\n";
-        hook << "while (fs >> field) {fields.push_back(field);}\n";
-        hook << "UntypedTuple tuple{rel, fields};\n";
-        hook << "fact_prob[tuple] = prob;\n";
+        hook << "  std::istringstream fs(factLine);\n";
+        hook << "  double prob = 1.0;\n";
+        hook << "  if (probExists && std::getline(probFile, probLine)) {\n";
+        hook << "    std::istringstream ps(probLine);\n";
+        hook << "    if (!(ps >> prob) || prob < 0 || prob > 1) prob = 1.0;\n";
+        hook << "  }\n";
+        hook << "  souffle::RamDomain field;\n";
+        hook << "  std::vector<souffle::RamDomain> fields;\n";
+        hook << "  while (fs >> field) fields.push_back(field);\n";
+        hook << "  UntypedTuple tuple{ioRel, fields};\n";
+        hook << "  fact_prob[tuple] = prob;\n";
         hook << "}\n";
+
         hook << "}\n";
     }
     hook << "}\n";

@@ -459,11 +459,18 @@ bool NormaliseDatabaseTransformer::querifyOutputRelations(TranslationUnit& trans
         return strictlyOutput && ruleCount <= 1;
     };
 
+    auto hasProbQuery = [&](const QualifiedName& qn) {
+        for (const auto& pq : program.getProbQueries()) {
+            if (pq->getAtom().getQualifiedName() == qn) return true;
+        }
+        return false;
+    };
+
     // Get all output relations that need to be normalised
     const auto& ioTypes = translationUnit.getAnalysis<analysis::IOTypeAnalysis>();
     UnorderedQualifiedNameSet outputRelationNames;
     for (auto* rel : program.getRelations()) {
-        if ((ioTypes.isOutput(rel) || ioTypes.isPrintSize(rel)) && !isStrictlyOutput(rel)) {
+        if (((ioTypes.isOutput(rel) || ioTypes.isPrintSize(rel)) && !isStrictlyOutput(rel)) || hasProbQuery(rel->getQualifiedName())) {
             assert(!ioTypes.isInput(rel) && "output relations should not be input at this stage");
             outputRelationNames.insert(rel->getQualifiedName());
         }
@@ -654,6 +661,8 @@ Own<Clause> AdornDatabaseTransformer::adornClause(const Clause* clause, const st
 
     // Create the adorned clause with an empty body
     auto adornedClause = mk<Clause>(getAdornmentID(relName, adornmentMarker));
+    // Preserve the original probability so magic-set rewriting doesn't reset it to 1.0
+    adornedClause->setProbability(clause->getProbability());
 
     // Copy over plans if needed
     if (clause->getExecutionPlan() != nullptr) {
@@ -728,6 +737,14 @@ bool AdornDatabaseTransformer::transform(TranslationUnit& translationUnit) {
     const auto& ioTypes = translationUnit.getAnalysis<analysis::IOTypeAnalysis>();
     weaklyIgnoredRelations = getWeaklyIgnoredRelations(translationUnit);
 
+    static bool printed = false;
+    if (!printed) {
+        printed = true;
+        for (const auto& rel : weaklyIgnoredRelations) {
+            std::cerr << "weakly ignore: " << rel << "\n";
+        }
+    }
+
     // Output relations trigger the adornment process
     for (const auto* rel : program.getRelations()) {
         if (ioTypes.isOutput(rel) || ioTypes.isPrintSize(rel)) {
@@ -765,7 +782,7 @@ bool AdornDatabaseTransformer::transform(TranslationUnit& translationUnit) {
             }
         }
     }
-
+    std::cout << "AORNMENT MARKER : " << changed << std::endl;
     return changed;
 }
 
@@ -1184,6 +1201,7 @@ bool MagicSetCoreTransformer::transform(TranslationUnit& translationUnit) {
         changed = true;
         program.addRelation(std::move(magicRelation));
     }
+    std::cout << "MSTCORE:" << changed << std::endl;
     return changed;
 }
 

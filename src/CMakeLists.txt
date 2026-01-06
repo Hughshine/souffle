@@ -93,6 +93,7 @@ set(SOUFFLE_SOURCES
     ast/transform/ExpandEqrels.cpp
     ast/transform/FoldAnonymousRecords.cpp
     ast/transform/ProbQueryChecker.cpp
+    ast/transform/ProbQueryConstraintLifting.cpp
     ast/transform/GroundedTermsChecker.cpp
     ast/transform/GroundWitnesses.cpp
     ast/transform/InlineRelations.cpp

@@ -352,8 +352,8 @@ void buildFormulasCyclewise(
         int _seqId = 0;
         for (auto edge : cycleEdges) {
             worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
-//            std::cout << "Adding edge " << edge->getId() << " " << edge->toString()
-//                      << " with depth " << depGraph.edgeDepthsGlobal.at(edge) << " to worklist.\n";
+            std::cout << "Adding edge " << edge->getId() << " " << edge->toString()
+                      << " with depth " << depGraph.edgeDepthsGlobal.at(edge) << " to worklist.\n";
             inWorklist.insert(edge);
         }
 

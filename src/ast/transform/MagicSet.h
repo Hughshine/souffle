@@ -23,6 +23,7 @@
 #include "ast/transform/Pipeline.h"
 #include "ast/transform/RemoveRedundantRelations.h"
 #include "ast/transform/Transformer.h"
+#include "ast/transform/ProbQueryConstraintLifting.h"
 #include "souffle/utility/ContainerUtil.h"
 #include <algorithm>
 #include <cassert>
@@ -57,8 +58,11 @@ public:
     class MagicSetCoreTransformer;
 
     MagicSetTransformer()
-            : PipelineTransformer(mk<NormaliseDatabaseTransformer>(), mk<LabelDatabaseTransformer>(),
-                      mk<RemoveRedundantRelationsTransformer>(), mk<AdornDatabaseTransformer>(),
+            : PipelineTransformer(mk<NormaliseDatabaseTransformer>(),
+                      mk<ProbQueryConstraintLiftingTransformer>(),
+                      mk<LabelDatabaseTransformer>(),
+                      mk<RemoveRedundantRelationsTransformer>(),
+                      mk<AdornDatabaseTransformer>(),
                       mk<RemoveRedundantRelationsTransformer>(), mk<MagicSetCoreTransformer>()) {}
 
     std::string getName() const override {

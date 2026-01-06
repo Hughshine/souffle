@@ -16,6 +16,7 @@ public:
     ProbQuery(Own<Atom> atom, SrcLocation loc);
 
     const Atom& getAtom() const;
+    Atom& getAtom() { return *atom; }
     const QualifiedName& getAtomName() const;
     const std::vector<Argument*> getArguments() const;
     void print(std::ostream& os) const override;

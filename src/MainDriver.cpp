@@ -49,6 +49,7 @@
 #include "ast/transform/PartitionBodyLiterals.h"
 #include "ast/transform/Pipeline.h"
 #include "ast/transform/PragmaChecker.h"
+#include "ast/transform/ProbQueryConstraintLifting.h"
 #include "ast/transform/ReduceExistentials.h"
 #include "ast/transform/RemoveBooleanConstraints.h"
 #include "ast/transform/RemoveEmptyRelations.h"
