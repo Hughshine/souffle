@@ -2,6 +2,12 @@
 - Design/plan document; not the current implementation.
 - Full-mode rewrite only; incremental modes do not perform rewrite.
 
+## Current status (2026-01-05)
+- The actual fast paths live in component-wise forward compilation (not rewrite).
+- Implemented: single-randvar and conj-only components in `ForwardCompilation.h`.
+- Constraints for the conj-only fast path: no evidence, no negation, no cycles; otherwise fall back to DD.
+- For current behavior and timings, see `README.rewrite.md`.
+
 Technical note: DD decomposition for SISO + Fact-Prefix + pure-conjunctive regions
 0. Background and goals
 

@@ -140,6 +140,8 @@ Notes:
 
 ## Trimmed runs (no ProbLog, P1..P20 without P2)
 Use trimmed rules only and compare Souffle no-rewrite vs rewrite.
+Note: do not reuse the same `output/` directory for no-rewrite and rewrite. Use
+separate base dirs (or copy outputs) so `facts.prob` stays comparable.
 ```bash
 python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
   --base-dir experiments/side_channel_full_eval_trimmed generate \
@@ -206,6 +208,69 @@ Per-case timing (Elapsed_s, trimmed):
 | P18 | 6.760182 | 4.256490 | 1.588 |
 | P19 | 10.555435 | 5.666979 | 1.863 |
 | P20 | 6.640608 | 3.994600 | 1.662 |
+
+## Trimmed-plus runs (no ProbLog, P1..P20)
+Use `trimmed_plus` (all facts probabilistic) and keep outputs separate for
+no-rewrite vs rewrite so `facts.prob` can be diffed directly.
+```bash
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed_plus_norewrite generate \
+  --cases 1-20 --cleanup --force-smt --rule-set trimmed_plus
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed_plus_norewrite compile \
+  --cases 1-20 --timeout 300
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed_plus_norewrite run \
+  --cases 1-20 --timeout 60 --souffle-only --souffle-arg=--det-opt
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed_plus_norewrite collect --cases 1-20
+mv experiments/side_channel_full_eval_trimmed_plus_norewrite/results-souffle.tsv \
+  experiments/side_channel_full_eval_trimmed_plus_norewrite/results-souffle-norewrite.tsv
+
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed_plus_rewrite generate \
+  --cases 1-20 --cleanup --force-smt --rule-set trimmed_plus
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed_plus_rewrite compile \
+  --cases 1-20 --timeout 300
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed_plus_rewrite run \
+  --cases 1-20 --timeout 60 --souffle-only --souffle-arg=--det-opt \
+  --souffle-arg=--rewrite
+python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
+  --base-dir experiments/side_channel_full_eval_trimmed_plus_rewrite collect --cases 1-20
+mv experiments/side_channel_full_eval_trimmed_plus_rewrite/results-souffle.tsv \
+  experiments/side_channel_full_eval_trimmed_plus_rewrite/results-souffle-rewrite.tsv
+```
+
+Latest run summary (2026-01-05, trimmed_plus, 60s timeout):
+- Separate base dirs used for no-rewrite vs rewrite.
+- P17-P19 timeout in no-rewrite; rewrite completes all cases.
+- `facts.prob` matches for every case where both sides finished.
+
+Per-case timing and consistency (trimmed_plus):
+| Case | NR status | NR elapsed_s | RW status | RW elapsed_s | facts.prob |
+| --- | --- | --- | --- | --- | --- |
+| P1 | ok | 0.325666 | ok | 0.339383 | match |
+| P2 | missing | n/a | missing | n/a | skip |
+| P3 | ok | 0.349041 | ok | 0.305746 | match |
+| P4 | ok | 0.009540 | ok | 0.005856 | match |
+| P5 | ok | 0.010260 | ok | 0.005829 | match |
+| P6 | ok | 0.012172 | ok | 0.008273 | match |
+| P7 | ok | 0.018784 | ok | 0.013395 | match |
+| P8 | ok | 0.015769 | ok | 0.014028 | match |
+| P9 | ok | 0.042604 | ok | 0.016063 | match |
+| P10 | ok | 0.037049 | ok | 0.036261 | match |
+| P11 | ok | 0.043119 | ok | 0.034538 | match |
+| P12 | ok | 1.248649 | ok | 0.074829 | match |
+| P13 | ok | 1.600543 | ok | 0.171661 | match |
+| P14 | ok | 3.200349 | ok | 0.292766 | match |
+| P15 | ok | 9.593758 | ok | 0.621502 | match |
+| P16 | ok | 20.891493 | ok | 1.228883 | match |
+| P17 | timeout | 60.000000 | ok | 1.971686 | skip |
+| P18 | timeout | 60.000000 | ok | 3.058608 | skip |
+| P19 | timeout | 60.000000 | ok | 4.264387 | skip |
+| P20 | ok | 32.980840 | ok | 3.259881 | match |
 
 ## Measurements
 

@@ -1,5 +1,9 @@
 # Codex Quickstart
 
+> Note: Canonical agent constraints live in `AGENTS.md`, and core docs are under
+> `docs/`. This file is a context dump; verify experiment details in
+> `README.eval.md` and `README.rewrite.md` (latest sync: 2026-01-05).
+
 Use this file to orient Codex sessions. It lists the essential docs, code hotspots, and how to run experiments.
 
 ## Scope
@@ -37,10 +41,11 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
 
 ## Experiment How-To (full/rewrite; side_channel_full)
 - Per benchmark dir (see `README.eval.md` for canonical generators; e.g., `experiments/side_channel_full_eval/P12`):
-  - No rewrite: `./compute -F ./input -D ./output_no_rewrite_xx > run_no_rewrite_xx.log`
-  - With rewrite: `./compute -r -F ./input -D ./output_rewrite_xx > run_rewrite_xx.log`
+  - No rewrite: `./compute --det-opt -F ./input -D ./output_no_rewrite_xx > run_no_rewrite_xx.log`
+  - With rewrite: `./compute --det-opt --rewrite -F ./input -D ./output_rewrite_xx > run_rewrite_xx.log`
   - Outputs should match: `diff output_no_rewrite_xx/facts.prob output_rewrite_xx/facts.prob`
-  - Logs contain `[pipeline]` timings (create graph, pruning, SISO detection/rewrite, BDD init/build, WMC).
+  - Keep output dirs separate (do not overwrite `output/`) so `facts.prob` is comparable.
+  - Logs contain `[pipeline]` timings (create graph, pruning, rewrite, FC/WMC).
   - Historical logs sometimes use `compute_new`; use the binary that exists in the case directory.
 
 ## Experiment How-To (online incremental; side_channel_inc_eval)
@@ -52,10 +57,12 @@ Use this file to orient Codex sessions. It lists the essential docs, code hotspo
   - Debugger JSON reports now land in the output dir; the filename uses the basename of `--logfile` plus a timestamp.
 
 ## Current State (full/rewrite)
-- Reverted aggressive fact-prefix/folding; simple SISO only updates edge probability, not folding nodes.
-- Region filter: edgeCount ≥1 or nodeCount >2, with `kMaxEdges` default 5; RV count not enforced.
-- P5: rewrite ≈ no-rewrite (~0.33–0.34s, BDD ~210 nodes).
-- P12: rewrite slower (~6.5s vs ~3.3s) mainly due to SISO rewrite (~3.3s); outputs match.
+- Rewrite is full-mode only; incremental modes skip rewrite.
+- Default split mode is `naive-split`; split runs only with rewrite.
+- Component-wise FC/WMC runs under `FC_WMC_HYBRID` (includes rewrite time).
+- Single-randvar and conj-only fast paths evaluate eligible components without DDs.
+- Probabilities are stored only for `needOutput` nodes (plus precomputed facts).
+- See `README.rewrite.md` for current timing tables and behavior details.
 
 ## Current State (online incremental)
 - Online incremental pipelines are delta-driven and do not run rewrite (`--setmode inc` / `--setmode inc-regional`).
