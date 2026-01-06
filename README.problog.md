@@ -24,6 +24,7 @@ whenever ProbLog prints them and notes timeouts explicitly.
   - `output_problog_full/stderr.txt`
   - `output_problog_full/meta.json` (status, elapsed, exit code)
   - `output_problog_full/stages.json` (parsed stage timings)
+  - Latest terminal reruns only guarantee `stdout.txt`/`stderr.txt`; older `meta.json` may be stale if outputs overlap.
 
 ## Data provenance
 - full: `experiments/side_channel_full_eval/P*/compute.problog.dl`
@@ -34,53 +35,54 @@ whenever ProbLog prints them and notes timeouts explicitly.
 - Stage timings are only recorded when ProbLog prints its per-stage line.
 - If a case times out mid-stage, later stages will be missing.
 - Partial data can appear (e.g., P10 full records only Propagating evidence).
+- Codex sandbox performance can be unstable; re-run evaluation in a terminal for definitive timings (relative ratios usually stay similar).
 
 ## Summary (timeout=60s)
-- full: ok=3, timeout=16, error=0
+- full: ok=5, timeout=14, error=0
 - trimmed_plus: ok=6, timeout=13, error=0
 
-## ProbLog full run (full, timeout=60s)
-| Case | Status | Elapsed_s | Propagating evidence_s | Grounding_s | Removing derivations of facts_s | Cycle breaking_s | Compiling SDD_s |
-|--- | --- | --- | --- | --- | --- | --- | ---|
-| P1 | timeout | 60.000000 |  |  |  |  |  |
-| P3 | timeout | 60.000000 |  |  |  |  |  |
-| P4 | ok | 1.316627 | 0.000100 | 1.167100 | 0.001300 | 0.000100 | 0.000200 |
-| P5 | ok | 0.464797 | 0.000400 | 0.289400 | 0.000600 | 0.000600 | 0.001000 |
-| P6 | ok | 10.286137 | 0.000100 | 9.567400 | 0.001700 | 0.001700 | 0.002300 |
-| P7 | timeout | 60.000000 |  |  |  |  |  |
-| P8 | timeout | 60.000000 |  |  |  |  |  |
-| P9 | timeout | 60.000000 |  |  |  |  |  |
-| P10 | timeout | 60.000000 | 0.000100 |  |  |  |  |
-| P11 | timeout | 60.000000 |  |  |  |  |  |
-| P12 | timeout | 60.000000 |  |  |  |  |  |
-| P13 | timeout | 60.000000 |  |  |  |  |  |
-| P14 | timeout | 60.000000 |  |  |  |  |  |
-| P15 | timeout | 60.000000 |  |  |  |  |  |
-| P16 | timeout | 60.000000 |  |  |  |  |  |
-| P17 | timeout | 60.000000 |  |  |  |  |  |
-| P18 | timeout | 60.000000 |  |  |  |  |  |
-| P19 | timeout | 60.000000 |  |  |  |  |  |
-| P20 | timeout | 60.000000 |  |  |  |  |  |
+## ProbLog full run (full, timeout=60s, stdout-only)
+| Case | Status | Propagating evidence_s | Grounding_s | Removing derivations of facts_s | Cycle breaking_s | Compiling SDD_s |
+|--- | --- | --- | --- | --- | --- | ---|
+| P1 | ok | 0.0001 | 44.9994 | 0.0002 | 0.0156 | 0.0015 |
+| P3 | ok | 0.0000 | 46.0602 | 0.0002 | 0.0160 | 0.0002 |
+| P4 | ok | 0.0001 | 0.7994 | 0.0004 | 0.0001 | 0.0002 |
+| P5 | ok | 0.0001 | 0.1976 | 0.0004 | 0.0005 | 0.0009 |
+| P6 | ok | 0.0000 | 6.9254 | 0.0014 | 0.0018 | 0.0020 |
+| P7 | timeout | 0.0001 |  |  |  |  |
+| P8 | timeout | 0.0001 |  |  |  |  |
+| P9 | timeout | 0.0001 |  |  |  |  |
+| P10 | timeout | 0.0001 |  |  |  |  |
+| P11 | timeout | 0.0001 |  |  |  |  |
+| P12 | timeout | 0.0001 |  |  |  |  |
+| P13 | timeout | 0.0001 |  |  |  |  |
+| P14 | timeout | 0.0001 |  |  |  |  |
+| P15 | timeout | 0.0000 |  |  |  |  |
+| P16 | timeout | 0.0001 |  |  |  |  |
+| P17 | timeout | 0.0001 |  |  |  |  |
+| P18 | timeout | 0.0001 |  |  |  |  |
+| P19 | timeout | 0.0001 |  |  |  |  |
+| P20 | timeout | 0.0001 |  |  |  |  |
 
-## ProbLog full run (trimmed_plus, timeout=60s)
-| Case | Status | Elapsed_s | Propagating evidence_s | Grounding_s | Removing derivations of facts_s | Cycle breaking_s | Compiling SDD_s |
-|--- | --- | --- | --- | --- | --- | --- | ---|
-| P1 | timeout | 60.000000 |  |  |  |  |  |
-| P3 | timeout | 60.000000 |  |  |  |  |  |
-| P4 | ok | 0.314310 | 0.000000 | 0.158600 | 0.000800 | 0.000100 | 0.000300 |
-| P5 | ok | 0.464746 | 0.000100 | 0.288600 | 0.001200 | 0.001000 | 0.001800 |
-| P6 | ok | 0.815073 | 0.000100 | 0.659700 | 0.002000 | 0.003000 | 0.004100 |
-| P7 | ok | 4.573737 | 0.000100 | 4.344500 | 0.005300 | 0.004100 | 0.005800 |
-| P8 | ok | 7.481078 | 0.000100 | 7.229700 | 0.007900 | 0.006300 | 0.006800 |
-| P9 | ok | 5.576376 | 0.000100 | 5.342100 | 0.007000 | 0.009800 | 0.011500 |
-| P10 | timeout | 60.000000 |  |  |  |  |  |
-| P11 | timeout | 60.000000 |  |  |  |  |  |
-| P12 | timeout | 60.000000 |  |  |  |  |  |
-| P13 | timeout | 60.000000 |  |  |  |  |  |
-| P14 | timeout | 60.000000 |  |  |  |  |  |
-| P15 | timeout | 60.000000 |  |  |  |  |  |
-| P16 | timeout | 60.000000 |  |  |  |  |  |
-| P17 | timeout | 60.000000 |  |  |  |  |  |
-| P18 | timeout | 60.000000 |  |  |  |  |  |
-| P19 | timeout | 60.000000 |  |  |  |  |  |
-| P20 | timeout | 60.000000 |  |  |  |  |  |
+## ProbLog full run (trimmed_plus, timeout=60s, stdout-only)
+| Case | Status | Propagating evidence_s | Grounding_s | Removing derivations of facts_s | Cycle breaking_s | Compiling SDD_s |
+|--- | --- | --- | --- | --- | --- | ---|
+| P1 | timeout |  |  |  |  |  |
+| P3 | timeout |  |  |  |  |  |
+| P4 | ok | 0.0000 | 0.1586 | 0.0008 | 0.0001 | 0.0003 |
+| P5 | ok | 0.0001 | 0.2886 | 0.0012 | 0.0010 | 0.0018 |
+| P6 | ok | 0.0001 | 0.6597 | 0.0020 | 0.0030 | 0.0041 |
+| P7 | ok | 0.0001 | 4.3445 | 0.0053 | 0.0041 | 0.0058 |
+| P8 | ok | 0.0001 | 7.2297 | 0.0079 | 0.0063 | 0.0068 |
+| P9 | ok | 0.0001 | 5.3421 | 0.0070 | 0.0098 | 0.0115 |
+| P10 | timeout | 0.0001 |  |  |  |  |
+| P11 | timeout |  |  |  |  |  |
+| P12 | timeout |  |  |  |  |  |
+| P13 | timeout |  |  |  |  |  |
+| P14 | timeout |  |  |  |  |  |
+| P15 | timeout |  |  |  |  |  |
+| P16 | timeout |  |  |  |  |  |
+| P17 | timeout |  |  |  |  |  |
+| P18 | timeout |  |  |  |  |  |
+| P19 | timeout |  |  |  |  |  |
+| P20 | timeout |  |  |  |  |  |
