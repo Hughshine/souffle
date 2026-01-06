@@ -333,6 +333,17 @@ static void runBddPipeline(
     std::map<EdgePtr, BddNodeRef> edgeFormulas;
     std::unique_ptr<WeightedBDDManager> bddManager;
     const bool computeProbabilities = !opt.isDerivationOnly();
+    std::unordered_set<NodePtr> seedTrueNodes;
+    seedTrueNodes.reserve(view.getNodes().size());
+    for (const auto& n : view.getNodes()) {
+        const std::string s = n->getTuple().toString();
+        if (s.rfind("@magic.", 0) != 0) continue;
+
+        if (view.getIncomingEdges(n).empty()) {
+            seedTrueNodes.insert(n);
+        }
+    }
+    //std::cout << "[dbg] seedTrueNodes size = " << seedTrueNodes.size() << "\
 
     if (computeProbabilities) {
         if (opt.isRewriteEnabled()) {
@@ -849,7 +860,7 @@ static void runBddPipeline(
                 fcStage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMs));
             }
             auto t0 = std::chrono::steady_clock::now();
-            buildFormulasCyclewise(view, *bddManager, nodeFormulas, edgeFormulas);
+            buildFormulasCyclewise(view, *bddManager, nodeFormulas, edgeFormulas, seedTrueNodes);
             auto t1 = std::chrono::steady_clock::now();
             std::cout << "[pipeline] BDD formula build took "
                       << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
@@ -976,6 +987,17 @@ static void runSddPipeline(
     std::map<EdgePtr, SddNodeRef> edgeFormulas;
     std::unique_ptr<SddFormulaManager> sddManager;
     const bool computeProbabilities = !opt.isDerivationOnly();
+    std::unordered_set<NodePtr> seedTrueNodes;
+    seedTrueNodes.reserve(view.getNodes().size());
+    for (const auto& n : view.getNodes()) {
+        const std::string s = n->getTuple().toString();
+        if (s.rfind("@magic.", 0) != 0) continue;
+
+        if (view.getIncomingEdges(n).empty()) {
+            seedTrueNodes.insert(n);
+        }
+    }
+    //std::cout << "[dbg] seedTrueNodes size = " << seedTrueNodes.size() << "\
 
     if (computeProbabilities) {
         if (opt.isRewriteEnabled()) {
@@ -1346,7 +1368,7 @@ static void runSddPipeline(
                 fcStage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMs));
             }
             auto t0 = std::chrono::steady_clock::now();
-            buildFormulasCyclewise(view, *sddManager, nodeFormulas, edgeFormulas);
+            buildFormulasCyclewise(view, *sddManager, nodeFormulas, edgeFormulas, seedTrueNodes);
             auto t1 = std::chrono::steady_clock::now();
             std::cout << "[pipeline] SDD formula build took "
                       << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()

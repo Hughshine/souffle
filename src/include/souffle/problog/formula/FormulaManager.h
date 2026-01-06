@@ -19,7 +19,7 @@ public:
     virtual NodeRef makeOr(const std::vector<NodeRef>& nodes) = 0;
     virtual NodeRef makeNot(const NodeRef& a) = 0;
     virtual NodeRef makeCondition(const NodeRef& f,
-        const std::vector<int>& trueIndexes, const std::vector<int>& falseIndexes);
+        const std::vector<int>& trueIndexes, const std::vector<int>& falseIndexes) = 0;
     virtual void postprocessUselessVariables(const std::set<int>& condVars) {};
     virtual bool isSame(const NodeRef& a, const NodeRef& b) = 0;
     virtual NodeRef getTrue() = 0;

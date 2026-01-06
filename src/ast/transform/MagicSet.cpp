@@ -737,14 +737,6 @@ bool AdornDatabaseTransformer::transform(TranslationUnit& translationUnit) {
     const auto& ioTypes = translationUnit.getAnalysis<analysis::IOTypeAnalysis>();
     weaklyIgnoredRelations = getWeaklyIgnoredRelations(translationUnit);
 
-    static bool printed = false;
-    if (!printed) {
-        printed = true;
-        for (const auto& rel : weaklyIgnoredRelations) {
-            std::cerr << "weakly ignore: " << rel << "\n";
-        }
-    }
-
     // Output relations trigger the adornment process
     for (const auto* rel : program.getRelations()) {
         if (ioTypes.isOutput(rel) || ioTypes.isPrintSize(rel)) {
@@ -782,7 +774,6 @@ bool AdornDatabaseTransformer::transform(TranslationUnit& translationUnit) {
             }
         }
     }
-    std::cout << "AORNMENT MARKER : " << changed << std::endl;
     return changed;
 }
 
@@ -1201,7 +1192,6 @@ bool MagicSetCoreTransformer::transform(TranslationUnit& translationUnit) {
         changed = true;
         program.addRelation(std::move(magicRelation));
     }
-    std::cout << "MSTCORE:" << changed << std::endl;
     return changed;
 }
 
