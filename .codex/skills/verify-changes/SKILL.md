@@ -1,0 +1,18 @@
+---
+name: verify-changes
+description: Run or document verification steps and produce a concise verification summary.
+---
+
+# Verify Changes
+
+Use this for any change that should include verification evidence.
+
+## Steps
+1. Pick the smallest relevant checks:
+   - Style: `sh/run_test_format.sh`
+   - Build: `cmake -S . -B build`
+   - Build: `cmake --build build -j${JOBS}` (set `JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)`)
+   - Smoke run: `SOUFFLE_BIN=./build/src/souffle examples/running_example/run.sh`
+   - Tests: `ctest --test-dir build -I "<range>" --output-on-failure --progress -j${JOBS}`
+2. If a command is skipped or fails, record the reason and how a maintainer can run it.
+3. Report a verification summary with each command and its status (ran/skipped).
