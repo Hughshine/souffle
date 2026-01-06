@@ -142,9 +142,6 @@ public:
     bool needOutput = false;
     bool isQuery = false;
 
-    size_t currentRefCount = 0;  // references by output nodes; set during pruning
-    size_t tmpRefCount = 0;      // set during
-
 private:
     explicit Node(const UntypedTuple& t, size_t nodeId, double prob = 1.0)
         : tuple(t), id(nodeId), probability(prob) {}
@@ -251,11 +248,6 @@ public:
     }
     RuleApplication getRuleApp() const { return ruleApp; }
     bool pruned = false;
-    size_t currentRefCount = 0;  // references by output nodes; set during pruning
-    size_t tmpRefCount = 0;      // set during
-
-
-
     mutable std::optional<EdgeKey> cachedEdgeKey;
 
     /**
@@ -1248,7 +1240,6 @@ public:
         std::unordered_set<EdgePtr> reachableEdges;
         std::queue<NodePtr> workQueue;
 
-        std::unordered_set<NodePtr> outputNodes;
         // Initialize: start from all output relation nodes.
         for (const auto& node : nodes) {
             if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
@@ -1256,32 +1247,6 @@ public:
                 reachableNodes.insert(node);
                 workQueue.push(node);
                 node->setQuery();
-                outputNodes.insert(node);
-            }
-            node->currentRefCount = 0;
-        }
-
-        for (const auto& edge : edges) {
-            edge->currentRefCount = 0;
-        }
-
-        // register reference count
-        for (const auto& node : outputNodes) {
-            std::queue<NodePtr> q;
-            std::unordered_set<NodePtr> visited;
-            q.push(node);
-            while (!q.empty()) {
-                NodePtr n = q.front(); q.pop();
-                visited.insert(n);
-                n->currentRefCount += 1;
-                for (const auto& edge : n->getIncomingEdges()) {
-                    edge->currentRefCount += 1;
-                    for (const auto& inputNode : edge->getInputs()) {
-                        if (visited.count(inputNode) == 0) {
-                            q.push(inputNode);
-                        }
-                    }
-                }
             }
         }
 
@@ -1856,7 +1821,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
     std::unordered_set<EdgePtr> edgesToRemoveSet;
     std::unordered_set<NodePtr> outputsToFix;
     std::unordered_set<NodePtr> inputsToFix;
-    std::set<UntypedTuple> deletedFactsSet(deletedFacts.begin(), deletedFacts.end());
+    std::unordered_set<UntypedTuple> deletedFactsSet(deletedFacts.begin(), deletedFacts.end());
     {
         FunctionTimer scope("applyDeltaDeletes: collect impact of deleted facts");
         // Old logic rebuilds impacted maps after prune; keep interface as a placeholder to minimize overhead.
@@ -2000,32 +1965,26 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
 
     {
         FunctionTimer scope("applyDeltaDeletes: cleanup impacted sets");
-        for (auto& [fact, impactedEdges]: deletedFactImpactedEdges) {
-            std::unordered_set<EdgePtr> newImpactedEdges;
-            for (const auto& impactedEdge : impactedEdges) {
-                // If this edge is already marked deleted, skip it.
-                if (deltaDeleteEdges.find(impactedEdge) != deltaDeleteEdges.end()) {
-                    continue;
+        for (auto& [fact, impactedEdges] : deletedFactImpactedEdges) {
+            for (auto it = impactedEdges.begin(); it != impactedEdges.end(); ) {
+                if (deltaDeleteEdges.find(*it) != deltaDeleteEdges.end()) {
+                    auto toErase = it++;
+                    impactedEdges.erase(toErase);
+                } else {
+                    ++it;
                 }
-                // Otherwise, add it to the new impacted edge set.
-                newImpactedEdges.insert(impactedEdge);
             }
-            // Update the impacted edge set.
-            impactedEdges = std::move(newImpactedEdges);
         }
-        for (auto& [fact, impactedNodes]: deletedFactImpactedNodes) {
-            std::unordered_set<NodePtr> newImpactedNodes;
-            for (const auto& impactedNode : impactedNodes) {
-                // If this node is already marked deleted, skip it.
-                if (deltaDeleteNodes.find(impactedNode) != deltaDeleteNodes.end()) {
-                    continue;
+        for (auto& [fact, impactedNodes] : deletedFactImpactedNodes) {
+            for (auto it = impactedNodes.begin(); it != impactedNodes.end(); ) {
+                if (deltaDeleteNodes.find(*it) != deltaDeleteNodes.end()) {
+                    auto toErase = it++;
+                    impactedNodes.erase(toErase);
+                } else {
+                    ++it;
                 }
-                // Otherwise, add it to the new impacted node set.
-                newImpactedNodes.insert(impactedNode);
 //            std::cout << "Deleted fact: " << fact->toString() << " impacts node: " << impactedNode->toString() << std::endl;
             }
-            // Update the impacted node set.
-            impactedNodes = newImpactedNodes;
         }
     }
     std::cout << "[applyDeltaDeletes] detailed: "
@@ -2077,48 +2036,15 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     std::unordered_set<EdgePtr> reachableEdges;
     std::queue<NodePtr> workQueue;
 
-    std::unordered_set<NodePtr> outputNodes;
-
     {
-        FunctionTimer scopeTimer("prune-inc: init outputs + refcount");
+        FunctionTimer scopeTimer("prune-inc: init outputs");
         // Initialize: start from all output relation nodes.
         for (const auto& node : nodes) {
-            if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
+            if (outputRelationNames.count(node->getTuple().relation_name) > 0 || node->isQueryNode()) {
                 // std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
                 reachableNodes.insert(node);
                 workQueue.push(node);
                 node->setQuery();
-                outputNodes.insert(node);
-            } else if (node -> isQueryNode()) {
-                reachableNodes.insert(node);
-                workQueue.push(node);
-                node->setQuery();
-                outputNodes.insert(node);
-            }
-            node->currentRefCount = 0;
-        }
-
-        for (const auto& edge : edges) {
-            edge->currentRefCount = 0;
-        }
-
-        // register reference count
-        for (const auto& node : outputNodes) {
-            std::queue<NodePtr> q;
-            std::unordered_set<NodePtr> visited;
-            q.push(node);
-            while (!q.empty()) {
-                NodePtr n = q.front(); q.pop();
-                visited.insert(n);
-                n->currentRefCount += 1;
-                for (const auto& edge : n->getIncomingEdges()) {
-                    edge->currentRefCount += 1;
-                    for (const auto& inputNode : edge->getInputs()) {
-                        if (visited.count(inputNode) == 0) {
-                            q.push(inputNode);
-                        }
-                    }
-                }
             }
         }
     }

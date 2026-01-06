@@ -1848,13 +1848,6 @@ void buildFormulasCyclewiseOnDemand(
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     debugger.logMessage(Level::INFO, "Variable ordering takes " + std::to_string(duration) + " ms");
 
-    for (auto node : view.getNodes()) {
-        node->tmpRefCount = node->currentRefCount;
-    }
-    for (auto edge : view.getEdges()) {
-        edge->tmpRefCount = edge->currentRefCount;
-    }
-
     auto& depGraph = view.getCycleDependencyGraph();
 //    depGraph.dumpCycles(std::cout);
     depGraph.dumpDot("scc.dot");
@@ -2001,32 +1994,8 @@ void buildFormulasCyclewiseOnDemand(
             }
         }
         for (auto node : outputNodes) {
-            std::queue<NodePtr> q;
-            std::unordered_set<NodePtr> visited;
             auto prob = formulaManager.computeWeightedModelCount(nodeFormulas[node]);
             probResult[node] = prob;
-            q.push(node);
-            while (!q.empty()) {
-                auto qnode = q.front(); q.pop(); visited.insert(qnode);
-                if (qnode->isFact) continue;
-                qnode->tmpRefCount -= 1;
-                if (qnode->tmpRefCount <= 0) {
-                    nodeFormulas.erase(qnode);
-//                    std::cout << "Reduced node formula for node " << qnode->toString() << std::endl;
-                }
-                for (auto inEdge : view.getIncomingEdges(qnode)) {
-                    inEdge->tmpRefCount -= 1;
-                    if (inEdge->tmpRefCount <= 0) {
-                        edgeFormulas.erase(inEdge);
-                    }
-//                    std::cout << "Reduced edge formula for edge " << inEdge->toString() << std::endl;
-                    for (auto inNode: view.getInputs(inEdge)) {
-                        if (visited.count(inNode) == 0 && qnode->tmpRefCount > 0) {
-                            q.push(inNode);
-                        }
-                    }
-                }
-            }
         }
         formulaManager.tryGarbageCollection();
 
