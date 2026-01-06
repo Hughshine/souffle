@@ -1,3 +1,9 @@
+# Conjunctive Rewrite Notes (Historical Design)
+
+## Status
+- Design/plan document; not the current implementation.
+- Current fast paths are summarized in `README.rewrite.md`.
+
 ## Scope
 - Design/plan document; not the current implementation.
 - Full-mode rewrite only; incremental modes do not perform rewrite.

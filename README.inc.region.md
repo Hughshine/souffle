@@ -2,6 +2,9 @@
 
 This file describes the current inc-regional incremental pipeline implementation. It follows the code and is not a planning document.
 
+## Status
+- Active design note; matches current implementation.
+
 ## Scope / Context
 - Applies only to online incremental binaries (default; `--online` optional); the old `--inc` backend is removed.
 - inc-regional only replaces insertion forward compilation; deletion still reuses the inc-naive DRed-like logic.

@@ -4,6 +4,9 @@
 
 This note explains what `src/include/souffle/problog/GraphAnalyzer.h` does, the major steps in its algorithm, and where the debug logs land. It is meant to help reason about why SISO regions may or may not be found on a given derivation graph.
 
+## Status
+- Active detector reference; behavior matches the current rewriter.
+
 ## Scope
 - Detection algorithm only (GraphAnalyzer); rewrite application lives in `README.rewrite.md`.
 - Not specific to online incremental; applies to full-mode derivation graphs.

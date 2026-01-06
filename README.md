@@ -5,16 +5,19 @@ incremental evaluation. It focuses on the online compiler path and adds
 DRed-like incremental updates, derivation-graph-based inference, and rewrite
 prototypes.
 
+## Status
+- Active entry point for this fork; keep high-level and link to detailed docs.
+
 ## Audience
 - Researchers and engineers working on probabilistic Datalog evaluation.
 - Contributors modifying the online incremental compiler and rewrite pipeline.
 
-## Status / Scope
-- Online incremental path is the only supported backend; the legacy `--inc`
-  backend is removed.
-- Online compilation is the default; `--online` is optional and auto-enabled.
-- No interpreter mode; `souffle file.dl` defaults to compile-only `-o <basename>`.
+## Scope and Defaults
+- Online compilation is the default; `--online` is optional.
+- The legacy `--inc` backend is removed.
+- No interpreter path; `souffle file.dl` defaults to compile-only `-o <basename>`.
 - Rewrite runs in full mode only; incremental modes skip rewrite.
+- Full mode defaults to `full-hard`; `full-soft` is optional.
 
 ## Quickstart
 
@@ -24,19 +27,19 @@ prototypes.
 - macOS Apple Silicon: `sh/setup/install_macos_arm_deps.sh`
 
 ### 2) Build
-```
+```bash
 JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
 cmake -S . -B build
 cmake --build build -j${JOBS}
 ```
 
 ### 3) Run a minimal example
-```
+```bash
 SOUFFLE_BIN=./build/src/souffle examples/running_example/run.sh
 ```
 
 ### 4) Verify (style)
-```
+```bash
 sh/run_test_format.sh
 ```
 See `docs/TESTING.md` for test status and alternative verification paths.
@@ -55,10 +58,9 @@ See `docs/TESTING.md` for test status and alternative verification paths.
 - `docs/RUNBOOK.md`: run/rollback/troubleshooting guide.
 - `docs/SECURITY.md`: data handling and dependency hygiene.
 - `docs/USAGE.md`: program syntax, CLI, and runtime options.
-- `docs/INDEX.md`: index of all research notes and evaluation docs.
+- `docs/INDEX.md`: index of research notes and evaluation docs.
 
 ## FAQ / Common Issues
-- **ctest fails**: this fork intentionally disables `ctest`.
-  See `docs/TESTING.md`.
-- **Need rewrite/incremental details**: start at `docs/INDEX.md`.
-- **Commit hygiene**: see `README.git.md` for what to include and exclude.
+- ctest fails: this fork intentionally disables `ctest`; see `docs/TESTING.md`.
+- Need rewrite or incremental details: start at `docs/INDEX.md`.
+- Commit hygiene: see `README.git.md` for what to include and exclude.

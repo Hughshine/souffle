@@ -4,6 +4,9 @@ This document records ProbLog full-inference timing runs for the
 side-channel benchmark programs. It captures stdout stage timings
 whenever ProbLog prints them and notes timeouts explicitly.
 
+## Status
+- Historical baseline record; re-run when datasets or timeouts change.
+
 ## Scope
 - Rule sets: full and trimmed_plus.
 - Cases: P1..P20 (P2 missing in the dataset).

@@ -4,6 +4,9 @@
 - The old `--inc` incremental backend is removed; this file does not discuss it.
 - Focuses on semi-naive + DRed-like deletion/rederive/insertion; rewrite/forward compilation are covered in other docs.
 
+## Status
+- Active implementation and performance note for online DRed.
+
 ## Online DRed flow (code-level overview)
 1) CLI parses deltas and writes to `$inc_delta_tuple_{insert,delete}_*`; deletes do not directly erase from base relations.
 2) Generated `runFunctionInc()` calls `inc_table_update` first, then executes each `_inc` stratum in order.

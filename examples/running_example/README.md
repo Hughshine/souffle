@@ -2,6 +2,9 @@
 
 This folder contains a minimal Souffle case that demonstrates how to compile and run a Datalog program with this fork.
 
+## Status
+- Active running example for this fork.
+
 ## What this example does
 The program computes reachability (`path`) from directed edges (`edge`).
 

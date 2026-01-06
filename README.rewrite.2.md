@@ -1,4 +1,8 @@
-> Note (status): This document captures an **experimental/alternative plan** that included fact-prefix folding and node merges. The current codebase has been reverted to a conservative rewriter (see `README.rewrite.md` for the active behavior). Keep this file as a historical reference; do not assume its steps are implemented now.
+# Rewrite Alternative Plan (Historical)
+
+## Status
+- Historical experimental plan (fact-prefix folding and node merges).
+- Current behavior is the conservative rewriter in `README.rewrite.md`.
 
 ## Scope
 - Historical rewrite plan; not current behavior.

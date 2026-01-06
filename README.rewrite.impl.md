@@ -1,4 +1,9 @@
-> Note: This file is a running notebook of experiments/ideas, including aggressive versions that are **not** the current state. The active implementation is summarized in `README.rewrite.md`; use this file as historical context. Most timings below predate `--det-opt`, component-wise FC/WMC, and the new hybrid timing stage.
+# Rewrite Experiments (Historical Notebook)
+
+## Status
+- Historical experiment notebook; not the current behavior.
+- Active implementation summary: `README.rewrite.md`.
+- Many timings predate `--det-opt`, component-wise FC/WMC, and the hybrid timing stage.
 
 ## Scope
 - Historical experiment log; not the current behavior.

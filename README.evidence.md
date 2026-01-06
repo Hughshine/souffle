@@ -3,6 +3,9 @@
 This document summarizes how `evidence(...)` is parsed, validated, compiled, and applied
 in the probabilistic pipeline.
 
+## Status
+- Active behavior reference for evidence handling.
+
 ## 1. Syntax and AST
 
 Accepted syntax:

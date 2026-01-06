@@ -4,6 +4,9 @@ This file summarizes analysis of GraphRewriter / GraphAnalyzer rewrite costs,
 adjacency queries, cache invalidation, and optimization ideas. It is a design
 note only; no code changes are included.
 
+## Status
+- Active optimization note; not a description of implemented changes.
+
 ## Current behavior (rewrite loop)
 
 - The rewrite loop detects SISO regions, then rewrites them one by one.

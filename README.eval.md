@@ -4,6 +4,9 @@ This plan covers full-only evaluation for the side-channel benchmarks generated 
 `side_channel_full.py`. It includes dataset generation, derivation-graph-only timing,
 ProbLog vs Souffle (no rewrite vs rewrite), WMC scaling, and end-to-end comparisons.
 
+## Status
+- Active evaluation workflow; update with new runs and dates as needed.
+
 ## Scope
 - Full computation only; no incremental modes.
 - Compile with `--full-only` so reordering strategy stays consistent (default CUDD sift).
@@ -92,8 +95,8 @@ Notes:
 - For rewrite, `fc_s`/`wmc_s` are derived from `fc_build_ms` and `wmc_ms` recorded
   in the hybrid stage.
 - `FORWARD_COMPILATION_FULL` appears only in no-rewrite runs.
-- `dd_live_nodes` for rewrite is the **sum** of per‑component live nodes; it is not
-  directly comparable to the single‑manager count and may be inaccurate for
+- `dd_live_nodes` for rewrite is the sum of per-component live nodes; it is not
+  directly comparable to the single-manager count and may be inaccurate for
   absolute size comparisons.
 - P2 is missing in the dataset and is skipped.
 
@@ -175,16 +178,18 @@ re-run is required for current pipeline behavior.
 - Rewrite is slower on P3 and P9; larger cases (P14-P16) show ~2.6x to 2.8x.
 - Data files: `experiments/side_channel_full_eval_trimmed/results-souffle-norewrite.tsv`,
   `experiments/side_channel_full_eval_trimmed/results-souffle-rewrite.tsv`.
-Interpretation: the trimmed side-channel rule set further reduces the number of random variables,
-and the analysis itself is relatively simple/legacy, so even large benchmarks remain easy.
-As a result, rewrite's linear advantage versus forward compilation's exponential growth
-does not fully surface, and the speedup is not consistently dramatic.
+
+Interpretation: the trimmed side-channel rule set further reduces the number of random
+variables, and the analysis itself is relatively simple/legacy, so even large
+benchmarks remain easy. As a result, rewrite's linear advantage versus forward
+compilation's exponential growth does not fully surface, and the speedup is not
+consistently dramatic.
 
 TODO (full rule set):
-- 已完成：对确定性 relation 尽早做优化（`--det-opt` gating RecordDerivation）。
-- 已完成：重跑全量评测（`--det-opt`，默认 `naive-split`）。
-- 待补：分别记录 `--split-mode` 影响。
-- 需要更复杂的 benchmark；等待 PLDI'18 的提取。
+- Done: optimize deterministic relations early (`--det-opt` gates RecordDerivation).
+- Done: re-run full evaluation (`--det-opt`, default `naive-split`).
+- TODO: record the impact of `--split-mode` variants.
+- TODO: use a more complex benchmark; waiting on PLDI'18 extraction.
 
 Per-case timing (Elapsed_s, trimmed):
 | Case | No-rewrite Elapsed_s | Rewrite Elapsed_s | Speedup (NR/RW) |
@@ -198,216 +203,3 @@ Per-case timing (Elapsed_s, trimmed):
 | P8 | 0.095404 | 0.099170 | 0.962 |
 | P9 | 0.098901 | 0.141231 | 0.700 |
 | P10 | 0.163559 | 0.113158 | 1.445 |
-| P11 | 0.113185 | 0.110342 | 1.026 |
-| P12 | 0.154320 | 0.153959 | 1.002 |
-| P13 | 0.482895 | 0.246416 | 1.960 |
-| P14 | 0.917989 | 0.354718 | 2.588 |
-| P15 | 2.935720 | 1.043847 | 2.812 |
-| P16 | 5.302365 | 1.875912 | 2.827 |
-| P17 | 6.489348 | 2.783795 | 2.331 |
-| P18 | 6.760182 | 4.256490 | 1.588 |
-| P19 | 10.555435 | 5.666979 | 1.863 |
-| P20 | 6.640608 | 3.994600 | 1.662 |
-
-## Trimmed-plus runs (no ProbLog, P1..P20)
-Use `trimmed_plus` (all facts probabilistic) and keep outputs separate for
-no-rewrite vs rewrite so `facts.prob` can be diffed directly.
-```bash
-python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
-  --base-dir experiments/side_channel_full_eval_trimmed_plus_norewrite generate \
-  --cases 1-20 --cleanup --force-smt --rule-set trimmed_plus
-python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
-  --base-dir experiments/side_channel_full_eval_trimmed_plus_norewrite compile \
-  --cases 1-20 --timeout 300
-python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
-  --base-dir experiments/side_channel_full_eval_trimmed_plus_norewrite run \
-  --cases 1-20 --timeout 60 --souffle-only --souffle-arg=--det-opt
-python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
-  --base-dir experiments/side_channel_full_eval_trimmed_plus_norewrite collect --cases 1-20
-mv experiments/side_channel_full_eval_trimmed_plus_norewrite/results-souffle.tsv \
-  experiments/side_channel_full_eval_trimmed_plus_norewrite/results-souffle-norewrite.tsv
-
-python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
-  --base-dir experiments/side_channel_full_eval_trimmed_plus_rewrite generate \
-  --cases 1-20 --cleanup --force-smt --rule-set trimmed_plus
-python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
-  --base-dir experiments/side_channel_full_eval_trimmed_plus_rewrite compile \
-  --cases 1-20 --timeout 300
-python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
-  --base-dir experiments/side_channel_full_eval_trimmed_plus_rewrite run \
-  --cases 1-20 --timeout 60 --souffle-only --souffle-arg=--det-opt \
-  --souffle-arg=--rewrite
-python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
-  --base-dir experiments/side_channel_full_eval_trimmed_plus_rewrite collect --cases 1-20
-mv experiments/side_channel_full_eval_trimmed_plus_rewrite/results-souffle.tsv \
-  experiments/side_channel_full_eval_trimmed_plus_rewrite/results-souffle-rewrite.tsv
-```
-
-Latest run summary (2026-01-05, trimmed_plus, 60s timeout):
-- Separate base dirs used for no-rewrite vs rewrite.
-- P17-P19 timeout in no-rewrite; rewrite completes all cases.
-- `facts.prob` matches for every case where both sides finished.
-
-Per-case timing and consistency (trimmed_plus):
-| Case | NR status | NR elapsed_s | RW status | RW elapsed_s | facts.prob |
-| --- | --- | --- | --- | --- | --- |
-| P1 | ok | 0.325666 | ok | 0.339383 | match |
-| P2 | missing | n/a | missing | n/a | skip |
-| P3 | ok | 0.349041 | ok | 0.305746 | match |
-| P4 | ok | 0.009540 | ok | 0.005856 | match |
-| P5 | ok | 0.010260 | ok | 0.005829 | match |
-| P6 | ok | 0.012172 | ok | 0.008273 | match |
-| P7 | ok | 0.018784 | ok | 0.013395 | match |
-| P8 | ok | 0.015769 | ok | 0.014028 | match |
-| P9 | ok | 0.042604 | ok | 0.016063 | match |
-| P10 | ok | 0.037049 | ok | 0.036261 | match |
-| P11 | ok | 0.043119 | ok | 0.034538 | match |
-| P12 | ok | 1.248649 | ok | 0.074829 | match |
-| P13 | ok | 1.600543 | ok | 0.171661 | match |
-| P14 | ok | 3.200349 | ok | 0.292766 | match |
-| P15 | ok | 9.593758 | ok | 0.621502 | match |
-| P16 | ok | 20.891493 | ok | 1.228883 | match |
-| P17 | timeout | 60.000000 | ok | 1.971686 | skip |
-| P18 | timeout | 60.000000 | ok | 3.058608 | skip |
-| P19 | timeout | 60.000000 | ok | 4.264387 | skip |
-| P20 | ok | 32.980840 | ok | 3.259881 | match |
-
-## Measurements
-
-### 1) Derivation graph generation vs ProbLog grounding
-Goal: isolate derivation-graph build time in Souffle and compare to ProbLog grounding.
-
-Souffle derivation graph only:
-```bash
-for p in experiments/side_channel_full_eval/P{1..20}; do
-  [ -x "$p/compute" ] || continue
-  (cd "$p" && ./compute --derv-only -F input -D output_dg \
-    --logfile log_$(basename "$p")_derv)
-done
-```
-- Use `log_P*_derv*.json` for timing (typically just the SEM/derivation stage).
-- Add `--dumpjson` / `--dumpdot` if you need graph dumps.
-
-ProbLog grounding only (use a timeout; large cases may not finish):
-```bash
-for p in experiments/side_channel_full_eval/P{1..20}; do
-  [ -f "$p/compute.problog.dl" ] || continue
-  (cd "$p" && timeout 600 problog --ground compute.problog.dl \
-    > output_dg/problog.ground.out 2>&1)
-done
-```
-- Record wall-clock time; treat timeouts as upper bounds.
-
-### 2) ProbLog vs Souffle no-rewrite vs rewrite
-Compare three variants: ProbLog baseline, Souffle full without rewrite, and Souffle
-full with rewrite. Avoid `--merge-bi-imp` unless explicitly testing eqrel.
-
-Manual run (keeps outputs separate):
-```bash
-for p in experiments/side_channel_full_eval/P{1..20}; do
-  [ -x "$p/compute" ] || continue
-  (cd "$p" && ./compute --det-opt -F input -D output_norewrite \
-    --logfile log_$(basename "$p")_norewrite)
-  (cd "$p" && ./compute --det-opt --rewrite -F input -D output_rewrite \
-    --logfile log_$(basename "$p")_rewrite)
-done
-```
-
-Python runner alternative:
-- ProbLog baseline:
-  ```bash
-  python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
-    --base-dir experiments/side_channel_full_eval run --cases 1-20 \
-    --problog-only --timeout 600
-  ```
-- Souffle no-rewrite:
-  ```bash
-  python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
-    --base-dir experiments/side_channel_full_eval run --cases 1-20 \
-    --souffle-only --souffle-arg --det-opt --timeout 600
-  ```
-- Souffle rewrite:
-  ```bash
-  python /home/hugh/research/datalog/problog-benchmark/side_channel_full.py \
-    --base-dir experiments/side_channel_full_eval run --cases 1-20 \
-    --souffle-only --souffle-arg --det-opt --souffle-arg --rewrite --timeout 600
-  ```
-After each run, call `collect` and rename the TSVs (e.g.,
-`results-souffle-norewrite.tsv`, `results-souffle-rewrite.tsv`) to avoid overwrite.
-
-Metrics to report:
-- Time: `souffle.full.meta.json` elapsed time and `log_P*_*.json` stage timing.
-- Space: `FC_LiveNodes` in `results-souffle.tsv` (proxy for DD size), plus any
-  `graph-*.json` node/edge counts.
-- Emphasize cases where rewrite allows completion that ProbLog or no-rewrite
-  cannot finish due to time or memory limits.
-
-### 3) WMC scaling
-- WMC time is `WMC_s` in `results-souffle.tsv`.
-- Node count proxy is `FC_LiveNodes`.
-- Report how WMC time scales with node count across P1-P20 (roughly proportional).
-
-### 4) End-to-end efficiency
-- Compare total `Elapsed_s` between ProbLog and Souffle variants.
-- For Souffle, confirm each stage (SEM/PRN/FC/WMC) is faster in the rewrite variant
-  and in aggregate, resulting in a lower end-to-end time.
-
-## LaTeX table prompts (one per measurement)
-Use these prompts to generate LaTeX tables for the paper. Each prompt assumes you
-provide the relevant TSV/JSON extracts as input to the model.
-
-### Table prompt A: Derivation graph generation vs ProbLog grounding
-Prompt:
-```
-You are given per-case timings for Souffle derivation-graph-only runs
-(log_P*_derv*.json) and ProbLog grounding runs (problog --ground), including
-timeouts. Produce a LaTeX table (tabular + caption + label) with columns:
-Case, Souffle_Derv_s, ProbLog_Ground_s, ProbLog_Status, Speedup, Notes.
-Use "timeout" in ProbLog_Ground_s when it hits the limit and leave Speedup blank.
-Sort rows by case (P1..P20). Keep 2 decimal places.
-```
-
-### Table prompt B1: ProbLog vs Souffle (time)
-Prompt:
-```
-Given results-problog.tsv and results-souffle.tsv for three variants
-(ProbLog baseline, Souffle no-rewrite, Souffle rewrite), generate a LaTeX table
-with columns: Case, ProbLog_s, Souffle_NoRewrite_s, Souffle_Rewrite_s,
-Speedup_NR_vs_ProbLog, Speedup_RW_vs_NR. Use Elapsed_s for all timings.
-Mark timeouts as "timeout". Keep 2 decimal places. Sort by case.
-Include caption and label.
-```
-
-### Table prompt B2: ProbLog vs Souffle (space / DD size)
-Prompt:
-```
-Given results-souffle.tsv for no-rewrite and rewrite runs, produce a LaTeX table
-with columns: Case, FC_LiveNodes_NoRewrite, FC_LiveNodes_Rewrite, Reduction_%.
-Compute Reduction_% = 100*(1 - rewrite/no-rewrite). Keep 1 decimal place.
-Sort by case. Include caption and label.
-```
-
-### Table prompt C: WMC scaling
-Prompt:
-```
-Using results-souffle.tsv (rewrite run preferred), generate a LaTeX table with
-compact headers: Case, Nodes, WMC, WMC/1k. Use FC_LiveNodes for Nodes and compute
-WMC/1k = WMC_s / (FC_LiveNodes/1000). Keep 3 decimal places. Sort by case.
-Include caption and label.
-```
-
-### Table prompt D: End-to-end efficiency (stage breakdown)
-Prompt:
-```
-From log_P*_*.json (Souffle) and results-problog.tsv (ProbLog), generate a LaTeX
-table with columns: Case, SEM_s, PRN_s, FC_s, WMC_s, Souffle_Total_s, ProbLog_Total_s,
-Speedup_Total. Use Souffle stage times from log JSON (or results-souffle.tsv if easier).
-Mark missing/timeout as "timeout". Keep 2 decimal places. Sort by case.
-Include caption and label.
-```
-
-## Notes
-- Keep all generated artifacts under `experiments/`; do not git-add them.
-- Fix a timeout for ProbLog and record timeouts explicitly in the tables.
-- If you need strict reproducibility, pin `OMP_NUM_THREADS=1` and keep reordering
-  defaults unchanged.

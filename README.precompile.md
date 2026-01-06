@@ -1,5 +1,9 @@
 # Precompile Refactor Log
 
+## Status
+- Completed refactor as of 2025-02-14; keep as historical reference.
+- Current build flow links the precompiled runtime library `compiled`.
+
 ## Goals
 - Reduce compile time for generated C++ by moving heavy runtime implementations out of headers.
 - Build a precompiled runtime library and link it from `souffle-compile.py`.

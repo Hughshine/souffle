@@ -2,6 +2,9 @@
 
 This file captures refactor opportunities after re-reading the core online pipeline and problog code. It is not a plan or a commitment; it is a prioritized list of likely improvements.
 
+## Status
+- Active refactor note; not a commitment to implement.
+
 ## Scope (files reviewed)
 - `src/MainDriver.cpp`
 - `src/include/souffle/cli/Cli.h`

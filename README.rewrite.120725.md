@@ -1,3 +1,9 @@
+# Rewrite Notes (Historical, 2025-12-07)
+
+## Status
+- Historical record from 2025-12-07; not the current implementation.
+- Use `README.rewrite.md` for current behavior and `README.eval.md` for runs.
+
 ## Scope
 - Historical record (2025-12-07); not an authoritative description of the current implementation.
 - Applies only to full-mode rewrite; incremental modes do not perform rewrite.

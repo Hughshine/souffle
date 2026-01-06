@@ -2,6 +2,9 @@
 
 This file summarizes the SISO rewrite pipeline: design, current state (post revert), observed behavior, and near‑term plans.
 
+## Status
+- Active pipeline summary; update with new runs and behavior changes.
+
 ## Scope
 - Full-mode pipeline only; incremental modes (`inc`/`inc-regional`) skip rewrite.
 - Online compilation is default; `--online` is optional (kept in commands when shown).

@@ -2,6 +2,9 @@
 
 This note explains where timing/memory/graph statistics are reported, how to collect them, and how to interpret the key fields. It is written for the online incremental path (default).
 
+## Status
+- Active profiling guide for online incremental pipelines.
+
 ## Scope
 - Focus: P12-style runs with `inc-naive`, `inc-regional`, and `full` pipelines (`full` maps to `full-hard`; `full-soft` is optional).
 - No dump options by default (`--dumpjson/--dumpdot/--dumpstat` add overhead).

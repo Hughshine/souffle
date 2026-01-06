@@ -1,3 +1,9 @@
+# Rewrite Notes (Historical, 2025-12-08)
+
+## Status
+- Historical record from 2025-12-08; not the current implementation.
+- Use `README.rewrite.md` for current behavior and `README.eval.md` for runs.
+
 ## Scope
 - Historical record (2025-12-08); not an authoritative description of the current implementation.
 - Applies only to full-mode rewrite; incremental modes do not perform rewrite.
@@ -24,11 +30,12 @@
 - Similarly for no-rewrite: drop `-r` and change output to `_no_rewrite_prof`.
 - Diff after running: `for p in P13 P14 P15 P16 P17; do diff experiments/side_channel_full/$p/output_no_rewrite_prof/facts.prob experiments/side_channel_full/$p/output_rewrite_prof/facts.prob || echo "$p differs"; done`
 
-1. LinearTwoEdge的rewrite还没写
-2. a -> b, a' -> b (disj)
-3. split 和 evidence 的耦合需要fix. 
-4. split 算法可以优化
-5. rewrite并发化（每次找的siso集合是彼此独立的，那么有可能可以并发rewrite）
+## Open items (historical)
+1. LinearTwoEdge rewrite not implemented.
+2. Handle disjunction pattern: `a -> b`, `a' -> b`.
+3. Fix coupling between split and evidence handling.
+4. Optimize the split algorithm.
+5. Parallelize rewrite when detected SISOs are independent.
 
 
 ## Implemented SISO RegionKind (fast path)

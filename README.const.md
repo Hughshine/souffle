@@ -9,6 +9,9 @@ implemented pieces: `--det-opt` computes/dumps determinism and gates
 `RecordDerivation` + graph construction behavior. All current evaluations should
 run with `--det-opt` enabled.
 
+## Status
+- Active design and implementation notes; `--det-opt` is current behavior.
+
 ## Problem statement
 - Const-FC runs inside forward compilation, after graph construction and pruning.
 - Deterministic relations can generate huge derivation graphs even though their
