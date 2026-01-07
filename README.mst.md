@@ -30,3 +30,25 @@ ProbLog emitRules and the derivation graph.
 - Compile command: 
 - --magic-transform='Relations' enable mst changes on the given relations.
 - --magic-transform='*' enable mst changes for all relations.
+
+## Example
+```souffle
+.decl b(X:number, Z:number)
+.input b
+
+.decl c(Y:number, Z:number)
+.input c
+
+.decl a(X:number, Y:number)
+
+.decl res(X:number)
+.output res
+
+a(X, Y) :- b(X, Z), c(Y, Z).
+res(Y) :- a(1, Y).
+
+// Or:
+// a(X, Y) :- b(X, Z), c(Y, Z).
+// res(X) :- a(X, Y).
+// query(res(1)).
+```

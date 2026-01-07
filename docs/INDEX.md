@@ -28,6 +28,7 @@
 - `README.precompile.md`: precompile refactor log (historical, build-related).
 - `README.rewrite.120725.md`, `README.rewrite.120825.md`, `README.rewrite.2.md`,
   `README.rewrite.conj.md`, `README.rewrite.impl.md`: historical rewrite notes and alternative plans.
+- `README.mst.md` : MST pipeline notes (translator changes, emitRules effects, derivation graph edges
 
 ## Evaluation and Profiling
 - `README.eval.md`: full-mode evaluation workflows.
