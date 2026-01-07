@@ -27,6 +27,7 @@
 #include "ast/transform/ComponentChecker.h"
 #include "ast/transform/ComponentInstantiation.h"
 #include "ast/transform/Conditional.h"
+#include "ast/transform/ConstantNormalizationTransformer.h"
 #include "ast/transform/DebugDeltaRelation.h"
 #include "ast/transform/EvidenceChecker.h"
 #include "ast/transform/ExecutionPlanChecker.h"
@@ -521,7 +522,8 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
             std::move(magicPipeline), mk<ast::transform::RemoveEmptyRelationsTransformer>(),
             // mk<ast::transform::AddNullariesToAtomlessAggregatesTransformer>(),
             // mk<ast::transform::ExecutionPlanChecker>(), // std::move(provenancePipeline),
-            mk<ast::transform::IOAttributesTransformer>());
+            mk<ast::transform::IOAttributesTransformer>(),
+            mk<ast::transform::ConstantNormalizationTransformer>());
     // clang-format on
 
     return pipeline;

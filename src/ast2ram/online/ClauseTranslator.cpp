@@ -19,6 +19,7 @@
 #include "LogStatement.h"
 #include "ast/Aggregator.h"
 #include "ast/BranchInit.h"
+#include "ast/BinaryConstraint.h"
 #include "ast/Clause.h"
 #include "ast/Constant.h"
 #include "ast/IntrinsicAggregator.h"
@@ -66,6 +67,7 @@
 #include "ram/UnsignedConstant.h"
 #include "ram/UserDefinedAggregator.h"
 #include "ram/utility/Utils.h"
+#include "souffle/BinaryConstraintOps.h"
 #include "souffle/TypeAttribute.h"
 #include "souffle/utility/StringUtil.h"
 #include <map>
@@ -119,6 +121,28 @@ std::map<std::string, Own<ram::Expression>> ClauseTranslator::getClauseVars(cons
             atom = as<ast::Atom>(lit);
         } else if (isA<ast::Negation>(lit)) {
             atom = as<ast::Negation>(lit)->getAtom();
+        } else if (const auto* bc = as<ast::BinaryConstraint>(lit)) {
+            if (bc->getBaseOperator() == BinaryConstraintOp::EQ) {
+                const auto* lhs = bc->getLHS();
+                const auto* rhs = bc->getRHS();
+                const auto* lhsVar = as<ast::Variable>(lhs);
+                const auto* rhsVar = as<ast::Variable>(rhs);
+                const auto* lhsConst = as<ast::Constant>(lhs);
+                const auto* rhsConst = as<ast::Constant>(rhs);
+
+                if (lhsVar != nullptr && rhsConst != nullptr) {
+                    const auto& varName = lhsVar->getName();
+                    if (varExprMap.find(varName) == varExprMap.end()) {
+                        varExprMap.insert({varName, context.translateValue(*valueIndex, rhsConst)});
+                    }
+                } else if (rhsVar != nullptr && lhsConst != nullptr) {
+                    const auto& varName = rhsVar->getName();
+                    if (varExprMap.find(varName) == varExprMap.end()) {
+                        varExprMap.insert({varName, context.translateValue(*valueIndex, lhsConst)});
+                    }
+                }
+            }
+            continue;
         } else {
             // assert(false && "constraints are not supported");
             continue;

@@ -86,6 +86,7 @@ set(SOUFFLE_SOURCES
     ast/transform/AddNullariesToAtomlessAggregates.cpp
     ast/transform/ComponentChecker.cpp
     ast/transform/ComponentInstantiation.cpp
+    ast/transform/ConstantNormalizationTransformer.cpp
     ast/transform/DebugReporter.cpp
     ast/transform/DebugDeltaRelation.cpp
     ast/transform/EvidenceChecker.cpp

@@ -72,7 +72,7 @@ struct CycleDependencyGraph;
 using NodePtr = std::shared_ptr<Node>;
 using EdgePtr = std::shared_ptr<Hyperedge>;
 // TODO: derivation graph now does not support negation...
-
+// TODO: MST GRAPH FUSE
 /** class Evidence {
 public:
     friend class DerivationGraph;
