@@ -1345,6 +1345,43 @@ void buildFormulasIncCyclewise(
             }
         }
 
+        // Deleted edges can still change surviving outputs; refresh them even if impact maps are empty.
+        for (auto edge : deltaDeletedEdges) {
+            NodePtr output = view.getOutput(edge);
+            if (!output || output->isFact || deltaDeletedNodes.count(output)) {
+                continue;
+            }
+            FormulaNodeRef newNode;
+            bool hasNewNode = constAccess.nodeFormula(output, newNode);
+            if (!hasNewNode) {
+                std::vector<FormulaNodeRef> incoming;
+                for (EdgePtr e : view.getIncomingEdges(output)) {
+                    if (edgeFormulas.count(e) && edgeFormulas[e].get()) {
+                        incoming.push_back(edgeFormulas[e]);
+                    }
+                }
+                newNode = formulaManager.makeOr(incoming);
+            }
+            if (!formulaManager.isSame(nodeFormulas[output], newNode)) {
+                nodeFormulas[output] = newNode;
+                changedNodes.insert(output);
+                for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
+                    auto it = depGraph.edgeToCycleIndex.find(outEdge);
+                    if (it == depGraph.edgeToCycleIndex.end()) {
+                        continue;
+                    }
+                    auto& worklist = cycleWorklists[it->second];
+                    auto& inWorklist = cycleInWorklists[it->second];
+                    if (inWorklist.count(outEdge)) {
+                        continue;
+                    }
+                    worklist.push({outEdge, depGraph.edgeDepthsGlobal.at(outEdge),
+                                   (int)depGraph.edgeDepthsGlobal.at(outEdge)});
+                    inWorklist.insert(outEdge);
+                }
+            }
+        }
+
 
         auto& nodeImpactedByDeltaDelete = view.getNodeImpactedByDeltaDelete();
         auto& edgeImpactedByDeltaDelete = view.getEdgeImpactedByDeltaDelete();

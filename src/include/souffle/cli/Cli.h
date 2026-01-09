@@ -132,6 +132,52 @@ private:
         return oss.str();
     }
 
+    void logApplyDeltaSummary(const IncrementalDerivationGraph& graph, const std::string& modeLabel) const {
+        const size_t insNodes = graph.getDeltaInsertNodes().size();
+        const size_t insEdges = graph.getDeltaInsertEdges().size();
+        const size_t delNodes = graph.getDeltaDeleteNodes().size();
+        const size_t delEdges = graph.getDeltaDeleteEdges().size();
+        std::ostringstream oss;
+        oss << "[inc-iter " << iteration << "] mode=" << modeLabel
+            << " apply_delta_view: insNodes=" << insNodes
+            << " insEdges=" << insEdges
+            << " delNodes=" << delNodes
+            << " delEdges=" << delEdges;
+        std::cout << oss.str() << std::endl;
+        debugger.logMessage(Level::INFO, oss.str());
+    }
+
+    void logApplyDeltaOpsSummary(
+            const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaInsertRuleApps,
+            const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaDeleteRuleApps,
+            const std::unordered_map<UntypedTuple, double>& factProb,
+            const std::vector<UntypedTuple>& deletedFacts,
+            const std::string& modeLabel) const {
+        auto countRuleApps = [](const auto& m) {
+            size_t total = 0;
+            for (const auto& [_, s] : m) {
+                total += s ? s->size() : 0;
+            }
+            return total;
+        };
+        const size_t delTuples = deltaDeleteRuleApps.size();
+        const size_t delRuleApps = countRuleApps(deltaDeleteRuleApps);
+        const size_t delFacts = deletedFacts.size();
+        const size_t insTuples = deltaInsertRuleApps.size();
+        const size_t insRuleApps = countRuleApps(deltaInsertRuleApps);
+        const size_t insFacts = factProb.size();
+        std::ostringstream oss;
+        oss << "[inc-iter " << iteration << "] mode=" << modeLabel
+            << " apply_delta_ops: delTuples=" << delTuples
+            << " delRuleApps=" << delRuleApps
+            << " delFacts=" << delFacts
+            << " insTuples=" << insTuples
+            << " insRuleApps=" << insRuleApps
+            << " insFacts=" << insFacts;
+        std::cout << oss.str() << std::endl;
+        debugger.logMessage(Level::INFO, oss.str());
+    }
+
     void logPrunedDeltaSummary(const IncSubgraphView& view, const std::string& modeLabel) const {
         const size_t insNodes = view.getDeltaInsertNodes().size();
         const size_t insEdges = view.getDeltaInsertEdges().size();
@@ -1088,16 +1134,25 @@ public:
                     std::cout << "[prune-inc] pre-applyDelta statistics:\n";
                     graph->dumpStatisticsInc(std::cout);
                 }
+                auto factProbInc = getFactProbInc();
+                auto deletedFacts = getDeletedFacts();
                 {
                     FunctionTimer timer("PRUNING_INC: applyDelta");
                     graph->applyDelta(
                         DerivationManager::untypedTuple2DeltaInsertRuleApplications,
                         DerivationManager::untypedTuple2DeltaDeleteRuleApplications,
                         *ruleManager,
-                        getFactProbInc(),// fact_prob_inc; cli should collect this
-                        getDeletedFacts() // deletedFacts; cli should collect this
+                        factProbInc,
+                        deletedFacts
                     );
                 }
+                logApplyDeltaOpsSummary(
+                    DerivationManager::untypedTuple2DeltaInsertRuleApplications,
+                    DerivationManager::untypedTuple2DeltaDeleteRuleApplications,
+                    factProbInc,
+                    deletedFacts,
+                    useRegional ? "INC_REGIONAL" : "INC_NAIVE");
+                logApplyDeltaSummary(*graph, useRegional ? "INC_REGIONAL" : "INC_NAIVE");
                 {
                     if (opt.isDumpDotEnabled()) {
                         FunctionTimer timer("PRUNING_INC: dumpDot-before-prune");

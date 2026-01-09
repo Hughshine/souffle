@@ -685,9 +685,10 @@ public:
         return const_cast<IncrementalDerivationGraphViewInterface*>(this)->getValidEdges();
     }
     const std::set<NodePtr>& getDeletedFacts() {
-        if (deletedFacts_.size() > 0) {
+        if (!deletedFacts_.empty()) {
             return deletedFacts_;
         }
+        deletedFacts_.insert(explicitDeletedFacts_.begin(), explicitDeletedFacts_.end());
         for (const auto& kv : getNodeImpactedByDeltaDelete()) {
             deletedFacts_.insert(kv.first);
         }
@@ -752,6 +753,7 @@ public:
 protected:
     std::set<NodePtr> validNodes_;
     std::set<EdgePtr> validEdges_;
+    std::set<NodePtr> explicitDeletedFacts_;
     std::set<NodePtr> deletedFacts_;
     std::set<NodePtr> deletedDeterminsticFacts_;
     std::set<NodePtr> deletedNonDeterministicFacts_;
@@ -770,7 +772,8 @@ public:
             const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& nodeImpactedByDeltaInsert = {},
             const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& edgeImpactedByDeltaInsert = {},
             const std::unordered_set<NodePtr>& deltaInsertReachableNodes = {},
-            const std::unordered_set<EdgePtr>& deltaInsertReachableEdges = {})
+            const std::unordered_set<EdgePtr>& deltaInsertReachableEdges = {},
+            const std::set<NodePtr>& explicitDeletedFacts = {})
             : SubgraphView(nodes, edges),
               deltaInsertNodes_(deltaInsertNodes),
               deltaInsertEdges_(deltaInsertEdges),
@@ -781,7 +784,9 @@ public:
             nodeImpactedByDeltaInsert_(nodeImpactedByDeltaInsert),
             edgeImpactedByDeltaInsert_(edgeImpactedByDeltaInsert),
             deltaInsertReachableNodes_(deltaInsertReachableNodes),
-            deltaInsertReachableEdges_(deltaInsertReachableEdges) {};
+            deltaInsertReachableEdges_(deltaInsertReachableEdges) {
+            explicitDeletedFacts_ = explicitDeletedFacts;
+        }
 
     // getNodes() / getEdges() from DerivationGraphView
     const std::unordered_set<NodePtr>& getNodes() const override {return nodes_; };
@@ -1630,6 +1635,10 @@ public:
             this->insertedFactImpactedEdges.clear();
             this->deltaInsertReachableNodes.clear();
             this->deltaInsertReachableEdges.clear();
+            this->explicitDeletedFacts_.clear();
+            this->deletedFacts_.clear();
+            this->deletedDeterminsticFacts_.clear();
+            this->deletedNonDeterministicFacts_.clear();
             this->clearCycleDependencyGraphCache();
         }
 
@@ -1946,6 +1955,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             auto node = this->findNode(tuple);
             // it's possible that a deleted fact has deleted derivation...
             if (node != nullptr) {
+                explicitDeletedFacts_.insert(node);
                 // Remove from map.
 
 //            node->isFact = false;
@@ -2306,7 +2316,8 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                                std::move(newInsertedFactImpactedNodes),
                                std::move(newInsertedFactImpactedEdges),
                                std::move(newInsertedReachableNodes),
-                               std::move(newInsertedReachableEdges));
+                               std::move(newInsertedReachableEdges),
+                               explicitDeletedFacts_);
     }();
     {
         FunctionTimer scopeTimer("prune-inc: dumpStatisticsInc(view)");
@@ -3742,6 +3753,7 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
         NodePtr n = g->createNode(t);
         n->isFact = true; n->setProbability(p);
         g->deltaDeleteNodes.insert(n);
+        g->explicitDeletedFacts_.insert(n);
     }
     for (const auto& jn : arr_or(jdel["nodes"])) {
         UntypedTuple t = _parse_tuple(jn.string_value());
