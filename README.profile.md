@@ -66,6 +66,11 @@ Structure:
   - `ins_ratio = insNodes / live_nodes`
 - Edge ratios are not directly available (total edge count is not logged). If needed, add instrumentation or enable dumps and compute counts offline.
 
+## DRed Sub-Phase Profiling
+- Compile with `--profile --dred-profile` to include DRed sub-phase timers.
+- Run with `--dred-profile -p profile.json --dumpstat` to emit per-SCC workload counters and JSON timers.
+- See `README.dred.md` for DRed-specific interpretation and examples.
+
 ## Practical Notes
 - `inc1` deltas produce: turn2 = delete phase, turn3 = insert phase.
 - `inc-regional` logs include extra `analyze`/`rebuild` breakdowns in stdout.

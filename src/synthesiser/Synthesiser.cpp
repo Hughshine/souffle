@@ -1065,10 +1065,97 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 
             const std::string ext = fileExtension(glb.config().get("profile"));
 
-            // create local timer
-            out << "\tLogger logger(R\"_(" << timer.getMessage() << ")_\",iter);\n";
-            // insert statement to be measured
-            dispatch(timer.getStatement(), out);
+            const std::string& message = timer.getMessage();
+            bool isDredTimer = false;
+            std::size_t dredSccId = 0;
+            std::string dredPhase;
+            std::string dredLabel;
+            std::string dredBucketEnum;
+            constexpr const char* dredPrefix = "@t-recursive-relation;";
+            constexpr std::size_t dredPrefixLen = sizeof("@t-recursive-relation;") - 1;
+            if (message.rfind(dredPrefix, 0) == 0) {
+                std::size_t nameStart = dredPrefixLen;
+                std::size_t nameEnd = message.find(';', nameStart);
+                if (nameEnd != std::string::npos) {
+                    std::string relName = message.substr(nameStart, nameEnd - nameStart);
+                    if (relName.rfind("__inc_dred_", 0) == 0) {
+                        std::size_t sccPos = relName.rfind("_scc");
+                        if (sccPos != std::string::npos) {
+                            constexpr std::size_t dredNameStart = sizeof("__inc_dred_") - 1;
+                            const std::string dredName = relName.substr(dredNameStart, sccPos - dredNameStart);
+                            const std::size_t labelPos = dredName.find('_');
+                            if (labelPos == std::string::npos) {
+                                dredPhase = dredName;
+                            } else {
+                                dredPhase = dredName.substr(0, labelPos);
+                                dredLabel = dredName.substr(labelPos + 1);
+                            }
+                            std::string sccStr = relName.substr(sccPos + 4);
+                            if (!sccStr.empty()) {
+                                dredSccId = static_cast<std::size_t>(std::stoull(sccStr));
+                                isDredTimer = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (isDredTimer) {
+                auto dredBucketFor = [](const std::string& phase, const std::string& label) -> std::string {
+                    if (phase == "delete") {
+                        if (label.empty()) return "DelTotal";
+                        if (label == "copy_old") return "DelCopyOld";
+                        if (label == "preamble") return "DelPreamble";
+                        if (label == "prefill") return "DelPrefill";
+                        if (label == "prefill_update") return "DelPrefillUpdate";
+                        if (label == "loop_body") return "DelLoopBody";
+                        if (label == "loop_exit") return "DelLoopExit";
+                        if (label == "loop_update") return "DelLoopUpdate";
+                        if (label == "postamble") return "DelPostamble";
+                    } else if (phase == "insert") {
+                        if (label.empty()) return "InsTotal";
+                        if (label == "preamble") return "InsPreamble";
+                        if (label == "prefill") return "InsPrefill";
+                        if (label == "prefill_update") return "InsPrefillUpdate";
+                        if (label == "loop_body") return "InsLoopBody";
+                        if (label == "loop_exit") return "InsLoopExit";
+                        if (label == "loop_update") return "InsLoopUpdate";
+                        if (label == "postamble") return "InsPostamble";
+                    } else if (phase == "rederive") {
+                        if (label.empty()) return "RedTotal";
+                        if (label == "loop_body") return "RedLoopBody";
+                        if (label == "loop_exit") return "RedLoopExit";
+                        if (label == "loop_update") return "RedLoopUpdate";
+                        if (label == "postamble") return "RedPostamble";
+                    }
+                    return {};
+                };
+                dredBucketEnum = dredBucketFor(dredPhase, dredLabel);
+            }
+
+            if (isDredTimer) {
+                out << "if (dredProfileEnabled) {\n";
+                out << "auto prev_dred_scc = DerivationManager::getDredCurrentScc();\n";
+                out << "DerivationManager::setDredCurrentScc(" << dredSccId << ");\n";
+                if (!dredBucketEnum.empty()) {
+                    out << "std::uint64_t __dred_timer_start = DerivationManager::nowNanos();\n";
+                }
+                out << "\tLogger logger(R\"_(" << message << ")_\",iter);\n";
+                dispatch(timer.getStatement(), out);
+                if (!dredBucketEnum.empty()) {
+                    out << "DerivationManager::addDredTime(DerivationManager::DredTimeBucket::"
+                        << dredBucketEnum << ", DerivationManager::elapsedNanos(__dred_timer_start));\n";
+                }
+                out << "DerivationManager::setDredCurrentScc(prev_dred_scc);\n";
+                out << "} else {\n";
+                dispatch(timer.getStatement(), out);
+                out << "}\n";
+            } else {
+                // create local timer
+                out << "\tLogger logger(R\"_(" << message << ")_\",iter);\n";
+                // insert statement to be measured
+                dispatch(timer.getStatement(), out);
+            }
 
             // done
             out << "}\n";
@@ -2287,6 +2374,10 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             auto relName = getBaseRelationName(recordDerivation.getRelation());
             bool isRecursive = recordDerivation.isRecursive;
             out << "if (!detOptEnabled || !isDetRelation(\"" << relName << "\")) {\n";
+            const char* dredRecordBucket =
+                    recordDerivation.isInsert() ? "InsRecord" : "DelRecord";
+            out << "std::uint64_t __dred_record_start = 0;\n";
+            out << "if (dredProfileEnabled) { __dred_record_start = DerivationManager::nowNanos(); }\n";
             out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << relName << "\",tuple);\n";
             if (recordDerivation.isComplete()) {
                 out << "auto*& ruleSet = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
@@ -2323,13 +2414,23 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
                 if (!recordDerivation.isRederive()) {
                     out << "ruleSet->insert(ruleApplication);\n";
+                    out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                    out << "DerivationManager::dredStats.ins_ruleapp_recorded++;\n";
+                    out << "}\n";
                 } else {
                     // rederiving overdeleted derivations
                     // out << "std::cout << \"rederive: \" << untypedTuple.toString() << \" \" << ruleApplication.toString() << std::endl;\n";
                     out << "ruleSet->erase(ruleApplication);\n";
+                    out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                    out << "DerivationManager::dredStats.ins_ruleapp_rederive_erases++;\n";
+                    out << "DerivationManager::bumpDredSccRederiveRuleappErases();\n";
+                    out << "}\n";
                 }
                 if (!recordDerivation.isComplete()) {
                     out << "ruleSet2->insert(ruleApplication);\n";
+                    out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                    out << "DerivationManager::dredStats.ins_ruleapp_delta_delta++;\n";
+                    out << "}\n";
                 }
             } else {
                 // is delete
@@ -2340,6 +2441,9 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     }
                     out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
                     out << "ruleSet->insert(ruleApplication);\n";
+                    out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                    out << "DerivationManager::dredStats.del_ruleapp_recorded++;\n";
+                    out << "}\n";
                 } else {
                     out << "std::vector<souffle::RamDomain> varValues{};\n";
                     for (const auto& expr: recordDerivation.varExprs) {
@@ -2348,20 +2452,46 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     out << "RuleApplication ruleApplication{" << recordDerivation.getClauseID() << ", varValues};\n";
                     out << "ruleSet->insert(ruleApplication);\n";
                     out << "ruleSet2->insert(ruleApplication);\n";
+                    out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                    out << "DerivationManager::dredStats.del_ruleapp_recorded++;\n";
+                    out << "DerivationManager::dredStats.del_ruleapp_delta_delta++;\n";
+                    out << "}\n";
 
                     // TODO: optimize the dynamic recursive check
                     out << "if (ruleManager.isInRecursiveStratum(ruleApplication.ruleId)) {\n";
                     out << "auto*& ruleSetComplete = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
+                    out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                    out << "DerivationManager::dredStats.del_complete_scan_calls++;\n";
+                    out << "DerivationManager::bumpDredSccCompleteScanCalls();\n";
+                    out << "if (ruleSetComplete != nullptr) {\n";
+                    out << "DerivationManager::dredStats.del_complete_scan_elems += ruleSetComplete->size();\n";
+                    out << "DerivationManager::bumpDredSccCompleteScanElems(ruleSetComplete->size());\n";
+                    out << "}\n";
+                    out << "}\n";
                     // over-deletion...
+                    out << "std::uint64_t __dred_overdelete_start = 0;\n";
+                    out << "if (dredProfileEnabled) { __dred_overdelete_start = DerivationManager::nowNanos(); }\n";
                     out << "for (const auto& ruleApp: *ruleSetComplete) {" << std::endl;
                         out << "if(ruleManager.isRecursive(ruleApp.ruleId)) {\n";
                         out << "ruleSet->insert(ruleApp);\n";
                         out << "ruleSet2->insert(ruleApp);\n";
+                        out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                        out << "DerivationManager::dredStats.del_ruleapp_overdelete++;\n";
+                        out << "DerivationManager::bumpDredSccOverdelete();\n";
+                        out << "}\n";
                         out << "}\n";
                     out << "}" << std::endl;
+                    out << "if (dredProfileEnabled) {\n";
+                    out << "DerivationManager::addDredTime(DerivationManager::DredTimeBucket::DelOverdelete,\n";
+                    out << "        DerivationManager::elapsedNanos(__dred_overdelete_start));\n";
+                    out << "}\n";
                     out << "}\n";
                 }
             }
+            out << "if (dredProfileEnabled) {\n";
+            out << "DerivationManager::addDredTime(DerivationManager::DredTimeBucket::"
+                << dredRecordBucket << ", DerivationManager::elapsedNanos(__dred_record_start));\n";
+            out << "}\n";
             out << "}\n";
         }
 
@@ -2408,6 +2538,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             // if (deltaUnion.getDel)
             // INSERT
             if (both || insertOnly) {
+                out << "{\n";
+                out << "std::uint64_t __dred_delta_ins_start = 0;\n";
+                out << "if (dredProfileEnabled) { __dred_delta_ins_start = DerivationManager::nowNanos(); }\n";
+                const bool isRederiveDeltaTuple =
+                        deltaUnion.getDeltaTupleInsertRel().find("@inc_delta_tuple_rederive_") == 0;
                 out << "for(const auto& tupleDeltaDervInsert: *" <<
                     synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaDervInsertRel())) << ") {" << std::endl;
                 out << "auto untypedDeltaDervTupleInsert = UntypedTuple::fromTypedTuple(\""
@@ -2420,21 +2555,53 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 // } else {
                 //     out << "auto*& untypedDeltaDervTupleInsertRuleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
                 // }
+                out << "std::size_t deltaInsertRuleAppCount = 0;\n";
+                out << "if (untypedDeltaDervTupleInsertRuleSet != nullptr) { deltaInsertRuleAppCount = untypedDeltaDervTupleInsertRuleSet->size(); }\n";
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.ins_delta_tuples++;\n";
+                out << "DerivationManager::dredStats.ins_delta_ruleapps += deltaInsertRuleAppCount;\n";
+                out << "}\n";
+                if (isRederiveDeltaTuple) {
+                    out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                    out << "DerivationManager::dredStats.rederive_delta_tuples++;\n";
+                    out << "DerivationManager::dredStats.rederive_delta_ruleapps += deltaInsertRuleAppCount;\n";
+                    out << "DerivationManager::bumpDredSccRederiveDeltaTuples();\n";
+                    out << "DerivationManager::bumpDredSccRederiveDeltaRuleapps(deltaInsertRuleAppCount);\n";
+                    out << "}\n";
+                }
                 out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
                 out << "if (untypedDeltaDervTupleRuleSet == nullptr) {" << std::endl;
                 out << "untypedDeltaDervTupleRuleSet = untypedDeltaDervTupleInsertRuleSet;\n" << std::endl;
-                out << "if(!isInputFact(untypedDeltaDervTupleInsert))" << std::endl;
-                out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleInsertRel())) << "->insert(tupleDeltaDervInsert);\n "<< std::endl;
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.ins_complete_sets_attached++;\n";
+                out << "}\n";
+                out << "if(!isInputFact(untypedDeltaDervTupleInsert)) {\n";
+                out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleInsertRel())) << "->insert(tupleDeltaDervInsert);\n";
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.ins_tuple_inserts++;\n";
+                out << "}\n";
+                out << "}\n";
                 out << "} else {" << std::endl;
                 out << "untypedDeltaDervTupleRuleSet->insert(untypedDeltaDervTupleInsertRuleSet->begin(), untypedDeltaDervTupleInsertRuleSet->end());\n" << std::endl;
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.ins_ruleapp_merges += deltaInsertRuleAppCount;\n";
+                out << "}\n";
                 out << "}" << std::endl;
                 out << "}" << std::endl;
                 // if (insertOnly) {
                 out << "DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();\n";
                 // }
+                out << "if (dredProfileEnabled) {\n";
+                out << "DerivationManager::addDredTime(DerivationManager::DredTimeBucket::InsDeltaUnion,\n";
+                out << "        DerivationManager::elapsedNanos(__dred_delta_ins_start));\n";
+                out << "}\n";
+                out << "}\n";
             }
             // DELETE
             if (both || deleteOnly) {
+                out << "{\n";
+                out << "std::uint64_t __dred_delta_del_start = 0;\n";
+                out << "if (dredProfileEnabled) { __dred_delta_del_start = DerivationManager::nowNanos(); }\n";
                 out << "for(const auto& tupleDeltaDervDelete: *" <<
         synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaDervDeleteRel())) << ") {" << std::endl;
                 out << "auto untypedDeltaDervTupleDelete = UntypedTuple::fromTypedTuple(\""
@@ -2444,19 +2611,44 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 // } else {
                 //     out << "auto*& untypedDeltaDervTupleDeleteRuleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
                 // }
+                out << "std::size_t deltaDeleteRuleAppCount = 0;\n";
+                out << "if (untypedDeltaDervTupleDeleteRuleSet != nullptr) { deltaDeleteRuleAppCount = untypedDeltaDervTupleDeleteRuleSet->size(); }\n";
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.del_delta_tuples++;\n";
+                out << "DerivationManager::dredStats.del_delta_ruleapps += deltaDeleteRuleAppCount;\n";
+                out << "DerivationManager::dredStats.del_ruleapp_erases += deltaDeleteRuleAppCount;\n";
+                out << "}\n";
                 out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
+                out << "std::uint64_t __dred_ruleapp_erase_start = 0;\n";
+                out << "if (dredProfileEnabled) { __dred_ruleapp_erase_start = DerivationManager::nowNanos(); }\n";
                 out << "for(const auto& deletedRuleAppl: *untypedDeltaDervTupleDeleteRuleSet) {" << std::endl;
                 out << "untypedDeltaDervTupleRuleSet->erase(deletedRuleAppl);\n" << std::endl;
                 out << "}" << std::endl;
+                out << "if (dredProfileEnabled) {\n";
+                out << "DerivationManager::addDredTime(DerivationManager::DredTimeBucket::DelRuleappErase,\n";
+                out << "        DerivationManager::elapsedNanos(__dred_ruleapp_erase_start));\n";
+                out << "}\n";
                 out << "if (untypedDeltaDervTupleRuleSet->empty()) {" << std::endl;
                 out << "delete untypedDeltaDervTupleRuleSet;\n" << std::endl;
                 // out << "untypedDeltaDervTupleRuleSet = nullptr;\n" << std::endl;
                 out << "DerivationManager::untypedTuple2RuleApplications.erase(untypedDeltaDervTupleDelete);\n" << std::endl;
-                out << "if(!isInputFact(untypedDeltaDervTupleDelete))" << std::endl;
-                out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel())) << "->insert(tupleDeltaDervDelete);\n "<< std::endl;
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.del_complete_sets_freed++;\n";
+                out << "}\n";
+                out << "if(!isInputFact(untypedDeltaDervTupleDelete)) {\n";
+                out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel())) << "->insert(tupleDeltaDervDelete);\n";
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.del_tuple_deletes++;\n";
+                out << "}\n";
+                out << "}\n";
                 out << "}" << std::endl;
                 out << "}" << std::endl;
                 out << "DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();\n";
+                out << "if (dredProfileEnabled) {\n";
+                out << "DerivationManager::addDredTime(DerivationManager::DredTimeBucket::DelDeltaUnion,\n";
+                out << "        DerivationManager::elapsedNanos(__dred_delta_del_start));\n";
+                out << "}\n";
+                out << "}\n";
             }
             // ADD EVERYTHING UP TO NEW
             // out <<
@@ -4209,6 +4401,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";
     hook << "detOptEnabled = opt.isDetOptEnabled();\n";
+    hook << "dredProfileEnabled = opt.isDredProfileEnabled();\n";
 
     if (!db.getNS(false).empty()) {
         hook << db.getNS(false) << "::";

@@ -71,6 +71,7 @@
 #include "souffle/BinaryConstraintOps.h"
 #include "souffle/TypeAttribute.h"
 #include "souffle/utility/StringUtil.h"
+#include <algorithm>
 #include <map>
 #include <unordered_set>
 #include <vector>
@@ -1479,10 +1480,12 @@ Own<ram::Condition> IncClauseTranslator::getFunctionalDependencies(const ast::Cl
 
 std::vector<ast::Atom*> IncClauseTranslator::getAtomOrdering(const ast::Clause& clause) const {
     auto atoms = ast::getBodyLiterals<ast::Atom>(clause);
+    const bool hasRederiveAtom =
+            std::any_of(atoms.begin(), atoms.end(), [](const ast::Atom* atom) { return atom->isRederive; });
 
     // stick to the plan if we have one set
     auto* plan = clause.getExecutionPlan();
-    if (plan != nullptr) {
+    if (plan != nullptr && !hasRederiveAtom) {
         auto orders = plan->getOrders();
         if (contains(orders, version)) {
             // get the imposed order, and change it to start at zero
@@ -1498,11 +1501,23 @@ std::vector<ast::Atom*> IncClauseTranslator::getAtomOrdering(const ast::Clause& 
     for (auto* atom : atoms) {
         atomNames.push_back(getClauseAtomName(clause, atom));
     }
-    auto newOrder = context.getSipsMetric()->getReordering(&clause, atomNames);
+    std::vector<std::string> initialBoundVars;
+    if (hasRederiveAtom) {
+        for (auto* atom : atoms) {
+            if (!atom->isRederive) {
+                continue;
+            }
+            visit(*atom, [&](const ast::Variable& var) { initialBoundVars.push_back(var.getName()); });
+        }
+    }
+    const auto* sipsMetric =
+            hasRederiveAtom ? context.getRederiveSipsMetric() : context.getSipsMetric();
+    auto newOrder = sipsMetric->getReorderingWithInitialBindings(&clause, atomNames, initialBoundVars);
     auto reorderedAtoms = reorderAtoms(atoms, newOrder);
-    std::stable_partition(reorderedAtoms.begin(), reorderedAtoms.end(), [](ast::Atom* atom) {
-        return atom->isRederive;
-    });
+    if (hasRederiveAtom) {
+        std::stable_partition(reorderedAtoms.begin(), reorderedAtoms.end(),
+                [](ast::Atom* atom) { return atom->isRederive; });
+    }
     return reorderedAtoms;
 }
 

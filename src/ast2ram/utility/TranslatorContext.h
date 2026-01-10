@@ -151,6 +151,9 @@ public:
     const ast::SipsMetric* getSipsMetric() const {
         return sipsMetric.get();
     }
+    const ast::SipsMetric* getRederiveSipsMetric() const {
+        return sipsMetricRederive.get();
+    }
 
     /** Translation strategy */
     Own<ram::Statement> translateNonRecursiveClause(
@@ -192,6 +195,7 @@ private:
     const ast::analysis::JoinSizeAnalysis* joinSizeAnalysis;
     std::map<const ast::Clause*, std::size_t> clauseNums;
     Own<ast::SipsMetric> sipsMetric;
+    Own<ast::SipsMetric> sipsMetricRederive;
     Own<TranslationStrategy> translationStrategy;
     std::map<const ast::Relation*, const ast::Relation*> deltaRel;
     ast::UnorderedQualifiedNameMap<const ast::Lattice*> lattices;

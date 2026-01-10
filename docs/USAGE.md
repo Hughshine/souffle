@@ -37,6 +37,8 @@ Compiler notes:
 - Online CLI support and `_inc` strata are always enabled; `--online` is optional.
 - `--full-only` disables incremental code generation but still uses the online
   compiler path.
+- `--dred-profile` (compile-time) adds detailed DRed sub-phase timers and per-SCC attribution; requires
+  compile-time `--profile` and runtime `--dred-profile -p <file>` to emit JSON.
 - `-o` controls the output binary name.
 - Generated programs link against the precompiled runtime library built by CMake
   (`compiled`); keep the build tree (or install the library) available for
@@ -64,6 +66,8 @@ listed below; use `-h` for the authoritative values.
 - `--dumpjson`: default `false`
 - `--dumpdot`: default `false`
 - `--dumpstat`: default `false`
+- `--dred-profile`: default `false` (requires compile-time `--profile --dred-profile` to emit DRed sub-phase timers;
+  per-SCC workload counters also need `--dumpstat`)
 - `-h`: help
 
 ## Online Incremental CLI (Interactive or Batch)

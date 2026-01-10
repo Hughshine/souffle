@@ -671,6 +671,8 @@ std::vector<MainOption> getMainOptions() {
           "C preprocessor to use."},
       {"profile", 'p', "FILE", "", false,
           "Enable profiling, and write profile data to <FILE>."},
+      {"dred-profile", nextOptChar++, "", "", false,
+          "Enable detailed DRed profiling (requires --profile to emit data)."},
       {"profile-frequency", nextOptChar++, "", "", false,
           "Enable the frequency counter in the profiler."},
       {"setmode", 0, "[ full | inc-naive | inc-regional | elastic ]", "inc-naive", false,

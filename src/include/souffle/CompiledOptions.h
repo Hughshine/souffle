@@ -80,6 +80,7 @@ protected:
     bool dump_dot = false;  // dump derivation graph DOT after prune
     bool dump_stat = false;  // dump derivation graph stats after prune
     bool dump_const = false;  // dump constant pre-analysis details
+    bool dred_profile = false;  // enable detailed DRed profiling
     bool det_opt = false;  // enable deterministic-relation analysis and det gating
     bool single_rand_fast = true;  // enable single-randvar fast path in component FC
 public:
@@ -88,10 +89,12 @@ public:
             std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc",
             bool merge_bi = true, bool foldconst = false, bool rewrite = false,
             bool dumpjson = false, bool dumpdot = false, bool dumpstat = false, bool dumpconst = false,
+            bool dredProfile = false,
             const std::string& splitmode = "naive-split")
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
     , incMode(mode), merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
       dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
+      dred_profile(dredProfile),
       split_mode(splitmode) {}
 
     CmdOptions() {}
@@ -167,6 +170,9 @@ public:
     bool isDumpConstEnabled() const {
         return dump_const;
     }
+    bool isDredProfileEnabled() const {
+        return dred_profile;
+    }
     bool isDetOptEnabled() const {
         return det_opt;
     }
@@ -218,6 +224,7 @@ public:
                 {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
                 {"dumpstat", false, nullptr, 'S'},
                 {"dumpconst", false, nullptr, 'U'},
+                {"dred-profile", false, nullptr, 1002},
                 {"det-opt", false, nullptr, 'Z'},
                 {"no-single-rand-fast", false, nullptr, 1001},
                 // the terminal option -- needs to be null
@@ -347,6 +354,9 @@ public:
                 case 'U':
                     dump_const = true;
                     break;
+                case 1002:
+                    dred_profile = true;
+                    break;
                 case 'Z':
                     det_opt = true;
                     break;
@@ -393,6 +403,7 @@ private:
         std::cerr << "    --dumpjson                   -- Dump derivation graph JSON after prune\n";
         std::cerr << "    --dumpdot                    -- Dump derivation graph DOT after prune\n";
         std::cerr << "    --dumpstat                   -- Dump derivation graph stats after prune\n";
+        std::cerr << "    --dred-profile               -- Enable detailed DRed profiling (requires --profile)\n";
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
         std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
         std::cerr << "    --no-single-rand-fast        -- Disable single-randvar fast path in component FC\n";

@@ -98,6 +98,7 @@ TranslatorContext::TranslatorContext(const ast::TranslationUnit& tu) {
         sipsChosen = global->config().get("RamSIPS");
     }
     sipsMetric = ast::SipsMetric::create(sipsChosen, tu);
+    sipsMetricRederive = ast::SipsMetric::create("max-bound", tu);
 
     // Online is the only supported translation strategy in this fork.
     translationStrategy = mk<online::TranslationStrategy>();

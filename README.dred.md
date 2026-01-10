@@ -43,6 +43,30 @@ This module implements DRed-like incremental semi-naive evaluation to generate/m
 - `@old_*`: cached old results in `inc_table_update`; non-recursive `_inc` logic uses it to rebuild base.
 - `@new_*` / `@delta_*`: standard semi-naive relations (still present in online incremental).
 
+## 2.2 Overdelete/rederive semantics (verified in code)
+- The rederive clause is a clone of the original clause with the head atom added to the body and marked `isRederive`.
+  `getAtomName()` maps that `isRederive` body atom to `@inc_derv_overdelete_*`, so rederive scans overdeleted
+  derivations as input (see `src/ast2ram/utility/Utils.cpp` and `src/ast2ram/online/IncClauseTranslator.cpp`).
+- The rederive clause head writes into `@inc_new_derv_rederive_*` (via `getAtomName()` for `clause.isRederive`).
+  The loop update `DeltaUnion` pushes these into `@inc_delta_tuple_rederive_*`, then erases those tuples from
+  `@inc_tuple_overdelete_*` (see `generateStratumTableUpdatesIncRederive()` in
+  `src/ast2ram/online/UnitTranslator.cpp`).
+- So the naming is accurate: `@inc_*_overdelete_*` is a superset of deletions, and
+  `@inc_*_rederive_*` are re-derived survivors. On the side-channel workload where deleted tuples do not
+  have alternative derivations, `@inc_delta_tuple_rederive_*` should be empty and the overdelete set equals
+  the real delete set.
+
+## 2.3 Rederive join-order pitfall (performance + correctness proof)
+- For recursive strata, deletion must be proven via rederive: every overdeleted tuple must be checked for a surviving
+  derivation. If the rederive join order scans full relations before filtering by the overdelete set, it can be
+  slower than full recomputation because it effectively joins full tables and only filters at the end.
+- Even when no overdelete survives, the rederive phase still runs; it is the proof that the overdelete is a real
+  deletion (i.e., no remaining derivation exists), not just a speculation.
+- Current strategy: keep the rederive (overdelete) atom first and run a bound-aware join ordering (max-bound)
+  seeded with the overdelete bindings so the next atom is the most constrained, avoiding full-table joins.
+- TODO: consider a cheaper proof path to skip rederive when derivation-support information in the derivation graph
+  can certify that overdelete implies real deletion (future exploration only).
+
 ## 3. Code entry points and reading guide (must-read)
 
 > Main analysis targets are online translation and C++ code generation: `src/ast2ram/online/*` and `src/synthesiser/Synthesiser.cpp`.
@@ -218,6 +242,84 @@ Fix in the order S1 -> S2 -> S3 -> S4 -> S5; after each fix:
 - Repro steps and baseline data
 - Evidence for main bottlenecks (log/profile/asan)
 - Fix strategy and rationale
+
+## 7. SEMINAIVE delete vs insert instrumentation (2026-01-09)
+
+Goal: explain why delete is much slower than insert in SEMINAIVE, even when the input delta is symmetric.
+
+### Instrumentation added
+- `--dumpstat` enables `seminaive-dred` counters (stdout) per commit.
+- `--dred-profile` is now a runtime flag (default false) that enables the detailed DRed phase timers and
+  per-SCC workload attribution; it requires the program to be compiled with `--profile --dred-profile`.
+- Counters are maintained in `DerivationManager::dredStats` and are printed after `runAllInc`:
+  - `del_complete_scan_*`: how many times deletion scans full derivation sets (and total elements).
+  - `del_ruleapp_overdelete`: extra rule apps inserted due to recursive stratum overdelete path.
+  - `del_ruleapp_erases`: number of rule apps erased from complete sets during `DeltaUnion` delete.
+  - `ins_ruleapp_merged`: number of rule apps merged into complete sets during `DeltaUnion` insert.
+  - `ins_ruleapp_rederive_erased`: rule apps removed during rederive (if any).
+  - `rederive_delta_tuples` / `rederive_delta_ruleapps`: tuples/rule apps flowing through `@inc_delta_tuple_rederive_*`.
+- `seminaive-dred` now also prints DRed phase timings (`*_time_*_ns`) and key operation timings
+  (`time_record_ns`, `time_overdelete_ns`, `time_delta_union_ns`, `time_ruleapp_erase_ns`).
+  Phase timers are derived from DRed sub-phase log timers; operation timers are nested within phases.
+- Per-SCC counters are printed as `[seminaive-dred-scc]` lines (requires `--dumpstat` and runtime
+  `--dred-profile` to map work to SCC); these lines also include per-SCC phase timings in nanoseconds.
+- `--dred-profile` (compile-time) controls extra DRed sub-phase timers. When enabled with `--profile`, it emits in `profile*.json`:
+  - `__inc_dred_delete_{copy_old,preamble,prefill,prefill_update,loop_body,loop_exit,loop_update,postamble}_sccN`
+  - `__inc_dred_rederive_{loop_body,loop_exit,loop_update,postamble}_sccN`
+  - `__inc_dred_insert_{preamble,prefill,prefill_update,loop_body,loop_exit,loop_update,postamble}_sccN`
+  These are `t-recursive-relation` events and are nested under the existing phase totals.
+- Note: compile-time `souffle --dred-profile` and runtime `./compute --dred-profile` share the same flag name;
+  both are required to emit DRed sub-phase JSON timers.
+- SEMINAIVE stratum timings are already logged via `FunctionTimer` around `stratum_*_inc` calls in stdout.
+
+### How to run (example: P12 inc1)
+```
+PATH=./build/src:$PATH python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+  --base-dir /home/hugh/research/datalog/souffle/experiments/side_channel_inc_eval \
+  compile --cases 12 --souffle-arg=--profile=profile.log --souffle-arg=--dred-profile
+
+cd /home/hugh/research/datalog/souffle/experiments/side_channel_inc_eval/P12
+./compute -F input -D output --setmode inc --derv-only=true --dumpstat --dred-profile -p profile_inc1.json \
+  --logfile log_P12_inc1_dred < delta/inc1_1.txt > run_inc1_dred.stdout 2>&1
+```
+
+### Results (P12, inc1)
+
+`seminaive-dred` counters (excerpt):
+```
+iter=1 phase=delete del delta_ruleapps=55358 ruleapps_overdelete=158337 complete_scan_elems=158880 ruleapps_erased=55358
+iter=1 phase=delete ins delta_ruleapps=28464 ruleapps_rederive_erased=38923 ruleapps_merged=23525
+iter=2 phase=insert ins delta_ruleapps=26894 ruleapps_recorded=48431 ruleapps_merged=24326
+```
+
+Stratum timings from `run_inc1_dred.stdout` (delete vs insert commit):
+```
+stratum_equal_assign_inc  delete=0.1010s  insert=0.0497s  (2.0x)
+stratum_RAND_inc          delete=0.0139s  insert=0.0016s  (8.8x)
+stratum_KEY_SENSITIVE_inc delete=0.0016s  insert=0.0009s  (1.8x)
+```
+
+Per-SCC workload counters (excerpt):
+```
+[seminaive-dred-scc] iter=1 phase=delete scc=8 ruleapps_overdelete=157970 complete_scan_calls=8578 complete_scan_elems=158469 rederive_delta_tuples=6683 rederive_delta_ruleapps=28464 ruleapps_rederive_erased=38923
+[seminaive-dred-scc] iter=1 phase=delete scc=13 ruleapps_overdelete=277 complete_scan_calls=277 complete_scan_elems=277 rederive_delta_tuples=0 rederive_delta_ruleapps=0 ruleapps_rederive_erased=0
+[seminaive-dred-scc] iter=1 phase=delete scc=14 ruleapps_overdelete=89 complete_scan_calls=133 complete_scan_elems=133 rederive_delta_tuples=0 rederive_delta_ruleapps=0 ruleapps_rederive_erased=0
+[seminaive-dred-scc] iter=1 phase=delete scc=15 ruleapps_overdelete=1 complete_scan_calls=1 complete_scan_elems=1 rederive_delta_tuples=0 rederive_delta_ruleapps=0 ruleapps_rederive_erased=0
+```
+
+### Findings
+- Delete triggers large recursive scans and overdelete inserts (`complete_scan_elems` ~= `ruleapps_overdelete`),
+  which are absent in the insert commit; this is a major asymmetry even when input deltas are symmetric.
+- Delete also spends work erasing rule apps from complete sets (`ruleapps_erased`), while insert can often
+  attach/merge delta sets with fewer per-element erases.
+- Non-zero `ins_*` counters during delete indicate rederive-style activity still runs even when we expect no
+  overdelete/rederive on this workload; this is likely a key source of the delete slowdown.
+
+### Next hypotheses to verify
+- The recursive delete branch scans full derivation sets (`ruleSetComplete`) per deleted rule app; even if
+  no overdelete survives, this scan cost dominates for large derivation sets.
+- `unordered_set<RuleApplication>` uses vector-based hashing and `erase`, which is heavier than insert-only
+  paths; delete cost will grow with derivation fanout.
 - At least one verifiable fix from S1 or S2 (prefer S2 leak)
 - Instrumentation macros (optional, but recommended)
 - Before/after comparison data (at least 3 repeats with mean/variance)

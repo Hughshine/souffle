@@ -46,8 +46,21 @@ SipsMetric::SipsMetric(const TranslationUnit& tu) : program(tu.getProgram()) {
     sccGraph = &tu.getAnalysis<ast::analysis::SCCGraphAnalysis>();
 }
 
+std::vector<std::size_t> SipsMetric::getReorderingWithInitialBindings(const Clause* clause,
+        const std::vector<std::string>& atomNames,
+        const std::vector<std::string>& initialBoundVars) const {
+    (void)initialBoundVars;
+    return getReordering(clause, atomNames);
+}
+
 std::vector<std::size_t> StaticSipsMetric::getReordering(
         const Clause* clause, const std::vector<std::string>& atomNames) const {
+    return getReorderingWithInitialBindings(clause, atomNames, {});
+}
+
+std::vector<std::size_t> StaticSipsMetric::getReorderingWithInitialBindings(
+        const Clause* clause, const std::vector<std::string>& atomNames,
+        const std::vector<std::string>& initialBoundVars) const {
     std::size_t relStratum = sccGraph->getSCC(program.getRelation(*clause));
     auto sccRelations = sccGraph->getInternalRelations(relStratum);
 
@@ -55,6 +68,9 @@ std::vector<std::size_t> StaticSipsMetric::getReordering(
             [&](auto* atom) { return contains(sccRelations, program.getRelation(*atom)); });
 
     BindingStore bindingStore(clause);
+    for (const auto& varName : initialBoundVars) {
+        bindingStore.bindVariableStrongly(varName);
+    }
     auto atoms = getBodyLiterals<Atom>(*clause);
     std::vector<std::size_t> newOrder(atoms.size());
 

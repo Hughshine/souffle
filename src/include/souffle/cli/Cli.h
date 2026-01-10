@@ -354,6 +354,7 @@ public:
         DerivationGraphViewInterface::setDumpDotEnabled(options.isDumpDotEnabled());
         DerivationGraphViewInterface::setDumpJsonEnabled(options.isDumpJsonEnabled());
         DerivationGraphViewInterface::setDumpStatsEnabled(options.isDumpStatEnabled());
+        DerivationManager::setSemStatsEnabled(options.isDumpStatEnabled());
         auto& mode = options.getIncMode();
         if (mode == "full" || mode == "full-hard") {
             setIncMode(IncMode::FULL_HARD);
@@ -571,6 +572,7 @@ public:
             } else if (key == "dumpstat") {
                 opt.setDumpStatEnabled(true);
                 DerivationGraphViewInterface::setDumpStatsEnabled(true);
+                DerivationManager::setSemStatsEnabled(true);
                 std::cout << "Set dumpstat to true" << std::endl;
             } else {
                 std::cout << "Unknown option: " << key << std::endl;
@@ -589,6 +591,7 @@ public:
             } else if (key == "dumpstat") {
                 opt.setDumpStatEnabled(false);
                 DerivationGraphViewInterface::setDumpStatsEnabled(false);
+                DerivationManager::setSemStatsEnabled(false);
                 std::cout << "Set dumpstat to false" << std::endl;
             } else {
                 std::cout << "Unknown option: " << key << std::endl;
@@ -1123,10 +1126,36 @@ public:
             bool useRegional = incMode == IncMode::INC_REGIONAL;
             if (incMode == IncMode::INC_NAIVE || useRegional) {
                 {
+                    bool hasDelete = false;
+                    bool hasInsert = false;
+                    for (const auto& op : pendingOperations) {
+                        if (!op.valid) {
+                            continue;
+                        }
+                        if (op.type == Operation::DELETE) {
+                            hasDelete = true;
+                        } else if (op.type == Operation::INSERT) {
+                            hasInsert = true;
+                        }
+                    }
+                    std::string phaseLabel = "mixed";
+                    if (hasDelete && !hasInsert) {
+                        phaseLabel = "delete";
+                    } else if (hasInsert && !hasDelete) {
+                        phaseLabel = "insert";
+                    }
+                    if (DerivationManager::isSemStatsEnabled()) {
+                        DerivationManager::resetDredStats();
+                    }
                     debugger.startTurn();
                     debugger.startStage(StageKind::SEMINAIVE_INC);
                     program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);
                     debugger.endStage();
+                    if (DerivationManager::isSemStatsEnabled()) {
+                        std::ostringstream label;
+                        label << "iter=" << iteration << " phase=" << phaseLabel;
+                        DerivationManager::dumpDredStats(std::cout, label.str());
+                    }
                 }
                 DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
                 debugger.startStage(StageKind::PRUNING_INC);

@@ -60,6 +60,9 @@ public:
      */
     virtual std::vector<std::size_t> getReordering(
             const Clause* clause, const std::vector<std::string>& atomNames) const = 0;
+    virtual std::vector<std::size_t> getReorderingWithInitialBindings(const Clause* clause,
+            const std::vector<std::string>& atomNames,
+            const std::vector<std::string>& initialBoundVars) const;
 
     /** Create a SIPS metric based on a given heuristic. */
     static std::unique_ptr<SipsMetric> create(const std::string& heuristic, const TranslationUnit& tu);
@@ -98,6 +101,9 @@ public:
 
     std::vector<std::size_t> getReordering(
             const Clause* clause, const std::vector<std::string>& atomNames) const override;
+    std::vector<std::size_t> getReorderingWithInitialBindings(const Clause* clause,
+            const std::vector<std::string>& atomNames,
+            const std::vector<std::string>& initialBoundVars) const override;
 
 protected:
     /**

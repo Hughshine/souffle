@@ -1,11 +1,14 @@
 # Incremental Side-Channel Benchmark Guide
 
 Incremental side-channel benchmark notes (context + procedures). Experiments live
-under `experiments/side_channel_inc_eval/` and use the Souffle binary built from
-this repo. Do not git-add anything under `experiments/` or other generated artifacts.
+under `experiments/side_channel_inc_eval/` (legacy) and
+`experiments/side_channel_inc_trimmed_eval/` (trimmed ruleset, no equal_assign),
+using the Souffle binary built from this repo. Do not git-add anything under
+`experiments/` or other generated artifacts.
 
 ## Status
 - Active evaluation workflow.
+- 2026-01-10 (trimmed ruleset): P1,P3,P4-P20, inc1/inc3/inc5, sample=1, all OK.
 - 2026-01-09 (post-fix rerun): P1,P3,P4-P20, inc1/inc3/inc5, sample=1, all OK.
 - 2026-01-09 (pre-fix run): P1,P3,P4-P20, inc1/inc3/inc5, sample=1, P7/P20 mismatches (see Results).
 - 2025-12-21 (inc10 sample=1): P4-P13 snapshot + notes preserved below.
@@ -83,6 +86,7 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --bas
 - `src/include/souffle/cli/Cli.h`: applyDelta + mode dispatch (inc-naive/inc-regional).
 
 ## Latest status / known issues
+- 2026-01-10 (trimmed ruleset): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc1 7/19 faster, inc3 7/19 faster, inc5 1/19 faster.
 - 2026-01-09 (post-fix rerun): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc1 16/19 faster (ok=19/19), inc3 8/19 faster (ok=19/19), inc5 2/19 faster (ok=19/19).
 - 2026-01-09 (pre-fix run): correctness mismatches (inc_iter1_vs_full_iter1): P7 inc1/inc3/inc5 mismatches=1 max|d|=0.10239319; P20 inc5 mismatches=2 max|d|=0.2522536. Summary counts: inc1 16/19 faster (ok=18/19), inc3 10/19 faster (ok=18/19), inc5 6/19 faster (ok=17/19).
 - Delta-size sensitivity: inc1 often faster, inc3 mixed, inc5 usually slower (full recompute wins for larger deltas).
@@ -126,12 +130,77 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --bas
 
 ## Results (inc1/inc3/inc5, sample=1)
 Data sources:
-- `experiments/side_channel_inc_eval/results-souffle-inc.tsv` (end-to-end)
+- `experiments/side_channel_inc_trimmed_eval/results-souffle-inc.tsv` (end-to-end, 2026-01-10)
+- `experiments/side_channel_inc_trimmed_eval/P*/output/log_P*_<label>_1_{inc,full}_*.json`
+  (per-stage breakdown, delta counts, 2026-01-10)
+- `experiments/side_channel_inc_eval/results-souffle-inc.tsv` (end-to-end, 2026-01-09)
 - `experiments/side_channel_inc_eval/P*/output/log_P*_<label>_1_{inc,full}_*.json`
-  (per-stage breakdown, delta counts)
+  (per-stage breakdown, delta counts, 2026-01-09)
 
 ### End-to-end wall time (inc vs full)
 Speedup = FullTime / IncTime (>1.0 means inc faster).
+#### 2026-01-10 (trimmed ruleset, no equal_assign)
+```tsv
+Case	Delta	IncTime	FullTime	Speedup	OK
+P1	inc1	0.337566	1.286437	3.811	1
+P1	inc3	0.370647	1.028006	2.774	1
+P1	inc5	1.236234	0.674332	0.545	1
+P3	inc1	1.162363	0.737374	0.634	1
+P3	inc3	1.104880	0.732703	0.663	1
+P3	inc5	1.189762	0.726775	0.611	1
+P4	inc1	0.015281	0.013889	0.909	1
+P4	inc3	0.018728	0.015583	0.832	1
+P4	inc5	0.015677	0.014013	0.894	1
+P5	inc1	0.016249	0.015899	0.978	1
+P5	inc3	0.014509	0.020673	1.425	1
+P5	inc5	0.017839	0.015902	0.891	1
+P6	inc1	0.017493	0.018616	1.064	1
+P6	inc3	0.021958	0.022397	1.020	1
+P6	inc5	0.023372	0.022702	0.971	1
+P7	inc1	0.027244	0.026758	0.982	1
+P7	inc3	0.031928	0.033618	1.053	1
+P7	inc5	0.039772	0.037617	0.946	1
+P8	inc1	0.033662	0.034403	1.022	1
+P8	inc3	0.040625	0.038162	0.939	1
+P8	inc5	0.047059	0.046882	0.996	1
+P9	inc1	0.033846	0.033542	0.991	1
+P9	inc3	0.041368	0.041887	1.013	1
+P9	inc5	0.048792	0.048052	0.985	1
+P10	inc1	0.119009	0.137689	1.157	1
+P10	inc3	0.192643	0.212458	1.103	1
+P10	inc5	0.307846	0.284290	0.923	1
+P11	inc1	0.102617	0.117096	1.141	1
+P11	inc3	0.190447	0.197392	1.036	1
+P11	inc5	0.269119	0.274488	1.020	1
+P12	inc1	0.303927	0.251685	0.828	1
+P12	inc3	0.451209	0.304003	0.674	1
+P12	inc5	0.486506	0.381906	0.785	1
+P13	inc1	1.539222	1.033123	0.671	1
+P13	inc3	1.475342	1.123304	0.761	1
+P13	inc5	1.528772	1.300920	0.851	1
+P14	inc1	2.375514	2.317190	0.975	1
+P14	inc3	2.644482	2.163876	0.818	1
+P14	inc5	2.774842	2.387992	0.861	1
+P15	inc1	6.447595	8.072398	1.252	1
+P15	inc3	7.621881	7.134407	0.936	1
+P15	inc5	8.958616	7.720081	0.862	1
+P16	inc1	17.786523	14.867957	0.836	1
+P16	inc3	17.096539	11.900136	0.696	1
+P16	inc5	17.910979	13.288718	0.742	1
+P17	inc1	22.690092	15.751412	0.694	1
+P17	inc3	25.109208	14.663478	0.584	1
+P17	inc5	25.437655	15.934298	0.626	1
+P18	inc1	23.024591	17.099180	0.743	1
+P18	inc3	27.333167	17.007375	0.622	1
+P18	inc5	31.320941	18.466959	0.590	1
+P19	inc1	36.558594	23.779726	0.650	1
+P19	inc3	42.888465	23.127642	0.539	1
+P19	inc5	44.262132	25.203704	0.569	1
+P20	inc1	15.179235	16.208378	1.068	1
+P20	inc3	24.246785	17.372865	0.717	1
+P20	inc5	32.598067	23.049153	0.707	1
+```
+
 #### 2026-01-09 (post-fix rerun)
 ```tsv
 Case	Delta	IncTime	FullTime	Speedup	OK
@@ -1300,6 +1369,133 @@ P20	inc5	ins	FC	4.488667	8.463204	0.530
 P20	inc5	ins	WMC	0.017387	0.019268	0.902
 ```
 
+### SEM del/ins time (inc vs full, 2026-01-10 trimmed ruleset)
+Speedup = Full_SEM_s / Inc_SEM_s (>1.0 means inc faster).
+```tsv
+Case	Delta	IncDelSem_s	FullDelSem_s	DelSpeedup	IncInsSem_s	FullInsSem_s	InsSpeedup
+P1	inc1	0.001535	0.385245	250.984	0.001224	0.521563	426.080
+P1	inc3	0.000876	0.298912	341.231	0.000835	0.377565	452.009
+P1	inc5	0.151882	0.052206	0.344	0.139657	0.295593	2.117
+P3	inc1	0.137226	0.085397	0.622	0.113269	0.295461	2.609
+P3	inc3	0.129838	0.081318	0.626	0.120856	0.301446	2.494
+P3	inc5	0.133459	0.078053	0.585	0.122928	0.289006	2.351
+P4	inc1	0.001424	0.000267	0.188	0.000782	0.000285	0.365
+P4	inc3	0.001536	0.000271	0.177	0.004219	0.000290	0.069
+P4	inc5	0.000460	0.000275	0.599	0.000682	0.000288	0.422
+P5	inc1	0.001921	0.000353	0.184	0.001445	0.000357	0.247
+P5	inc3	0.001559	0.000321	0.206	0.001460	0.000486	0.333
+P5	inc5	0.001764	0.000318	0.180	0.001349	0.000369	0.274
+P6	inc1	0.001331	0.000577	0.434	0.001175	0.000511	0.435
+P6	inc3	0.001073	0.000498	0.464	0.001593	0.000551	0.346
+P6	inc5	0.001005	0.000500	0.497	0.001087	0.000567	0.522
+P7	inc1	0.001729	0.001283	0.742	0.002042	0.001337	0.655
+P7	inc3	0.002003	0.001144	0.571	0.002106	0.001355	0.643
+P7	inc5	0.002202	0.001134	0.515	0.002157	0.001322	0.613
+P8	inc1	0.002342	0.002143	0.915	0.002291	0.002062	0.900
+P8	inc3	0.002270	0.001668	0.735	0.001243	0.002148	1.728
+P8	inc5	0.001689	0.001627	0.963	0.002270	0.002301	1.014
+P9	inc1	0.001792	0.001482	0.827	0.001506	0.001361	0.904
+P9	inc3	0.001140	0.001557	1.366	0.002248	0.001411	0.628
+P9	inc5	0.001722	0.001309	0.760	0.001698	0.001515	0.892
+P10	inc1	0.007109	0.016497	2.321	0.007115	0.022307	3.135
+P10	inc3	0.007572	0.011049	1.459	0.006946	0.027290	3.929
+P10	inc5	0.009497	0.010862	1.144	0.008745	0.020957	2.396
+P11	inc1	0.006090	0.014723	2.418	0.005739	0.020583	3.586
+P11	inc3	0.006840	0.011051	1.616	0.007046	0.021368	3.033
+P11	inc5	0.006432	0.010305	1.602	0.007001	0.024023	3.431
+P12	inc1	0.003826	0.017927	4.686	0.003104	0.018963	6.108
+P12	inc3	0.003982	0.015555	3.906	0.003466	0.018792	5.422
+P12	inc5	0.005125	0.013238	2.583	0.004588	0.020125	4.386
+P13	inc1	0.006497	0.031940	4.916	0.005295	0.038475	7.266
+P13	inc3	0.009377	0.026386	2.814	0.009386	0.041025	4.371
+P13	inc5	0.009931	0.024283	2.445	0.008919	0.044441	4.983
+P14	inc1	0.009290	0.047071	5.067	0.008696	0.056581	6.507
+P14	inc3	0.014381	0.036507	2.539	0.017245	0.067469	3.912
+P14	inc5	0.015297	0.032569	2.129	0.015090	0.060942	4.039
+P15	inc1	0.032168	0.113367	3.524	0.031465	0.147830	4.698
+P15	inc3	0.037838	0.095963	2.536	0.041470	0.130419	3.145
+P15	inc5	0.048718	0.109446	2.247	0.057390	0.158768	2.766
+P16	inc1	0.057738	0.168664	2.921	0.057660	0.239183	4.148
+P16	inc3	0.065251	0.151248	2.318	0.070245	0.240819	3.428
+P16	inc5	0.076431	0.241312	3.157	0.075052	0.242772	3.235
+P17	inc1	0.100536	0.230810	2.296	0.096283	0.396708	4.120
+P17	inc3	0.111565	0.198731	1.781	0.107714	0.390036	3.621
+P17	inc5	0.110010	0.194008	1.764	0.117621	0.374737	3.186
+P18	inc1	0.130858	0.335190	2.561	0.153409	0.461087	3.006
+P18	inc3	0.128429	0.285182	2.221	0.152332	0.455197	2.988
+P18	inc5	0.119644	0.234277	1.958	0.156283	0.508392	3.253
+P19	inc1	0.179769	0.472441	2.628	0.225704	0.706978	3.132
+P19	inc3	0.177076	0.370329	2.091	0.220714	0.624964	2.832
+P19	inc5	0.187138	0.345540	1.846	0.260906	0.608440	2.332
+P20	inc1	0.092535	0.629298	6.801	0.099873	0.673522	6.744
+P20	inc3	0.146947	0.461004	3.137	0.136890	0.728237	5.320
+P20	inc5	0.150087	0.471920	3.144	0.149270	0.609385	4.082
+```
+
+### Pre-prune delta edge ratios (apply_delta_view / total edges, 2026-01-10 trimmed ruleset)
+DeltaEdges come from apply_delta_view (pre-prune); total edges come from dumpStatisticsInc (full graph).
+Delete ratios can exceed 1.0 when removed edges outnumber the remaining edges after the delete turn.
+```tsv
+Case	Delta	DelEdges	DelTotalEdges	DelEdgeRatio	InsEdges	InsTotalEdges	InsEdgeRatio
+P1	inc1	0	88699	0.000000	0	88699	0.000000
+P1	inc3	0	88699	0.000000	0	88699	0.000000
+P1	inc5	73343	15356	4.776179	73343	88699	0.826875
+P3	inc1	60097	28602	2.101147	60097	88699	0.677539
+P3	inc3	60426	28273	2.137233	60426	88699	0.681248
+P3	inc5	62773	25926	2.421237	62773	88699	0.707708
+P4	inc1	5	33	0.151515	5	38	0.131579
+P4	inc3	5	33	0.151515	5	38	0.131579
+P4	inc5	6	32	0.187500	6	38	0.157895
+P5	inc1	6	52	0.115385	6	58	0.103448
+P5	inc3	6	52	0.115385	6	58	0.103448
+P5	inc5	12	46	0.260870	12	58	0.206897
+P6	inc1	0	108	0.000000	0	108	0.000000
+P6	inc3	22	86	0.255814	22	108	0.203704
+P6	inc5	24	84	0.285714	24	108	0.222222
+P7	inc1	25	278	0.089928	25	303	0.082508
+P7	inc3	52	251	0.207171	52	303	0.171617
+P7	inc5	76	227	0.334802	76	303	0.250825
+P8	inc1	32	504	0.063492	32	536	0.059701
+P8	inc3	136	400	0.340000	136	536	0.253731
+P8	inc5	175	361	0.484765	175	536	0.326493
+P9	inc1	20	351	0.056980	20	371	0.053908
+P9	inc3	31	340	0.091176	31	371	0.083558
+P9	inc5	68	303	0.224422	68	371	0.183288
+P10	inc1	1206	2933	0.411183	1206	4139	0.291375
+P10	inc3	1955	2184	0.895147	1955	4139	0.472336
+P10	inc5	2043	2096	0.974714	2043	4139	0.493597
+P11	inc1	1365	2759	0.494744	1365	4124	0.330989
+P11	inc3	2027	2097	0.966619	2027	4124	0.491513
+P11	inc5	2120	2004	1.057884	2120	4124	0.514064
+P12	inc1	405	3800	0.106579	405	4205	0.096314
+P12	inc3	889	3316	0.268094	889	4205	0.211415
+P12	inc5	1234	2971	0.415348	1234	4205	0.293460
+P13	inc1	1033	7202	0.143432	1033	8235	0.125440
+P13	inc3	2406	5829	0.412764	2406	8235	0.292168
+P13	inc5	3151	5084	0.619788	3151	8235	0.382635
+P14	inc1	1934	10331	0.187204	1934	12265	0.157684
+P14	inc3	4131	8134	0.507868	4131	12265	0.336812
+P14	inc5	5024	7241	0.693827	5024	12265	0.409621
+P15	inc1	4799	22061	0.217533	4799	26860	0.178667
+P15	inc3	9144	17716	0.516144	9144	26860	0.340432
+P15	inc5	11606	15254	0.760850	11606	26860	0.432092
+P16	inc1	13796	30725	0.449015	13796	44521	0.309876
+P16	inc3	18388	26133	0.703631	18388	44521	0.413019
+P16	inc5	20505	24016	0.853806	20505	44521	0.460569
+P17	inc1	19763	40886	0.483368	19763	60649	0.325859
+P17	inc3	26588	34061	0.780600	26588	60649	0.438391
+P17	inc5	28621	32028	0.893624	28621	60649	0.471912
+P18	inc1	26192	50577	0.517864	26192	76769	0.341179
+P18	inc3	33500	43269	0.774226	33500	76769	0.436374
+P18	inc5	36274	40495	0.895765	36274	76769	0.472508
+P19	inc1	33439	63496	0.526632	33439	96935	0.344963
+P19	inc3	43103	53832	0.800695	43103	96935	0.444659
+P19	inc5	46087	50848	0.906368	46087	96935	0.475442
+P20	inc1	7959	86265	0.092262	7959	94224	0.084469
+P20	inc3	19980	74244	0.269113	19980	94224	0.212048
+P20	inc5	27193	67031	0.405678	27193	94224	0.288600
+```
+
 ### SEMINAIVE stage vs delta counts (DeltaNodes/DeltaEdges)
 Delta* columns come from `[inc-naive] delta counts` in FORWARD_COMPILATION logs.
 ```tsv
@@ -1458,6 +1654,30 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --bas
 
 # Collect TSV
 python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval collect --cases 1,3,4-20
+```
+
+### Trimmed ruleset run (no equal_assign)
+```bash
+python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_trimmed_eval \
+  generate --cases 1,3,4-20 --cleanup --rule-set trimmed
+
+python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_trimmed_eval \
+  delta --cases 1,3,4-20 --cleanup
+
+JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
+python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_trimmed_eval \
+  compile --cases 1,3,4-20 --timeout 600 --jobs ${JOBS}
+
+python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_trimmed_eval \
+  run --cases 1,3,4-20 --delta-labels inc1,inc3,inc5 --delta-samples 1 --timeout 600
+
+python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_trimmed_eval \
+  collect --cases 1,3,4-20
 ```
 ### Legacy inc10 run (2025-12-21)
 ```bash

@@ -76,20 +76,21 @@ protected:
     VecOwn<ram::Statement> generateClauseVersionsInc(
         const ast::Clause* clause, const ast::RelationSet& scc, bool isDelete = false) const;
     VecOwn<ram::Statement> generateClauseVersionsIncRederive(
-        const ast::Clause* clause, const ast::RelationSet& scc) const;
+            const ast::Clause* clause, const ast::RelationSet& scc, std::size_t sccNumber) const;
     VecOwn<ram::Statement> generateClauseVersionsPrefill(
         const ast::Clause* clause, const ast::RelationSet& scc, bool isDelete) const;
     Own<ram::Statement> generateStratumTableUpdatesInc(const ast::RelationSet& scc, bool isDelete = false) const;
     Own<ram::Statement> generateStratumTableUpdatesIncRederive(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateStratumLoopBodyInc(const ast::RelationSet& scc, bool isDelete = false) const;
-    Own<ram::Statement> generateStratumLoopBodyIncRederive(const ast::RelationSet& scc) const;
+    Own<ram::Statement> generateStratumLoopBodyIncRederive(
+            const ast::RelationSet& scc, std::size_t sccNumber) const;
 
     Own<ram::Statement> generateStratumExitSequenceInc(const ast::RelationSet& scc, bool isDelete = false) const;
     Own<ram::Statement> generateStratumExitSequenceIncRederive(const ast::RelationSet& scc) const;
     Own<ram::Statement> translateRecursiveClausesInc(
         const ast::RelationSet& scc, const ast::Relation* rel, bool isDelete = false, bool isPrefill = false) const;
     Own<ram::Statement> translateRecursiveClausesIncRederive(
-        const ast::RelationSet& scc, const ast::Relation* rel) const;
+            const ast::RelationSet& scc, const ast::Relation* rel, std::size_t sccNumber) const;
     Own<ram::Statement> generateStratumNonSccPreFill(const ast::RelationSet& scc, bool isDelete = false) const;
     Own<ram::Statement> generateNonRecursiveRelationIns(const ast::Relation& rel) const;
     Own<ram::Statement> generateNonRecursiveRelationDel(const ast::Relation& rel) const;
@@ -115,7 +116,8 @@ protected:
     Own<ram::Statement> generateIncTableUpdate(const std::vector<std::size_t>& sccOrderings) const;  // TODO
     Own<ram::Statement> generateStratumPreamble(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateStratumPreambleInc(const ast::RelationSet& scc, bool isDelete = false) const;
-    Own<ram::Statement> generateStratumRederive(const ast::RelationSet& scc) const;
+    Own<ram::Statement> generateStratumRederive(
+            const ast::RelationSet& scc, std::size_t sccNumber) const;
 
     Own<ram::Statement> generateNonRecursiveDelete(const ast::Relation& rel) const;
     Own<ram::Statement> generateStratumPostamble(const ast::RelationSet& scc) const;
