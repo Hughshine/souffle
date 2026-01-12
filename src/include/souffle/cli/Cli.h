@@ -780,6 +780,7 @@ public:
                     graph->dumpDotInc(outputPath("derivation-inc-before-prune" + std::to_string(iteration) + ".dot"));
                 }
                 DerivationGraph::setMergeBiImpEnabled(false);
+                graph->setBuildInsertImpacts(useRegional);
                 auto view = graph->prune(this->outputRelations);
                 debugger.endStage();
                 if (opt.isDumpDotEnabled()) {
@@ -1264,6 +1265,7 @@ public:
                 IncSubgraphView view = [&] {
                     FunctionTimer timer("PRUNING_INC: prune");
                     DerivationGraph::setMergeBiImpEnabled(false);
+                    graph->setBuildInsertImpacts(useRegional);
                     return graph->prune(program->getOutputRelations());
                 }();  // will be assigned below
                 {

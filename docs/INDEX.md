@@ -35,6 +35,7 @@
 - `README.eval.inc.md`: incremental evaluation workflows.
 - `README.profile.md`: profiling guidance.
 - `README.profile.inc.md`: incremental profiling notes and experiment plan.
+- `README.prune.md`: prune-stage behavior and performance notes.
 - `README.problog.md`: ProbLog baseline timing runs (historical).
 
 ## Experiments

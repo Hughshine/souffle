@@ -1696,6 +1696,14 @@ public:
         }
     }
 
+    void setBuildInsertImpacts(bool enable) {
+        buildInsertImpacts_ = enable;
+    }
+
+    bool getBuildInsertImpacts() const {
+        return buildInsertImpacts_;
+    }
+
     // Sets tracking incremental changes to nodes and edges
     std::set<NodePtr> deltaInsertNodes;
     std::set<EdgePtr> deltaInsertEdges;
@@ -1708,6 +1716,7 @@ public:
     std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> insertedFactImpactedEdges;
     std::unordered_set<NodePtr> deltaInsertReachableNodes;
     std::unordered_set<EdgePtr> deltaInsertReachableEdges;
+    bool buildInsertImpacts_ = true;
 
     const std::set<NodePtr>& getDeltaInsertNodes() const {
         return deltaInsertNodes;
@@ -2383,23 +2392,26 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
             return {outNodes.size(), outEdges.size()};
         };
 
-        for (const auto& fact : newDeltaInsertedNodes) {
-            std::unordered_set<NodePtr> impactedNodes;
-            std::unordered_set<EdgePtr> impactedEdges;
-            auto t0 = Clock::now();
-            auto counts = computeImpact(fact, impactedNodes, impactedEdges);
-            insImpactMs += std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-            if (!impactedNodes.empty() || !impactedEdges.empty()) {
-                newInsertedReachableNodes.insert(impactedNodes.begin(), impactedNodes.end());
-                newInsertedReachableEdges.insert(impactedEdges.begin(), impactedEdges.end());
-                newInsertedFactImpactedNodes[fact] = std::move(impactedNodes);
-                newInsertedFactImpactedEdges[fact] = std::move(impactedEdges);
-                insImpactNodes += counts.first;
-                insImpactEdges += counts.second;
-                insSources++;
+        // Insert impacts are only needed for inc-regional; delete impacts only for explicit deleted facts.
+        if (buildInsertImpacts_) {
+            for (const auto& fact : newDeltaInsertedNodes) {
+                std::unordered_set<NodePtr> impactedNodes;
+                std::unordered_set<EdgePtr> impactedEdges;
+                auto t0 = Clock::now();
+                auto counts = computeImpact(fact, impactedNodes, impactedEdges);
+                insImpactMs += std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+                if (!impactedNodes.empty() || !impactedEdges.empty()) {
+                    newInsertedReachableNodes.insert(impactedNodes.begin(), impactedNodes.end());
+                    newInsertedReachableEdges.insert(impactedEdges.begin(), impactedEdges.end());
+                    newInsertedFactImpactedNodes[fact] = std::move(impactedNodes);
+                    newInsertedFactImpactedEdges[fact] = std::move(impactedEdges);
+                    insImpactNodes += counts.first;
+                    insImpactEdges += counts.second;
+                    insSources++;
+                }
             }
         }
-        for (const auto& fact : newDeltaDeletedNodes) {
+        for (const auto& fact : explicitDeletedFacts_) {
             std::unordered_set<NodePtr> impactedNodes;
             std::unordered_set<EdgePtr> impactedEdges;
             auto t0 = Clock::now();
