@@ -147,6 +147,17 @@ private:
         debugger.logMessage(Level::INFO, oss.str());
     }
 
+    void logApplyDeltaGraphSummary(const IncrementalDerivationGraph& graph, const std::string& modeLabel) const {
+        const size_t totalNodes = graph.getNodes().size();
+        const size_t totalEdges = graph.getEdges().size();
+        std::ostringstream oss;
+        oss << "[inc-iter " << iteration << "] mode=" << modeLabel
+            << " apply_delta_graph: totalNodes=" << totalNodes
+            << " totalEdges=" << totalEdges;
+        std::cout << oss.str() << std::endl;
+        debugger.logMessage(Level::INFO, oss.str());
+    }
+
     void logApplyDeltaOpsSummary(
             const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaInsertRuleApps,
             const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaDeleteRuleApps,
@@ -355,6 +366,7 @@ public:
         DerivationGraphViewInterface::setDumpJsonEnabled(options.isDumpJsonEnabled());
         DerivationGraphViewInterface::setDumpStatsEnabled(options.isDumpStatEnabled());
         DerivationManager::setSemStatsEnabled(options.isDumpStatEnabled());
+        incProfileEnabled = options.isIncProfileEnabled();
         auto& mode = options.getIncMode();
         if (mode == "full" || mode == "full-hard") {
             setIncMode(IncMode::FULL_HARD);
@@ -804,6 +816,20 @@ public:
                 {
                     debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
                     FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(changedNodes.size()));
+                    const bool incProfile = incProfileEnabled;
+                    using Clock = std::chrono::steady_clock;
+                    auto toMs = [](Clock::time_point start) {
+                        return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+                    };
+                    auto stageStart = Clock::now();
+                    double evidenceBuildMs = 0.0;
+                    double evidenceWmcMs = 0.0;
+                    double nodeLoopMs = 0.0;
+                    std::size_t evidenceWmcCalls = 0;
+                    std::size_t nodeWmcCalls = 0;
+                    std::size_t nodeReuse = 0;
+                    std::size_t nodeRecompute = 0;
+                    std::size_t nodeZero = 0;
                     std::unordered_map<NodePtr, double> newProbResult;
                     auto& depGraph = view.getCycleDependencyGraph();
                     size_t componentCount = depGraph.getComponentCount();
@@ -812,6 +838,7 @@ public:
                     std::vector<bool> componentHasEvidence(componentCount, false);
                     std::vector<bool> componentEvidenceChanged(componentCount, false);
 
+                    auto evidenceBuildStart = Clock::now();
                     for (size_t cid = 0; cid < componentCount; ++cid) {
                         const auto& evidences = depGraph.getComponentEvidences(cid);
                         if (evidences.empty()) {
@@ -835,14 +862,22 @@ public:
                         }
                         componentEvidence[cid] = evidenceNode;
                     }
-
+                    if (incProfile) {
+                        evidenceBuildMs = toMs(evidenceBuildStart);
+                    }
+                    auto evidenceWmcStart = Clock::now();
                     for (size_t cid = 0; cid < componentCount; ++cid) {
                         if (componentHasEvidence[cid]) {
                             componentEvidenceWeight[cid] =
                                     ddManager->computeWeightedModelCount(componentEvidence[cid]);
+                            evidenceWmcCalls++;
                         }
                     }
+                    if (incProfile) {
+                        evidenceWmcMs = toMs(evidenceWmcStart);
+                    }
 
+                    auto nodeLoopStart = Clock::now();
                     for (const auto& node : view.getValidNodes()) {
                         if (!node->needOutput) {
                             continue;
@@ -853,17 +888,23 @@ public:
                                 auto it = probResult.find(node);
                                 if (it != probResult.end()) {
                                     newProbResult[node] = it->second;
+                                    nodeReuse++;
                                 } else {
                                     newProbResult[node] =
                                             ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                                    nodeWmcCalls++;
+                                    nodeRecompute++;
                                 }
                             } else {
                                 newProbResult[node] = ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                                nodeWmcCalls++;
+                                nodeRecompute++;
                             }
                             continue;
                         }
                         if (componentEvidenceWeight[cid] == 0.0) {
                             newProbResult[node] = 0.0;
+                            nodeZero++;
                             continue;
                         }
                         if (!componentEvidenceChanged[cid] &&
@@ -871,22 +912,53 @@ public:
                             auto it = probResult.find(node);
                             if (it != probResult.end()) {
                                 newProbResult[node] = it->second;
+                                nodeReuse++;
                             } else {
                                 auto joint =
                                         ddManager->makeAnd((*nodeFormulas)[node], componentEvidence[cid]);
                                 double jointW = ddManager->computeWeightedModelCount(joint);
                                 newProbResult[node] = jointW / componentEvidenceWeight[cid];
+                                nodeWmcCalls++;
+                                nodeRecompute++;
                             }
                             continue;
                         }
                         auto joint = ddManager->makeAnd((*nodeFormulas)[node], componentEvidence[cid]);
                         double jointW = ddManager->computeWeightedModelCount(joint);
                         newProbResult[node] = jointW / componentEvidenceWeight[cid];
+                        nodeWmcCalls++;
+                        nodeRecompute++;
+                    }
+                    if (incProfile) {
+                        nodeLoopMs = toMs(nodeLoopStart);
                     }
                     probResult.clear();
                     probResult = newProbResult;
                     for (const auto& [node, prob] : precomputedProbResult) {
                         probResult.emplace(node, prob);
+                    }
+                    if (incProfile) {
+                        const double totalMs = toMs(stageStart);
+                        std::size_t componentWithEvidence = 0;
+                        for (bool hasEv : componentHasEvidence) {
+                            if (hasEv) {
+                                componentWithEvidence++;
+                            }
+                        }
+                        std::cout << "[inc-profile] stage=WMC_INC total_ms=" << totalMs
+                                  << " evidence_build_ms=" << evidenceBuildMs
+                                  << " evidence_wmc_ms=" << evidenceWmcMs
+                                  << " node_ms=" << nodeLoopMs
+                                  << " components=" << componentCount
+                                  << " components_ev=" << componentWithEvidence
+                                  << " nodes=" << view.getValidNodes().size()
+                                  << " changed_nodes=" << changedNodes.size()
+                                  << " node_reuse=" << nodeReuse
+                                  << " node_recompute=" << nodeRecompute
+                                  << " node_zero=" << nodeZero
+                                  << " evidence_wmc_calls=" << evidenceWmcCalls
+                                  << " node_wmc_calls=" << nodeWmcCalls
+                                  << std::endl;
                     }
                     debugger.endStage();
                 }
@@ -1182,6 +1254,7 @@ public:
                     deletedFacts,
                     useRegional ? "INC_REGIONAL" : "INC_NAIVE");
                 logApplyDeltaSummary(*graph, useRegional ? "INC_REGIONAL" : "INC_NAIVE");
+                logApplyDeltaGraphSummary(*graph, useRegional ? "INC_REGIONAL" : "INC_NAIVE");
                 {
                     if (opt.isDumpDotEnabled()) {
                         FunctionTimer timer("PRUNING_INC: dumpDot-before-prune");
@@ -1227,6 +1300,20 @@ public:
                 {
                     debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
                     FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(changedNodes.size()));
+                    const bool incProfile = incProfileEnabled;
+                    using Clock = std::chrono::steady_clock;
+                    auto toMs = [](Clock::time_point start) {
+                        return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+                    };
+                    auto stageStart = Clock::now();
+                    double evidenceBuildMs = 0.0;
+                    double evidenceWmcMs = 0.0;
+                    double nodeLoopMs = 0.0;
+                    std::size_t evidenceWmcCalls = 0;
+                    std::size_t nodeWmcCalls = 0;
+                    std::size_t nodeReuse = 0;
+                    std::size_t nodeRecompute = 0;
+                    std::size_t nodeZero = 0;
                     std::unordered_map<NodePtr, double> newProbResult;
                     auto& depGraph = view.getCycleDependencyGraph();
                     size_t componentCount = depGraph.getComponentCount();
@@ -1235,6 +1322,7 @@ public:
                     std::vector<bool> componentHasEvidence(componentCount, false);
                     std::vector<bool> componentEvidenceChanged(componentCount, false);
 
+                    auto evidenceBuildStart = Clock::now();
                     for (size_t cid = 0; cid < componentCount; ++cid) {
                         const auto& evidences = depGraph.getComponentEvidences(cid);
                         if (evidences.empty()) {
@@ -1258,14 +1346,23 @@ public:
                         }
                         componentEvidence[cid] = evidenceNode;
                     }
+                    if (incProfile) {
+                        evidenceBuildMs = toMs(evidenceBuildStart);
+                    }
 
+                    auto evidenceWmcStart = Clock::now();
                     for (size_t cid = 0; cid < componentCount; ++cid) {
                         if (componentHasEvidence[cid]) {
                             componentEvidenceWeight[cid] =
                                     ddManager->computeWeightedModelCount(componentEvidence[cid]);
+                            evidenceWmcCalls++;
                         }
                     }
+                    if (incProfile) {
+                        evidenceWmcMs = toMs(evidenceWmcStart);
+                    }
 
+                    auto nodeLoopStart = Clock::now();
                     for (const auto& node : view.getValidNodes()) {
                         if (!node->needOutput) {
                             continue;
@@ -1276,17 +1373,23 @@ public:
                                 auto it = probResult.find(node);
                                 if (it != probResult.end()) {
                                     newProbResult[node] = it->second;
+                                    nodeReuse++;
                                 } else {
                                     newProbResult[node] =
                                             ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                                    nodeWmcCalls++;
+                                    nodeRecompute++;
                                 }
                             } else {
                                 newProbResult[node] = ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
+                                nodeWmcCalls++;
+                                nodeRecompute++;
                             }
                             continue;
                         }
                         if (componentEvidenceWeight[cid] == 0.0) {
                             newProbResult[node] = 0.0;
+                            nodeZero++;
                             continue;
                         }
                         if (!componentEvidenceChanged[cid] &&
@@ -1294,20 +1397,51 @@ public:
                             auto it = probResult.find(node);
                             if (it != probResult.end()) {
                                 newProbResult[node] = it->second;
+                                nodeReuse++;
                             } else {
                                 auto joint =
                                         ddManager->makeAnd((*nodeFormulas)[node], componentEvidence[cid]);
                                 double jointW = ddManager->computeWeightedModelCount(joint);
                                 newProbResult[node] = jointW / componentEvidenceWeight[cid];
+                                nodeWmcCalls++;
+                                nodeRecompute++;
                             }
                             continue;
                         }
                         auto joint = ddManager->makeAnd((*nodeFormulas)[node], componentEvidence[cid]);
                         double jointW = ddManager->computeWeightedModelCount(joint);
                         newProbResult[node] = jointW / componentEvidenceWeight[cid];
+                        nodeWmcCalls++;
+                        nodeRecompute++;
+                    }
+                    if (incProfile) {
+                        nodeLoopMs = toMs(nodeLoopStart);
                     }
                     probResult.clear();
                     probResult = newProbResult;
+                    if (incProfile) {
+                        const double totalMs = toMs(stageStart);
+                        std::size_t componentWithEvidence = 0;
+                        for (bool hasEv : componentHasEvidence) {
+                            if (hasEv) {
+                                componentWithEvidence++;
+                            }
+                        }
+                        std::cout << "[inc-profile] stage=WMC_INC total_ms=" << totalMs
+                                  << " evidence_build_ms=" << evidenceBuildMs
+                                  << " evidence_wmc_ms=" << evidenceWmcMs
+                                  << " node_ms=" << nodeLoopMs
+                                  << " components=" << componentCount
+                                  << " components_ev=" << componentWithEvidence
+                                  << " nodes=" << view.getValidNodes().size()
+                                  << " changed_nodes=" << changedNodes.size()
+                                  << " node_reuse=" << nodeReuse
+                                  << " node_recompute=" << nodeRecompute
+                                  << " node_zero=" << nodeZero
+                                  << " evidence_wmc_calls=" << evidenceWmcCalls
+                                  << " node_wmc_calls=" << nodeWmcCalls
+                                  << std::endl;
+                    }
                     debugger.endStage();
                 }
                 if (ddManager != nullptr) {

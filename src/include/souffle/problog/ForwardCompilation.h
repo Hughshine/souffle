@@ -1261,9 +1261,25 @@ void buildFormulasIncCyclewise(
 //    auto* stage = debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
     using namespace std::chrono;
     static int turn = 1;
+    const bool incProfile = incProfileEnabled;
+    using Clock = std::chrono::steady_clock;
+    auto toMs = [](Clock::time_point t0, Clock::time_point t1) {
+        return std::chrono::duration<double, std::milli>(t1 - t0).count();
+    };
+    auto totalStart = Clock::now();
+    double depGraphMs = 0.0;
+    double constMs = 0.0;
+    double deletePrepMs = 0.0;
+    double rederiveMs = 0.0;
+    double insertPrepMs = 0.0;
+    double insertLoopMs = 0.0;
     auto start = high_resolution_clock::now();
+    auto depStart = Clock::now();
     auto& depGraph = view.getCycleDependencyGraph();  // Includes computeSCCs, computeDependencies, computeDepths
     depGraph.dumpDot("scc" + std::to_string(turn++) + ".dot");
+    if (incProfile) {
+        depGraphMs = toMs(depStart, Clock::now());
+    }
 
 
     const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
@@ -1284,6 +1300,12 @@ void buildFormulasIncCyclewise(
         for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
             debugger.addInfo(key, value);
         }
+        if (incProfile) {
+            const double totalMs = toMs(totalStart, Clock::now());
+            std::cout << "[inc-profile] stage=FORWARD_COMPILATION_INC total_ms=" << totalMs
+                      << " note=no_delta"
+                      << std::endl;
+        }
         return;
     }
     const bool useConst = DerivationGraph::isConstFoldEnabled();
@@ -1293,13 +1315,16 @@ void buildFormulasIncCyclewise(
     if (useConst || dumpConst) {
         auto constStart = std::chrono::steady_clock::now();
         constInfo = analyzeConstants(view, true);
-        auto constMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        auto constMsLocal = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - constStart).count();
         if (useConst) {
             constInfoPtr = &constInfo;
         }
-        std::cout << "[const-pre] tag=inc-cyclewise took " << constMs << " ms" << std::endl;
+        std::cout << "[const-pre] tag=inc-cyclewise took " << constMsLocal << " ms" << std::endl;
         logConstAnalysis(constInfo, view, "inc-cyclewise");
+        if (incProfile) {
+            constMs = static_cast<double>(constMsLocal);
+        }
     }
     ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager};
     debugger.logMessage(Level::INFO, "Starting incremental update for deleted edges");
@@ -1310,6 +1335,7 @@ void buildFormulasIncCyclewise(
 //    std::set<EdgePtr> inWorklist;
 
     debugger.logMessage(Level::INFO, "Performing deletion");
+    auto deletePrepStart = Clock::now();
     {
         // for each deleted node, apply its neg to all its reachable edges and nodes
         // however, since we still want the optimizations for deterministic facts, we sperate them
@@ -1518,6 +1544,9 @@ void buildFormulasIncCyclewise(
 
 
 
+        if (incProfile) {
+            deletePrepMs = toMs(deletePrepStart, Clock::now());
+        }
         start = high_resolution_clock::now();
         // try to rederive the formulas
         std::queue<size_t> ready;  // cycles with in-degree 0
@@ -1619,6 +1648,9 @@ void buildFormulasIncCyclewise(
         }
     }
     end = high_resolution_clock::now();
+    if (incProfile) {
+        rederiveMs = static_cast<double>(duration_cast<milliseconds>(end - start).count());
+    }
     debugger.logMessage(Level::INFO, "rederive time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
     // should reset variable ordering like information after deletion
     // should change to a light weight version?
@@ -1628,6 +1660,7 @@ void buildFormulasIncCyclewise(
         start = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "No inserted edges, skipping insertion phase");
     } else {
+        auto insertPrepStart = Clock::now();
         start = high_resolution_clock::now();
         formulaManager.preConfig(view);
         end = high_resolution_clock::now();
@@ -1684,6 +1717,10 @@ void buildFormulasIncCyclewise(
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Preparation for insertion phase. Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+        if (incProfile) {
+            insertPrepMs = toMs(insertPrepStart, Clock::now());
+        }
+        auto insertLoopStart = Clock::now();
         while (!ready.empty()) {
             size_t cid = ready.front(); ready.pop();
             scheduled[cid] = true;
@@ -1841,6 +1878,9 @@ void buildFormulasIncCyclewise(
 //            debugger.logMessage(Level::INFO, "[CYCLE " + std::to_string(cid) + "] Insertion phase completed. Time: " +
 //                std::to_string(duration_cast<microseconds>(end_cycle - start_cycle).count()) + " microseconds");
         }
+        if (incProfile) {
+            insertLoopMs = toMs(insertLoopStart, Clock::now());
+        }
     }
     end = high_resolution_clock::now();
     debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
@@ -1850,6 +1890,22 @@ void buildFormulasIncCyclewise(
         debugger.addInfo(key, value);
     }
     debugger.addInfo("changed_node_count", std::to_string(changedNodes.size()));
+    if (incProfile) {
+        const double totalMs = toMs(totalStart, Clock::now());
+        std::cout << "[inc-profile] stage=FORWARD_COMPILATION_INC total_ms=" << totalMs
+                  << " dep_ms=" << depGraphMs
+                  << " const_ms=" << constMs
+                  << " delete_prep_ms=" << deletePrepMs
+                  << " rederive_ms=" << rederiveMs
+                  << " insert_prep_ms=" << insertPrepMs
+                  << " insert_loop_ms=" << insertLoopMs
+                  << " del_nodes=" << deltaDeletedNodes.size()
+                  << " del_edges=" << deltaDeletedEdges.size()
+                  << " ins_nodes=" << deltaInsertedNodes.size()
+                  << " ins_edges=" << deltaInsertedEdges.size()
+                  << " changed_nodes=" << changedNodes.size()
+                  << std::endl;
+    }
 
 
 }

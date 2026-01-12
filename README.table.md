@@ -33,10 +33,15 @@ The TSV contains the following columns (names must match exactly):
 - `Speedup_x`: precomputed speedup (may be redundant; recompute to avoid rounding drift)
 - `Improvement_pct`: precomputed percentage improvement (optional; not needed for our tables)
 
-Graph-size columns for the **resulting derivation graph after the update**:
+Graph-size columns for the **resulting derivation graph after the update** (full graph,
+post-applyDelta, pre-prune):
 
-- `GraphNodes`: number of nodes (atoms) in the resulting derivation graph
-- `GraphEdges`: number of edges (grounded rule applications / derivation edges) in the resulting derivation graph
+- `GraphNodes`: number of nodes (atoms) in the full derivation graph after applyDelta
+- `GraphEdges`: number of edges (grounded rule applications / derivation edges) in the full derivation graph after applyDelta
+
+These are taken from the incremental log line:
+`[inc-iter N] mode=... apply_delta_graph: totalNodes=... totalEdges=...`
+and **do not** use pruned/view totals.
 
 Delta columns (net changes between the old graph and the resulting updated graph):
 
@@ -77,7 +82,7 @@ For every row:
 |E| := \texttt{GraphEdges}.
 \]
 
-4) **Workload proxy** `ΔE/|E|` (per instance):
+4) **Workload proxy** `ΔE/|E|` (per instance, full graph):
 \[
 \Delta E/|E| := \frac{\Delta E}{|E|}.
 \]
@@ -92,9 +97,9 @@ For every row:
   because deletion maintenance may involve extra steps (e.g., temporary over-deletion and subsequent re-derivation,
   and cycle repair) that are not reflected in the **net** delta `ΔE`.
 
-- `DeltaInsertNodes/DeltaDeleteNodes` and `DeltaInsertEdges/DeltaDeleteEdges` are **view/prune
-  deltas** and can be asymmetric; they are useful for diagnosing pruning overhead, not for
-  SEM delta proxies.
+- `DeltaInsertNodes/DeltaDeleteNodes` and `DeltaInsertEdges/DeltaDeleteEdges` come from
+  `apply_delta_view` (view/prune deltas) and can be asymmetric; they are useful for diagnosing
+  pruning overhead, not for SEM delta proxies.
 
 ### A.4 Aggregation rules for Table 1 (summary table)
 

@@ -1,13 +1,17 @@
 # Incremental Side-Channel Benchmark Guide
 
 Incremental side-channel benchmark notes (context + procedures). Experiments live
-under `experiments/side_channel_inc_eval/` (legacy) and
+under `experiments/side_channel_inc_eval/` (legacy),
 `experiments/side_channel_inc_trimmed_eval/` (trimmed ruleset, no equal_assign),
+and `experiments/side_channel_inc_trimmed_eval_small/` (trimmed ruleset, 0.1/0.3/0.5% deltas),
 using the Souffle binary built from this repo. Do not git-add anything under
 `experiments/` or other generated artifacts.
 
 ## Status
 - Active evaluation workflow.
+- 2026-01-11 (trimmed ruleset, det-opt, apply_delta_graph): P1,P3,P4-P20, inc0p1/inc0p3/inc0p5, sample=1, all OK.
+- 2026-01-11 (full ruleset, det-opt, apply_delta_graph): P1,P3,P4-P20, inc1/inc3/inc5, sample=1, all OK.
+- 2026-01-11 (trimmed ruleset, det-opt, apply_delta_graph): P1,P3,P4-P20, inc1/inc3/inc5, sample=1, all OK.
 - 2026-01-10 (trimmed ruleset): P1,P3,P4-P20, inc1/inc3/inc5, sample=1, all OK.
 - 2026-01-10 (full ruleset): P1,P3,P4-P20, inc1/inc3/inc5, sample=1, all OK (P1/P3 forced trimmed).
 - 2026-01-09 (post-fix rerun): P1,P3,P4-P20, inc1/inc3/inc5, sample=1, all OK.
@@ -48,7 +52,7 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --bas
 python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval compile --cases 1 --timeout 600
 
 # 4) Run baseline (full+inc) and one sample for inc1/inc3/inc5
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval run   --cases 1 --delta-labels inc1,inc3,inc5 --delta-samples 1 --timeout 600
+python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval run   --cases 1 --delta-labels inc1,inc3,inc5 --delta-samples 1 --timeout 600 --run-arg=--det-opt
 
 # 5) Collect summary TSV
 python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval collect --cases 1
@@ -68,6 +72,7 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --bas
 - CLI logs pre-prune applyDelta counts (symmetric) and view-update counts (asymmetric):
   `[inc-iter N] mode=INC_NAIVE apply_delta_ops: delTuples=... delRuleApps=... delFacts=... insTuples=... insRuleApps=... insFacts=...`.
   `[inc-iter N] mode=INC_NAIVE apply_delta_view: insNodes=... insEdges=... delNodes=... delEdges=...` (view/prune-driven).
+  `[inc-iter N] mode=INC_NAIVE apply_delta_graph: totalNodes=... totalEdges=...` (full graph after applyDelta, before prune).
 - Forward compilation logs print delta counts:
   `[inc-naive] delta counts: insNodes=... insEdges=... delNodes=... delEdges=...`.
 - Deletion stage prints `Deletion deletedVarsIndex size: N` before postprocessing
@@ -87,13 +92,21 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --bas
 - `src/include/souffle/cli/Cli.h`: applyDelta + mode dispatch (inc-naive/inc-regional).
 
 ## Latest status / known issues
-- 2026-01-10 (trimmed ruleset): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc1 7/19 faster, inc3 7/19 faster, inc5 1/19 faster.
+- 2026-01-11 (trimmed ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc0p1 15/19 faster, inc0p3 16/19 faster, inc0p5 14/19 faster. Avg ΔE/|E| now 9.8–33.9% (ins) and 10.9–51.2% (del).
+- 2026-01-11 (full ruleset, det-opt, apply_delta_graph): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc1 6/19 faster, inc3 3/19 faster, inc5 2/19 faster. ΔE/|E| now uses post-applyDelta full-graph edges (not pruned view edges).
+- 2026-01-11 (trimmed ruleset, det-opt, apply_delta_graph): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc1 7/19 faster, inc3 6/19 faster, inc5 1/19 faster.
+- 2026-01-10 (trimmed ruleset): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc1 7/19 faster, inc3 7/19 faster, inc5 1/19 faster (legacy, pre apply_delta_graph).
 - 2026-01-10 (full ruleset): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc1 17/19 faster, inc3 14/19 faster, inc5 6/19 faster; P1/P3 forced trimmed ruleset in generator.
 - 2026-01-09 (post-fix rerun): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc1 16/19 faster (ok=19/19), inc3 8/19 faster (ok=19/19), inc5 2/19 faster (ok=19/19).
 - 2026-01-09 (pre-fix run): correctness mismatches (inc_iter1_vs_full_iter1): P7 inc1/inc3/inc5 mismatches=1 max|d|=0.10239319; P20 inc5 mismatches=2 max|d|=0.2522536. Summary counts: inc1 16/19 faster (ok=18/19), inc3 10/19 faster (ok=18/19), inc5 6/19 faster (ok=17/19).
 - Delta-size sensitivity: inc1 often faster, inc3 mixed, inc5 usually slower (full recompute wins for larger deltas).
 - PRUNING_INC dominates on larger cases and especially on insert turns; see the
   per-stage breakdown table for ratios (Speedup < 1.0 indicates inc slower).
+- ΔE/|E| is based on rule-app deltas vs total derived edges after applyDelta; small
+  input deltas can fan out through recursive rules and drive ΔE/|E| well above the
+  input change rate (especially on delete, where the graph also shrinks).
+- Delete SEM speedup remains <1 for inc3/inc5 in the full ruleset and mixed in the
+  trimmed ruleset; see the delete speedup aggregate table in the SEM summary.
 - Delta node/edge counts are taken from forward compilation logs and can be
   asymmetric due to prune/derivation changes; they are not the same as input facts.
 - inc-regional is not exercised in the current runs (logs show inc-naive only).
@@ -130,20 +143,528 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --bas
 - Incremental runs disable bi-imp merge; if a graph is merged (full mode),
   switching to inc/inc-regional asserts to avoid cache mismatch.
 
-## Results (inc1/inc3/inc5, sample=1)
+## Results (inc1/inc3/inc5 + inc0p1/inc0p3/inc0p5, sample=1)
 Data sources:
-- `experiments/side_channel_inc_trimmed_eval/results-souffle-inc.tsv` (end-to-end, 2026-01-10)
+- `experiments/side_channel_inc_eval/end-to-end-inc-vs-full.tsv` (end-to-end, 2026-01-11 det-opt run, apply_delta_graph)
+- `experiments/side_channel_inc_eval/stage-breakdown.tsv` (per-stage breakdown, 2026-01-11 det-opt run, apply_delta_graph)
+- `experiments/side_channel_inc_eval/semnaive-comparison-with-graph.tsv` (SEM + graph/delta counts, 2026-01-11 det-opt run, apply_delta_graph)
+- `experiments/side_channel_inc_eval/semnaive-sem-delta-ratio.tsv` (SEM + ΔE/|E| ratio, 2026-01-11 det-opt run, apply_delta_graph)
+- `experiments/side_channel_inc_eval/per-case-runtime-summary.tsv` (per-case runtime totals, 2026-01-11 det-opt run, apply_delta_graph)
+- `experiments/side_channel_inc_trimmed_eval/end-to-end-inc-vs-full.tsv` (end-to-end, 2026-01-11 det-opt run, apply_delta_graph)
+- `experiments/side_channel_inc_trimmed_eval/stage-breakdown.tsv` (per-stage breakdown, 2026-01-11 det-opt run, apply_delta_graph)
+- `experiments/side_channel_inc_trimmed_eval/semnaive-comparison-with-graph.tsv` (SEM + graph/delta counts, 2026-01-11 det-opt run, apply_delta_graph)
+- `experiments/side_channel_inc_trimmed_eval/semnaive-sem-delta-ratio.tsv` (SEM + ΔE/|E| ratio, 2026-01-11 det-opt run, apply_delta_graph)
+- `experiments/side_channel_inc_trimmed_eval/per-case-runtime-summary.tsv` (per-case runtime totals, 2026-01-11 det-opt run, apply_delta_graph)
+- `experiments/side_channel_inc_trimmed_eval_small/end-to-end-inc-vs-full.tsv` (end-to-end, 2026-01-11 det-opt run, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+- `experiments/side_channel_inc_trimmed_eval_small/stage-breakdown.tsv` (per-stage breakdown, 2026-01-11 det-opt run, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+- `experiments/side_channel_inc_trimmed_eval_small/semnaive-comparison-with-graph.tsv` (SEM + graph/delta counts, 2026-01-11 det-opt run, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+- `experiments/side_channel_inc_trimmed_eval_small/semnaive-sem-delta-ratio.tsv` (SEM + ΔE/|E| ratio, 2026-01-11 det-opt run, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+- `experiments/side_channel_inc_trimmed_eval_small/per-case-runtime-summary.tsv` (per-case runtime totals, 2026-01-11 det-opt run, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+- `experiments/side_channel_inc_trimmed_eval_small/results-souffle-inc.tsv` (end-to-end, 2026-01-11 det-opt run, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+- `experiments/side_channel_inc_trimmed_eval_small/P*/output/log_P*_<label>_1_{inc,full}_*.json`
+  (per-stage breakdown, delta counts, 2026-01-11 inc0p1/inc0p3/inc0p5 run)
+- `experiments/side_channel_inc_trimmed_eval/results-souffle-inc.tsv` (end-to-end, 2026-01-10 legacy)
 - `experiments/side_channel_inc_trimmed_eval/P*/output/log_P*_<label>_1_{inc,full}_*.json`
-  (per-stage breakdown, delta counts, 2026-01-10)
+  (per-stage breakdown, delta counts, 2026-01-10 legacy)
 - `experiments/side_channel_inc_eval/results-souffle-inc.tsv` (end-to-end, 2026-01-10 full ruleset)
 - `experiments/side_channel_inc_eval/P*/output/log_P*_<label>_1_{inc,full}_*.json`
   (per-stage breakdown, delta counts, 2026-01-10 full ruleset)
-- 2026-01-09 post-fix tables are preserved below; source files under
-  `experiments/side_channel_inc_eval/` were overwritten by the 2026-01-10 run.
+- 2026-01-09/2026-01-10 tables are preserved below; source files under
+  `experiments/side_channel_inc_eval/` and `experiments/side_channel_inc_trimmed_eval/` were overwritten by the
+  2026-01-11 apply_delta_graph runs. The 0.1/0.3/0.5% run uses
+  `experiments/side_channel_inc_trimmed_eval_small/`.
+
+#### 2026-01-11 run notes (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+- Correctness: all P1,P3,P4-P20 OK (P2 missing in source); see `experiments/side_channel_inc_trimmed_eval_small/results-souffle-inc.tsv`.
+- End-to-end wins: inc faster in 15/19 (inc0p1), 16/19 (inc0p3), 14/19 (inc0p5).
+- SEM workload proxy: Avg ΔE/|E| = 9.8/24.7/33.9% (ins) and 10.9/32.7/51.2% (del) for 0.1/0.3/0.5%.
+- SEM speedup (avg): 4.74/3.71/3.55 (ins) and 4.47/3.35/2.48 (del) for 0.1/0.3/0.5%.
+- Total delta-run time: sum of inc+full across all cases/deltas ≈ 10.3 min (from `per-case-runtime-summary.tsv`).
+- Small-case SEM anomalies: P4/P5/P6/P7/P9 show inc slower than full in SEM for some deltas; likely fixed overheads (applyDelta bookkeeping, logging, tiny runtime noise) dominate. This is plausibly engineering overhead rather than algorithmic work.
+- TODO: reduce fixed overhead in inc SEM for very small cases; insertion should be strictly lower work than full when delta is tiny, so we should aim to make inc faster even at small scales (low priority).
+- Note: for 0.1% input deltas, some cases still show ΔE/|E| ≈ 30%+, indicating dense derivation interactions even under tiny input changes (useful for characterizing network sensitivity).
 
 ### End-to-end wall time (inc vs full)
 Speedup = FullTime / IncTime (>1.0 means inc faster).
+#### 2026-01-11 (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_trimmed_eval_small.
+```tsv
+Case	Delta	IncTime	FullTime	Speedup	OK
+P1	inc0p1	0.020318	0.033605	1.654	1
+P1	inc0p3	0.020449	0.029070	1.422	1
+P1	inc0p5	0.022706	0.029715	1.309	1
+P3	inc0p1	0.018827	0.029582	1.571	1
+P3	inc0p3	0.019552	0.031180	1.595	1
+P3	inc0p5	0.020197	0.029833	1.477	1
+P4	inc0p1	0.014072	0.017787	1.264	1
+P4	inc0p3	0.012907	0.015358	1.190	1
+P4	inc0p5	0.013097	0.015567	1.189	1
+P5	inc0p1	0.018084	0.014479	0.801	1
+P5	inc0p3	0.016854	0.017161	1.018	1
+P5	inc0p5	0.016811	0.017935	1.067	1
+P6	inc0p1	0.018545	0.019976	1.077	1
+P6	inc0p3	0.025645	0.021738	0.848	1
+P6	inc0p5	0.019686	0.019058	0.968	1
+P7	inc0p1	0.021382	0.021235	0.993	1
+P7	inc0p3	0.022101	0.027373	1.239	1
+P7	inc0p5	0.022145	0.026492	1.196	1
+P8	inc0p1	0.023612	0.029662	1.256	1
+P8	inc0p3	0.022675	0.029965	1.322	1
+P8	inc0p5	0.026518	0.033781	1.274	1
+P9	inc0p1	0.024759	0.030862	1.246	1
+P9	inc0p3	0.025347	0.030787	1.215	1
+P9	inc0p5	0.031550	0.030192	0.957	1
+P10	inc0p1	0.061523	0.086442	1.405	1
+P10	inc0p3	0.070595	0.089794	1.272	1
+P10	inc0p5	0.087539	0.096636	1.104	1
+P11	inc0p1	0.061812	0.083741	1.355	1
+P11	inc0p3	0.067250	0.082829	1.232	1
+P11	inc0p5	0.086138	0.108652	1.261	1
+P12	inc0p1	0.226723	0.176796	0.780	1
+P12	inc0p3	0.185996	0.180181	0.969	1
+P12	inc0p5	0.191760	0.197595	1.030	1
+P13	inc0p1	1.552602	1.238655	0.798	1
+P13	inc0p3	1.373745	1.279263	0.931	1
+P13	inc0p5	1.368756	1.266652	0.925	1
+P14	inc0p1	2.244685	2.617350	1.166	1
+P14	inc0p3	2.411816	2.660230	1.103	1
+P14	inc0p5	2.250168	2.710688	1.205	1
+P15	inc0p1	4.623407	9.424624	2.038	1
+P15	inc0p3	5.695245	8.069352	1.417	1
+P15	inc0p5	5.782716	7.668204	1.326	1
+P16	inc0p1	8.296726	15.439653	1.861	1
+P16	inc0p3	12.185284	13.864005	1.138	1
+P16	inc0p5	12.394709	14.701200	1.186	1
+P17	inc0p1	18.143024	19.752326	1.089	1
+P17	inc0p3	18.134930	19.378225	1.069	1
+P17	inc0p5	19.975100	19.165821	0.959	1
+P18	inc0p1	15.476658	23.190252	1.498	1
+P18	inc0p3	18.565776	21.619346	1.164	1
+P18	inc0p5	19.582045	19.830833	1.013	1
+P19	inc0p1	21.501694	29.577780	1.376	1
+P19	inc0p3	25.684923	26.230354	1.021	1
+P19	inc0p5	27.311604	26.849092	0.983	1
+P20	inc0p1	14.422260	14.889377	1.032	1
+P20	inc0p3	12.169796	14.474115	1.189	1
+P20	inc0p5	13.316359	15.898888	1.194	1
+```
+#### 2026-01-11 (full ruleset, det-opt, apply_delta_graph)
+Run: 2026-01-11, full ruleset, det-opt, apply_delta_graph, inc1/inc3/inc5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_eval.
+```tsv
+Case	Delta	IncTime	FullTime	Speedup	OK
+P1	inc1	0.028178	0.033582	1.192	1
+P1	inc3	0.043144	0.035740	0.828	1
+P1	inc5	0.053348	0.033148	0.621	1
+P3	inc1	0.042752	0.027407	0.641	1
+P3	inc3	0.042514	0.027267	0.641	1
+P3	inc5	0.043842	0.030105	0.687	1
+P4	inc1	0.018551	0.016141	0.870	1
+P4	inc3	0.021788	0.018486	0.848	1
+P4	inc5	0.016210	0.020464	1.262	1
+P5	inc1	0.016542	0.016584	1.002	1
+P5	inc3	0.014902	0.017951	1.205	1
+P5	inc5	0.019005	0.017609	0.927	1
+P6	inc1	0.027713	0.027013	0.975	1
+P6	inc3	0.033642	0.026583	0.790	1
+P6	inc5	0.029518	0.024389	0.826	1
+P7	inc1	0.039608	0.032672	0.825	1
+P7	inc3	0.041087	0.039764	0.968	1
+P7	inc5	0.048850	0.045021	0.922	1
+P8	inc1	0.047085	0.044502	0.945	1
+P8	inc3	0.046412	0.059150	1.274	1
+P8	inc5	0.069400	0.061949	0.893	1
+P9	inc1	0.045243	0.038667	0.855	1
+P9	inc3	0.059417	0.045368	0.764	1
+P9	inc5	0.063161	0.049588	0.785	1
+P10	inc1	0.170394	0.169448	0.994	1
+P10	inc3	0.265261	0.230197	0.868	1
+P10	inc5	0.348250	0.312959	0.899	1
+P11	inc1	0.131460	0.145658	1.108	1
+P11	inc3	0.227782	0.241238	1.059	1
+P11	inc5	0.307969	0.311062	1.010	1
+P12	inc1	0.489833	0.309209	0.631	1
+P12	inc3	0.481141	0.373662	0.777	1
+P12	inc5	0.698120	0.438985	0.629	1
+P13	inc1	1.592549	1.527124	0.959	1
+P13	inc3	1.848791	1.238764	0.670	1
+P13	inc5	1.762857	1.374947	0.780	1
+P14	inc1	2.457870	2.797754	1.138	1
+P14	inc3	2.492091	2.414316	0.969	1
+P14	inc5	3.988358	2.755228	0.691	1
+P15	inc1	6.498690	8.499480	1.308	1
+P15	inc3	8.319964	7.157752	0.860	1
+P15	inc5	11.160457	8.347403	0.748	1
+P16	inc1	15.557071	14.150498	0.910	1
+P16	inc3	18.827648	13.240545	0.703	1
+P16	inc5	20.065891	14.214730	0.708	1
+P17	inc1	36.648351	17.928072	0.489	1
+P17	inc3	29.203291	17.025071	0.583	1
+P17	inc5	29.861553	18.232292	0.611	1
+P18	inc1	24.201893	20.268406	0.837	1
+P18	inc3	29.540257	19.455472	0.659	1
+P18	inc5	31.654243	20.964235	0.662	1
+P19	inc1	38.998415	26.669192	0.684	1
+P19	inc3	44.134623	26.614771	0.603	1
+P19	inc5	46.978561	28.079509	0.598	1
+P20	inc1	16.206111	18.035626	1.113	1
+P20	inc3	65.678594	23.662061	0.360	1
+P20	inc5	98.144037	23.689803	0.241	1
+```
+
+Legacy tables below are pre apply_delta_graph and kept for audit only.
+#### 2026-01-11 (full ruleset, det-opt)
+Legacy run: 2026-01-11, full ruleset, det-opt, pre apply_delta_graph; ΔE/|E| uses pruned view edges (do not compare).
+```tsv
+Case	Delta	IncTime	FullTime	Speedup	OK
+P1	inc1	0.024590	0.028496	1.159	1
+P1	inc3	0.025747	0.031953	1.241	1
+P1	inc5	0.031007	0.029204	0.942	1
+P3	inc1	0.042083	0.027340	0.650	1
+P3	inc3	0.030971	0.026801	0.865	1
+P3	inc5	0.031071	0.025746	0.829	1
+P4	inc1	0.021447	0.016012	0.747	1
+P4	inc3	0.015920	0.014436	0.907	1
+P4	inc5	0.016310	0.017382	1.066	1
+P5	inc1	0.027326	0.015328	0.561	1
+P5	inc3	0.016283	0.015693	0.964	1
+P5	inc5	0.022869	0.016411	0.718	1
+P6	inc1	0.041006	0.026507	0.646	1
+P6	inc3	0.041995	0.024159	0.575	1
+P6	inc5	0.031903	0.027147	0.851	1
+P7	inc1	0.055094	0.033358	0.605	0
+P7	inc3	0.041475	0.039726	0.958	0
+P7	inc5	0.038732	0.040661	1.050	0
+P8	inc1	0.070456	0.040190	0.570	1
+P8	inc3	0.055275	0.046884	0.848	0
+P8	inc5	0.053569	0.054194	1.012	0
+P9	inc1	0.071813	0.037202	0.518	1
+P9	inc3	0.055736	0.043502	0.781	1
+P9	inc5	0.067330	0.048526	0.721	0
+P10	inc1	0.164333	0.157620	0.959	1
+P10	inc3	0.248252	0.250650	1.010	1
+P10	inc5	0.325507	0.319812	0.983	1
+P11	inc1	0.144309	0.157171	1.089	1
+P11	inc3	0.253178	0.281968	1.114	1
+P11	inc5	0.361273	0.315088	0.872	1
+P12	inc1	0.450488	0.309551	0.687	0
+P12	inc3	0.462808	0.387834	0.838	0
+P12	inc5	0.586862	0.510967	0.871	0
+P13	inc1	1.787361	1.597985	0.894	1
+P13	inc3	1.594393	1.322037	0.829	0
+P13	inc5	2.104543	1.528060	0.726	0
+P14	inc1	2.634469	2.647659	1.005	1
+P14	inc3	2.544650	2.390040	0.939	1
+P14	inc5	3.678997	2.620160	0.712	1
+P15	inc1	6.970433	7.914148	1.135	1
+P15	inc3	8.642125	7.728032	0.894	1
+P15	inc5	10.741151	8.976752	0.836	1
+P16	inc1	15.073081	13.926551	0.924	0
+P16	inc3	18.768468	13.155517	0.701	0
+P16	inc5	18.257157	14.322621	0.784	0
+P17	inc1	34.566305	18.888610	0.546	1
+P17	inc3	32.701322	17.784819	0.544	1
+P17	inc5	34.999886	19.005227	0.543	0
+P18	inc1	35.110283	21.676021	0.617	1
+P18	inc3	39.337119	21.577558	0.549	1
+P18	inc5	45.919875	23.931545	0.521	0
+P19	inc1	46.492906	27.609727	0.594	0
+P19	inc3	58.440121	30.306610	0.519	0
+P19	inc5	51.975533	27.879079	0.536	0
+P20	inc1	15.954860	17.810268	1.116	0
+P20	inc3	76.357024	26.046637	0.341	0
+P20	inc5	116.144302	25.061241	0.216	0
+```
+
+#### 2026-01-11 per-case runtime totals (inc+full, 0.1/0.3/0.5% deltas, apply_delta_graph, trimmed ruleset)
+Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, sample=1, base-dir experiments/side_channel_inc_trimmed_eval_small.
+```tsv
+Case	IncTotal_s	FullTotal_s	IncPlusFull_s
+P1	0.063	0.092	0.156
+P3	0.059	0.091	0.149
+P4	0.040	0.049	0.089
+P5	0.052	0.050	0.101
+P6	0.064	0.061	0.125
+P7	0.066	0.075	0.141
+P8	0.073	0.093	0.166
+P9	0.082	0.092	0.173
+P10	0.220	0.273	0.493
+P11	0.215	0.275	0.490
+P12	0.604	0.555	1.159
+P13	4.295	3.785	8.080
+P14	6.907	7.988	14.895
+P15	16.101	25.162	41.264
+P16	32.877	44.005	76.882
+P17	56.253	58.296	114.549
+P18	53.624	64.640	118.265
+P19	74.498	82.657	157.155
+P20	39.908	45.262	85.171
+```
+
+#### 2026-01-11 per-case runtime totals (inc+full, 3 deltas, apply_delta_graph)
+Run: 2026-01-11, full ruleset, det-opt, apply_delta_graph, inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_eval.
+```tsv
+Case	IncTotal_s	FullTotal_s	IncPlusFull_s
+P1	0.125	0.102	0.227
+P3	0.129	0.085	0.214
+P4	0.057	0.055	0.112
+P5	0.050	0.052	0.103
+P6	0.091	0.078	0.169
+P7	0.130	0.117	0.247
+P8	0.163	0.166	0.328
+P9	0.168	0.134	0.301
+P10	0.784	0.713	1.497
+P11	0.667	0.698	1.365
+P12	1.669	1.122	2.791
+P13	5.204	4.141	9.345
+P14	8.938	7.967	16.906
+P15	25.979	24.005	49.984
+P16	54.451	41.606	96.056
+P17	95.713	53.185	148.899
+P18	85.396	60.688	146.085
+P19	130.112	81.363	211.475
+P20	180.029	65.387	245.416
+```
+
+#### 2026-01-11 per-case runtime totals (inc+full, 3 deltas, apply_delta_graph, trimmed ruleset)
+Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_trimmed_eval.
+```tsv
+Case	IncTotal_s	FullTotal_s	IncPlusFull_s
+P1	0.096	0.091	0.187
+P3	0.140	0.098	0.238
+P4	0.054	0.050	0.103
+P5	0.057	0.058	0.115
+P6	0.069	0.071	0.140
+P7	0.099	0.108	0.206
+P8	0.128	0.121	0.249
+P9	0.130	0.114	0.245
+P10	0.586	0.583	1.169
+P11	0.631	0.656	1.286
+P12	1.375	0.922	2.298
+P13	5.046	3.711	8.757
+P14	7.559	7.230	14.789
+P15	25.554	25.861	51.415
+P16	54.908	41.375	96.283
+P17	87.674	53.639	141.313
+P18	92.079	62.225	154.304
+P19	137.702	79.897	217.599
+P20	178.937	76.835	255.772
+```
+
+Legacy per-case totals below are pre apply_delta_graph (kept for audit only).
+#### 2026-01-11 per-case runtime totals (inc+full, 3 deltas)
+Legacy run: 2026-01-11, full ruleset, det-opt, pre apply_delta_graph.
+```tsv
+Case	IncTotal_s	FullTotal_s	IncPlusFull_s
+P1	0.081	0.090	0.171
+P3	0.104	0.080	0.184
+P4	0.054	0.048	0.102
+P5	0.066	0.047	0.114
+P6	0.115	0.078	0.193
+P7	0.135	0.114	0.249
+P8	0.179	0.141	0.321
+P9	0.195	0.129	0.324
+P10	0.738	0.728	1.466
+P11	0.759	0.754	1.513
+P12	1.500	1.208	2.709
+P13	5.486	4.448	9.934
+P14	8.858	7.658	16.516
+P15	26.354	24.619	50.973
+P16	52.099	41.405	93.503
+P17	102.268	55.679	157.946
+P18	120.367	67.185	187.552
+P19	156.909	85.795	242.704
+P20	208.456	68.918	277.374
+```
+
+Correctness (det-opt, apply_delta_graph): all P1,P3,P4-P20 OK (P2 missing in source).
+Correctness (trimmed, det-opt, apply_delta_graph): all P1,P3,P4-P20 OK (P2 missing in source).
+Correctness (det-opt, legacy run): mismatches in P7 (inc1/inc3/inc5), P8 (inc3/inc5), P9 (inc5), P12 (inc1/inc3/inc5), P13 (inc3/inc5), P16 (inc1/inc3/inc5), P17 (inc5), P18 (inc5), P19 (inc1/inc3/inc5), P20 (inc1/inc3/inc5).
+
+#### 2026-01-11 (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_trimmed_eval_small.
+```tsv
+Case	Delta	Turn	Full_SEM_s	Inc_SEM_s	Speedup	DeltaRuleApps	GraphEdges	DeltaEdgeRatio
+P1	inc0p1	del	0.004462	0.001337	3.337	0	58	0.000000
+P1	inc0p1	ins	0.004459	0.000877	5.083	0	58	0.000000
+P1	inc0p3	del	0.004789	0.001294	3.702	0	58	0.000000
+P1	inc0p3	ins	0.004914	0.001761	2.790	0	58	0.000000
+P1	inc0p5	del	0.004895	0.001850	2.646	0	58	0.000000
+P1	inc0p5	ins	0.004703	0.002201	2.137	0	58	0.000000
+P3	inc0p1	del	0.004446	0.000877	5.071	0	58	0.000000
+P3	inc0p1	ins	0.004410	0.000889	4.961	0	58	0.000000
+P3	inc0p3	del	0.004418	0.001602	2.758	0	58	0.000000
+P3	inc0p3	ins	0.004350	0.000746	5.833	0	58	0.000000
+P3	inc0p5	del	0.004419	0.000926	4.773	0	58	0.000000
+P3	inc0p5	ins	0.004451	0.000925	4.811	0	58	0.000000
+P4	inc0p1	del	0.000266	0.000909	0.293	0	19	0.000000
+P4	inc0p1	ins	0.000301	0.001761	0.171	0	19	0.000000
+P4	inc0p3	del	0.000248	0.000792	0.313	0	19	0.000000
+P4	inc0p3	ins	0.000236	0.001131	0.208	0	19	0.000000
+P4	inc0p5	del	0.000253	0.002054	0.123	0	19	0.000000
+P4	inc0p5	ins	0.000229	0.000441	0.518	0	19	0.000000
+P5	inc0p1	del	0.000268	0.001177	0.228	15	18	0.833333
+P5	inc0p1	ins	0.000318	0.001045	0.304	15	33	0.454545
+P5	inc0p3	del	0.000242	0.000621	0.390	15	18	0.833333
+P5	inc0p3	ins	0.000304	0.002492	0.122	15	33	0.454545
+P5	inc0p5	del	0.000253	0.000803	0.315	15	18	0.833333
+P5	inc0p5	ins	0.000318	0.002410	0.132	15	33	0.454545
+P6	inc0p1	del	0.000451	0.001169	0.386	1	60	0.016667
+P6	inc0p1	ins	0.000409	0.001046	0.391	1	61	0.016393
+P6	inc0p3	del	0.000465	0.002456	0.189	1	60	0.016667
+P6	inc0p3	ins	0.000420	0.002647	0.159	1	61	0.016393
+P6	inc0p5	del	0.000468	0.001437	0.326	1	60	0.016667
+P6	inc0p5	ins	0.000529	0.002191	0.241	1	61	0.016393
+P7	inc0p1	del	0.001030	0.001997	0.516	4	167	0.023952
+P7	inc0p1	ins	0.000996	0.001919	0.519	4	171	0.023392
+P7	inc0p3	del	0.001064	0.002429	0.438	4	167	0.023952
+P7	inc0p3	ins	0.001063	0.001320	0.805	4	171	0.023392
+P7	inc0p5	del	0.001088	0.001371	0.794	36	135	0.266667
+P7	inc0p5	ins	0.001249	0.001967	0.635	36	171	0.210526
+P8	inc0p1	del	0.001715	0.001457	1.177	0	287	0.000000
+P8	inc0p1	ins	0.001491	0.001040	1.433	0	287	0.000000
+P8	inc0p3	del	0.001634	0.001795	0.910	0	287	0.000000
+P8	inc0p3	ins	0.001525	0.001229	1.242	0	287	0.000000
+P8	inc0p5	del	0.001611	0.002366	0.681	15	272	0.055147
+P8	inc0p5	ins	0.001529	0.001306	1.171	15	287	0.052265
+P9	inc0p1	del	0.001257	0.001286	0.978	7	202	0.034653
+P9	inc0p1	ins	0.001407	0.001156	1.217	7	209	0.033493
+P9	inc0p3	del	0.001222	0.002341	0.522	7	202	0.034653
+P9	inc0p3	ins	0.001107	0.001924	0.575	7	209	0.033493
+P9	inc0p5	del	0.001198	0.001289	0.929	10	199	0.050251
+P9	inc0p5	ins	0.001103	0.002088	0.529	10	209	0.047847
+P10	inc0p1	del	0.017382	0.003102	5.603	143	2188	0.065356
+P10	inc0p1	ins	0.016505	0.008052	2.050	143	2331	0.061347
+P10	inc0p3	del	0.014270	0.004797	2.975	494	1837	0.268917
+P10	inc0p3	ins	0.016878	0.006660	2.534	494	2331	0.211926
+P10	inc0p5	del	0.013707	0.006738	2.034	710	1621	0.438001
+P10	inc0p5	ins	0.016625	0.005310	3.131	710	2331	0.304590
+P11	inc0p1	del	0.014945	0.009417	1.587	315	2003	0.157264
+P11	inc0p1	ins	0.016825	0.003209	5.244	315	2318	0.135893
+P11	inc0p3	del	0.013123	0.004124	3.182	559	1759	0.317794
+P11	inc0p3	ins	0.015848	0.006339	2.500	559	2318	0.241156
+P11	inc0p5	del	0.014515	0.005800	2.503	1082	1236	0.875405
+P11	inc0p5	ins	0.019501	0.005728	3.405	1082	2318	0.466782
+P12	inc0p1	del	0.014929	0.003384	4.411	65	2250	0.028889
+P12	inc0p1	ins	0.012602	0.003251	3.876	65	2315	0.028078
+P12	inc0p3	del	0.013814	0.003490	3.958	111	2204	0.050363
+P12	inc0p3	ins	0.013780	0.003236	4.258	111	2315	0.047948
+P12	inc0p5	del	0.013045	0.003690	3.535	153	2162	0.070768
+P12	inc0p5	ins	0.013609	0.002218	6.136	153	2315	0.066091
+P13	inc0p1	del	0.029434	0.004762	6.182	113	4417	0.025583
+P13	inc0p1	ins	0.024921	0.004537	5.493	113	4530	0.024945
+P13	inc0p3	del	0.026197	0.004828	5.427	261	4269	0.061138
+P13	inc0p3	ins	0.028873	0.005028	5.742	261	4530	0.057616
+P13	inc0p5	del	0.021999	0.005810	3.786	579	3951	0.146545
+P13	inc0p5	ins	0.027698	0.005834	4.748	579	4530	0.127815
+P14	inc0p1	del	0.040013	0.004783	8.366	168	6577	0.025544
+P14	inc0p1	ins	0.044723	0.004882	9.161	168	6745	0.024907
+P14	inc0p3	del	0.040072	0.005703	7.026	419	6326	0.066235
+P14	inc0p3	ins	0.041167	0.005614	7.332	419	6745	0.062120
+P14	inc0p5	del	0.041958	0.007684	5.460	719	6026	0.119316
+P14	inc0p5	ins	0.042660	0.007388	5.775	719	6745	0.106597
+P15	inc0p1	del	0.108737	0.018486	5.882	887	13211	0.067141
+P15	inc0p1	ins	0.110210	0.034138	3.228	887	14098	0.062917
+P15	inc0p3	del	0.095775	0.028815	3.324	2460	11638	0.211377
+P15	inc0p3	ins	0.111738	0.025520	4.379	2460	14098	0.174493
+P15	inc0p5	del	0.075237	0.034535	2.179	3027	11071	0.273417
+P15	inc0p5	ins	0.097734	0.027915	3.501	3027	14098	0.214711
+P16	inc0p1	del	0.163779	0.030880	5.304	1968	22505	0.087447
+P16	inc0p1	ins	0.196405	0.037250	5.273	1968	24473	0.080415
+P16	inc0p3	del	0.162215	0.060967	2.661	6200	18273	0.339298
+P16	inc0p3	ins	0.201602	0.065006	3.101	6200	24473	0.253340
+P16	inc0p5	del	0.137573	0.059488	2.313	9479	14994	0.632186
+P16	inc0p5	ins	0.181818	0.059098	3.077	9479	24473	0.387325
+P17	inc0p1	del	0.281173	0.049873	5.638	3415	29922	0.114130
+P17	inc0p1	ins	0.327089	0.064152	5.099	3415	33337	0.102439
+P17	inc0p3	del	0.237279	0.062241	3.812	7415	25922	0.286050
+P17	inc0p3	ins	0.328813	0.067742	4.854	7415	33337	0.222426
+P17	inc0p5	del	0.206403	0.085284	2.420	11290	22047	0.512088
+P17	inc0p5	ins	0.325402	0.080864	4.024	11290	33337	0.338663
+P18	inc0p1	del	0.359826	0.075882	4.742	5321	36876	0.144294
+P18	inc0p1	ins	0.396444	0.078139	5.074	5321	42197	0.126099
+P18	inc0p3	del	0.317769	0.112652	2.821	15504	26693	0.580826
+P18	inc0p3	ins	0.379968	0.123031	3.088	15504	42197	0.367419
+P18	inc0p5	del	0.272955	0.127900	2.134	20508	21689	0.945548
+P18	inc0p5	ins	0.392006	0.131476	2.982	20508	42197	0.486006
+P19	inc0p1	del	0.458766	0.140386	3.268	9357	43923	0.213032
+P19	inc0p1	ins	0.567848	0.162099	3.503	9357	53280	0.175619
+P19	inc0p3	del	0.394764	0.162682	2.427	21022	32258	0.651683
+P19	inc0p3	ins	0.507724	0.178437	2.845	21022	53280	0.394557
+P19	inc0p5	del	0.362572	0.205365	1.766	26094	27186	0.959832
+P19	inc0p5	ins	0.527415	0.177267	2.975	26094	53280	0.489752
+P20	inc0p1	del	0.445935	0.084684	5.266	842	43488	0.019362
+P20	inc0p1	ins	0.522146	0.064647	8.077	842	44330	0.018994
+P20	inc0p3	del	0.471718	0.073470	6.421	2437	41893	0.058172
+P20	inc0p3	ins	0.457180	0.070169	6.515	2437	44330	0.054974
+P20	inc0p5	del	0.391553	0.075693	5.173	4486	39844	0.112589
+P20	inc0p5	ins	0.464711	0.081904	5.674	4486	44330	0.101196
+```
+
+#### 2026-01-11 (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph)
+Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc1/inc3/inc5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_trimmed_eval.
+```tsv
+Case	Delta	IncTime	FullTime	Speedup	OK
+P1	inc1	0.028174	0.031133	1.105	1
+P1	inc3	0.020168	0.030031	1.489	1
+P1	inc5	0.047576	0.029866	0.628	1
+P3	inc1	0.049642	0.034214	0.689	1
+P3	inc3	0.043860	0.030722	0.700	1
+P3	inc5	0.046448	0.033480	0.721	1
+P4	inc1	0.020769	0.015718	0.757	1
+P4	inc3	0.015630	0.016476	1.054	1
+P4	inc5	0.017387	0.017342	0.997	1
+P5	inc1	0.020434	0.018205	0.891	1
+P5	inc3	0.016775	0.019649	1.171	1
+P5	inc5	0.019417	0.020247	1.043	1
+P6	inc1	0.020088	0.019407	0.966	1
+P6	inc3	0.023222	0.026678	1.149	1
+P6	inc5	0.025284	0.025121	0.994	1
+P7	inc1	0.023944	0.025257	1.055	1
+P7	inc3	0.033048	0.041928	1.269	1
+P7	inc5	0.041658	0.040398	0.970	1
+P8	inc1	0.029692	0.034018	1.146	1
+P8	inc3	0.042743	0.040157	0.939	1
+P8	inc5	0.055685	0.046510	0.835	1
+P9	inc1	0.035904	0.033638	0.937	1
+P9	inc3	0.045508	0.037518	0.824	1
+P9	inc5	0.049045	0.043165	0.880	1
+P10	inc1	0.099667	0.113593	1.140	1
+P10	inc3	0.196394	0.189252	0.964	1
+P10	inc5	0.289605	0.280547	0.969	1
+P11	inc1	0.110692	0.131738	1.190	1
+P11	inc3	0.202375	0.218438	1.079	1
+P11	inc5	0.317574	0.305413	0.962	1
+P12	inc1	0.300770	0.210064	0.698	1
+P12	inc3	0.578522	0.311286	0.538	1
+P12	inc5	0.496008	0.400971	0.808	1
+P13	inc1	1.756376	1.154963	0.658	1
+P13	inc3	1.610216	1.193499	0.741	1
+P13	inc5	1.679541	1.362420	0.811	1
+P14	inc1	2.220252	2.469873	1.112	1
+P14	inc3	2.477329	2.289784	0.924	1
+P14	inc5	2.861612	2.470252	0.863	1
+P15	inc1	7.437080	9.243480	1.243	1
+P15	inc3	8.322846	8.095021	0.973	1
+P15	inc5	9.794030	8.522862	0.870	1
+P16	inc1	15.693304	14.205796	0.905	1
+P16	inc3	18.439533	13.233052	0.718	1
+P16	inc5	20.775026	13.935862	0.671	1
+P17	inc1	26.658874	18.140791	0.680	1
+P17	inc3	30.111198	17.358775	0.576	1
+P17	inc5	30.903680	18.139282	0.587	1
+P18	inc1	26.021528	20.945713	0.805	1
+P18	inc3	33.110626	20.492151	0.619	1
+P18	inc5	32.946639	20.787343	0.631	1
+P19	inc1	38.554325	27.160667	0.704	1
+P19	inc3	53.219256	24.804331	0.466	1
+P19	inc5	45.928423	27.931835	0.608	1
+P20	inc1	22.254613	20.504406	0.921	1
+P20	inc3	79.235345	26.239887	0.331	1
+P20	inc5	77.446699	30.090553	0.389	1
+```
+
 #### 2026-01-10 (trimmed ruleset, no equal_assign)
+Legacy run: 2026-01-10, trimmed ruleset (no equal_assign), inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_trimmed_eval.
 ```tsv
 Case	Delta	IncTime	FullTime	Speedup	OK
 P1	inc1	0.337566	1.286437	3.811	1
@@ -206,6 +727,7 @@ P20	inc5	32.598067	23.049153	0.707	1
 ```
 
 #### 2026-01-10 (full ruleset, equal_assign)
+Legacy run: 2026-01-10, full ruleset (equal_assign), inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_eval.
 ```tsv
 Case	Delta	IncTime	FullTime	Speedup	OK
 P1	inc1	0.362890	1.059420	2.919	1
@@ -268,6 +790,7 @@ P20	inc5	174.268695	95.279086	0.547	1
 ```
 
 #### 2026-01-10 (full ruleset, equal_assign)
+Legacy run: 2026-01-10, full ruleset (equal_assign), inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_eval.
 ```tsv
 Case	Delta	Turn	Stage	Full_s	Inc_s	Speedup
 P1	inc1	del	SEM	0.308619	0.003080	100.193
@@ -729,6 +1252,7 @@ P20	inc5	ins	WMC	0.021465	0.041386	0.519
 ```
 
 #### 2026-01-09 (post-fix rerun)
+Legacy run: 2026-01-09 post-fix, inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_eval.
 ```tsv
 Case	Delta	IncTime	FullTime	Speedup	OK
 P1	inc1	0.194069	0.519645	2.678	1
@@ -791,6 +1315,7 @@ P20	inc5	172.173196	81.444416	0.473	1
 ```
 
 #### 2026-01-09 (pre-fix run)
+Legacy run: 2026-01-09 pre-fix, inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_eval.
 ```tsv
 Case	Delta	IncTime	FullTime	Speedup	OK
 P1	inc1	0.604551	0.373050	0.617	1
@@ -853,12 +1378,14 @@ P20	inc5	85.374623	76.569061	0.897	0
 ```
 
 ### Legacy quick snapshot (inc10 sample=1, 2025-12-21)
+Run: 2025-12-21, inc10, sample=1, legacy snapshot.
 - P4-P9: inc ~=0.10-0.20s, full ~=0.09-0.17s (roughly parity; prune dominates inc).
 - P10-P11: inc ~=0.68/0.66s vs full ~=0.94/0.63s.
 - P12: inc ~=2.80s vs full ~=2.18s (prune+fwd heavy).
 - P13: inc ~=8.27s vs full ~=5.92s (prune+fwd heavy).
 
 ### Approximate per-case evaluation time (inc1/inc3/inc5, 2026-01-09 post-fix)
+Run: 2026-01-09 post-fix, inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_eval.
 DeltaEval_s sums inc+full wall time for the three deltas; add baseline full+inc
 overhead (not timed in the table) and compile time (~30-70s per case) when planning
 end-to-end runs. Full suite delta runs sum to ~45.7 min on this machine.
@@ -886,6 +1413,7 @@ P20	559.682	9.33
 ```
 
 ### Post-prune delta node/edge counts (inc logs, 2026-01-09 post-fix)
+Run: 2026-01-09 post-fix, inc logs (view/prune deltas), base-dir experiments/side_channel_inc_eval.
 Counts are from `[inc-naive] delta counts: ...` in `FORWARD_COMPILATION_INC` logs; del counts
 are from turn2 (delete) and ins counts from turn3 (insert) for each delta. These are
 view/prune deltas and can be asymmetric; use `apply_delta_ops` for SEM delta proxies.
@@ -951,6 +1479,7 @@ P20	inc5	27631	80451	98066	116734	3.549	1.451
 ```
 
 ### Pre-prune applyDelta op counts (P17 inc1, 2026-01-09 post-fix)
+Run: 2026-01-09 post-fix, P17 inc1, apply_delta_ops, base-dir experiments/side_channel_inc_eval.
 Counts are captured from the `PRUNING_INC` stage log line
 `[inc-iter N] mode=INC_NAIVE apply_delta_ops: ...` (after applyDelta, before prune). These
 are symmetric and should be used as SEM delta proxies.
@@ -963,6 +1492,7 @@ ins	0	0	0	46521	221157	829
 ```
 
 ### Pre-prune applyDelta view-update counts (P17 inc1, 2026-01-09 post-fix)
+Run: 2026-01-09 post-fix, P17 inc1, apply_delta_view, base-dir experiments/side_channel_inc_eval.
 Counts are captured from the `PRUNING_INC` stage log line
 `[inc-iter N] mode=INC_NAIVE apply_delta_view: ...` (after applyDelta, before prune). These
 are asymmetric because the view/prune bookkeeping reintroduces nodes/edges that remain derivable.
@@ -974,7 +1504,1857 @@ ins	46912	221157	0	0
 
 ### Per-stage breakdown (turn2=delete, turn3=insert)
 Speedup = Full_s / Inc_s (>1.0 means inc faster).
+#### 2026-01-11 (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_trimmed_eval_small.
+```tsv
+Case	Delta	Turn	Stage	Full_s	Inc_s	Speedup
+P1	inc0p1	del	FC	0.000258	0.000236	1.096
+P1	inc0p1	del	PRN	0.000512	0.000491	1.041
+P1	inc0p1	del	SEM	0.004462	0.001337	3.337
+P1	inc0p1	del	WMC	0.000027	0.000048	0.563
+P1	inc0p1	ins	FC	0.000258	0.000156	1.658
+P1	inc0p1	ins	PRN	0.000342	0.000252	1.356
+P1	inc0p1	ins	SEM	0.004459	0.000877	5.083
+P1	inc0p1	ins	WMC	0.000026	0.000048	0.546
+P1	inc0p3	del	FC	0.000260	0.000118	2.196
+P1	inc0p3	del	PRN	0.000338	0.000243	1.393
+P1	inc0p3	del	SEM	0.004789	0.001294	3.702
+P1	inc0p3	del	WMC	0.000026	0.000032	0.837
+P1	inc0p3	ins	FC	0.000292	0.000106	2.759
+P1	inc0p3	ins	PRN	0.000347	0.000212	1.633
+P1	inc0p3	ins	SEM	0.004914	0.001761	2.790
+P1	inc0p3	ins	WMC	0.000086	0.000043	1.988
+P1	inc0p5	del	FC	0.000257	0.000142	1.806
+P1	inc0p5	del	PRN	0.000388	0.000276	1.406
+P1	inc0p5	del	SEM	0.004895	0.001850	2.646
+P1	inc0p5	del	WMC	0.000037	0.000038	0.977
+P1	inc0p5	ins	FC	0.000255	0.000240	1.063
+P1	inc0p5	ins	PRN	0.000313	0.000262	1.197
+P1	inc0p5	ins	SEM	0.004703	0.002201	2.137
+P1	inc0p5	ins	WMC	0.000026	0.000044	0.592
+P3	inc0p1	del	FC	0.000256	0.000172	1.493
+P3	inc0p1	del	PRN	0.000425	0.000386	1.100
+P3	inc0p1	del	SEM	0.004446	0.000877	5.071
+P3	inc0p1	del	WMC	0.000026	0.000125	0.209
+P3	inc0p1	ins	FC	0.000268	0.000123	2.182
+P3	inc0p1	ins	PRN	0.000307	0.000214	1.433
+P3	inc0p1	ins	SEM	0.004410	0.000889	4.961
+P3	inc0p1	ins	WMC	0.000026	0.000030	0.889
+P3	inc0p3	del	FC	0.000256	0.000115	2.230
+P3	inc0p3	del	PRN	0.000324	0.000262	1.238
+P3	inc0p3	del	SEM	0.004418	0.001602	2.758
+P3	inc0p3	del	WMC	0.000026	0.000032	0.815
+P3	inc0p3	ins	FC	0.000258	0.000107	2.417
+P3	inc0p3	ins	PRN	0.000355	0.000233	1.525
+P3	inc0p3	ins	SEM	0.004350	0.000746	5.833
+P3	inc0p3	ins	WMC	0.000026	0.000030	0.876
+P3	inc0p5	del	FC	0.000258	0.000110	2.350
+P3	inc0p5	del	PRN	0.000321	0.000242	1.325
+P3	inc0p5	del	SEM	0.004419	0.000926	4.773
+P3	inc0p5	del	WMC	0.000027	0.000032	0.826
+P3	inc0p5	ins	FC	0.000256	0.000105	2.430
+P3	inc0p5	ins	PRN	0.000308	0.000245	1.257
+P3	inc0p5	ins	SEM	0.004451	0.000925	4.811
+P3	inc0p5	ins	WMC	0.000026	0.000029	0.896
+P4	inc0p1	del	FC	0.000080	0.000071	1.130
+P4	inc0p1	del	PRN	0.000191	0.000209	0.911
+P4	inc0p1	del	SEM	0.000266	0.000909	0.293
+P4	inc0p1	del	WMC	0.000024	0.000053	0.453
+P4	inc0p1	ins	FC	0.000083	0.000041	2.011
+P4	inc0p1	ins	PRN	0.000117	0.000109	1.069
+P4	inc0p1	ins	SEM	0.000301	0.001761	0.171
+P4	inc0p1	ins	WMC	0.000028	0.000025	1.081
+P4	inc0p3	del	FC	0.000095	0.000038	2.507
+P4	inc0p3	del	PRN	0.000123	0.000254	0.483
+P4	inc0p3	del	SEM	0.000248	0.000792	0.313
+P4	inc0p3	del	WMC	0.000024	0.000025	0.952
+P4	inc0p3	ins	FC	0.000094	0.000040	2.326
+P4	inc0p3	ins	PRN	0.000116	0.000095	1.223
+P4	inc0p3	ins	SEM	0.000236	0.001131	0.208
+P4	inc0p3	ins	WMC	0.000024	0.000025	0.959
+P4	inc0p5	del	FC	0.000078	0.000042	1.848
+P4	inc0p5	del	PRN	0.000103	0.000118	0.877
+P4	inc0p5	del	SEM	0.000253	0.002054	0.123
+P4	inc0p5	del	WMC	0.000024	0.000026	0.935
+P4	inc0p5	ins	FC	0.000093	0.000038	2.458
+P4	inc0p5	ins	PRN	0.000097	0.000098	0.996
+P4	inc0p5	ins	SEM	0.000229	0.000441	0.518
+P4	inc0p5	ins	WMC	0.000024	0.000025	0.967
+P5	inc0p1	del	FC	0.000096	0.000943	0.102
+P5	inc0p1	del	PRN	0.000170	0.000277	0.612
+P5	inc0p1	del	SEM	0.000268	0.001177	0.228
+P5	inc0p1	del	WMC	0.000025	0.000052	0.480
+P5	inc0p1	ins	FC	0.000204	0.000327	0.626
+P5	inc0p1	ins	PRN	0.000249	0.000448	0.555
+P5	inc0p1	ins	SEM	0.000318	0.001045	0.304
+P5	inc0p1	ins	WMC	0.000026	0.000034	0.774
+P5	inc0p3	del	FC	0.000079	0.001087	0.072
+P5	inc0p3	del	PRN	0.000124	0.000201	0.618
+P5	inc0p3	del	SEM	0.000242	0.000621	0.390
+P5	inc0p3	del	WMC	0.000024	0.000025	0.978
+P5	inc0p3	ins	FC	0.000192	0.000277	0.695
+P5	inc0p3	ins	PRN	0.000247	0.000443	0.557
+P5	inc0p3	ins	SEM	0.000304	0.002492	0.122
+P5	inc0p3	ins	WMC	0.000026	0.000027	0.977
+P5	inc0p5	del	FC	0.000078	0.000975	0.080
+P5	inc0p5	del	PRN	0.000143	0.000253	0.563
+P5	inc0p5	del	SEM	0.000253	0.000803	0.315
+P5	inc0p5	del	WMC	0.000024	0.000025	0.977
+P5	inc0p5	ins	FC	0.000239	0.000256	0.936
+P5	inc0p5	ins	PRN	0.000246	0.000448	0.550
+P5	inc0p5	ins	SEM	0.000318	0.002410	0.132
+P5	inc0p5	ins	WMC	0.000027	0.000027	0.985
+P6	inc0p1	del	FC	0.000462	0.000352	1.314
+P6	inc0p1	del	PRN	0.000616	0.000461	1.336
+P6	inc0p1	del	SEM	0.000451	0.001169	0.386
+P6	inc0p1	del	WMC	0.000031	0.000032	0.965
+P6	inc0p1	ins	FC	0.000453	0.000349	1.298
+P6	inc0p1	ins	PRN	0.000580	0.000414	1.401
+P6	inc0p1	ins	SEM	0.000409	0.001046	0.391
+P6	inc0p1	ins	WMC	0.000030	0.000031	0.996
+P6	inc0p3	del	FC	0.000506	0.000380	1.332
+P6	inc0p3	del	PRN	0.000621	0.000499	1.245
+P6	inc0p3	del	SEM	0.000465	0.002456	0.189
+P6	inc0p3	del	WMC	0.000031	0.000038	0.810
+P6	inc0p3	ins	FC	0.000480	0.000370	1.295
+P6	inc0p3	ins	PRN	0.000629	0.000410	1.535
+P6	inc0p3	ins	SEM	0.000420	0.002647	0.159
+P6	inc0p3	ins	WMC	0.000031	0.000031	0.997
+P6	inc0p5	del	FC	0.000475	0.000303	1.567
+P6	inc0p5	del	PRN	0.000622	0.000472	1.320
+P6	inc0p5	del	SEM	0.000468	0.001437	0.326
+P6	inc0p5	del	WMC	0.000031	0.000030	1.031
+P6	inc0p5	ins	FC	0.000602	0.000347	1.737
+P6	inc0p5	ins	PRN	0.000782	0.000419	1.866
+P6	inc0p5	ins	SEM	0.000529	0.002191	0.241
+P6	inc0p5	ins	WMC	0.000040	0.000031	1.269
+P7	inc0p1	del	FC	0.000541	0.001122	0.482
+P7	inc0p1	del	PRN	0.000716	0.000574	1.247
+P7	inc0p1	del	SEM	0.001030	0.001997	0.516
+P7	inc0p1	del	WMC	0.000037	0.000055	0.671
+P7	inc0p1	ins	FC	0.000558	0.000458	1.219
+P7	inc0p1	ins	PRN	0.000773	0.000556	1.390
+P7	inc0p1	ins	SEM	0.000996	0.001919	0.519
+P7	inc0p1	ins	WMC	0.000034	0.000034	1.005
+P7	inc0p3	del	FC	0.000607	0.001162	0.522
+P7	inc0p3	del	PRN	0.000847	0.000635	1.334
+P7	inc0p3	del	SEM	0.001064	0.002429	0.438
+P7	inc0p3	del	WMC	0.000034	0.000033	1.014
+P7	inc0p3	ins	FC	0.000555	0.000483	1.151
+P7	inc0p3	ins	PRN	0.000732	0.000575	1.274
+P7	inc0p3	ins	SEM	0.001063	0.001320	0.805
+P7	inc0p3	ins	WMC	0.000034	0.000034	1.002
+P7	inc0p5	del	FC	0.000467	0.001135	0.412
+P7	inc0p5	del	PRN	0.000704	0.000575	1.226
+P7	inc0p5	del	SEM	0.001088	0.001371	0.794
+P7	inc0p5	del	WMC	0.000035	0.000031	1.102
+P7	inc0p5	ins	FC	0.000660	0.000759	0.869
+P7	inc0p5	ins	PRN	0.000919	0.001396	0.658
+P7	inc0p5	ins	SEM	0.001249	0.001967	0.635
+P7	inc0p5	ins	WMC	0.000040	0.000036	1.099
+P8	inc0p1	del	FC	0.000881	0.000572	1.540
+P8	inc0p1	del	PRN	0.001283	0.001216	1.055
+P8	inc0p1	del	SEM	0.001715	0.001457	1.177
+P8	inc0p1	del	WMC	0.000039	0.000064	0.609
+P8	inc0p1	ins	FC	0.001143	0.000368	3.101
+P8	inc0p1	ins	PRN	0.001203	0.000733	1.641
+P8	inc0p1	ins	SEM	0.001491	0.001040	1.433
+P8	inc0p1	ins	WMC	0.000051	0.000056	0.913
+P8	inc0p3	del	FC	0.000862	0.000379	2.273
+P8	inc0p3	del	PRN	0.001144	0.000849	1.349
+P8	inc0p3	del	SEM	0.001634	0.001795	0.910
+P8	inc0p3	del	WMC	0.000040	0.000061	0.654
+P8	inc0p3	ins	FC	0.000848	0.000504	1.684
+P8	inc0p3	ins	PRN	0.001206	0.000749	1.609
+P8	inc0p3	ins	SEM	0.001525	0.001229	1.242
+P8	inc0p3	ins	WMC	0.000047	0.000084	0.558
+P8	inc0p5	del	FC	0.000803	0.000397	2.020
+P8	inc0p5	del	PRN	0.001196	0.001097	1.091
+P8	inc0p5	del	SEM	0.001611	0.002366	0.681
+P8	inc0p5	del	WMC	0.000038	0.000057	0.677
+P8	inc0p5	ins	FC	0.000913	0.000393	2.324
+P8	inc0p5	ins	PRN	0.001299	0.000852	1.523
+P8	inc0p5	ins	SEM	0.001529	0.001306	1.171
+P8	inc0p5	ins	WMC	0.000040	0.000059	0.680
+P9	inc0p1	del	FC	0.001251	0.000589	2.125
+P9	inc0p1	del	PRN	0.001650	0.001210	1.363
+P9	inc0p1	del	SEM	0.001257	0.001286	0.978
+P9	inc0p1	del	WMC	0.000050	0.000081	0.618
+P9	inc0p1	ins	FC	0.001257	0.000731	1.718
+P9	inc0p1	ins	PRN	0.001714	0.001100	1.558
+P9	inc0p1	ins	SEM	0.001407	0.001156	1.217
+P9	inc0p1	ins	WMC	0.000054	0.000094	0.582
+P9	inc0p3	del	FC	0.001282	0.000632	2.029
+P9	inc0p3	del	PRN	0.001618	0.001214	1.333
+P9	inc0p3	del	SEM	0.001222	0.002341	0.522
+P9	inc0p3	del	WMC	0.000052	0.000082	0.640
+P9	inc0p3	ins	FC	0.001259	0.000550	2.287
+P9	inc0p3	ins	PRN	0.001653	0.001062	1.557
+P9	inc0p3	ins	SEM	0.001107	0.001924	0.575
+P9	inc0p3	ins	WMC	0.000052	0.000105	0.494
+P9	inc0p5	del	FC	0.001216	0.001953	0.622
+P9	inc0p5	del	PRN	0.001667	0.001166	1.430
+P9	inc0p5	del	SEM	0.001198	0.001289	0.929
+P9	inc0p5	del	WMC	0.000050	0.000057	0.882
+P9	inc0p5	ins	FC	0.001280	0.004224	0.303
+P9	inc0p5	ins	PRN	0.001563	0.001313	1.190
+P9	inc0p5	ins	SEM	0.001103	0.002088	0.529
+P9	inc0p5	ins	WMC	0.000051	0.000048	1.068
+P10	inc0p1	del	FC	0.000320	0.000119	2.696
+P10	inc0p1	del	PRN	0.001427	0.001401	1.019
+P10	inc0p1	del	SEM	0.017382	0.003102	5.603
+P10	inc0p1	del	WMC	0.000047	0.000038	1.248
+P10	inc0p1	ins	FC	0.000243	0.000112	2.169
+P10	inc0p1	ins	PRN	0.001102	0.001690	0.652
+P10	inc0p1	ins	SEM	0.016505	0.008052	2.050
+P10	inc0p1	ins	WMC	0.000032	0.000035	0.927
+P10	inc0p3	del	FC	0.000251	0.000152	1.653
+P10	inc0p3	del	PRN	0.000963	0.003378	0.285
+P10	inc0p3	del	SEM	0.014270	0.004797	2.975
+P10	inc0p3	del	WMC	0.000033	0.000061	0.539
+P10	inc0p3	ins	FC	0.000258	0.000111	2.330
+P10	inc0p3	ins	PRN	0.001157	0.003153	0.367
+P10	inc0p3	ins	SEM	0.016878	0.006660	2.534
+P10	inc0p3	ins	WMC	0.000031	0.000035	0.872
+P10	inc0p5	del	FC	0.000240	0.000125	1.931
+P10	inc0p5	del	PRN	0.000929	0.005337	0.174
+P10	inc0p5	del	SEM	0.013707	0.006738	2.034
+P10	inc0p5	del	WMC	0.000031	0.000039	0.798
+P10	inc0p5	ins	FC	0.000240	0.000115	2.086
+P10	inc0p5	ins	PRN	0.001050	0.004901	0.214
+P10	inc0p5	ins	SEM	0.016625	0.005310	3.131
+P10	inc0p5	ins	WMC	0.000031	0.000036	0.856
+P11	inc0p1	del	FC	0.000187	0.000108	1.726
+P11	inc0p1	del	PRN	0.000997	0.002639	0.378
+P11	inc0p1	del	SEM	0.014945	0.009417	1.587
+P11	inc0p1	del	WMC	0.000029	0.000039	0.748
+P11	inc0p1	ins	FC	0.000186	0.000081	2.296
+P11	inc0p1	ins	PRN	0.001003	0.002232	0.449
+P11	inc0p1	ins	SEM	0.016825	0.003209	5.244
+P11	inc0p1	ins	WMC	0.000030	0.000032	0.933
+P11	inc0p3	del	FC	0.000202	0.000148	1.360
+P11	inc0p3	del	PRN	0.000867	0.003044	0.285
+P11	inc0p3	del	SEM	0.013123	0.004124	3.182
+P11	inc0p3	del	WMC	0.000030	0.000032	0.927
+P11	inc0p3	ins	FC	0.000188	0.000151	1.249
+P11	inc0p3	ins	PRN	0.000900	0.003366	0.267
+P11	inc0p3	ins	SEM	0.015848	0.006339	2.500
+P11	inc0p3	ins	WMC	0.000030	0.000031	0.966
+P11	inc0p5	del	FC	0.000184	0.001525	0.121
+P11	inc0p5	del	PRN	0.000613	0.007134	0.086
+P11	inc0p5	del	SEM	0.014515	0.005800	2.503
+P11	inc0p5	del	WMC	0.000031	0.000044	0.702
+P11	inc0p5	ins	FC	0.000194	0.000156	1.243
+P11	inc0p5	ins	PRN	0.000893	0.006299	0.142
+P11	inc0p5	ins	SEM	0.019501	0.005728	3.405
+P11	inc0p5	ins	WMC	0.000030	0.000031	0.975
+P12	inc0p1	del	FC	0.009612	0.009810	0.980
+P12	inc0p1	del	PRN	0.012056	0.009327	1.293
+P12	inc0p1	del	SEM	0.014929	0.003384	4.411
+P12	inc0p1	del	WMC	0.000261	0.000214	1.222
+P12	inc0p1	ins	FC	0.010453	0.097336	0.107
+P12	inc0p1	ins	PRN	0.011797	0.007532	1.566
+P12	inc0p1	ins	SEM	0.012602	0.003251	3.876
+P12	inc0p1	ins	WMC	0.000331	0.000434	0.762
+P12	inc0p3	del	FC	0.009901	0.009904	1.000
+P12	inc0p3	del	PRN	0.010550	0.009569	1.103
+P12	inc0p3	del	SEM	0.013814	0.003490	3.958
+P12	inc0p3	del	WMC	0.000242	0.000211	1.148
+P12	inc0p3	ins	FC	0.009964	0.049742	0.200
+P12	inc0p3	ins	PRN	0.012155	0.008185	1.485
+P12	inc0p3	ins	SEM	0.013780	0.003236	4.258
+P12	inc0p3	ins	WMC	0.000239	0.000369	0.649
+P12	inc0p5	del	FC	0.008863	0.009996	0.887
+P12	inc0p5	del	PRN	0.010569	0.008934	1.183
+P12	inc0p5	del	SEM	0.013045	0.003690	3.535
+P12	inc0p5	del	WMC	0.000233	0.000210	1.113
+P12	inc0p5	ins	FC	0.013224	0.049239	0.269
+P12	inc0p5	ins	PRN	0.015128	0.008893	1.701
+P12	inc0p5	ins	SEM	0.013609	0.002218	6.136
+P12	inc0p5	ins	WMC	0.000311	0.000461	0.674
+P13	inc0p1	del	FC	0.310675	0.032938	9.432
+P13	inc0p1	del	PRN	0.031745	0.026835	1.183
+P13	inc0p1	del	SEM	0.029434	0.004762	6.182
+P13	inc0p1	del	WMC	0.001004	0.000545	1.844
+P13	inc0p1	ins	FC	0.273196	1.004080	0.272
+P13	inc0p1	ins	PRN	0.030429	0.022599	1.346
+P13	inc0p1	ins	SEM	0.024921	0.004537	5.493
+P13	inc0p1	ins	WMC	0.001089	0.000930	1.172
+P13	inc0p3	del	FC	0.350770	0.029537	11.876
+P13	inc0p3	del	PRN	0.025118	0.021430	1.172
+P13	inc0p3	del	SEM	0.026197	0.004828	5.427
+P13	inc0p3	del	WMC	0.001202	0.000521	2.305
+P13	inc0p3	ins	FC	0.303749	0.797630	0.381
+P13	inc0p3	ins	PRN	0.028108	0.023290	1.207
+P13	inc0p3	ins	SEM	0.028873	0.005028	5.742
+P13	inc0p3	ins	WMC	0.000949	0.001031	0.920
+P13	inc0p5	del	FC	0.381976	0.034151	11.185
+P13	inc0p5	del	PRN	0.021424	0.028385	0.755
+P13	inc0p5	del	SEM	0.021999	0.005810	3.786
+P13	inc0p5	del	WMC	0.000999	0.000611	1.636
+P13	inc0p5	ins	FC	0.269438	0.768142	0.351
+P13	inc0p5	ins	PRN	0.027580	0.032775	0.841
+P13	inc0p5	ins	SEM	0.027698	0.005834	4.748
+P13	inc0p5	ins	WMC	0.000993	0.001270	0.782
+P14	inc0p1	del	FC	0.724219	0.046865	15.453
+P14	inc0p1	del	PRN	0.037953	0.033957	1.118
+P14	inc0p1	del	SEM	0.040013	0.004783	8.366
+P14	inc0p1	del	WMC	0.001676	0.001239	1.353
+P14	inc0p1	ins	FC	0.691813	1.168568	0.592
+P14	inc0p1	ins	PRN	0.049794	0.041861	1.190
+P14	inc0p1	ins	SEM	0.044723	0.004882	9.161
+P14	inc0p1	ins	WMC	0.001643	0.001618	1.015
+P14	inc0p3	del	FC	0.718997	0.050780	14.159
+P14	inc0p3	del	PRN	0.044596	0.039213	1.137
+P14	inc0p3	del	SEM	0.040072	0.005703	7.026
+P14	inc0p3	del	WMC	0.001618	0.001169	1.384
+P14	inc0p3	ins	FC	0.752254	1.262636	0.596
+P14	inc0p3	ins	PRN	0.041176	0.042677	0.965
+P14	inc0p3	ins	SEM	0.041167	0.005614	7.332
+P14	inc0p3	ins	WMC	0.001973	0.001890	1.044
+P14	inc0p5	del	FC	0.786499	0.048087	16.356
+P14	inc0p5	del	PRN	0.037939	0.038148	0.995
+P14	inc0p5	del	SEM	0.041958	0.007684	5.460
+P14	inc0p5	del	WMC	0.001393	0.001121	1.243
+P14	inc0p5	ins	FC	0.681929	1.034966	0.659
+P14	inc0p5	ins	PRN	0.039478	0.052824	0.747
+P14	inc0p5	ins	SEM	0.042660	0.007388	5.775
+P14	inc0p5	ins	WMC	0.001761	0.001300	1.354
+P15	inc0p1	del	FC	3.047640	0.180820	16.855
+P15	inc0p1	del	PRN	0.102469	0.098074	1.045
+P15	inc0p1	del	SEM	0.108737	0.018486	5.882
+P15	inc0p1	del	WMC	0.004515	0.003399	1.329
+P15	inc0p1	ins	FC	2.540522	0.923416	2.751
+P15	inc0p1	ins	PRN	0.112419	0.144588	0.778
+P15	inc0p1	ins	SEM	0.110210	0.034138	3.228
+P15	inc0p1	ins	WMC	0.004209	0.002916	1.443
+P15	inc0p3	del	FC	1.650958	0.140283	11.769
+P15	inc0p3	del	PRN	0.069786	0.097094	0.719
+P15	inc0p3	del	SEM	0.095775	0.028815	3.324
+P15	inc0p3	del	WMC	0.002783	0.002668	1.043
+P15	inc0p3	ins	FC	2.611321	1.904509	1.371
+P15	inc0p3	ins	PRN	0.110225	0.269336	0.409
+P15	inc0p3	ins	SEM	0.111738	0.025520	4.379
+P15	inc0p3	ins	WMC	0.005495	0.004374	1.256
+P15	inc0p5	del	FC	1.531727	0.151539	10.108
+P15	inc0p5	del	PRN	0.052210	0.087989	0.593
+P15	inc0p5	del	SEM	0.075237	0.034535	2.179
+P15	inc0p5	del	WMC	0.003030	0.002009	1.509
+P15	inc0p5	ins	FC	2.547238	1.855658	1.373
+P15	inc0p5	ins	PRN	0.108278	0.270908	0.400
+P15	inc0p5	ins	SEM	0.097734	0.027915	3.501
+P15	inc0p5	ins	WMC	0.003659	0.004239	0.863
+P16	inc0p1	del	FC	4.289082	0.426019	10.068
+P16	inc0p1	del	PRN	0.199490	0.166236	1.200
+P16	inc0p1	del	SEM	0.163779	0.030880	5.304
+P16	inc0p1	del	WMC	0.006711	0.005078	1.321
+P16	inc0p1	ins	FC	4.351065	1.816880	2.395
+P16	inc0p1	ins	PRN	0.251434	0.329554	0.763
+P16	inc0p1	ins	SEM	0.196405	0.037250	5.273
+P16	inc0p1	ins	WMC	0.008108	0.006803	1.192
+P16	inc0p3	del	FC	2.704384	0.402855	6.713
+P16	inc0p3	del	PRN	0.129060	0.250505	0.515
+P16	inc0p3	del	SEM	0.162215	0.060967	2.661
+P16	inc0p3	del	WMC	0.004618	0.003980	1.160
+P16	inc0p3	ins	FC	4.494153	4.703978	0.955
+P16	inc0p3	ins	PRN	0.239124	0.906170	0.264
+P16	inc0p3	ins	SEM	0.201602	0.065006	3.101
+P16	inc0p3	ins	WMC	0.009494	0.009184	1.034
+P16	inc0p5	del	FC	3.678109	0.325992	11.283
+P16	inc0p5	del	PRN	0.081496	0.188459	0.432
+P16	inc0p5	del	SEM	0.137573	0.059488	2.313
+P16	inc0p5	del	WMC	0.003557	0.003011	1.181
+P16	inc0p5	ins	FC	4.224442	4.484049	0.942
+P16	inc0p5	ins	PRN	0.223250	1.371037	0.163
+P16	inc0p5	ins	SEM	0.181818	0.059098	3.077
+P16	inc0p5	ins	WMC	0.008333	0.009149	0.911
+P17	inc0p1	del	FC	4.917857	0.813809	6.043
+P17	inc0p1	del	PRN	0.263594	0.270804	0.973
+P17	inc0p1	del	SEM	0.281173	0.049873	5.638
+P17	inc0p1	del	WMC	0.010827	0.006708	1.614
+P17	inc0p1	ins	FC	5.926456	8.831407	0.671
+P17	inc0p1	ins	PRN	0.483917	0.906958	0.534
+P17	inc0p1	ins	SEM	0.327089	0.064152	5.099
+P17	inc0p1	ins	WMC	0.015325	0.012483	1.228
+P17	inc0p3	del	FC	4.448754	0.685930	6.486
+P17	inc0p3	del	PRN	0.201638	0.294751	0.684
+P17	inc0p3	del	SEM	0.237279	0.062241	3.812
+P17	inc0p3	del	WMC	0.007594	0.005276	1.439
+P17	inc0p3	ins	FC	6.146907	8.422660	0.730
+P17	inc0p3	ins	PRN	0.470924	1.349119	0.349
+P17	inc0p3	ins	SEM	0.328813	0.067742	4.854
+P17	inc0p3	ins	WMC	0.016458	0.014957	1.100
+P17	inc0p5	del	FC	4.680297	0.603922	7.750
+P17	inc0p5	del	PRN	0.141013	0.317554	0.444
+P17	inc0p5	del	SEM	0.206403	0.085284	2.420
+P17	inc0p5	del	WMC	0.006857	0.003837	1.787
+P17	inc0p5	ins	FC	5.737835	9.183012	0.625
+P17	inc0p5	ins	PRN	0.444637	1.946739	0.228
+P17	inc0p5	ins	SEM	0.325402	0.080864	4.024
+P17	inc0p5	ins	WMC	0.015360	0.017094	0.899
+P18	inc0p1	del	FC	5.801961	1.295361	4.479
+P18	inc0p1	del	PRN	0.336396	0.400026	0.841
+P18	inc0p1	del	SEM	0.359826	0.075882	4.742
+P18	inc0p1	del	WMC	0.014832	0.008139	1.822
+P18	inc0p1	ins	FC	6.907898	4.032478	1.713
+P18	inc0p1	ins	PRN	0.494874	1.212912	0.408
+P18	inc0p1	ins	SEM	0.396444	0.078139	5.074
+P18	inc0p1	ins	WMC	0.026203	0.021273	1.232
+P18	inc0p3	del	FC	4.841083	1.042358	4.644
+P18	inc0p3	del	PRN	0.188187	0.327559	0.575
+P18	inc0p3	del	SEM	0.317769	0.112652	2.821
+P18	inc0p3	del	WMC	0.008045	0.006356	1.266
+P18	inc0p3	ins	FC	6.833086	4.462466	1.531
+P18	inc0p3	ins	PRN	0.517305	3.813643	0.136
+P18	inc0p3	ins	SEM	0.379968	0.123031	3.088
+P18	inc0p3	ins	WMC	0.025578	0.020834	1.228
+P18	inc0p5	del	FC	3.102575	0.849826	3.651
+P18	inc0p5	del	PRN	0.097733	0.384196	0.254
+P18	inc0p5	del	SEM	0.272955	0.127900	2.134
+P18	inc0p5	del	WMC	0.004528	0.003582	1.264
+P18	inc0p5	ins	FC	6.530702	4.541250	1.438
+P18	inc0p5	ins	PRN	0.489285	4.848070	0.101
+P18	inc0p5	ins	SEM	0.392006	0.131476	2.982
+P18	inc0p5	ins	WMC	0.019506	0.021242	0.918
+P19	inc0p1	del	FC	6.124874	2.366321	2.588
+P19	inc0p1	del	PRN	0.556373	0.548439	1.014
+P19	inc0p1	del	SEM	0.458766	0.140386	3.268
+P19	inc0p1	del	WMC	0.019514	0.010442	1.869
+P19	inc0p1	ins	FC	8.484889	4.410780	1.924
+P19	inc0p1	ins	PRN	0.755852	2.820433	0.268
+P19	inc0p1	ins	SEM	0.567848	0.162099	3.503
+P19	inc0p1	ins	WMC	0.030750	0.021762	1.413
+P19	inc0p3	del	FC	4.693566	1.599100	2.935
+P19	inc0p3	del	PRN	0.241065	0.491717	0.490
+P19	inc0p3	del	SEM	0.394764	0.162682	2.427
+P19	inc0p3	del	WMC	0.007865	0.006035	1.303
+P19	inc0p3	ins	FC	8.426217	5.113266	1.648
+P19	inc0p3	ins	PRN	0.641318	6.367033	0.101
+P19	inc0p3	ins	SEM	0.507724	0.178437	2.845
+P19	inc0p3	ins	WMC	0.027683	0.029159	0.949
+P19	inc0p5	del	FC	5.279360	1.305664	4.043
+P19	inc0p5	del	PRN	0.147898	0.490438	0.302
+P19	inc0p5	del	SEM	0.362572	0.205365	1.766
+P19	inc0p5	del	WMC	0.005035	0.003823	1.317
+P19	inc0p5	ins	FC	8.347401	5.213631	1.601
+P19	inc0p5	ins	PRN	0.578485	7.927107	0.073
+P19	inc0p5	ins	SEM	0.527415	0.177267	2.975
+P19	inc0p5	ins	WMC	0.027893	0.031542	0.884
+P20	inc0p1	del	FC	3.062824	1.939695	1.579
+P20	inc0p1	del	PRN	0.782812	0.872839	0.897
+P20	inc0p1	del	SEM	0.445935	0.084684	5.266
+P20	inc0p1	del	WMC	0.017877	0.013151	1.359
+P20	inc0p1	ins	FC	3.251189	3.457220	0.940
+P20	inc0p1	ins	PRN	0.850621	0.692266	1.229
+P20	inc0p1	ins	SEM	0.522146	0.064647	8.077
+P20	inc0p1	ins	WMC	0.023656	0.015379	1.538
+P20	inc0p3	del	FC	2.430943	1.267965	1.917
+P20	inc0p3	del	PRN	0.580567	0.604886	0.960
+P20	inc0p3	del	SEM	0.471718	0.073470	6.421
+P20	inc0p3	del	WMC	0.015942	0.013168	1.211
+P20	inc0p3	ins	FC	3.347979	3.105850	1.078
+P20	inc0p3	ins	PRN	0.758168	0.718624	1.055
+P20	inc0p3	ins	SEM	0.457180	0.070169	6.515
+P20	inc0p3	ins	WMC	0.014610	0.020075	0.728
+P20	inc0p5	del	FC	2.222264	1.308789	1.698
+P20	inc0p5	del	PRN	0.632361	0.586975	1.077
+P20	inc0p5	del	SEM	0.391553	0.075693	5.173
+P20	inc0p5	del	WMC	0.014776	0.013193	1.120
+P20	inc0p5	ins	FC	3.488609	3.562673	0.979
+P20	inc0p5	ins	PRN	0.795613	0.862600	0.922
+P20	inc0p5	ins	SEM	0.464711	0.081904	5.674
+P20	inc0p5	ins	WMC	0.018231	0.027487	0.663
+```
+#### 2026-01-11 (full ruleset, det-opt, apply_delta_graph)
+Run: 2026-01-11, full ruleset, det-opt, apply_delta_graph, inc1/inc3/inc5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_eval.
+```tsv
+Case	Delta	Turn	Stage	Full_s	Inc_s	Speedup
+P1	inc1	del	SEM	0.005949	0.005426	1.096
+P1	inc1	del	PRN	0.000428	0.000323	1.325
+P1	inc1	del	FC	0.000296	0.000136	2.185
+P1	inc1	del	WMC	0.000030	0.000040	0.771
+P1	inc1	ins	SEM	0.005568	0.001506	3.698
+P1	inc1	ins	PRN	0.000364	0.000228	1.600
+P1	inc1	ins	FC	0.000289	0.000105	2.759
+P1	inc1	ins	WMC	0.000027	0.000029	0.922
+P1	inc3	del	SEM	0.004767	0.019603	0.243
+P1	inc3	del	PRN	0.000388	0.000256	1.512
+P1	inc3	del	FC	0.000320	0.000106	3.025
+P1	inc3	del	WMC	0.000033	0.000034	0.970
+P1	inc3	ins	SEM	0.004770	0.003737	1.277
+P1	inc3	ins	PRN	0.000319	0.000259	1.235
+P1	inc3	ins	FC	0.000254	0.000103	2.455
+P1	inc3	ins	WMC	0.000027	0.000030	0.883
+P1	inc5	del	SEM	0.001490	0.018827	0.079
+P1	inc5	del	PRN	0.000316	0.000234	1.348
+P1	inc5	del	FC	0.000258	0.000106	2.430
+P1	inc5	del	WMC	0.000026	0.000032	0.838
+P1	inc5	ins	SEM	0.004413	0.013487	0.327
+P1	inc5	ins	PRN	0.000307	0.000286	1.071
+P1	inc5	ins	FC	0.000256	0.000136	1.883
+P1	inc5	ins	WMC	0.000026	0.000037	0.702
+P3	inc1	del	SEM	0.002377	0.018805	0.126
+P3	inc1	del	PRN	0.000372	0.000322	1.154
+P3	inc1	del	FC	0.000255	0.000109	2.339
+P3	inc1	del	WMC	0.000027	0.000031	0.869
+P3	inc1	ins	SEM	0.004394	0.006261	0.702
+P3	inc1	ins	PRN	0.000328	0.000228	1.441
+P3	inc1	ins	FC	0.000256	0.000107	2.383
+P3	inc1	ins	WMC	0.000026	0.000030	0.869
+P3	inc3	del	SEM	0.002250	0.019016	0.118
+P3	inc3	del	PRN	0.000220	0.000382	0.577
+P3	inc3	del	FC	0.000175	0.000187	0.939
+P3	inc3	del	WMC	0.000026	0.000026	0.976
+P3	inc3	ins	SEM	0.004686	0.006041	0.776
+P3	inc3	ins	PRN	0.000363	0.000447	0.813
+P3	inc3	ins	FC	0.000253	0.000280	0.905
+P3	inc3	ins	WMC	0.000026	0.000027	0.963
+P3	inc5	del	SEM	0.001073	0.014696	0.073
+P3	inc5	del	PRN	0.000225	0.000292	0.769
+P3	inc5	del	FC	0.000180	0.000183	0.982
+P3	inc5	del	WMC	0.000026	0.000027	0.968
+P3	inc5	ins	SEM	0.004469	0.010542	0.424
+P3	inc5	ins	PRN	0.000348	0.000477	0.730
+P3	inc5	ins	FC	0.000255	0.000275	0.928
+P3	inc5	ins	WMC	0.000027	0.000028	0.956
+P4	inc1	del	SEM	0.000342	0.001842	0.186
+P4	inc1	del	PRN	0.000127	0.000222	0.573
+P4	inc1	del	FC	0.000103	0.000056	1.853
+P4	inc1	del	WMC	0.000040	0.000032	1.267
+P4	inc1	ins	SEM	0.000308	0.002716	0.113
+P4	inc1	ins	PRN	0.000118	0.000176	0.672
+P4	inc1	ins	FC	0.000094	0.000045	2.081
+P4	inc1	ins	WMC	0.000024	0.000031	0.775
+P4	inc3	del	SEM	0.000335	0.002448	0.137
+P4	inc3	del	PRN	0.000166	0.000157	1.053
+P4	inc3	del	FC	0.000119	0.000056	2.125
+P4	inc3	del	WMC	0.000031	0.000031	0.999
+P4	inc3	ins	SEM	0.000406	0.002428	0.167
+P4	inc3	ins	PRN	0.000116	0.000103	1.124
+P4	inc3	ins	FC	0.000119	0.000036	3.280
+P4	inc3	ins	WMC	0.000030	0.000025	1.209
+P4	inc5	del	SEM	0.000382	0.002118	0.181
+P4	inc5	del	PRN	0.000135	0.000136	0.993
+P4	inc5	del	FC	0.000105	0.000051	2.037
+P4	inc5	del	WMC	0.000027	0.000026	1.068
+P4	inc5	ins	SEM	0.000315	0.001917	0.164
+P4	inc5	ins	PRN	0.000115	0.000123	0.940
+P4	inc5	ins	FC	0.000096	0.000037	2.610
+P4	inc5	ins	WMC	0.000024	0.000025	0.975
+P5	inc1	del	SEM	0.000265	0.001689	0.157
+P5	inc1	del	PRN	0.000278	0.000408	0.681
+P5	inc1	del	FC	0.000192	0.000112	1.715
+P5	inc1	del	WMC	0.000026	0.000038	0.676
+P5	inc1	ins	SEM	0.000306	0.001391	0.220
+P5	inc1	ins	PRN	0.000275	0.000266	1.033
+P5	inc1	ins	FC	0.000194	0.000083	2.347
+P5	inc1	ins	WMC	0.000026	0.000028	0.928
+P5	inc3	del	SEM	0.000281	0.001198	0.234
+P5	inc3	del	PRN	0.000249	0.000283	0.880
+P5	inc3	del	FC	0.000195	0.000091	2.136
+P5	inc3	del	WMC	0.000026	0.000030	0.861
+P5	inc3	ins	SEM	0.000388	0.001429	0.271
+P5	inc3	ins	PRN	0.000261	0.000265	0.986
+P5	inc3	ins	FC	0.000198	0.000084	2.362
+P5	inc3	ins	WMC	0.000030	0.000028	1.071
+P5	inc5	del	SEM	0.000184	0.000921	0.200
+P5	inc5	del	PRN	0.000078	0.000229	0.342
+P5	inc5	del	FC	0.000056	0.000907	0.062
+P5	inc5	del	WMC	0.000030	0.000025	1.177
+P5	inc5	ins	SEM	0.000319	0.001943	0.164
+P5	inc5	ins	PRN	0.000266	0.000466	0.571
+P5	inc5	ins	FC	0.000200	0.000261	0.765
+P5	inc5	ins	WMC	0.000026	0.000027	0.965
+P6	inc1	del	SEM	0.000745	0.006285	0.119
+P6	inc1	del	PRN	0.000642	0.000696	0.923
+P6	inc1	del	FC	0.000535	0.000427	1.252
+P6	inc1	del	WMC	0.000031	0.000039	0.806
+P6	inc1	ins	SEM	0.000752	0.003410	0.221
+P6	inc1	ins	PRN	0.000624	0.000537	1.162
+P6	inc1	ins	FC	0.000482	0.000422	1.141
+P6	inc1	ins	WMC	0.000038	0.000039	0.978
+P6	inc3	del	SEM	0.000887	0.004428	0.200
+P6	inc3	del	PRN	0.000572	0.000457	1.252
+P6	inc3	del	FC	0.000447	0.001087	0.411
+P6	inc3	del	WMC	0.000037	0.000030	1.210
+P6	inc3	ins	SEM	0.000731	0.002372	0.308
+P6	inc3	ins	PRN	0.000680	0.000749	0.907
+P6	inc3	ins	FC	0.000501	0.000617	0.813
+P6	inc3	ins	WMC	0.000032	0.000033	0.955
+P6	inc5	del	SEM	0.000648	0.003109	0.208
+P6	inc5	del	PRN	0.000403	0.000443	0.911
+P6	inc5	del	FC	0.000298	0.001093	0.273
+P6	inc5	del	WMC	0.000030	0.000031	0.961
+P6	inc5	ins	SEM	0.000744	0.003838	0.194
+P6	inc5	ins	PRN	0.000654	0.000808	0.810
+P6	inc5	ins	FC	0.000570	0.000717	0.795
+P6	inc5	ins	WMC	0.000032	0.000033	0.974
+P7	inc1	del	SEM	0.001875	0.004001	0.469
+P7	inc1	del	PRN	0.000901	0.000837	1.076
+P7	inc1	del	FC	0.000675	0.001445	0.467
+P7	inc1	del	WMC	0.000041	0.000096	0.425
+P7	inc1	ins	SEM	0.001939	0.008006	0.242
+P7	inc1	ins	PRN	0.000926	0.000667	1.389
+P7	inc1	ins	FC	0.000660	0.000477	1.385
+P7	inc1	ins	WMC	0.000040	0.000034	1.186
+P7	inc3	del	SEM	0.001825	0.003866	0.472
+P7	inc3	del	PRN	0.000865	0.000710	1.219
+P7	inc3	del	FC	0.000589	0.001276	0.462
+P7	inc3	del	WMC	0.000037	0.000041	0.909
+P7	inc3	ins	SEM	0.002089	0.005045	0.414
+P7	inc3	ins	PRN	0.000927	0.000935	0.992
+P7	inc3	ins	FC	0.000663	0.000748	0.886
+P7	inc3	ins	WMC	0.000040	0.000088	0.452
+P7	inc5	del	SEM	0.001733	0.004204	0.412
+P7	inc5	del	PRN	0.000607	0.000878	0.692
+P7	inc5	del	FC	0.000393	0.001373	0.286
+P7	inc5	del	WMC	0.000033	0.000039	0.846
+P7	inc5	ins	SEM	0.001962	0.003515	0.558
+P7	inc5	ins	PRN	0.000910	0.001584	0.575
+P7	inc5	ins	FC	0.000673	0.001346	0.500
+P7	inc5	ins	WMC	0.000040	0.000059	0.670
+P8	inc1	del	SEM	0.005327	0.004240	1.257
+P8	inc1	del	PRN	0.001530	0.001655	0.925
+P8	inc1	del	FC	0.001115	0.002015	0.554
+P8	inc1	del	WMC	0.000053	0.000049	1.075
+P8	inc1	ins	SEM	0.004307	0.002971	1.449
+P8	inc1	ins	PRN	0.001229	0.001787	0.688
+P8	inc1	ins	FC	0.000906	0.000980	0.924
+P8	inc1	ins	WMC	0.000043	0.000064	0.673
+P8	inc3	del	SEM	0.004764	0.006255	0.762
+P8	inc3	del	PRN	0.001133	0.000997	1.137
+P8	inc3	del	FC	0.000683	0.001380	0.495
+P8	inc3	del	WMC	0.000048	0.000036	1.336
+P8	inc3	ins	SEM	0.005635	0.003714	1.517
+P8	inc3	ins	PRN	0.001388	0.001830	0.759
+P8	inc3	ins	FC	0.001231	0.001475	0.835
+P8	inc3	ins	WMC	0.000054	0.000054	0.989
+P8	inc5	del	SEM	0.003227	0.007586	0.425
+P8	inc5	del	PRN	0.000672	0.001323	0.508
+P8	inc5	del	FC	0.000534	0.001991	0.268
+P8	inc5	del	WMC	0.000038	0.000037	1.026
+P8	inc5	ins	SEM	0.004233	0.006153	0.688
+P8	inc5	ins	PRN	0.001731	0.002819	0.614
+P8	inc5	ins	FC	0.001230	0.006078	0.202
+P8	inc5	ins	WMC	0.000071	0.000070	1.012
+P9	inc1	del	SEM	0.002239	0.003866	0.579
+P9	inc1	del	PRN	0.001083	0.001014	1.068
+P9	inc1	del	FC	0.000873	0.001732	0.504
+P9	inc1	del	WMC	0.000042	0.000052	0.811
+P9	inc1	ins	SEM	0.002551	0.003623	0.704
+P9	inc1	ins	PRN	0.001707	0.002122	0.804
+P9	inc1	ins	FC	0.001319	0.005226	0.252
+P9	inc1	ins	WMC	0.000053	0.000094	0.565
+P9	inc3	del	SEM	0.002331	0.008827	0.264
+P9	inc3	del	PRN	0.000943	0.001009	0.935
+P9	inc3	del	FC	0.000630	0.001871	0.337
+P9	inc3	del	WMC	0.000039	0.000050	0.782
+P9	inc3	ins	SEM	0.002559	0.003432	0.746
+P9	inc3	ins	PRN	0.001871	0.003015	0.620
+P9	inc3	ins	FC	0.001399	0.005312	0.263
+P9	inc3	ins	WMC	0.000054	0.000060	0.894
+P9	inc5	del	SEM	0.001970	0.006254	0.315
+P9	inc5	del	PRN	0.000782	0.001383	0.565
+P9	inc5	del	FC	0.000553	0.002480	0.223
+P9	inc5	del	WMC	0.000037	0.000060	0.612
+P9	inc5	ins	SEM	0.002433	0.003404	0.715
+P9	inc5	ins	PRN	0.001639	0.003096	0.530
+P9	inc5	ins	FC	0.001401	0.005959	0.235
+P9	inc5	ins	WMC	0.000055	0.000059	0.939
+P10	inc1	del	SEM	0.022626	0.016401	1.380
+P10	inc1	del	PRN	0.001180	0.009050	0.130
+P10	inc1	del	FC	0.000367	0.001840	0.199
+P10	inc1	del	WMC	0.000037	0.000057	0.641
+P10	inc1	ins	SEM	0.029375	0.013756	2.135
+P10	inc1	ins	PRN	0.001382	0.008094	0.171
+P10	inc1	ins	FC	0.000362	0.000299	1.208
+P10	inc1	ins	WMC	0.000037	0.000037	0.995
+P10	inc3	del	SEM	0.016200	0.018088	0.896
+P10	inc3	del	PRN	0.000995	0.011768	0.085
+P10	inc3	del	FC	0.000375	0.001484	0.253
+P10	inc3	del	WMC	0.000038	0.000045	0.857
+P10	inc3	ins	SEM	0.025992	0.015238	1.706
+P10	inc3	ins	PRN	0.001107	0.016486	0.067
+P10	inc3	ins	FC	0.000387	0.003901	0.099
+P10	inc3	ins	WMC	0.000037	0.000048	0.770
+P10	inc5	del	SEM	0.015023	0.018954	0.793
+P10	inc5	del	PRN	0.000930	0.014419	0.064
+P10	inc5	del	FC	0.000334	0.002229	0.150
+P10	inc5	del	WMC	0.000039	0.000049	0.805
+P10	inc5	ins	SEM	0.027699	0.015600	1.776
+P10	inc5	ins	PRN	0.001224	0.014361	0.085
+P10	inc5	ins	FC	0.000392	0.007271	0.054
+P10	inc5	ins	WMC	0.000038	0.000038	0.987
+P11	inc1	del	SEM	0.019965	0.012252	1.630
+P11	inc1	del	PRN	0.000700	0.007094	0.099
+P11	inc1	del	FC	0.000192	0.000101	1.901
+P11	inc1	del	WMC	0.000031	0.000036	0.845
+P11	inc1	ins	SEM	0.026763	0.010427	2.567
+P11	inc1	ins	PRN	0.001023	0.007450	0.137
+P11	inc1	ins	FC	0.000189	0.000090	2.101
+P11	inc1	ins	WMC	0.000030	0.000035	0.854
+P11	inc3	del	SEM	0.016677	0.015371	1.085
+P11	inc3	del	PRN	0.000771	0.009280	0.083
+P11	inc3	del	FC	0.000188	0.001217	0.155
+P11	inc3	del	WMC	0.000031	0.000036	0.854
+P11	inc3	ins	SEM	0.028387	0.014536	1.953
+P11	inc3	ins	PRN	0.001361	0.013932	0.098
+P11	inc3	ins	FC	0.000197	0.000168	1.171
+P11	inc3	ins	WMC	0.000031	0.000032	0.974
+P11	inc5	del	SEM	0.016679	0.017463	0.955
+P11	inc5	del	PRN	0.000782	0.010856	0.072
+P11	inc5	del	FC	0.000191	0.001375	0.139
+P11	inc5	del	WMC	0.000038	0.000033	1.129
+P11	inc5	ins	SEM	0.025602	0.013835	1.851
+P11	inc5	ins	PRN	0.000728	0.012046	0.060
+P11	inc5	ins	FC	0.000215	0.000185	1.160
+P11	inc5	ins	WMC	0.000031	0.000032	0.970
+P12	inc1	del	SEM	0.042451	0.022958	1.849
+P12	inc1	del	PRN	0.010981	0.010724	1.024
+P12	inc1	del	FC	0.008370	0.010926	0.766
+P12	inc1	del	WMC	0.000326	0.000261	1.253
+P12	inc1	ins	SEM	0.045460	0.015938	2.852
+P12	inc1	ins	PRN	0.012659	0.015183	0.834
+P12	inc1	ins	FC	0.009783	0.227113	0.043
+P12	inc1	ins	WMC	0.000247	0.000466	0.530
+P12	inc3	del	SEM	0.035452	0.053465	0.663
+P12	inc3	del	PRN	0.005460	0.010062	0.543
+P12	inc3	del	FC	0.004369	0.010469	0.417
+P12	inc3	del	WMC	0.000122	0.000145	0.846
+P12	inc3	ins	SEM	0.049778	0.031985	1.556
+P12	inc3	ins	PRN	0.011781	0.027200	0.433
+P12	inc3	ins	FC	0.009578	0.093751	0.102
+P12	inc3	ins	WMC	0.000212	0.000437	0.485
+P12	inc5	del	SEM	0.030687	0.079825	0.384
+P12	inc5	del	PRN	0.002792	0.010002	0.279
+P12	inc5	del	FC	0.002115	0.010329	0.205
+P12	inc5	del	WMC	0.000090	0.000092	0.975
+P12	inc5	ins	SEM	0.043567	0.032396	1.345
+P12	inc5	ins	PRN	0.011396	0.035595	0.320
+P12	inc5	ins	FC	0.009396	0.194827	0.048
+P12	inc5	ins	WMC	0.000181	0.000504	0.360
+P13	inc1	del	SEM	0.073189	0.048741	1.502
+P13	inc1	del	PRN	0.018333	0.026157	0.701
+P13	inc1	del	FC	0.420103	0.030454	13.795
+P13	inc1	del	WMC	0.000783	0.000559	1.402
+P13	inc1	ins	SEM	0.085161	0.025728	3.310
+P13	inc1	ins	PRN	0.030869	0.053756	0.574
+P13	inc1	ins	FC	0.263311	0.786047	0.335
+P13	inc1	ins	WMC	0.000984	0.001084	0.907
+P13	inc3	del	SEM	0.066443	0.123701	0.537
+P13	inc3	del	PRN	0.009030	0.034420	0.262
+P13	inc3	del	FC	0.007501	0.046314	0.162
+P13	inc3	del	WMC	0.000196	0.000546	0.360
+P13	inc3	ins	SEM	0.083246	0.057483	1.448
+P13	inc3	ins	PRN	0.030007	0.114716	0.262
+P13	inc3	ins	FC	0.250840	0.634293	0.395
+P13	inc3	ins	WMC	0.000909	0.001375	0.661
+P13	inc5	del	SEM	0.054103	0.156645	0.345
+P13	inc5	del	PRN	0.005701	0.025152	0.227
+P13	inc5	del	FC	0.004511	0.029408	0.153
+P13	inc5	del	WMC	0.000190	0.000301	0.632
+P13	inc5	ins	SEM	0.084723	0.060950	1.390
+P13	inc5	ins	PRN	0.028773	0.105511	0.273
+P13	inc5	ins	FC	0.259445	0.468270	0.554
+P13	inc5	ins	WMC	0.001005	0.001191	0.844
+P14	inc1	del	SEM	0.131847	0.070215	1.878
+P14	inc1	del	PRN	0.027949	0.037071	0.754
+P14	inc1	del	FC	0.361304	0.044308	8.154
+P14	inc1	del	WMC	0.001248	0.000925	1.348
+P14	inc1	ins	SEM	0.133311	0.041328	3.226
+P14	inc1	ins	PRN	0.061691	0.107493	0.574
+P14	inc1	ins	FC	0.650302	0.979779	0.664
+P14	inc1	ins	WMC	0.001532	0.002148	0.714
+P14	inc3	del	SEM	0.098265	0.162903	0.603
+P14	inc3	del	PRN	0.011622	0.049437	0.235
+P14	inc3	del	FC	0.010225	0.046177	0.221
+P14	inc3	del	WMC	0.000317	0.000442	0.718
+P14	inc3	ins	SEM	0.126148	0.066679	1.892
+P14	inc3	ins	PRN	0.043166	0.188329	0.229
+P14	inc3	ins	FC	0.674604	0.619036	1.090
+P14	inc3	ins	WMC	0.001593	0.002074	0.768
+P14	inc5	del	SEM	0.094283	0.247546	0.381
+P14	inc5	del	PRN	0.005663	0.036425	0.155
+P14	inc5	del	FC	0.003934	0.041300	0.095
+P14	inc5	del	WMC	0.000198	0.000272	0.729
+P14	inc5	ins	SEM	0.130085	0.089933	1.446
+P14	inc5	ins	PRN	0.043543	0.237673	0.183
+P14	inc5	ins	FC	0.656256	1.624767	0.404
+P14	inc5	ins	WMC	0.001640	0.004742	0.346
+P15	inc1	del	SEM	0.265276	0.181820	1.459
+P15	inc1	del	PRN	0.042704	0.088364	0.483
+P15	inc1	del	FC	1.035894	0.125312	8.266
+P15	inc1	del	WMC	0.001907	0.001497	1.273
+P15	inc1	ins	SEM	0.299944	0.102930	2.914
+P15	inc1	ins	PRN	0.143370	0.528818	0.271
+P15	inc1	ins	FC	2.886364	1.881244	1.534
+P15	inc1	ins	WMC	0.003837	0.004690	0.818
+P15	inc3	del	SEM	0.214627	0.387001	0.555
+P15	inc3	del	PRN	0.007920	0.103887	0.076
+P15	inc3	del	FC	0.003905	0.125685	0.031
+P15	inc3	del	WMC	0.000387	0.000435	0.891
+P15	inc3	ins	SEM	0.276546	0.182655	1.514
+P15	inc3	ins	PRN	0.103266	1.183926	0.087
+P15	inc3	ins	FC	2.479838	1.918898	1.292
+P15	inc3	ins	WMC	0.003685	0.005747	0.641
+P15	inc5	del	SEM	0.188237	0.504491	0.373
+P15	inc5	del	PRN	0.005025	0.106019	0.047
+P15	inc5	del	FC	0.001894	0.114260	0.017
+P15	inc5	del	WMC	0.000275	0.000397	0.693
+P15	inc5	ins	SEM	0.289823	0.240085	1.207
+P15	inc5	ins	PRN	0.105463	1.211843	0.087
+P15	inc5	ins	FC	2.756859	4.138369	0.666
+P15	inc5	ins	WMC	0.004094	0.006378	0.642
+P16	inc1	del	SEM	0.448604	0.319361	1.405
+P16	inc1	del	PRN	0.043773	0.178591	0.245
+P16	inc1	del	FC	0.981630	0.297144	3.304
+P16	inc1	del	WMC	0.002219	0.002066	1.074
+P16	inc1	ins	SEM	0.516224	0.214506	2.407
+P16	inc1	ins	PRN	0.257347	2.148691	0.120
+P16	inc1	ins	FC	4.820598	5.651540	0.853
+P16	inc1	ins	WMC	0.008122	0.030165	0.269
+P16	inc3	del	SEM	0.382780	0.642074	0.596
+P16	inc3	del	PRN	0.014822	0.183324	0.081
+P16	inc3	del	FC	0.007962	0.275286	0.029
+P16	inc3	del	WMC	0.000620	0.000816	0.760
+P16	inc3	ins	SEM	0.511636	0.290410	1.762
+P16	inc3	ins	PRN	0.226865	2.982534	0.076
+P16	inc3	ins	FC	4.481273	6.834669	0.656
+P16	inc3	ins	WMC	0.010508	0.027037	0.389
+P16	inc5	del	SEM	0.319658	0.820305	0.390
+P16	inc5	del	PRN	0.010593	0.192163	0.055
+P16	inc5	del	FC	0.003416	0.252758	0.014
+P16	inc5	del	WMC	0.000582	0.000621	0.938
+P16	inc5	ins	SEM	0.468832	0.406757	1.153
+P16	inc5	ins	PRN	0.213918	3.413312	0.063
+P16	inc5	ins	FC	4.428294	6.115048	0.724
+P16	inc5	ins	WMC	0.007292	0.038237	0.191
+P17	inc1	del	SEM	0.626876	0.418753	1.497
+P17	inc1	del	PRN	0.067167	0.293134	0.229
+P17	inc1	del	FC	1.969948	0.486125	4.052
+P17	inc1	del	WMC	0.002486	0.002168	1.146
+P17	inc1	ins	SEM	0.710549	0.280982	2.529
+P17	inc1	ins	PRN	0.390586	4.041428	0.097
+P17	inc1	ins	FC	5.489770	21.332053	0.257
+P17	inc1	ins	WMC	0.011268	0.026059	0.432
+P17	inc3	del	SEM	0.501872	0.925038	0.543
+P17	inc3	del	PRN	0.033942	0.376620	0.090
+P17	inc3	del	FC	0.009641	0.517190	0.019
+P17	inc3	del	WMC	0.000908	0.001201	0.756
+P17	inc3	ins	SEM	0.715911	0.443286	1.615
+P17	inc3	ins	PRN	0.391614	6.188496	0.063
+P17	inc3	ins	FC	5.939184	10.462206	0.568
+P17	inc3	ins	WMC	0.013451	0.019264	0.698
+P17	inc5	del	SEM	0.486997	1.099398	0.443
+P17	inc5	del	PRN	0.014949	0.332723	0.045
+P17	inc5	del	FC	0.006104	0.476938	0.013
+P17	inc5	del	WMC	0.000983	0.000888	1.108
+P17	inc5	ins	SEM	0.680069	0.499823	1.361
+P17	inc5	ins	PRN	0.352535	6.030900	0.058
+P17	inc5	ins	FC	5.566679	9.616531	0.579
+P17	inc5	ins	WMC	0.013054	0.026102	0.500
+P18	inc1	del	SEM	0.733412	0.568449	1.290
+P18	inc1	del	PRN	0.087262	0.436956	0.200
+P18	inc1	del	FC	1.734039	0.787984	2.201
+P18	inc1	del	WMC	0.002796	0.002588	1.080
+P18	inc1	ins	SEM	0.909348	0.379410	2.397
+P18	inc1	ins	PRN	0.578991	5.848393	0.099
+P18	inc1	ins	FC	6.172361	6.064649	1.018
+P18	inc1	ins	WMC	0.025725	0.023147	1.111
+P18	inc3	del	SEM	0.650327	1.043887	0.623
+P18	inc3	del	PRN	0.045977	0.409682	0.112
+P18	inc3	del	FC	0.013362	0.668973	0.020
+P18	inc3	del	WMC	0.001283	0.001184	1.083
+P18	inc3	ins	SEM	0.933957	0.509513	1.833
+P18	inc3	ins	PRN	0.445710	9.352399	0.048
+P18	inc3	ins	FC	6.311617	5.863587	1.076
+P18	inc3	ins	WMC	0.019405	0.029761	0.652
+P18	inc5	del	SEM	0.608425	1.499644	0.406
+P18	inc5	del	PRN	0.028547	0.460682	0.062
+P18	inc5	del	FC	0.004682	0.728560	0.006
+P18	inc5	del	WMC	0.001073	0.001310	0.819
+P18	inc5	ins	SEM	0.975995	0.655736	1.488
+P18	inc5	ins	PRN	0.460848	9.380067	0.049
+P18	inc5	ins	FC	6.087577	5.342382	1.139
+P18	inc5	ins	WMC	0.024594	0.026350	0.933
+P19	inc1	del	SEM	1.026818	0.734954	1.397
+P19	inc1	del	PRN	0.084457	0.547215	0.154
+P19	inc1	del	FC	1.923837	1.125574	1.709
+P19	inc1	del	WMC	0.002656	0.002483	1.070
+P19	inc1	ins	SEM	1.299704	0.520638	2.496
+P19	inc1	ins	PRN	0.723166	11.505166	0.063
+P19	inc1	ins	FC	8.531678	9.921401	0.860
+P19	inc1	ins	WMC	0.028808	0.039102	0.737
+P19	inc3	del	SEM	0.862460	1.423235	0.606
+P19	inc3	del	PRN	0.036294	0.608072	0.060
+P19	inc3	del	FC	0.007482	1.099164	0.007
+P19	inc3	del	WMC	0.001276	0.001419	0.900
+P19	inc3	ins	SEM	1.180612	0.732256	1.612
+P19	inc3	ins	PRN	0.706058	16.272904	0.043
+P19	inc3	ins	FC	8.218482	8.496291	0.967
+P19	inc3	ins	WMC	0.026766	0.040130	0.667
+P19	inc5	del	SEM	0.722430	1.994920	0.362
+P19	inc5	del	PRN	0.022601	0.624696	0.036
+P19	inc5	del	FC	0.002845	1.064087	0.003
+P19	inc5	del	WMC	0.001025	0.001119	0.916
+P19	inc5	ins	SEM	1.196871	0.891869	1.342
+P19	inc5	ins	PRN	0.709198	17.142523	0.041
+P19	inc5	ins	FC	7.958318	7.904848	1.007
+P19	inc5	ins	WMC	0.027416	0.034485	0.795
+P20	inc1	del	SEM	0.912271	0.519754	1.755
+P20	inc1	del	PRN	0.556661	0.515498	1.080
+P20	inc1	del	FC	1.828145	1.388467	1.317
+P20	inc1	del	WMC	0.011049	0.011156	0.990
+P20	inc1	ins	SEM	1.005359	0.322497	3.117
+P20	inc1	ins	PRN	0.756983	1.002726	0.755
+P20	inc1	ins	FC	3.603686	4.176005	0.863
+P20	inc1	ins	WMC	0.016144	0.019817	0.815
+P20	inc3	del	SEM	0.790884	1.009805	0.783
+P20	inc3	del	PRN	0.220571	0.466603	0.473
+P20	inc3	del	FC	0.584589	1.667500	0.351
+P20	inc3	del	WMC	0.006059	0.006984	0.867
+P20	inc3	ins	SEM	1.002361	0.480662	2.085
+P20	inc3	ins	PRN	0.809172	1.593747	0.508
+P20	inc3	ins	FC	4.899516	45.548539	0.108
+P20	inc3	ins	WMC	0.014509	0.084085	0.173
+P20	inc5	del	SEM	0.729993	1.524599	0.479
+P20	inc5	del	PRN	0.110299	0.509505	0.216
+P20	inc5	del	FC	0.350576	1.735462	0.202
+P20	inc5	del	WMC	0.003673	0.003947	0.931
+P20	inc5	ins	SEM	0.928317	0.636884	1.458
+P20	inc5	ins	PRN	0.789117	2.403102	0.328
+P20	inc5	ins	FC	4.675583	71.266423	0.066
+P20	inc5	ins	WMC	0.024335	0.221421	0.110
+```
+
+#### 2026-01-11 (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph)
+Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc1/inc3/inc5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_trimmed_eval.
+```tsv
+Case	Delta	Turn	Stage	Full_s	Inc_s	Speedup
+P1	inc1	del	SEM	0.004743	0.002514	1.887
+P1	inc1	del	PRN	0.000369	0.000337	1.094
+P1	inc1	del	FC	0.000299	0.000136	2.205
+P1	inc1	del	WMC	0.000028	0.000039	0.712
+P1	inc1	ins	SEM	0.004392	0.000987	4.448
+P1	inc1	ins	PRN	0.000416	0.000221	1.883
+P1	inc1	ins	FC	0.000263	0.000105	2.512
+P1	inc1	ins	WMC	0.000026	0.000030	0.882
+P1	inc3	del	SEM	0.004344	0.000980	4.431
+P1	inc3	del	PRN	0.000315	0.000243	1.295
+P1	inc3	del	FC	0.000260	0.000110	2.357
+P1	inc3	del	WMC	0.000026	0.000031	0.839
+P1	inc3	ins	SEM	0.004562	0.001215	3.755
+P1	inc3	ins	PRN	0.000304	0.000209	1.450
+P1	inc3	ins	FC	0.000255	0.000102	2.486
+P1	inc3	ins	WMC	0.000026	0.000029	0.910
+P1	inc5	del	SEM	0.001337	0.019502	0.069
+P1	inc5	del	PRN	0.000361	0.000263	1.370
+P1	inc5	del	FC	0.000256	0.000104	2.449
+P1	inc5	del	WMC	0.000026	0.000030	0.871
+P1	inc5	ins	SEM	0.004464	0.008072	0.553
+P1	inc5	ins	PRN	0.000356	0.000223	1.599
+P1	inc5	ins	FC	0.000262	0.000104	2.512
+P1	inc5	ins	WMC	0.000026	0.000029	0.905
+P3	inc1	del	SEM	0.002458	0.019236	0.128
+P3	inc1	del	PRN	0.000381	0.000232	1.637
+P3	inc1	del	FC	0.000289	0.000111	2.598
+P3	inc1	del	WMC	0.000030	0.000030	0.989
+P3	inc1	ins	SEM	0.004907	0.006778	0.724
+P3	inc1	ins	PRN	0.000400	0.000226	1.772
+P3	inc1	ins	FC	0.000297	0.000106	2.797
+P3	inc1	ins	WMC	0.000032	0.000029	1.079
+P3	inc3	del	SEM	0.002005	0.018872	0.106
+P3	inc3	del	PRN	0.000357	0.000259	1.380
+P3	inc3	del	FC	0.000262	0.000114	2.303
+P3	inc3	del	WMC	0.000027	0.000030	0.913
+P3	inc3	ins	SEM	0.004519	0.006775	0.667
+P3	inc3	ins	PRN	0.000354	0.000220	1.609
+P3	inc3	ins	FC	0.000310	0.000104	2.983
+P3	inc3	ins	WMC	0.000038	0.000029	1.301
+P3	inc5	del	SEM	0.001783	0.019515	0.091
+P3	inc5	del	PRN	0.000309	0.000278	1.112
+P3	inc5	del	FC	0.000250	0.000106	2.349
+P3	inc5	del	WMC	0.000026	0.000031	0.845
+P3	inc5	ins	SEM	0.006603	0.007456	0.886
+P3	inc5	ins	PRN	0.000431	0.000254	1.701
+P3	inc5	ins	FC	0.000317	0.000132	2.404
+P3	inc5	ins	WMC	0.000033	0.000030	1.092
+P4	inc1	del	SEM	0.000242	0.002511	0.096
+P4	inc1	del	PRN	0.000103	0.000213	0.486
+P4	inc1	del	FC	0.000095	0.000046	2.067
+P4	inc1	del	WMC	0.000024	0.000027	0.901
+P4	inc1	ins	SEM	0.000261	0.001367	0.191
+P4	inc1	ins	PRN	0.000126	0.000187	0.675
+P4	inc1	ins	FC	0.000093	0.000039	2.398
+P4	inc1	ins	WMC	0.000024	0.000025	0.970
+P4	inc3	del	SEM	0.000228	0.001048	0.218
+P4	inc3	del	PRN	0.000123	0.000152	0.810
+P4	inc3	del	FC	0.000096	0.000041	2.321
+P4	inc3	del	WMC	0.000024	0.000026	0.952
+P4	inc3	ins	SEM	0.000344	0.000871	0.395
+P4	inc3	ins	PRN	0.000169	0.000157	1.076
+P4	inc3	ins	FC	0.000093	0.000044	2.096
+P4	inc3	ins	WMC	0.000030	0.000027	1.106
+P4	inc5	del	SEM	0.000234	0.000539	0.434
+P4	inc5	del	PRN	0.000077	0.000144	0.530
+P4	inc5	del	FC	0.000065	0.000108	0.598
+P4	inc5	del	WMC	0.000023	0.000029	0.804
+P4	inc5	ins	SEM	0.000234	0.002628	0.089
+P4	inc5	ins	PRN	0.000132	0.000162	0.813
+P4	inc5	ins	FC	0.000076	0.000092	0.824
+P4	inc5	ins	WMC	0.000024	0.000026	0.913
+P5	inc1	del	SEM	0.000298	0.001770	0.169
+P5	inc1	del	PRN	0.000298	0.000330	0.905
+P5	inc1	del	FC	0.000192	0.000091	2.095
+P5	inc1	del	WMC	0.000026	0.000030	0.886
+P5	inc1	ins	SEM	0.000299	0.001114	0.268
+P5	inc1	ins	PRN	0.000240	0.000285	0.844
+P5	inc1	ins	FC	0.000190	0.000100	1.910
+P5	inc1	ins	WMC	0.000026	0.000039	0.675
+P5	inc3	del	SEM	0.000295	0.001214	0.243
+P5	inc3	del	PRN	0.000258	0.000226	1.141
+P5	inc3	del	FC	0.000192	0.000083	2.305
+P5	inc3	del	WMC	0.000026	0.000028	0.930
+P5	inc3	ins	SEM	0.000395	0.002563	0.154
+P5	inc3	ins	PRN	0.000271	0.000253	1.072
+P5	inc3	ins	FC	0.000212	0.000086	2.479
+P5	inc3	ins	WMC	0.000028	0.000033	0.847
+P5	inc5	del	SEM	0.000311	0.002252	0.138
+P5	inc5	del	PRN	0.000134	0.000264	0.507
+P5	inc5	del	FC	0.000101	0.000922	0.109
+P5	inc5	del	WMC	0.000027	0.000026	1.061
+P5	inc5	ins	SEM	0.000355	0.001292	0.275
+P5	inc5	ins	PRN	0.000280	0.000447	0.626
+P5	inc5	ins	FC	0.000227	0.000279	0.813
+P5	inc5	ins	WMC	0.000029	0.000027	1.059
+P6	inc1	del	SEM	0.000494	0.001690	0.292
+P6	inc1	del	PRN	0.000650	0.000606	1.072
+P6	inc1	del	FC	0.000509	0.000274	1.859
+P6	inc1	del	WMC	0.000031	0.000053	0.581
+P6	inc1	ins	SEM	0.000417	0.001266	0.329
+P6	inc1	ins	PRN	0.000601	0.000398	1.511
+P6	inc1	ins	FC	0.000458	0.000211	2.172
+P6	inc1	ins	WMC	0.000031	0.000041	0.758
+P6	inc3	del	SEM	0.000387	0.001962	0.197
+P6	inc3	del	PRN	0.000268	0.000338	0.792
+P6	inc3	del	FC	0.000192	0.001026	0.187
+P6	inc3	del	WMC	0.000029	0.000028	1.024
+P6	inc3	ins	SEM	0.000516	0.001318	0.392
+P6	inc3	ins	PRN	0.000813	0.000954	0.852
+P6	inc3	ins	FC	0.000618	0.000912	0.678
+P6	inc3	ins	WMC	0.000033	0.000035	0.961
+P6	inc5	del	SEM	0.000388	0.001505	0.258
+P6	inc5	del	PRN	0.000253	0.000443	0.572
+P6	inc5	del	FC	0.000198	0.001191	0.167
+P6	inc5	del	WMC	0.000027	0.000031	0.844
+P6	inc5	ins	SEM	0.000491	0.001223	0.402
+P6	inc5	ins	PRN	0.000643	0.001082	0.595
+P6	inc5	ins	FC	0.000472	0.000918	0.514
+P6	inc5	ins	WMC	0.000032	0.000033	0.966
+P7	inc1	del	SEM	0.000918	0.001241	0.740
+P7	inc1	del	PRN	0.000668	0.000675	0.990
+P7	inc1	del	FC	0.000464	0.001454	0.319
+P7	inc1	del	WMC	0.000032	0.000036	0.897
+P7	inc1	ins	SEM	0.000986	0.001470	0.671
+P7	inc1	ins	PRN	0.000818	0.000810	1.009
+P7	inc1	ins	FC	0.000551	0.000581	0.947
+P7	inc1	ins	WMC	0.000034	0.000036	0.960
+P7	inc3	del	SEM	0.001008	0.001814	0.556
+P7	inc3	del	PRN	0.000744	0.000979	0.760
+P7	inc3	del	FC	0.000551	0.001455	0.379
+P7	inc3	del	WMC	0.000035	0.000032	1.090
+P7	inc3	ins	SEM	0.001194	0.001994	0.599
+P7	inc3	ins	PRN	0.000891	0.001001	0.890
+P7	inc3	ins	FC	0.000635	0.000866	0.734
+P7	inc3	ins	WMC	0.000039	0.000040	0.974
+P7	inc5	del	SEM	0.000777	0.004235	0.184
+P7	inc5	del	PRN	0.000653	0.000747	0.874
+P7	inc5	del	FC	0.000428	0.001643	0.260
+P7	inc5	del	WMC	0.000096	0.000037	2.562
+P7	inc5	ins	SEM	0.001042	0.002830	0.368
+P7	inc5	ins	PRN	0.000894	0.001805	0.495
+P7	inc5	ins	FC	0.000567	0.000775	0.731
+P7	inc5	ins	WMC	0.000035	0.000037	0.950
+P8	inc1	del	SEM	0.001619	0.001447	1.119
+P8	inc1	del	PRN	0.001013	0.001118	0.906
+P8	inc1	del	FC	0.000711	0.001419	0.501
+P8	inc1	del	WMC	0.000036	0.000051	0.709
+P8	inc1	ins	SEM	0.002586	0.001378	1.877
+P8	inc1	ins	PRN	0.001020	0.001017	1.003
+P8	inc1	ins	FC	0.000912	0.000844	1.080
+P8	inc1	ins	WMC	0.000039	0.000044	0.890
+P8	inc3	del	SEM	0.001140	0.001548	0.736
+P8	inc3	del	PRN	0.000422	0.001299	0.325
+P8	inc3	del	FC	0.000236	0.001995	0.118
+P8	inc3	del	WMC	0.000029	0.000031	0.942
+P8	inc3	ins	SEM	0.001791	0.001501	1.193
+P8	inc3	ins	PRN	0.001258	0.002871	0.438
+P8	inc3	ins	FC	0.000823	0.001603	0.514
+P8	inc3	ins	WMC	0.000050	0.000052	0.970
+P8	inc5	del	SEM	0.001054	0.002834	0.372
+P8	inc5	del	PRN	0.000423	0.000981	0.431
+P8	inc5	del	FC	0.000266	0.001346	0.198
+P8	inc5	del	WMC	0.000033	0.000033	1.016
+P8	inc5	ins	SEM	0.001975	0.002585	0.764
+P8	inc5	ins	PRN	0.001412	0.002928	0.482
+P8	inc5	ins	FC	0.000991	0.001978	0.501
+P8	inc5	ins	WMC	0.000045	0.000046	0.983
+P9	inc1	del	SEM	0.001463	0.001394	1.050
+P9	inc1	del	PRN	0.001695	0.001171	1.447
+P9	inc1	del	FC	0.001394	0.001676	0.831
+P9	inc1	del	WMC	0.000048	0.000048	0.990
+P9	inc1	ins	SEM	0.001239	0.001204	1.029
+P9	inc1	ins	PRN	0.001670	0.001198	1.394
+P9	inc1	ins	FC	0.001519	0.006548	0.232
+P9	inc1	ins	WMC	0.000053	0.000072	0.745
+P9	inc3	del	SEM	0.001117	0.002986	0.374
+P9	inc3	del	PRN	0.001317	0.001125	1.171
+P9	inc3	del	FC	0.001009	0.001664	0.607
+P9	inc3	del	WMC	0.000044	0.000052	0.840
+P9	inc3	ins	SEM	0.001157	0.001173	0.986
+P9	inc3	ins	PRN	0.001570	0.001349	1.164
+P9	inc3	ins	FC	0.001265	0.005920	0.214
+P9	inc3	ins	WMC	0.000050	0.000080	0.622
+P9	inc5	del	SEM	0.000989	0.001262	0.784
+P9	inc5	del	PRN	0.000913	0.000961	0.950
+P9	inc5	del	FC	0.000692	0.001559	0.444
+P9	inc5	del	WMC	0.000038	0.000040	0.948
+P9	inc5	ins	SEM	0.001137	0.001295	0.878
+P9	inc5	ins	PRN	0.001351	0.003227	0.419
+P9	inc5	ins	FC	0.001310	0.005178	0.253
+P9	inc5	ins	WMC	0.000066	0.000069	0.945
+P10	inc1	del	SEM	0.010677	0.006068	1.760
+P10	inc1	del	PRN	0.000915	0.005915	0.155
+P10	inc1	del	FC	0.000237	0.000129	1.838
+P10	inc1	del	WMC	0.000030	0.000038	0.796
+P10	inc1	ins	SEM	0.017543	0.005938	2.955
+P10	inc1	ins	PRN	0.001321	0.006747	0.196
+P10	inc1	ins	FC	0.000249	0.000110	2.261
+P10	inc1	ins	WMC	0.000031	0.000036	0.872
+P10	inc3	del	SEM	0.007039	0.007867	0.895
+P10	inc3	del	PRN	0.000744	0.009184	0.081
+P10	inc3	del	FC	0.000247	0.000123	2.016
+P10	inc3	del	WMC	0.000051	0.000039	1.302
+P10	inc3	ins	SEM	0.016966	0.010369	1.636
+P10	inc3	ins	PRN	0.001867	0.011707	0.159
+P10	inc3	ins	FC	0.000345	0.000114	3.023
+P10	inc3	ins	WMC	0.000044	0.000037	1.203
+P10	inc5	del	SEM	0.006235	0.008821	0.707
+P10	inc5	del	PRN	0.000675	0.010858	0.062
+P10	inc5	del	FC	0.000240	0.001264	0.190
+P10	inc5	del	WMC	0.000034	0.000038	0.883
+P10	inc5	ins	SEM	0.014899	0.009525	1.564
+P10	inc5	ins	PRN	0.000941	0.014934	0.063
+P10	inc5	ins	FC	0.000267	0.000232	1.154
+P10	inc5	ins	WMC	0.000035	0.000034	1.020
+P11	inc1	del	SEM	0.011549	0.007544	1.531
+P11	inc1	del	PRN	0.000917	0.007937	0.116
+P11	inc1	del	FC	0.000257	0.001005	0.256
+P11	inc1	del	WMC	0.000040	0.000034	1.177
+P11	inc1	ins	SEM	0.021025	0.006399	3.286
+P11	inc1	ins	PRN	0.001272	0.009786	0.130
+P11	inc1	ins	FC	0.000244	0.000223	1.095
+P11	inc1	ins	WMC	0.000040	0.000034	1.182
+P11	inc3	del	SEM	0.006676	0.007554	0.884
+P11	inc3	del	PRN	0.000779	0.010027	0.078
+P11	inc3	del	FC	0.000189	0.001366	0.138
+P11	inc3	del	WMC	0.000032	0.000043	0.733
+P11	inc3	ins	SEM	0.019375	0.007536	2.571
+P11	inc3	ins	PRN	0.001012	0.014279	0.071
+P11	inc3	ins	FC	0.000193	0.000168	1.151
+P11	inc3	ins	WMC	0.000032	0.000032	1.002
+P11	inc5	del	SEM	0.006796	0.008546	0.795
+P11	inc5	del	PRN	0.000864	0.012575	0.069
+P11	inc5	del	FC	0.000267	0.001161	0.230
+P11	inc5	del	WMC	0.000034	0.000034	0.998
+P11	inc5	ins	SEM	0.019100	0.008368	2.282
+P11	inc5	ins	PRN	0.000743	0.016355	0.045
+P11	inc5	ins	FC	0.000190	0.000169	1.122
+P11	inc5	ins	WMC	0.000031	0.000048	0.654
+P12	inc1	del	SEM	0.013257	0.004136	3.205
+P12	inc1	del	PRN	0.009784	0.011335	0.863
+P12	inc1	del	FC	0.008031	0.010602	0.758
+P12	inc1	del	WMC	0.000214	0.000246	0.870
+P12	inc1	ins	SEM	0.012471	0.003676	3.393
+P12	inc1	ins	PRN	0.010673	0.015086	0.707
+P12	inc1	ins	FC	0.010154	0.114725	0.089
+P12	inc1	ins	WMC	0.000202	0.000395	0.511
+P12	inc3	del	SEM	0.011190	0.005048	2.217
+P12	inc3	del	PRN	0.006257	0.010955	0.571
+P12	inc3	del	FC	0.005635	0.011061	0.509
+P12	inc3	del	WMC	0.000151	0.000171	0.884
+P12	inc3	ins	SEM	0.018049	0.004250	4.247
+P12	inc3	ins	PRN	0.012604	0.026539	0.475
+P12	inc3	ins	FC	0.010267	0.297234	0.035
+P12	inc3	ins	WMC	0.000238	0.000574	0.415
+P12	inc5	del	SEM	0.009671	0.006657	1.453
+P12	inc5	del	PRN	0.003436	0.010201	0.337
+P12	inc5	del	FC	0.003174	0.009762	0.325
+P12	inc5	del	WMC	0.000148	0.000175	0.846
+P12	inc5	ins	SEM	0.017568	0.005519	3.183
+P12	inc5	ins	PRN	0.014044	0.036330	0.387
+P12	inc5	ins	FC	0.011382	0.113785	0.100
+P12	inc5	ins	WMC	0.000263	0.000440	0.598
+P13	inc1	del	SEM	0.033115	0.007896	4.194
+P13	inc1	del	PRN	0.022676	0.030783	0.737
+P13	inc1	del	FC	0.021519	0.032631	0.659
+P13	inc1	del	WMC	0.000543	0.000539	1.006
+P13	inc1	ins	SEM	0.039622	0.006199	6.391
+P13	inc1	ins	PRN	0.038151	0.049646	0.768
+P13	inc1	ins	FC	0.299594	1.002941	0.299
+P13	inc1	ins	WMC	0.001103	0.001234	0.894
+P13	inc3	del	SEM	0.020484	0.010539	1.944
+P13	inc3	del	PRN	0.008394	0.020177	0.416
+P13	inc3	del	FC	0.006386	0.032708	0.195
+P13	inc3	del	WMC	0.000179	0.000258	0.693
+P13	inc3	ins	SEM	0.033269	0.009800	3.395
+P13	inc3	ins	PRN	0.030722	0.128930	0.238
+P13	inc3	ins	FC	0.313203	0.624284	0.502
+P13	inc3	ins	WMC	0.000951	0.001475	0.645
+P13	inc5	del	SEM	0.012205	0.012813	0.953
+P13	inc5	del	PRN	0.001951	0.027524	0.071
+P13	inc5	del	FC	0.001648	0.029974	0.055
+P13	inc5	del	WMC	0.000118	0.000187	0.631
+P13	inc5	ins	SEM	0.035694	0.010787	3.309
+P13	inc5	ins	PRN	0.034870	0.156700	0.223
+P13	inc5	ins	FC	0.290969	0.480505	0.606
+P13	inc5	ins	WMC	0.001189	0.001317	0.903
+P14	inc1	del	SEM	0.038203	0.013184	2.898
+P14	inc1	del	PRN	0.027275	0.044648	0.611
+P14	inc1	del	FC	0.366106	0.048809	7.501
+P14	inc1	del	WMC	0.001006	0.000963	1.044
+P14	inc1	ins	SEM	0.062351	0.011808	5.280
+P14	inc1	ins	PRN	0.053740	0.094904	0.566
+P14	inc1	ins	FC	0.707355	0.893842	0.791
+P14	inc1	ins	WMC	0.001722	0.002587	0.666
+P14	inc3	del	SEM	0.019084	0.023567	0.810
+P14	inc3	del	PRN	0.006416	0.056724	0.113
+P14	inc3	del	FC	0.005890	0.051542	0.114
+P14	inc3	del	WMC	0.000199	0.000431	0.462
+P14	inc3	ins	SEM	0.039272	0.019502	2.014
+P14	inc3	ins	PRN	0.053542	0.277527	0.193
+P14	inc3	ins	FC	0.752616	0.641910	1.172
+P14	inc3	ins	WMC	0.002127	0.002038	1.044
+P14	inc5	del	SEM	0.017785	0.017414	1.021
+P14	inc5	del	PRN	0.002776	0.042512	0.065
+P14	inc5	del	FC	0.001914	0.040729	0.047
+P14	inc5	del	WMC	0.000152	0.000248	0.611
+P14	inc5	ins	SEM	0.048149	0.016584	2.903
+P14	inc5	ins	PRN	0.049662	0.311765	0.159
+P14	inc5	ins	FC	0.708168	0.669599	1.058
+P14	inc5	ins	WMC	0.001486	0.001821	0.816
+P15	inc1	del	SEM	0.083113	0.035372	2.350
+P15	inc1	del	PRN	0.066795	0.108728	0.614
+P15	inc1	del	FC	2.083023	0.144549	14.410
+P15	inc1	del	WMC	0.002508	0.001790	1.401
+P15	inc1	ins	SEM	0.119745	0.043150	2.775
+P15	inc1	ins	PRN	0.129767	0.575156	0.226
+P15	inc1	ins	FC	2.966588	2.471038	1.201
+P15	inc1	ins	WMC	0.004415	0.006818	0.647
+P15	inc3	del	SEM	0.064004	0.043043	1.487
+P15	inc3	del	PRN	0.017535	0.101780	0.172
+P15	inc3	del	FC	0.609360	0.137365	4.436
+P15	inc3	del	WMC	0.000747	0.000709	1.053
+P15	inc3	ins	SEM	0.095203	0.046392	2.052
+P15	inc3	ins	PRN	0.098795	1.028131	0.096
+P15	inc3	ins	FC	2.709845	2.540056	1.067
+P15	inc3	ins	WMC	0.004654	0.012475	0.373
+P15	inc5	del	SEM	0.045485	0.045516	0.999
+P15	inc5	del	PRN	0.003952	0.102680	0.038
+P15	inc5	del	FC	0.001533	0.132330	0.012
+P15	inc5	del	WMC	0.000273	0.000457	0.597
+P15	inc5	ins	SEM	0.113216	0.051747	2.188
+P15	inc5	ins	PRN	0.140155	1.615025	0.087
+P15	inc5	ins	FC	2.709029	2.501964	1.083
+P15	inc5	ins	WMC	0.004194	0.010008	0.419
+P16	inc1	del	SEM	0.147153	0.072585	2.027
+P16	inc1	del	PRN	0.055436	0.268839	0.206
+P16	inc1	del	FC	1.367697	0.388867	3.517
+P16	inc1	del	WMC	0.005298	0.002599	2.039
+P16	inc1	ins	SEM	0.259013	0.076654	3.379
+P16	inc1	ins	PRN	0.297764	2.447215	0.122
+P16	inc1	ins	FC	4.671168	5.687138	0.821
+P16	inc1	ins	WMC	0.007662	0.013171	0.582
+P16	inc3	del	SEM	0.090289	0.075636	1.194
+P16	inc3	del	PRN	0.020576	0.259006	0.079
+P16	inc3	del	FC	0.008849	0.317868	0.028
+P16	inc3	del	WMC	0.000591	0.001043	0.567
+P16	inc3	ins	SEM	0.217355	0.097046	2.240
+P16	inc3	ins	PRN	0.332535	3.806804	0.087
+P16	inc3	ins	FC	4.995322	5.806584	0.860
+P16	inc3	ins	WMC	0.008318	0.026237	0.317
+P16	inc5	del	SEM	0.068150	0.083557	0.816
+P16	inc5	del	PRN	0.007381	0.260887	0.028
+P16	inc5	del	FC	0.003727	0.303080	0.012
+P16	inc5	del	WMC	0.000525	0.000744	0.706
+P16	inc5	ins	SEM	0.216881	0.101574	2.135
+P16	inc5	ins	PRN	0.291024	4.163579	0.070
+P16	inc5	ins	FC	4.973518	7.161513	0.694
+P16	inc5	ins	WMC	0.010122	0.036475	0.278
+P17	inc1	del	SEM	0.175295	0.099465	1.762
+P17	inc1	del	PRN	0.047893	0.307436	0.156
+P17	inc1	del	FC	2.244418	0.523704	4.286
+P17	inc1	del	WMC	0.002430	0.001895	1.282
+P17	inc1	ins	SEM	0.350136	0.123004	2.847
+P17	inc1	ins	PRN	0.464461	4.269479	0.109
+P17	inc1	ins	FC	6.168977	12.331960	0.500
+P17	inc1	ins	WMC	0.017274	0.020594	0.839
+P17	inc3	del	SEM	0.134602	0.123260	1.092
+P17	inc3	del	PRN	0.023759	0.366868	0.065
+P17	inc3	del	FC	0.007649	0.506080	0.015
+P17	inc3	del	WMC	0.001329	0.001061	1.253
+P17	inc3	ins	SEM	0.303583	0.136419	2.225
+P17	inc3	ins	PRN	0.401953	6.999991	0.057
+P17	inc3	ins	FC	5.941497	11.979178	0.496
+P17	inc3	ins	WMC	0.015410	0.021889	0.704
+P17	inc5	del	SEM	0.119744	0.133294	0.898
+P17	inc5	del	PRN	0.019624	0.331619	0.059
+P17	inc5	del	FC	0.003607	0.485432	0.007
+P17	inc5	del	WMC	0.000944	0.001444	0.654
+P17	inc5	ins	SEM	0.310351	0.137578	2.256
+P17	inc5	ins	PRN	0.482732	6.490261	0.074
+P17	inc5	ins	FC	6.213848	11.159653	0.557
+P17	inc5	ins	WMC	0.016887	0.027611	0.612
+P18	inc1	del	SEM	0.271961	0.165667	1.642
+P18	inc1	del	PRN	0.089511	0.426342	0.210
+P18	inc1	del	FC	2.155408	0.772158	2.791
+P18	inc1	del	WMC	0.003407	0.003007	1.133
+P18	inc1	ins	SEM	0.389432	0.162323	2.399
+P18	inc1	ins	PRN	0.623117	6.726006	0.093
+P18	inc1	ins	FC	7.184263	7.566518	0.949
+P18	inc1	ins	WMC	0.039519	0.030034	1.316
+P18	inc3	del	SEM	0.151291	0.171126	0.884
+P18	inc3	del	PRN	0.021694	0.518955	0.042
+P18	inc3	del	FC	0.010664	0.798797	0.013
+P18	inc3	del	WMC	0.001093	0.001445	0.757
+P18	inc3	ins	SEM	0.462724	0.167023	2.770
+P18	inc3	ins	PRN	0.695035	9.783647	0.071
+P18	inc3	ins	FC	7.386186	6.486962	1.139
+P18	inc3	ins	WMC	0.021988	0.034841	0.631
+P18	inc5	del	SEM	0.138465	0.163466	0.847
+P18	inc5	del	PRN	0.023639	0.595577	0.040
+P18	inc5	del	FC	0.004488	0.768733	0.006
+P18	inc5	del	WMC	0.001174	0.001243	0.944
+P18	inc5	ins	SEM	0.420255	0.183545	2.290
+P18	inc5	ins	PRN	0.603728	11.534662	0.052
+P18	inc5	ins	FC	7.042728	6.311089	1.116
+P18	inc5	ins	WMC	0.025766	0.029918	0.861
+P19	inc1	del	SEM	0.355481	0.229725	1.547
+P19	inc1	del	PRN	0.107808	0.684836	0.157
+P19	inc1	del	FC	2.019279	1.267118	1.594
+P19	inc1	del	WMC	0.003721	0.003192	1.166
+P19	inc1	ins	SEM	0.548455	0.270420	2.028
+P19	inc1	ins	PRN	0.629839	13.296178	0.047
+P19	inc1	ins	FC	8.450660	8.836306	0.956
+P19	inc1	ins	WMC	0.029647	0.039592	0.749
+P19	inc3	del	SEM	0.198553	0.228191	0.870
+P19	inc3	del	PRN	0.030561	0.612878	0.050
+P19	inc3	del	FC	0.006527	1.111915	0.006
+P19	inc3	del	WMC	0.001357	0.001760	0.771
+P19	inc3	ins	SEM	0.502165	0.266115	1.887
+P19	inc3	ins	PRN	0.625268	19.085240	0.033
+P19	inc3	ins	FC	8.534822	13.732038	0.622
+P19	inc3	ins	WMC	0.033840	0.049560	0.683
+P19	inc5	del	SEM	0.212476	0.193918	1.096
+P19	inc5	del	PRN	0.023198	0.590973	0.039
+P19	inc5	del	FC	0.003354	1.072419	0.003
+P19	inc5	del	WMC	0.001135	0.001137	0.997
+P19	inc5	ins	SEM	0.488407	0.294687	1.657
+P19	inc5	ins	PRN	0.658232	17.691969	0.037
+P19	inc5	ins	FC	9.390675	8.042524	1.168
+P19	inc5	ins	WMC	0.044130	0.048403	0.912
+P20	inc1	del	SEM	0.408499	0.127433	3.206
+P20	inc1	del	PRN	0.484674	0.880933	0.550
+P20	inc1	del	FC	2.217454	1.871211	1.185
+P20	inc1	del	WMC	0.011718	0.010987	1.067
+P20	inc1	ins	SEM	0.446217	0.122291	3.649
+P20	inc1	ins	PRN	1.014775	1.209817	0.839
+P20	inc1	ins	FC	4.213063	9.741141	0.433
+P20	inc1	ins	WMC	0.017206	0.023041	0.747
+P20	inc3	del	SEM	0.598049	0.145318	4.115
+P20	inc3	del	PRN	0.495207	0.520207	0.952
+P20	inc3	del	FC	1.214744	1.895808	0.641
+P20	inc3	del	WMC	0.019877	0.008427	2.359
+P20	inc3	ins	SEM	0.610870	0.129668	4.711
+P20	inc3	ins	PRN	1.045462	2.081397	0.502
+P20	inc3	ins	FC	5.619336	57.960980	0.097
+P20	inc3	ins	WMC	0.020905	0.094957	0.220
+P20	inc5	del	SEM	0.303287	0.198381	1.529
+P20	inc5	del	PRN	0.106903	0.626383	0.171
+P20	inc5	del	FC	0.338001	1.817147	0.186
+P20	inc5	del	WMC	0.004109	0.005564	0.739
+P20	inc5	ins	SEM	0.566586	0.191767	2.955
+P20	inc5	ins	PRN	1.132399	3.162009	0.358
+P20	inc5	ins	FC	5.669214	53.320787	0.106
+P20	inc5	ins	WMC	0.018299	0.071998	0.254
+```
+
+Legacy per-stage tables below are pre apply_delta_graph (kept for audit only).
+
+#### 2026-01-11 (det-opt run)
+Legacy run: 2026-01-11, det-opt, pre apply_delta_graph; stage breakdown from debugger JSON.
+```tsv
+Case	Delta	Turn	Stage	Full_s	Inc_s	Speedup
+P1	inc1	del	SEM	0.004251	0.001509	2.818
+P1	inc1	del	PRN	0.001056	0.000327	3.232
+P1	inc1	del	FC	0.000284	0.000134	2.122
+P1	inc1	del	WMC	0.000026	0.000039	0.661
+P1	inc1	ins	SEM	0.004478	0.005950	0.753
+P1	inc1	ins	PRN	0.000318	0.000321	0.993
+P1	inc1	ins	FC	0.000250	0.000127	1.969
+P1	inc1	ins	WMC	0.000025	0.000036	0.698
+P1	inc3	del	SEM	0.003155	0.007915	0.399
+P1	inc3	del	PRN	0.000298	0.000252	1.186
+P1	inc3	del	FC	0.000251	0.000114	2.204
+P1	inc3	del	WMC	0.000056	0.000031	1.780
+P1	inc3	ins	SEM	0.004452	0.001304	3.413
+P1	inc3	ins	PRN	0.001114	0.000235	4.733
+P1	inc3	ins	FC	0.000250	0.000105	2.394
+P1	inc3	ins	WMC	0.000026	0.000030	0.866
+P1	inc5	del	SEM	0.001473	0.010097	0.146
+P1	inc5	del	PRN	0.000325	0.000258	1.258
+P1	inc5	del	FC	0.000252	0.000104	2.417
+P1	inc5	del	WMC	0.000026	0.000030	0.861
+P1	inc5	ins	SEM	0.004766	0.002672	1.784
+P1	inc5	ins	PRN	0.000318	0.000313	1.015
+P1	inc5	ins	FC	0.000250	0.000127	1.978
+P1	inc5	ins	WMC	0.000026	0.000037	0.698
+P3	inc1	del	SEM	0.002297	0.015203	0.151
+P3	inc1	del	PRN	0.001401	0.000571	2.453
+P3	inc1	del	FC	0.000299	0.000889	0.337
+P3	inc1	del	WMC	0.000026	0.000269	0.098
+P3	inc1	ins	SEM	0.004700	0.003420	1.374
+P3	inc1	ins	PRN	0.000312	0.000281	1.110
+P3	inc1	ins	FC	0.000259	0.000133	1.950
+P3	inc1	ins	WMC	0.000028	0.000038	0.724
+P3	inc3	del	SEM	0.002324	0.011148	0.208
+P3	inc3	del	PRN	0.000222	0.000728	0.305
+P3	inc3	del	FC	0.000175	0.000348	0.502
+P3	inc3	del	WMC	0.000025	0.000033	0.778
+P3	inc3	ins	SEM	0.004608	0.001191	3.870
+P3	inc3	ins	PRN	0.000333	0.000429	0.776
+P3	inc3	ins	FC	0.000250	0.000450	0.556
+P3	inc3	ins	WMC	0.000026	0.000027	0.986
+P3	inc5	del	SEM	0.001052	0.009461	0.111
+P3	inc5	del	PRN	0.000217	0.000449	0.483
+P3	inc5	del	FC	0.000177	0.000266	0.663
+P3	inc5	del	WMC	0.000025	0.000039	0.642
+P3	inc5	ins	SEM	0.004785	0.002811	1.702
+P3	inc5	ins	PRN	0.000293	0.000563	0.520
+P3	inc5	ins	FC	0.000247	0.000356	0.695
+P3	inc5	ins	WMC	0.000026	0.000034	0.771
+P4	inc1	del	SEM	0.000302	0.004944	0.061
+P4	inc1	del	PRN	0.001040	0.000898	1.158
+P4	inc1	del	FC	0.000098	0.000636	0.154
+P4	inc1	del	WMC	0.000169	0.000078	2.155
+P4	inc1	ins	SEM	0.000442	0.001038	0.426
+P4	inc1	ins	PRN	0.000094	0.000136	0.691
+P4	inc1	ins	FC	0.000075	0.000038	2.004
+P4	inc1	ins	WMC	0.000023	0.000024	0.960
+P4	inc3	del	SEM	0.000312	0.002161	0.145
+P4	inc3	del	PRN	0.000103	0.000154	0.668
+P4	inc3	del	FC	0.000095	0.000054	1.764
+P4	inc3	del	WMC	0.000025	0.000031	0.799
+P4	inc3	ins	SEM	0.000325	0.002006	0.162
+P4	inc3	ins	PRN	0.000097	0.000119	0.812
+P4	inc3	ins	FC	0.000046	0.000037	1.243
+P4	inc3	ins	WMC	0.000023	0.000025	0.934
+P4	inc5	del	SEM	0.000392	0.001742	0.225
+P4	inc5	del	PRN	0.000122	0.000161	0.759
+P4	inc5	del	FC	0.000095	0.000045	2.098
+P4	inc5	del	WMC	0.000024	0.000031	0.792
+P4	inc5	ins	SEM	0.000307	0.002253	0.136
+P4	inc5	ins	PRN	0.000112	0.000099	1.132
+P4	inc5	ins	FC	0.000096	0.000036	2.695
+P4	inc5	ins	WMC	0.000024	0.000026	0.925
+P5	inc1	del	SEM	0.000242	0.006048	0.040
+P5	inc1	del	PRN	0.000529	0.001350	0.392
+P5	inc1	del	FC	0.000192	0.000231	0.830
+P5	inc1	del	WMC	0.000066	0.000129	0.508
+P5	inc1	ins	SEM	0.000302	0.003256	0.093
+P5	inc1	ins	PRN	0.000250	0.000255	0.979
+P5	inc1	ins	FC	0.000188	0.000081	2.308
+P5	inc1	ins	WMC	0.000026	0.000061	0.423
+P5	inc3	del	SEM	0.000261	0.001235	0.211
+P5	inc3	del	PRN	0.000241	0.000258	0.935
+P5	inc3	del	FC	0.000188	0.000091	2.065
+P5	inc3	del	WMC	0.000025	0.000030	0.858
+P5	inc3	ins	SEM	0.000304	0.002696	0.113
+P5	inc3	ins	PRN	0.000234	0.000251	0.935
+P5	inc3	ins	FC	0.000186	0.000080	2.328
+P5	inc3	ins	WMC	0.000025	0.000029	0.879
+P5	inc5	del	SEM	0.000204	0.001952	0.105
+P5	inc5	del	PRN	0.000106	0.000218	0.485
+P5	inc5	del	FC	0.000078	0.001202	0.065
+P5	inc5	del	WMC	0.000024	0.000025	0.955
+P5	inc5	ins	SEM	0.000320	0.003192	0.100
+P5	inc5	ins	PRN	0.000261	0.000486	0.537
+P5	inc5	ins	FC	0.000190	0.000747	0.255
+P5	inc5	ins	WMC	0.000026	0.000034	0.781
+P6	inc1	del	SEM	0.000831	0.013218	0.063
+P6	inc1	del	PRN	0.000972	0.000760	1.277
+P6	inc1	del	FC	0.000673	0.001353	0.497
+P6	inc1	del	WMC	0.000040	0.000094	0.425
+P6	inc1	ins	SEM	0.000879	0.004374	0.201
+P6	inc1	ins	PRN	0.000817	0.000517	1.581
+P6	inc1	ins	FC	0.000608	0.000442	1.376
+P6	inc1	ins	WMC	0.000039	0.000032	1.243
+P6	inc3	del	SEM	0.000724	0.012503	0.058
+P6	inc3	del	PRN	0.000477	0.000461	1.036
+P6	inc3	del	FC	0.000331	0.001264	0.262
+P6	inc3	del	WMC	0.000029	0.000035	0.821
+P6	inc3	ins	SEM	0.000723	0.008265	0.088
+P6	inc3	ins	PRN	0.000652	0.000908	0.718
+P6	inc3	ins	FC	0.000475	0.001100	0.432
+P6	inc3	ins	WMC	0.000031	0.000036	0.859
+P6	inc5	del	SEM	0.000676	0.004099	0.165
+P6	inc5	del	PRN	0.000411	0.000416	0.989
+P6	inc5	del	FC	0.000294	0.001221	0.241
+P6	inc5	del	WMC	0.000028	0.000036	0.778
+P6	inc5	ins	SEM	0.000741	0.005760	0.129
+P6	inc5	ins	PRN	0.000627	0.001006	0.624
+P6	inc5	ins	FC	0.000525	0.000613	0.856
+P6	inc5	ins	WMC	0.000031	0.000032	0.970
+P7	inc1	del	SEM	0.002124	0.014671	0.145
+P7	inc1	del	PRN	0.001384	0.002207	0.627
+P7	inc1	del	FC	0.000768	0.003133	0.245
+P7	inc1	del	WMC	0.000044	0.000383	0.116
+P7	inc1	ins	SEM	0.002021	0.004589	0.440
+P7	inc1	ins	PRN	0.000903	0.000794	1.137
+P7	inc1	ins	FC	0.000716	0.000606	1.183
+P7	inc1	ins	WMC	0.000041	0.000041	1.009
+P7	inc3	del	SEM	0.002022	0.004234	0.477
+P7	inc3	del	PRN	0.000851	0.000781	1.089
+P7	inc3	del	FC	0.000639	0.001256	0.509
+P7	inc3	del	WMC	0.000047	0.000032	1.449
+P7	inc3	ins	SEM	0.002694	0.007001	0.385
+P7	inc3	ins	PRN	0.000908	0.000869	1.044
+P7	inc3	ins	FC	0.000648	0.000769	0.842
+P7	inc3	ins	WMC	0.000039	0.000038	1.009
+P7	inc5	del	SEM	0.001698	0.002656	0.639
+P7	inc5	del	PRN	0.000661	0.000664	0.996
+P7	inc5	del	FC	0.000389	0.001331	0.292
+P7	inc5	del	WMC	0.000032	0.000034	0.954
+P7	inc5	ins	SEM	0.002232	0.001980	1.127
+P7	inc5	ins	PRN	0.000908	0.001262	0.720
+P7	inc5	ins	FC	0.000723	0.001015	0.712
+P7	inc5	ins	WMC	0.000053	0.000038	1.401
+P8	inc1	del	SEM	0.003797	0.022280	0.170
+P8	inc1	del	PRN	0.001693	0.001837	0.922
+P8	inc1	del	FC	0.000862	0.004643	0.186
+P8	inc1	del	WMC	0.000088	0.000337	0.261
+P8	inc1	ins	SEM	0.004016	0.007588	0.529
+P8	inc1	ins	PRN	0.001236	0.001073	1.152
+P8	inc1	ins	FC	0.000899	0.000816	1.102
+P8	inc1	ins	WMC	0.000042	0.000042	1.017
+P8	inc3	del	SEM	0.003454	0.007939	0.435
+P8	inc3	del	PRN	0.000847	0.001043	0.812
+P8	inc3	del	FC	0.000521	0.001385	0.376
+P8	inc3	del	WMC	0.000033	0.000037	0.892
+P8	inc3	ins	SEM	0.003848	0.006126	0.628
+P8	inc3	ins	PRN	0.001239	0.002022	0.613
+P8	inc3	ins	FC	0.000854	0.001257	0.680
+P8	inc3	ins	WMC	0.000043	0.000049	0.864
+P8	inc5	del	SEM	0.004138	0.006612	0.626
+P8	inc5	del	PRN	0.000754	0.001019	0.740
+P8	inc5	del	FC	0.000470	0.001382	0.340
+P8	inc5	del	WMC	0.000038	0.000040	0.944
+P8	inc5	ins	SEM	0.004168	0.002592	1.608
+P8	inc5	ins	PRN	0.001271	0.002376	0.535
+P8	inc5	ins	FC	0.000867	0.001417	0.612
+P8	inc5	ins	WMC	0.000061	0.000044	1.363
+P9	inc1	del	SEM	0.002218	0.018669	0.119
+P9	inc1	del	PRN	0.001618	0.001591	1.017
+P9	inc1	del	FC	0.000777	0.001935	0.402
+P9	inc1	del	WMC	0.000039	0.001065	0.037
+P9	inc1	ins	SEM	0.002604	0.007336	0.355
+P9	inc1	ins	PRN	0.001544	0.002033	0.760
+P9	inc1	ins	FC	0.001332	0.008972	0.148
+P9	inc1	ins	WMC	0.000054	0.000063	0.852
+P9	inc3	del	SEM	0.002041	0.010515	0.194
+P9	inc3	del	PRN	0.000773	0.000945	0.818
+P9	inc3	del	FC	0.000573	0.001605	0.357
+P9	inc3	del	WMC	0.000036	0.000042	0.851
+P9	inc3	ins	SEM	0.002537	0.005795	0.438
+P9	inc3	ins	PRN	0.001760	0.002996	0.587
+P9	inc3	ins	FC	0.001443	0.004831	0.299
+P9	inc3	ins	WMC	0.000052	0.000058	0.903
+P9	inc5	del	SEM	0.002015	0.006511	0.309
+P9	inc5	del	PRN	0.000728	0.001227	0.593
+P9	inc5	del	FC	0.000533	0.001609	0.331
+P9	inc5	del	WMC	0.000036	0.000038	0.939
+P9	inc5	ins	SEM	0.002585	0.003643	0.710
+P9	inc5	ins	PRN	0.001606	0.002954	0.544
+P9	inc5	ins	FC	0.001320	0.005869	0.225
+P9	inc5	ins	WMC	0.000052	0.000054	0.963
+P10	inc1	del	SEM	0.020981	0.020477	1.025
+P10	inc1	del	PRN	0.001569	0.009690	0.162
+P10	inc1	del	FC	0.000406	0.002997	0.135
+P10	inc1	del	WMC	0.000043	0.000403	0.107
+P10	inc1	ins	SEM	0.026745	0.013681	1.955
+P10	inc1	ins	PRN	0.001428	0.009592	0.149
+P10	inc1	ins	FC	0.000404	0.000355	1.137
+P10	inc1	ins	WMC	0.000045	0.000040	1.139
+P10	inc3	del	SEM	0.016264	0.013988	1.163
+P10	inc3	del	PRN	0.000990	0.012326	0.080
+P10	inc3	del	FC	0.000365	0.001422	0.256
+P10	inc3	del	WMC	0.000042	0.000040	1.050
+P10	inc3	ins	SEM	0.026539	0.017276	1.536
+P10	inc3	ins	PRN	0.001277	0.014502	0.088
+P10	inc3	ins	FC	0.000369	0.003135	0.118
+P10	inc3	ins	WMC	0.000037	0.000042	0.861
+P10	inc5	del	SEM	0.016651	0.017872	0.932
+P10	inc5	del	PRN	0.001077	0.013596	0.079
+P10	inc5	del	FC	0.000834	0.001712	0.487
+P10	inc5	del	WMC	0.000049	0.000038	1.277
+P10	inc5	ins	SEM	0.027808	0.014015	1.984
+P10	inc5	ins	PRN	0.001504	0.013896	0.108
+P10	inc5	ins	FC	0.000399	0.003697	0.108
+P10	inc5	ins	WMC	0.000040	0.000042	0.964
+P11	inc1	del	SEM	0.020579	0.018087	1.138
+P11	inc1	del	PRN	0.000971	0.007292	0.133
+P11	inc1	del	FC	0.000202	0.000166	1.214
+P11	inc1	del	WMC	0.000085	0.000325	0.261
+P11	inc1	ins	SEM	0.031059	0.011481	2.705
+P11	inc1	ins	PRN	0.001466	0.007574	0.194
+P11	inc1	ins	FC	0.000243	0.000084	2.889
+P11	inc1	ins	WMC	0.000039	0.000049	0.798
+P11	inc3	del	SEM	0.018832	0.016069	1.172
+P11	inc3	del	PRN	0.000975	0.013496	0.072
+P11	inc3	del	FC	0.000232	0.002427	0.096
+P11	inc3	del	WMC	0.000041	0.000036	1.156
+P11	inc3	ins	SEM	0.028418	0.014512	1.958
+P11	inc3	ins	PRN	0.001272	0.013187	0.096
+P11	inc3	ins	FC	0.000212	0.000261	0.812
+P11	inc3	ins	WMC	0.000032	0.000032	1.000
+P11	inc5	del	SEM	0.015537	0.016590	0.937
+P11	inc5	del	PRN	0.000726	0.011315	0.064
+P11	inc5	del	FC	0.000183	0.001472	0.124
+P11	inc5	del	WMC	0.000032	0.000044	0.731
+P11	inc5	ins	SEM	0.026677	0.013775	1.937
+P11	inc5	ins	PRN	0.000857	0.015912	0.054
+P11	inc5	ins	FC	0.000199	0.000215	0.923
+P11	inc5	ins	WMC	0.000031	0.000037	0.849
+P12	inc1	del	SEM	0.049613	0.024790	2.001
+P12	inc1	del	PRN	0.010173	0.010169	1.000
+P12	inc1	del	FC	0.007996	0.010451	0.765
+P12	inc1	del	WMC	0.000286	0.000344	0.831
+P12	inc1	ins	SEM	0.045153	0.011840	3.814
+P12	inc1	ins	PRN	0.012070	0.011903	1.014
+P12	inc1	ins	FC	0.009328	0.213302	0.044
+P12	inc1	ins	WMC	0.000223	0.000361	0.618
+P12	inc3	del	SEM	0.037833	0.029860	1.267
+P12	inc3	del	PRN	0.005931	0.012070	0.491
+P12	inc3	del	FC	0.004309	0.011259	0.383
+P12	inc3	del	WMC	0.000152	0.000151	1.003
+P12	inc3	ins	SEM	0.047211	0.013767	3.429
+P12	inc3	ins	PRN	0.015579	0.024071	0.647
+P12	inc3	ins	FC	0.011451	0.106100	0.108
+P12	inc3	ins	WMC	0.000313	0.000564	0.555
+P12	inc5	del	SEM	0.032127	0.041353	0.777
+P12	inc5	del	PRN	0.002753	0.010860	0.253
+P12	inc5	del	FC	0.002381	0.009808	0.243
+P12	inc5	del	WMC	0.000099	0.000155	0.634
+P12	inc5	ins	SEM	0.050788	0.010736	4.731
+P12	inc5	ins	PRN	0.012583	0.043339	0.290
+P12	inc5	ins	FC	0.010350	0.116301	0.089
+P12	inc5	ins	WMC	0.000263	0.000503	0.523
+P13	inc1	del	SEM	0.079615	0.039754	2.003
+P13	inc1	del	PRN	0.020977	0.054158	0.387
+P13	inc1	del	FC	0.421273	0.032185	13.089
+P13	inc1	del	WMC	0.000945	0.000593	1.594
+P13	inc1	ins	SEM	0.089094	0.019020	4.684
+P13	inc1	ins	PRN	0.035129	0.062184	0.565
+P13	inc1	ins	FC	0.276202	0.955628	0.289
+P13	inc1	ins	WMC	0.001176	0.001199	0.981
+P13	inc3	del	SEM	0.068048	0.056309	1.208
+P13	inc3	del	PRN	0.009732	0.024611	0.395
+P13	inc3	del	FC	0.007830	0.028654	0.273
+P13	inc3	del	WMC	0.000240	0.000244	0.983
+P13	inc3	ins	SEM	0.093261	0.019942	4.677
+P13	inc3	ins	PRN	0.027182	0.091430	0.297
+P13	inc3	ins	FC	0.287935	0.603593	0.477
+P13	inc3	ins	WMC	0.000866	0.001140	0.759
+P13	inc5	del	SEM	0.056393	0.091148	0.619
+P13	inc5	del	PRN	0.005829	0.025948	0.225
+P13	inc5	del	FC	0.004368	0.030541	0.143
+P13	inc5	del	WMC	0.000199	0.000190	1.046
+P13	inc5	ins	SEM	0.082277	0.022039	3.733
+P13	inc5	ins	PRN	0.027398	0.105451	0.260
+P13	inc5	ins	FC	0.265834	0.887421	0.300
+P13	inc5	ins	WMC	0.000880	0.001286	0.684
+P14	inc1	del	SEM	0.108704	0.057824	1.880
+P14	inc1	del	PRN	0.025550	0.040421	0.632
+P14	inc1	del	FC	0.375528	0.044641	8.412
+P14	inc1	del	WMC	0.000942	0.000814	1.156
+P14	inc1	ins	SEM	0.133728	0.028363	4.715
+P14	inc1	ins	PRN	0.058697	0.109892	0.534
+P14	inc1	ins	FC	0.656353	1.139232	0.576
+P14	inc1	ins	WMC	0.001879	0.002685	0.700
+P14	inc3	del	SEM	0.097584	0.094255	1.035
+P14	inc3	del	PRN	0.012867	0.042385	0.304
+P14	inc3	del	FC	0.009688	0.051242	0.189
+P14	inc3	del	WMC	0.000346	0.000420	0.824
+P14	inc3	ins	SEM	0.131120	0.031611	4.148
+P14	inc3	ins	PRN	0.051809	0.161420	0.321
+P14	inc3	ins	FC	0.687895	0.705284	0.975
+P14	inc3	ins	WMC	0.001388	0.001999	0.694
+P14	inc5	del	SEM	0.084118	0.120522	0.698
+P14	inc5	del	PRN	0.006186	0.035363	0.175
+P14	inc5	del	FC	0.003821	0.039766	0.096
+P14	inc5	del	WMC	0.000175	0.000253	0.692
+P14	inc5	ins	SEM	0.126602	0.034240	3.698
+P14	inc5	ins	PRN	0.042913	0.241601	0.178
+P14	inc5	ins	FC	0.700970	1.533145	0.457
+P14	inc5	ins	WMC	0.001658	0.002271	0.730
+P15	inc1	del	SEM	0.273208	0.174149	1.569
+P15	inc1	del	PRN	0.047457	0.079712	0.595
+P15	inc1	del	FC	0.862920	0.119508	7.221
+P15	inc1	del	WMC	0.001352	0.001934	0.699
+P15	inc1	ins	SEM	0.307830	0.112487	2.737
+P15	inc1	ins	PRN	0.119871	0.557280	0.215
+P15	inc1	ins	FC	2.664418	2.095397	1.272
+P15	inc1	ins	WMC	0.005926	0.004845	1.223
+P15	inc3	del	SEM	0.229333	0.222286	1.032
+P15	inc3	del	PRN	0.008205	0.090130	0.091
+P15	inc3	del	FC	0.003446	0.113279	0.030
+P15	inc3	del	WMC	0.000367	0.000376	0.975
+P15	inc3	ins	SEM	0.300941	0.083295	3.613
+P15	inc3	ins	PRN	0.088873	1.130170	0.079
+P15	inc3	ins	FC	2.721291	2.493798	1.091
+P15	inc3	ins	WMC	0.004041	0.008009	0.504
+P15	inc5	del	SEM	0.216101	0.294825	0.733
+P15	inc5	del	PRN	0.005035	0.095717	0.053
+P15	inc5	del	FC	0.001859	0.116390	0.016
+P15	inc5	del	WMC	0.000237	0.000317	0.748
+P15	inc5	ins	SEM	0.372062	0.095902	3.880
+P15	inc5	ins	PRN	0.169969	1.240096	0.137
+P15	inc5	ins	FC	3.145466	3.806062	0.826
+P15	inc5	ins	WMC	0.005404	0.005331	1.014
+P16	inc1	del	SEM	0.425021	0.242774	1.751
+P16	inc1	del	PRN	0.052913	0.213125	0.248
+P16	inc1	del	FC	1.130022	0.314088	3.598
+P16	inc1	del	WMC	0.002036	0.001732	1.175
+P16	inc1	ins	SEM	0.551677	0.134090	4.114
+P16	inc1	ins	PRN	0.264732	2.315092	0.114
+P16	inc1	ins	FC	4.979389	5.122901	0.972
+P16	inc1	ins	WMC	0.014189	0.010192	1.392
+P16	inc3	del	SEM	0.421373	0.323300	1.303
+P16	inc3	del	PRN	0.018952	0.171580	0.110
+P16	inc3	del	FC	0.012711	0.270314	0.047
+P16	inc3	del	WMC	0.000734	0.000912	0.805
+P16	inc3	ins	SEM	0.462971	0.152172	3.042
+P16	inc3	ins	PRN	0.223009	3.109280	0.072
+P16	inc3	ins	FC	4.566333	6.752010	0.676
+P16	inc3	ins	WMC	0.008638	0.014085	0.613
+P16	inc5	del	SEM	0.349955	0.446609	0.784
+P16	inc5	del	PRN	0.014405	0.186543	0.077
+P16	inc5	del	FC	0.004417	0.270616	0.016
+P16	inc5	del	WMC	0.000938	0.000568	1.651
+P16	inc5	ins	SEM	0.508594	0.174257	2.919
+P16	inc5	ins	PRN	0.204950	3.235827	0.063
+P16	inc5	ins	FC	4.460447	5.459029	0.817
+P16	inc5	ins	WMC	0.009863	0.014142	0.697
+P17	inc1	del	SEM	0.563367	0.320419	1.758
+P17	inc1	del	PRN	0.074548	0.295499	0.252
+P17	inc1	del	FC	1.931425	0.485529	3.978
+P17	inc1	del	WMC	0.002555	0.002266	1.127
+P17	inc1	ins	SEM	0.706945	0.194515	3.634
+P17	inc1	ins	PRN	0.347290	3.660934	0.095
+P17	inc1	ins	FC	5.563075	19.813338	0.281
+P17	inc1	ins	WMC	0.013804	0.058472	0.236
+P17	inc3	del	SEM	0.655752	0.483841	1.355
+P17	inc3	del	PRN	0.026579	0.301017	0.088
+P17	inc3	del	FC	0.011251	0.476863	0.024
+P17	inc3	del	WMC	0.001455	0.001223	1.190
+P17	inc3	ins	SEM	0.748730	0.228624	3.275
+P17	inc3	ins	PRN	0.393068	5.742965	0.068
+P17	inc3	ins	FC	5.425321	14.902812	0.364
+P17	inc3	ins	WMC	0.011553	0.023136	0.499
+P17	inc5	del	SEM	0.486171	0.624983	0.778
+P17	inc5	del	PRN	0.018449	0.325221	0.057
+P17	inc5	del	FC	0.004870	0.482455	0.010
+P17	inc5	del	WMC	0.000717	0.000860	0.833
+P17	inc5	ins	SEM	0.721795	0.246373	2.930
+P17	inc5	ins	PRN	0.402241	6.181947	0.065
+P17	inc5	ins	FC	5.570104	14.949791	0.373
+P17	inc5	ins	WMC	0.012801	0.021163	0.605
+P18	inc1	del	SEM	0.754565	0.423318	1.783
+P18	inc1	del	PRN	0.086756	0.460928	0.188
+P18	inc1	del	FC	1.747355	0.834343	2.094
+P18	inc1	del	WMC	0.002963	0.002763	1.073
+P18	inc1	ins	SEM	0.967544	0.322139	3.003
+P18	inc1	ins	PRN	0.465934	6.895333	0.068
+P18	inc1	ins	FC	6.214961	13.276929	0.468
+P18	inc1	ins	WMC	0.019837	0.029997	0.661
+P18	inc3	del	SEM	0.606934	0.598993	1.013
+P18	inc3	del	PRN	0.028944	0.433830	0.067
+P18	inc3	del	FC	0.014180	0.722139	0.020
+P18	inc3	del	WMC	0.001012	0.001229	0.823
+P18	inc3	ins	SEM	0.960113	0.318369	3.016
+P18	inc3	ins	PRN	0.499270	9.463979	0.053
+P18	inc3	ins	FC	6.246413	12.458132	0.501
+P18	inc3	ins	WMC	0.024031	0.037025	0.649
+P18	inc5	del	SEM	0.623686	0.789984	0.789
+P18	inc5	del	PRN	0.025297	0.485870	0.052
+P18	inc5	del	FC	0.003978	0.747338	0.005
+P18	inc5	del	WMC	0.000955	0.001236	0.772
+P18	inc5	ins	SEM	0.945563	0.317627	2.977
+P18	inc5	ins	PRN	0.468633	10.946128	0.043
+P18	inc5	ins	FC	6.290194	14.004747	0.449
+P18	inc5	ins	WMC	0.026689	0.039889	0.669
+P19	inc1	del	SEM	1.004522	0.573492	1.752
+P19	inc1	del	PRN	0.088137	0.538242	0.164
+P19	inc1	del	FC	1.924228	1.130031	1.703
+P19	inc1	del	WMC	0.002473	0.002988	0.828
+P19	inc1	ins	SEM	1.185190	0.392632	3.019
+P19	inc1	ins	PRN	0.624903	12.627464	0.049
+P19	inc1	ins	FC	8.482758	14.194293	0.598
+P19	inc1	ins	WMC	0.030186	0.048400	0.624
+P19	inc3	del	SEM	0.864874	0.824897	1.048
+P19	inc3	del	PRN	0.040031	0.626829	0.064
+P19	inc3	del	FC	0.007506	1.069686	0.007
+P19	inc3	del	WMC	0.001245	0.001535	0.811
+P19	inc3	ins	SEM	1.192149	0.389017	3.065
+P19	inc3	ins	PRN	0.603274	16.214190	0.037
+P19	inc3	ins	FC	9.670271	17.783310	0.544
+P19	inc3	ins	WMC	0.036524	0.069072	0.529
+P19	inc5	del	SEM	0.687928	1.018640	0.675
+P19	inc5	del	PRN	0.017419	0.615711	0.028
+P19	inc5	del	FC	0.002628	1.143949	0.002
+P19	inc5	del	WMC	0.000931	0.001383	0.673
+P19	inc5	ins	SEM	1.196731	0.476608	2.511
+P19	inc5	ins	PRN	0.747791	16.738525	0.045
+P19	inc5	ins	FC	8.224507	11.234866	0.732
+P19	inc5	ins	WMC	0.030390	0.039476	0.770
+P20	inc1	del	SEM	0.896109	0.432936	2.070
+P20	inc1	del	PRN	0.491827	0.503938	0.976
+P20	inc1	del	FC	1.763112	1.419921	1.242
+P20	inc1	del	WMC	0.011130	0.012161	0.915
+P20	inc1	ins	SEM	1.013685	0.288688	3.511
+P20	inc1	ins	PRN	0.858867	0.971965	0.884
+P20	inc1	ins	FC	3.556236	4.636635	0.767
+P20	inc1	ins	WMC	0.020059	0.024584	0.816
+P20	inc3	del	SEM	0.808855	0.636448	1.271
+P20	inc3	del	PRN	0.206837	0.502045	0.412
+P20	inc3	del	FC	0.599805	1.711148	0.351
+P20	inc3	del	WMC	0.006115	0.006315	0.968
+P20	inc3	ins	SEM	0.966461	0.311388	3.104
+P20	inc3	ins	PRN	0.745503	1.870945	0.398
+P20	inc3	ins	FC	4.448927	55.166807	0.081
+P20	inc3	ins	WMC	0.014784	0.100308	0.147
+P20	inc5	del	SEM	0.806323	0.761576	1.059
+P20	inc5	del	PRN	0.170831	0.452100	0.378
+P20	inc5	del	FC	0.375276	1.866901	0.201
+P20	inc5	del	WMC	0.004248	0.004931	0.861
+P20	inc5	ins	SEM	1.050306	0.354827	2.960
+P20	inc5	ins	PRN	0.795247	2.332996	0.341
+P20	inc5	ins	FC	4.005914	91.531459	0.044
+P20	inc5	ins	WMC	0.020315	0.463985	0.044
+```
+
 #### 2026-01-09 (post-fix rerun)
+Legacy run: 2026-01-09 post-fix, inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_eval.
 ```tsv
 Case	Delta	Turn	Stage	Full_s	Inc_s	Speedup
 P1	inc1	del	SEM	0.150286	0.001311	114.649
@@ -1436,6 +3816,7 @@ P20	inc5	ins	WMC	0.018302	0.042977	0.426
 ```
 
 #### 2026-01-09 (pre-fix run)
+Legacy run: 2026-01-09 pre-fix, inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_eval.
 ```tsv
 Case	Delta	Turn	Stage	Full_s	Inc_s	Speedup
 P1	inc1	del	SEM	0.036916	0.107275	0.344
@@ -1896,9 +4277,337 @@ P20	inc5	ins	FC	4.488667	8.463204	0.530
 P20	inc5	ins	WMC	0.017387	0.019268	0.902
 ```
 
+### SEM summary (avg ΔE/|E| + avg times)
+Avg ΔE/|E| uses applyDelta rule-app counts (pre-prune) and apply_delta_graph totalEdges (post-applyDelta, pre-prune). Speedup = AvgFull / AvgInc.
+#### 2026-01-11 (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_trimmed_eval_small.
+```tsv
+DeltaPct	Turn	AvgFullSem_s	AvgIncSem_s	AvgSpeedup	AvgDeltaEdgeRatio_pct
+0.001	ins	0.12	0.02	4.74	9.8
+0.001	del	0.10	0.02	4.47	10.9
+0.003	ins	0.11	0.03	3.71	24.7
+0.003	del	0.09	0.03	3.35	32.7
+0.005	ins	0.11	0.03	3.55	33.9
+0.005	del	0.08	0.03	2.48	51.2
+```
+#### 2026-01-11 (full ruleset, det-opt, apply_delta_graph)
+Run: 2026-01-11, full ruleset, det-opt, apply_delta_graph, inc1/inc3/inc5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_eval.
+```tsv
+DeltaPct	Turn	AvgFullSem_s	AvgIncSem_s	AvgSpeedup	AvgDeltaEdgeRatio_pct
+0.01	ins	0.27	0.10	2.60	47.4
+0.01	del	0.23	0.16	1.46	90.2
+0.03	ins	0.26	0.15	1.74	67.1
+0.03	del	0.19	0.31	0.62	204.3
+0.05	ins	0.26	0.19	1.36	75.0
+0.05	del	0.17	0.42	0.41	300.1
+```
+
+#### 2026-01-11 (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph)
+Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc1/inc3/inc5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_trimmed_eval.
+```tsv
+DeltaPct	Turn	AvgFullSem_s	AvgIncSem_s	AvgSpeedup	AvgDeltaEdgeRatio_pct
+0.01	ins	0.12	0.04	2.69	47.6
+0.01	del	0.08	0.04	1.95	90.9
+0.03	ins	0.12	0.05	2.56	67.7
+0.03	del	0.07	0.05	1.51	209.6
+0.05	ins	0.12	0.05	2.18	75.4
+0.05	del	0.05	0.05	1.03	306.1
+```
+
+Delete SEM speedup (mean/median of per-case Full_SEM/Inc_SEM, delete turns).
+```tsv
+Delta	FullMean	FullMedian	TrimmedMean	TrimmedMedian
+inc1	1.107	1.380	1.663	1.642
+inc3	0.522	0.555	1.224	0.884
+inc5	0.379	0.381	0.708	0.795
+```
+
+Delete SEM speedup (mean/median of per-case Full_SEM/Inc_SEM, delete turns; trimmed 0.1/0.3/0.5%).
+```tsv
+Delta	TrimmedMean	TrimmedMedian
+inc0p1	3.591	4.412
+inc0p3	2.803	2.821
+inc0p5	2.310	2.179
+```
+
+### SEM speedup vs DeltaE/|E| scatter (0.05s filter, trimmed 0.1/0.3/0.5%)
+Points include both del/ins turns with Full_SEM_s and Inc_SEM_s >= 0.05s to reduce
+fixed-overhead noise. Colors: delete=blue, insert=orange. The gray dashed curve
+is the ideal 1/(DeltaE/|E|) relationship (clipped for visibility).
+Plot: `img/sem_speedup_vs_delta_ratio_filtered_50ms/sem_speedup_vs_delta_ratio_filtered_50ms_by_turn_with_ideal_nofit.png`.
+Summary table: `img/sem_speedup_vs_delta_ratio_filtered_50ms/sem_speedup_vs_delta_ratio_filtered_50ms_summary.tsv`.
+Source table + script: `img/sem_speedup_vs_delta_ratio_filtered_50ms/semnaive-sem-delta-ratio.tsv`,
+`img/sem_speedup_vs_delta_ratio_filtered_50ms/plot_sem_speedup_vs_delta_ratio_filtered_50ms.py`.
+
+Legacy SEM summary tables below are pre apply_delta_graph (ΔE/|E| used pruned view edges).
+
+#### 2026-01-11 (full ruleset, det-opt)
+Legacy run: 2026-01-11, full ruleset, det-opt, pre apply_delta_graph; ΔE/|E| uses pruned view edges (do not compare).
+```tsv
+DeltaPct	Turn	AvgFullSem_s	AvgIncSem_s	AvgSpeedup	AvgDeltaEdgeRatio_pct
+0.01	ins	0.27	0.08	3.24	70.9
+0.01	del	0.22	0.13	1.74	197.3
+0.03	ins	0.26	0.08	3.08	100.3
+0.03	del	0.20	0.18	1.14	704.8
+0.05	ins	0.27	0.09	2.87	112.1
+0.05	del	0.18	0.22	0.79	1486.0
+```
+
 ### SEM del/ins time (inc vs full)
-Speedup = Full_SEM_s / Inc_SEM_s (>1.0 means inc faster).
+Speedup = Full_SEM_s / Inc_SEM_s (>1.0 means inc faster). DelDeltaEdgeRatio/InsDeltaEdgeRatio = ΔE/|E| (fraction) using apply_delta_graph totalEdges.
+#### 2026-01-11 (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_trimmed_eval_small.
+```tsv
+Case	Delta	IncDelSem_s	FullDelSem_s	DelSpeedup	DelDeltaEdgeRatio	IncInsSem_s	FullInsSem_s	InsSpeedup	InsDeltaEdgeRatio
+P1	inc0p1	0.001337	0.004462	3.337	0.000000	0.000877	0.004459	5.084	0.000000
+P1	inc0p3	0.001294	0.004789	3.701	0.000000	0.001761	0.004914	2.790	0.000000
+P1	inc0p5	0.001850	0.004895	2.646	0.000000	0.002201	0.004703	2.137	0.000000
+P3	inc0p1	0.000877	0.004446	5.070	0.000000	0.000889	0.004410	4.961	0.000000
+P3	inc0p3	0.001602	0.004418	2.758	0.000000	0.000746	0.004350	5.831	0.000000
+P3	inc0p5	0.000926	0.004419	4.772	0.000000	0.000925	0.004451	4.812	0.000000
+P4	inc0p1	0.000909	0.000266	0.293	0.000000	0.001761	0.000301	0.171	0.000000
+P4	inc0p3	0.000792	0.000248	0.313	0.000000	0.001131	0.000236	0.209	0.000000
+P4	inc0p5	0.002054	0.000253	0.123	0.000000	0.000441	0.000229	0.519	0.000000
+P5	inc0p1	0.001177	0.000268	0.228	0.833333	0.001045	0.000318	0.304	0.454545
+P5	inc0p3	0.000621	0.000242	0.390	0.833333	0.002492	0.000304	0.122	0.454545
+P5	inc0p5	0.000803	0.000253	0.315	0.833333	0.002410	0.000318	0.132	0.454545
+P6	inc0p1	0.001169	0.000451	0.386	0.016667	0.001046	0.000409	0.391	0.016393
+P6	inc0p3	0.002456	0.000465	0.189	0.016667	0.002647	0.000420	0.159	0.016393
+P6	inc0p5	0.001437	0.000468	0.326	0.016667	0.002191	0.000529	0.241	0.016393
+P7	inc0p1	0.001997	0.001030	0.516	0.023952	0.001919	0.000996	0.519	0.023392
+P7	inc0p3	0.002429	0.001064	0.438	0.023952	0.001320	0.001063	0.805	0.023392
+P7	inc0p5	0.001371	0.001088	0.794	0.266667	0.001967	0.001249	0.635	0.210526
+P8	inc0p1	0.001457	0.001715	1.177	0.000000	0.001040	0.001491	1.434	0.000000
+P8	inc0p3	0.001795	0.001634	0.910	0.000000	0.001229	0.001525	1.241	0.000000
+P8	inc0p5	0.002366	0.001611	0.681	0.055147	0.001306	0.001529	1.171	0.052265
+P9	inc0p1	0.001286	0.001257	0.977	0.034653	0.001156	0.001407	1.217	0.033493
+P9	inc0p3	0.002341	0.001222	0.522	0.034653	0.001924	0.001107	0.575	0.033493
+P9	inc0p5	0.001289	0.001198	0.929	0.050251	0.002088	0.001103	0.528	0.047847
+P10	inc0p1	0.003102	0.017382	5.603	0.065356	0.008052	0.016505	2.050	0.061347
+P10	inc0p3	0.004797	0.014270	2.975	0.268917	0.006660	0.016878	2.534	0.211926
+P10	inc0p5	0.006738	0.013707	2.034	0.438001	0.005310	0.016625	3.131	0.304590
+P11	inc0p1	0.009417	0.014945	1.587	0.157264	0.003209	0.016825	5.243	0.135893
+P11	inc0p3	0.004124	0.013123	3.182	0.317794	0.006339	0.015848	2.500	0.241156
+P11	inc0p5	0.005800	0.014515	2.503	0.875405	0.005728	0.019501	3.405	0.466782
+P12	inc0p1	0.003384	0.014929	4.412	0.028889	0.003251	0.012602	3.876	0.028078
+P12	inc0p3	0.003490	0.013814	3.958	0.050363	0.003236	0.013780	4.258	0.047948
+P12	inc0p5	0.003690	0.013045	3.535	0.070768	0.002218	0.013609	6.136	0.066091
+P13	inc0p1	0.004762	0.029434	6.181	0.025583	0.004537	0.024921	5.493	0.024945
+P13	inc0p3	0.004828	0.026197	5.426	0.061138	0.005028	0.028873	5.742	0.057616
+P13	inc0p5	0.005810	0.021999	3.786	0.146545	0.005834	0.027698	4.748	0.127815
+P14	inc0p1	0.004783	0.040013	8.366	0.025544	0.004882	0.044723	9.161	0.024907
+P14	inc0p3	0.005703	0.040072	7.026	0.066235	0.005614	0.041167	7.333	0.062120
+P14	inc0p5	0.007684	0.041958	5.460	0.119316	0.007388	0.042660	5.774	0.106597
+P15	inc0p1	0.018486	0.108737	5.882	0.067141	0.034138	0.110210	3.228	0.062917
+P15	inc0p3	0.028815	0.095775	3.324	0.211377	0.025520	0.111738	4.378	0.174493
+P15	inc0p5	0.034535	0.075237	2.179	0.273417	0.027915	0.097734	3.501	0.214711
+P16	inc0p1	0.030880	0.163779	5.304	0.087447	0.037250	0.196405	5.273	0.080415
+P16	inc0p3	0.060967	0.162215	2.661	0.339298	0.065006	0.201602	3.101	0.253340
+P16	inc0p5	0.059488	0.137573	2.313	0.632186	0.059098	0.181818	3.077	0.387325
+P17	inc0p1	0.049873	0.281173	5.638	0.114130	0.064152	0.327089	5.099	0.102439
+P17	inc0p3	0.062241	0.237279	3.812	0.286050	0.067742	0.328813	4.854	0.222426
+P17	inc0p5	0.085284	0.206403	2.420	0.512088	0.080864	0.325402	4.024	0.338663
+P18	inc0p1	0.075882	0.359826	4.742	0.144294	0.078139	0.396444	5.074	0.126099
+P18	inc0p3	0.112652	0.317769	2.821	0.580826	0.123031	0.379968	3.088	0.367419
+P18	inc0p5	0.127900	0.272955	2.134	0.945548	0.131476	0.392006	2.982	0.486006
+P19	inc0p1	0.140386	0.458766	3.268	0.213032	0.162099	0.567848	3.503	0.175619
+P19	inc0p3	0.162682	0.394764	2.427	0.651683	0.178437	0.507724	2.845	0.394557
+P19	inc0p5	0.205365	0.362572	1.766	0.959832	0.177267	0.527415	2.975	0.489752
+P20	inc0p1	0.084684	0.445935	5.266	0.019362	0.064647	0.522146	8.077	0.018994
+P20	inc0p3	0.073470	0.471718	6.421	0.058172	0.070169	0.457180	6.515	0.054974
+P20	inc0p5	0.075693	0.391553	5.173	0.112589	0.081904	0.464711	5.674	0.101196
+```
+#### 2026-01-11 (full ruleset, det-opt, apply_delta_graph)
+Run: 2026-01-11, full ruleset, det-opt, apply_delta_graph, inc1/inc3/inc5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_eval.
+```tsv
+Case	Delta	IncDelSem_s	FullDelSem_s	DelSpeedup	DelDeltaEdgeRatio	IncInsSem_s	FullInsSem_s	InsSpeedup	InsDeltaEdgeRatio
+P1	inc1	0.005426	0.005949	1.096	0.000000	0.001506	0.005568	3.697	0.000000
+P1	inc3	0.019603	0.004767	0.243	0.000000	0.003737	0.004770	1.276	0.000000
+P1	inc5	0.018827	0.001490	0.079	0.000000	0.013487	0.004413	0.327	0.000000
+P3	inc1	0.018805	0.002377	0.126	0.000000	0.006261	0.004394	0.702	0.000000
+P3	inc3	0.019016	0.002250	0.118	1.000000	0.006041	0.004686	0.776	0.500000
+P3	inc5	0.014696	0.001073	0.073	1.000000	0.010542	0.004469	0.424	0.500000
+P4	inc1	0.001842	0.000342	0.186	0.000000	0.002716	0.000308	0.113	0.000000
+P4	inc3	0.002448	0.000335	0.137	0.000000	0.002428	0.000406	0.167	0.000000
+P4	inc5	0.002118	0.000382	0.180	0.000000	0.001917	0.000315	0.164	0.000000
+P5	inc1	0.001689	0.000265	0.157	0.650000	0.001391	0.000306	0.220	0.393939
+P5	inc3	0.001198	0.000281	0.235	0.650000	0.001429	0.000388	0.272	0.393939
+P5	inc5	0.000921	0.000184	0.200	2.300000	0.001943	0.000319	0.164	0.696970
+P6	inc1	0.006285	0.000745	0.119	0.015873	0.003410	0.000752	0.221	0.015625
+P6	inc3	0.004428	0.000887	0.200	0.361702	0.002372	0.000731	0.308	0.265625
+P6	inc5	0.003109	0.000648	0.208	0.454545	0.003838	0.000744	0.194	0.312500
+P7	inc1	0.004001	0.001875	0.469	0.095808	0.008006	0.001939	0.242	0.087432
+P7	inc3	0.003866	0.001825	0.472	0.220000	0.005045	0.002089	0.414	0.180328
+P7	inc5	0.004204	0.001733	0.412	0.335766	0.003515	0.001962	0.558	0.251366
+P8	inc1	0.004240	0.005327	1.256	0.178571	0.002971	0.004307	1.450	0.151515
+P8	inc3	0.006255	0.004764	0.762	0.470297	0.003714	0.005635	1.517	0.319865
+P8	inc5	0.007586	0.003227	0.425	0.800000	0.006153	0.004233	0.688	0.444444
+P9	inc1	0.003866	0.002239	0.579	0.327273	0.003623	0.002551	0.704	0.246575
+P9	inc3	0.008827	0.002331	0.264	0.825000	0.003432	0.002559	0.746	0.452055
+P9	inc5	0.006254	0.001970	0.315	1.009174	0.003404	0.002433	0.715	0.502283
+P10	inc1	0.016401	0.022626	1.380	0.937862	0.013756	0.029375	2.135	0.483968
+P10	inc3	0.018088	0.016200	0.896	3.773469	0.015238	0.025992	1.706	0.790509
+P10	inc5	0.018954	0.015023	0.793	5.879412	0.015600	0.027699	1.776	0.854639
+P11	inc1	0.012252	0.019965	1.630	0.989700	0.010427	0.026763	2.567	0.497412
+P11	inc3	0.015371	0.016677	1.085	4.028200	0.014536	0.028387	1.953	0.801122
+P11	inc5	0.017463	0.016679	0.955	4.824121	0.013835	0.025602	1.851	0.828300
+P12	inc1	0.022958	0.042451	1.849	0.175101	0.015938	0.045460	2.852	0.149009
+P12	inc3	0.053465	0.035452	0.663	0.569980	0.031985	0.049778	1.556	0.363049
+P12	inc5	0.079825	0.030687	0.384	1.124428	0.032396	0.043567	1.345	0.529285
+P13	inc1	0.048741	0.073189	1.502	0.258324	0.025728	0.085161	3.310	0.205292
+P13	inc3	0.123701	0.066443	0.537	0.860895	0.057483	0.083246	1.448	0.462624
+P13	inc5	0.156645	0.054103	0.345	1.546322	0.060950	0.084723	1.390	0.607277
+P14	inc1	0.070215	0.131847	1.878	0.370837	0.041328	0.133311	3.226	0.270519
+P14	inc3	0.162903	0.098265	0.603	0.974261	0.066679	0.126148	1.892	0.493481
+P14	inc5	0.247546	0.094283	0.381	1.679635	0.089933	0.130085	1.446	0.626815
+P15	inc1	0.181820	0.265276	1.459	0.641602	0.102930	0.299944	2.914	0.390839
+P15	inc3	0.387001	0.214627	0.555	2.248791	0.182655	0.276546	1.514	0.692193
+P15	inc5	0.504491	0.188237	0.373	3.303631	0.240085	0.289823	1.207	0.767638
+P16	inc1	0.319361	0.448604	1.405	1.149078	0.214506	0.516224	2.407	0.534684
+P16	inc3	0.642074	0.382780	0.596	2.706541	0.290410	0.511636	1.762	0.730207
+P16	inc5	0.820305	0.319658	0.390	3.939064	0.406757	0.468832	1.153	0.797532
+P17	inc1	0.418753	0.626876	1.497	1.230383	0.280982	0.710549	2.529	0.551647
+P17	inc3	0.925038	0.501872	0.543	2.894184	0.443286	0.715911	1.615	0.743207
+P17	inc5	1.099398	0.486997	0.443	4.121659	0.499823	0.680069	1.361	0.804751
+P18	inc1	0.568449	0.733412	1.290	1.455688	0.379410	0.909348	2.397	0.592782
+P18	inc3	1.043887	0.650327	0.623	3.172946	0.509513	0.933957	1.833	0.760361
+P18	inc5	1.499644	0.608425	0.406	4.523691	0.655736	0.975995	1.488	0.818962
+P19	inc1	0.734954	1.026818	1.397	1.785124	0.520638	1.299704	2.496	0.640950
+P19	inc3	1.423235	0.862460	0.606	3.689343	0.732256	1.180612	1.612	0.786750
+P19	inc5	1.994920	0.722430	0.362	5.164391	0.891869	1.196871	1.342	0.837778
+P20	inc1	0.519754	0.912271	1.755	0.216332	0.322497	1.005359	3.117	0.177856
+P20	inc3	1.009805	0.790884	0.783	0.707793	0.480662	1.002361	2.085	0.414449
+P20	inc5	1.524599	0.729993	0.479	1.219568	0.636884	0.928317	1.458	0.549462
+```
+
+#### 2026-01-11 (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph)
+Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc1/inc3/inc5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_trimmed_eval.
+```tsv
+Case	Delta	IncDelSem_s	FullDelSem_s	DelSpeedup	DelDeltaEdgeRatio	IncInsSem_s	FullInsSem_s	InsSpeedup	InsDeltaEdgeRatio
+P1	inc1	0.002514	0.004743	1.887	0.000000	0.000987	0.004392	4.448	0.000000
+P1	inc3	0.000980	0.004344	4.431	0.000000	0.001215	0.004562	3.755	0.000000
+P1	inc5	0.019502	0.001337	0.069	0.000000	0.008072	0.004464	0.553	0.000000
+P3	inc1	0.019236	0.002458	0.128	0.000000	0.006778	0.004907	0.724	0.000000
+P3	inc3	0.018872	0.002005	0.106	0.000000	0.006775	0.004519	0.667	0.000000
+P3	inc5	0.019515	0.001783	0.091	0.000000	0.007456	0.006603	0.886	0.000000
+P4	inc1	0.002511	0.000242	0.096	0.266667	0.001367	0.000261	0.191	0.210526
+P4	inc3	0.001048	0.000228	0.218	0.266667	0.000871	0.000344	0.395	0.210526
+P4	inc5	0.000539	0.000234	0.434	0.357143	0.002628	0.000234	0.089	0.263158
+P5	inc1	0.001770	0.000298	0.169	0.178571	0.001114	0.000299	0.268	0.151515
+P5	inc3	0.001214	0.000295	0.243	0.178571	0.002563	0.000395	0.154	0.151515
+P5	inc5	0.002252	0.000311	0.138	0.434783	0.001292	0.000355	0.275	0.303030
+P6	inc1	0.001690	0.000494	0.292	0.000000	0.001266	0.000417	0.329	0.000000
+P6	inc3	0.001962	0.000387	0.197	0.525000	0.001318	0.000516	0.392	0.344262
+P6	inc5	0.001505	0.000388	0.258	0.564103	0.001223	0.000491	0.402	0.360656
+P7	inc1	0.001241	0.000918	0.740	0.155405	0.001470	0.000986	0.671	0.134503
+P7	inc3	0.001814	0.001008	0.556	0.390244	0.001994	0.001194	0.599	0.280702
+P7	inc5	0.004235	0.000777	0.184	0.628571	0.002830	0.001042	0.368	0.385965
+P8	inc1	0.001447	0.001619	1.119	0.121094	0.001378	0.002586	1.877	0.108014
+P8	inc3	0.001548	0.001140	0.736	0.839744	0.001501	0.001791	1.193	0.456446
+P8	inc5	0.002834	0.001054	0.372	1.296000	0.002585	0.001975	0.764	0.564460
+P9	inc1	0.001394	0.001463	1.050	0.094241	0.001204	0.001239	1.029	0.086124
+P9	inc3	0.002986	0.001117	0.374	0.148352	0.001173	0.001157	0.986	0.129187
+P9	inc5	0.001262	0.000989	0.784	0.402685	0.001295	0.001137	0.878	0.287081
+P10	inc1	0.006068	0.010677	1.760	1.034031	0.005938	0.017543	2.955	0.508366
+P10	inc3	0.007867	0.007039	0.895	4.420930	0.010369	0.016966	1.636	0.815530
+P10	inc5	0.008821	0.006235	0.707	5.334239	0.009525	0.014899	1.564	0.842128
+P11	inc1	0.007544	0.011549	1.531	1.379877	0.006399	0.021025	3.286	0.579810
+P11	inc3	0.007554	0.006676	0.884	5.817647	0.007536	0.019375	2.571	0.853322
+P11	inc5	0.008546	0.006796	0.795	7.133333	0.008368	0.019100	2.282	0.877049
+P12	inc1	0.004136	0.013257	3.205	0.203848	0.003676	0.012471	3.393	0.169330
+P12	inc3	0.005048	0.011190	2.217	0.574830	0.004250	0.018049	4.247	0.365011
+P12	inc5	0.006657	0.009671	1.453	0.980325	0.005519	0.017568	3.183	0.495032
+P13	inc1	0.007896	0.033115	4.194	0.284378	0.006199	0.039622	6.391	0.221413
+P13	inc3	0.010539	0.020484	1.944	1.022321	0.009800	0.033269	3.395	0.505519
+P13	inc5	0.012813	0.012205	0.953	1.879847	0.010787	0.035694	3.309	0.652759
+P14	inc1	0.013184	0.038203	2.898	0.384158	0.011808	0.062351	5.280	0.277539
+P14	inc3	0.023567	0.019084	0.810	1.433261	0.019502	0.039272	2.014	0.589029
+P14	inc5	0.017414	0.017785	1.021	2.379259	0.016584	0.048149	2.903	0.704077
+P15	inc1	0.035372	0.083113	2.350	0.495016	0.043150	0.119745	2.775	0.331111
+P15	inc3	0.043043	0.064004	1.487	1.650000	0.046392	0.095203	2.052	0.622642
+P15	inc5	0.045516	0.045485	0.999	3.527296	0.051747	0.113216	2.188	0.779118
+P16	inc1	0.072585	0.147153	2.027	1.248117	0.076654	0.259013	3.379	0.555183
+P16	inc3	0.075636	0.090289	1.194	2.651052	0.097046	0.217355	2.240	0.726106
+P16	inc5	0.083557	0.068150	0.816	3.889710	0.101574	0.216881	2.135	0.795489
+P17	inc1	0.099465	0.175295	1.762	1.412578	0.123004	0.350136	2.847	0.585506
+P17	inc3	0.123260	0.134602	1.092	3.419594	0.136419	0.303583	2.225	0.773735
+P17	inc5	0.133294	0.119744	0.898	4.477654	0.137578	0.310351	2.256	0.817440
+P18	inc1	0.165667	0.271961	1.642	1.579121	0.162323	0.389432	2.399	0.612271
+P18	inc3	0.171126	0.151291	0.884	3.327010	0.167023	0.462724	2.770	0.768894
+P18	inc5	0.163466	0.138465	0.847	4.492256	0.183545	0.420255	2.290	0.817925
+P19	inc1	0.229725	0.355481	1.547	1.630072	0.270420	0.548455	2.028	0.619782
+P19	inc3	0.228191	0.198553	0.870	3.646377	0.266115	0.502165	1.887	0.784779
+P19	inc5	0.193918	0.212476	1.096	4.706941	0.294687	0.488407	1.657	0.824775
+P20	inc1	0.127433	0.408499	3.206	0.201518	0.122291	0.446217	3.649	0.167719
+P20	inc3	0.145318	0.598049	4.115	0.713965	0.129668	0.610870	4.711	0.416558
+P20	inc5	0.198381	0.303287	1.529	1.255291	0.191767	0.566586	2.955	0.556598
+```
+
+Legacy tables below omit ΔE/|E| columns and were collected before apply_delta_graph logging.
+#### 2026-01-11 (full ruleset, det-opt)
+Legacy run: 2026-01-11, full ruleset, det-opt, pre apply_delta_graph; ΔE/|E| uses pruned view edges (do not compare).
+```tsv
+Case	Delta	IncDelSem_s	FullDelSem_s	DelSpeedup	IncInsSem_s	FullInsSem_s	InsSpeedup
+P1	inc1	0.001509	0.004251	2.817	0.005950	0.004478	0.753
+P1	inc3	0.007915	0.003155	0.399	0.001304	0.004452	3.414
+P1	inc5	0.010097	0.001473	0.146	0.002672	0.004766	1.784
+P3	inc1	0.015203	0.002297	0.151	0.003420	0.004700	1.374
+P3	inc3	0.011148	0.002324	0.208	0.001191	0.004608	3.869
+P3	inc5	0.009461	0.001052	0.111	0.002811	0.004785	1.702
+P4	inc1	0.004944	0.000302	0.061	0.001038	0.000442	0.426
+P4	inc3	0.002161	0.000312	0.144	0.002006	0.000325	0.162
+P4	inc5	0.001742	0.000392	0.225	0.002253	0.000307	0.136
+P5	inc1	0.006048	0.000242	0.040	0.003256	0.000302	0.093
+P5	inc3	0.001235	0.000261	0.211	0.002696	0.000304	0.113
+P5	inc5	0.001952	0.000204	0.105	0.003192	0.000320	0.100
+P6	inc1	0.013218	0.000831	0.063	0.004374	0.000879	0.201
+P6	inc3	0.012503	0.000724	0.058	0.008265	0.000723	0.087
+P6	inc5	0.004099	0.000676	0.165	0.005760	0.000741	0.129
+P7	inc1	0.014671	0.002124	0.145	0.004589	0.002021	0.440
+P7	inc3	0.004234	0.002022	0.478	0.007001	0.002694	0.385
+P7	inc5	0.002656	0.001698	0.639	0.001980	0.002232	1.127
+P8	inc1	0.022280	0.003797	0.170	0.007588	0.004016	0.529
+P8	inc3	0.007939	0.003454	0.435	0.006126	0.003848	0.628
+P8	inc5	0.006612	0.004138	0.626	0.002592	0.004168	1.608
+P9	inc1	0.018669	0.002218	0.119	0.007336	0.002604	0.355
+P9	inc3	0.010515	0.002041	0.194	0.005795	0.002537	0.438
+P9	inc5	0.006511	0.002015	0.309	0.003643	0.002585	0.710
+P10	inc1	0.020477	0.020981	1.025	0.013681	0.026745	1.955
+P10	inc3	0.013988	0.016264	1.163	0.017276	0.026539	1.536
+P10	inc5	0.017872	0.016651	0.932	0.014015	0.027808	1.984
+P11	inc1	0.018087	0.020579	1.138	0.011481	0.031059	2.705
+P11	inc3	0.016069	0.018832	1.172	0.014512	0.028418	1.958
+P11	inc5	0.016590	0.015537	0.937	0.013775	0.026677	1.937
+P12	inc1	0.024790	0.049613	2.001	0.011840	0.045153	3.814
+P12	inc3	0.029860	0.037833	1.267	0.013767	0.047211	3.429
+P12	inc5	0.041353	0.032127	0.777	0.010736	0.050788	4.731
+P13	inc1	0.039754	0.079615	2.003	0.019020	0.089094	4.684
+P13	inc3	0.056309	0.068048	1.208	0.019942	0.093261	4.677
+P13	inc5	0.091148	0.056393	0.619	0.022039	0.082277	3.733
+P14	inc1	0.057824	0.108704	1.880	0.028363	0.133728	4.715
+P14	inc3	0.094255	0.097584	1.035	0.031611	0.131120	4.148
+P14	inc5	0.120522	0.084118	0.698	0.034240	0.126602	3.697
+P15	inc1	0.174149	0.273208	1.569	0.112487	0.307830	2.737
+P15	inc3	0.222286	0.229333	1.032	0.083295	0.300941	3.613
+P15	inc5	0.294825	0.216101	0.733	0.095902	0.372062	3.880
+P16	inc1	0.242774	0.425021	1.751	0.134090	0.551677	4.114
+P16	inc3	0.323300	0.421373	1.303	0.152172	0.462971	3.042
+P16	inc5	0.446609	0.349955	0.784	0.174257	0.508594	2.919
+P17	inc1	0.320419	0.563367	1.758	0.194515	0.706945	3.634
+P17	inc3	0.483841	0.655752	1.355	0.228624	0.748730	3.275
+P17	inc5	0.624983	0.486171	0.778	0.246373	0.721795	2.930
+P18	inc1	0.423318	0.754565	1.783	0.322139	0.967544	3.003
+P18	inc3	0.598993	0.606934	1.013	0.318369	0.960113	3.016
+P18	inc5	0.789984	0.623686	0.789	0.317627	0.945563	2.977
+P19	inc1	0.573492	1.004522	1.752	0.392632	1.185190	3.019
+P19	inc3	0.824897	0.864874	1.048	0.389017	1.192149	3.065
+P19	inc5	1.018640	0.687928	0.675	0.476608	1.196731	2.511
+P20	inc1	0.432936	0.896109	2.070	0.288688	1.013685	3.511
+P20	inc3	0.636448	0.808855	1.271	0.311388	0.966461	3.104
+P20	inc5	0.761576	0.806323	1.059	0.354827	1.050306	2.960
+```
 #### 2026-01-10 (full ruleset, equal_assign)
+Legacy run: 2026-01-10, full ruleset (equal_assign), inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_eval.
 ```tsv
 Case	Delta	IncDelSem_s	FullDelSem_s	DelSpeedup	IncInsSem_s	FullInsSem_s	InsSpeedup
 P1	inc1	0.003080	0.308619	100.193	0.001686	0.374344	221.972
@@ -1961,6 +4670,7 @@ P20	inc5	18.150697	18.968011	1.045	4.724020	23.712349	5.020
 ```
 
 #### 2026-01-10 (trimmed ruleset, no equal_assign)
+Legacy run: 2026-01-10, trimmed ruleset (no equal_assign), inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_trimmed_eval.
 ```tsv
 Case	Delta	IncDelSem_s	FullDelSem_s	DelSpeedup	IncInsSem_s	FullInsSem_s	InsSpeedup
 P1	inc1	0.001535	0.385245	250.984	0.001224	0.521563	426.080
@@ -2023,9 +4733,11 @@ P20	inc5	0.150087	0.471920	3.144	0.149270	0.609385	4.082
 ```
 
 ### Pre-prune delta edge ratios (apply_delta_view / total edges)
+Legacy run: pre apply_delta_graph; ratios based on apply_delta_view vs pruned total edges (do not compare).
 DeltaEdges come from apply_delta_view (pre-prune); total edges come from dumpStatisticsInc (full graph).
 Delete ratios can exceed 1.0 when removed edges outnumber the remaining edges after the delete turn.
 #### 2026-01-10 (full ruleset, equal_assign)
+Legacy run: 2026-01-10, full ruleset (equal_assign), inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_eval.
 Collected via `--dumpstat --derv-only=true` to read dumpStatisticsInc totals.
 ```tsv
 Case	Delta	DelEdges	DelTotalEdges	DelEdgeRatio	InsEdges	InsTotalEdges	InsEdgeRatio
@@ -2089,6 +4801,7 @@ P20	inc5	800432	3708454	0.215840	800432	4508886	0.177523
 ```
 
 #### 2026-01-10 (trimmed ruleset, no equal_assign)
+Legacy run: 2026-01-10, trimmed ruleset (no equal_assign), inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_trimmed_eval.
 ```tsv
 Case	Delta	DelEdges	DelTotalEdges	DelEdgeRatio	InsEdges	InsTotalEdges	InsEdgeRatio
 P1	inc1	0	88699	0.000000	0	88699	0.000000
@@ -2150,9 +4863,375 @@ P20	inc3	19980	74244	0.269113	19980	94224	0.212048
 P20	inc5	27193	67031	0.405678	27193	94224	0.288600
 ```
 
+### SEMINAIVE stage vs delta counts (ApplyDeltaOps + ΔE/|E|)
+DeltaRuleApps uses applyDelta (pre-prune) counts, so del/ins are symmetric in this dataset: deleted tuples do not retain alternative derivations and are reinserted verbatim.
+As of 2026-01-11, GraphEdges uses `apply_delta_graph` (post-applyDelta, pre-prune) full-graph totals; earlier tables that used pruned view totals are legacy-only.
+#### 2026-01-11 (full ruleset, det-opt, apply_delta_graph)
+Run: 2026-01-11, full ruleset, det-opt, apply_delta_graph, inc1/inc3/inc5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_eval.
+```tsv
+Case	Delta	Turn	Full_SEM_s	Inc_SEM_s	Speedup	DeltaRuleApps	GraphEdges	DeltaEdgeRatio
+P1	inc1	del	0.005949	0.005426	1.096	0	58	0.000000
+P1	inc1	ins	0.005568	0.001506	3.697	0	58	0.000000
+P1	inc3	del	0.004767	0.019603	0.243	0	58	0.000000
+P1	inc3	ins	0.004770	0.003737	1.276	0	58	0.000000
+P1	inc5	del	0.001490	0.018827	0.079	0	58	0.000000
+P1	inc5	ins	0.004413	0.013487	0.327	0	58	0.000000
+P3	inc1	del	0.002377	0.018805	0.126	0	58	0.000000
+P3	inc1	ins	0.004394	0.006261	0.702	0	58	0.000000
+P3	inc3	del	0.002250	0.019016	0.118	29	29	1.000000
+P3	inc3	ins	0.004686	0.006041	0.776	29	58	0.500000
+P3	inc5	del	0.001073	0.014696	0.073	29	29	1.000000
+P3	inc5	ins	0.004469	0.010542	0.424	29	58	0.500000
+P4	inc1	del	0.000342	0.001842	0.186	0	19	0.000000
+P4	inc1	ins	0.000308	0.002716	0.113	0	19	0.000000
+P4	inc3	del	0.000335	0.002448	0.137	0	19	0.000000
+P4	inc3	ins	0.000406	0.002428	0.167	0	19	0.000000
+P4	inc5	del	0.000382	0.002118	0.180	0	19	0.000000
+P4	inc5	ins	0.000315	0.001917	0.164	0	19	0.000000
+P5	inc1	del	0.000265	0.001689	0.157	13	20	0.650000
+P5	inc1	ins	0.000306	0.001391	0.220	13	33	0.393939
+P5	inc3	del	0.000281	0.001198	0.235	13	20	0.650000
+P5	inc3	ins	0.000388	0.001429	0.272	13	33	0.393939
+P5	inc5	del	0.000184	0.000921	0.200	23	10	2.300000
+P5	inc5	ins	0.000319	0.001943	0.164	23	33	0.696970
+P6	inc1	del	0.000745	0.006285	0.119	1	63	0.015873
+P6	inc1	ins	0.000752	0.003410	0.221	1	64	0.015625
+P6	inc3	del	0.000887	0.004428	0.200	17	47	0.361702
+P6	inc3	ins	0.000731	0.002372	0.308	17	64	0.265625
+P6	inc5	del	0.000648	0.003109	0.208	20	44	0.454545
+P6	inc5	ins	0.000744	0.003838	0.194	20	64	0.312500
+P7	inc1	del	0.001875	0.004001	0.469	16	167	0.095808
+P7	inc1	ins	0.001939	0.008006	0.242	16	183	0.087432
+P7	inc3	del	0.001825	0.003866	0.472	33	150	0.220000
+P7	inc3	ins	0.002089	0.005045	0.414	33	183	0.180328
+P7	inc5	del	0.001733	0.004204	0.412	46	137	0.335766
+P7	inc5	ins	0.001962	0.003515	0.558	46	183	0.251366
+P8	inc1	del	0.005327	0.004240	1.256	45	252	0.178571
+P8	inc1	ins	0.004307	0.002971	1.450	45	297	0.151515
+P8	inc3	del	0.004764	0.006255	0.762	95	202	0.470297
+P8	inc3	ins	0.005635	0.003714	1.517	95	297	0.319865
+P8	inc5	del	0.003227	0.007586	0.425	132	165	0.800000
+P8	inc5	ins	0.004233	0.006153	0.688	132	297	0.444444
+P9	inc1	del	0.002239	0.003866	0.579	54	165	0.327273
+P9	inc1	ins	0.002551	0.003623	0.704	54	219	0.246575
+P9	inc3	del	0.002331	0.008827	0.264	99	120	0.825000
+P9	inc3	ins	0.002559	0.003432	0.746	99	219	0.452055
+P9	inc5	del	0.001970	0.006254	0.315	110	109	1.009174
+P9	inc5	ins	0.002433	0.003404	0.715	110	219	0.502283
+P10	inc1	del	0.022626	0.016401	1.380	1132	1207	0.937862
+P10	inc1	ins	0.029375	0.013756	2.135	1132	2339	0.483968
+P10	inc3	del	0.016200	0.018088	0.896	1849	490	3.773469
+P10	inc3	ins	0.025992	0.015238	1.706	1849	2339	0.790509
+P10	inc5	del	0.015023	0.018954	0.793	1999	340	5.879412
+P10	inc5	ins	0.027699	0.015600	1.776	1999	2339	0.854639
+P11	inc1	del	0.019965	0.012252	1.630	1153	1165	0.989700
+P11	inc1	ins	0.026763	0.010427	2.567	1153	2318	0.497412
+P11	inc3	del	0.016677	0.015371	1.085	1857	461	4.028200
+P11	inc3	ins	0.028387	0.014536	1.953	1857	2318	0.801122
+P11	inc5	del	0.016679	0.017463	0.955	1920	398	4.824121
+P11	inc5	ins	0.025602	0.013835	1.851	1920	2318	0.828300
+P12	inc1	del	0.042451	0.022958	1.849	346	1976	0.175101
+P12	inc1	ins	0.045460	0.015938	2.852	346	2322	0.149009
+P12	inc3	del	0.035452	0.053465	0.663	843	1479	0.569980
+P12	inc3	ins	0.049778	0.031985	1.556	843	2322	0.363049
+P12	inc5	del	0.030687	0.079825	0.384	1229	1093	1.124428
+P12	inc5	ins	0.043567	0.032396	1.345	1229	2322	0.529285
+P13	inc1	del	0.073189	0.048741	1.502	931	3604	0.258324
+P13	inc1	ins	0.085161	0.025728	3.310	931	4535	0.205292
+P13	inc3	del	0.066443	0.123701	0.537	2098	2437	0.860895
+P13	inc3	ins	0.083246	0.057483	1.448	2098	4535	0.462624
+P13	inc5	del	0.054103	0.156645	0.345	2754	1781	1.546322
+P13	inc5	ins	0.084723	0.060950	1.390	2754	4535	0.607277
+P14	inc1	del	0.131847	0.070215	1.878	1826	4924	0.370837
+P14	inc1	ins	0.133311	0.041328	3.226	1826	6750	0.270519
+P14	inc3	del	0.098265	0.162903	0.603	3331	3419	0.974261
+P14	inc3	ins	0.126148	0.066679	1.892	3331	6750	0.493481
+P14	inc5	del	0.094283	0.247546	0.381	4231	2519	1.679635
+P14	inc5	ins	0.130085	0.089933	1.446	4231	6750	0.626815
+P15	inc1	del	0.265276	0.181820	1.459	5512	8591	0.641602
+P15	inc1	ins	0.299944	0.102930	2.914	5512	14103	0.390839
+P15	inc3	del	0.214627	0.387001	0.555	9762	4341	2.248791
+P15	inc3	ins	0.276546	0.182655	1.514	9762	14103	0.692193
+P15	inc5	del	0.188237	0.504491	0.373	10826	3277	3.303631
+P15	inc5	ins	0.289823	0.240085	1.207	10826	14103	0.767638
+P16	inc1	del	0.448604	0.319361	1.405	13088	11390	1.149078
+P16	inc1	ins	0.516224	0.214506	2.407	13088	24478	0.534684
+P16	inc3	del	0.382780	0.642074	0.596	17874	6604	2.706541
+P16	inc3	ins	0.511636	0.290410	1.762	17874	24478	0.730207
+P16	inc5	del	0.319658	0.820305	0.390	19522	4956	3.939064
+P16	inc5	ins	0.468832	0.406757	1.153	19522	24478	0.797532
+P17	inc1	del	0.626876	0.418753	1.497	18393	14949	1.230383
+P17	inc1	ins	0.710549	0.280982	2.529	18393	33342	0.551647
+P17	inc3	del	0.501872	0.925038	0.543	24780	8562	2.894184
+P17	inc3	ins	0.715911	0.443286	1.615	24780	33342	0.743207
+P17	inc5	del	0.486997	1.099398	0.443	26832	6510	4.121659
+P17	inc5	ins	0.680069	0.499823	1.361	26832	33342	0.804751
+P18	inc1	del	0.733412	0.568449	1.290	25016	17185	1.455688
+P18	inc1	ins	0.909348	0.379410	2.397	25016	42201	0.592782
+P18	inc3	del	0.650327	1.043887	0.623	32088	10113	3.172946
+P18	inc3	ins	0.933957	0.509513	1.833	32088	42201	0.760361
+P18	inc5	del	0.608425	1.499644	0.406	34561	7640	4.523691
+P18	inc5	ins	0.975995	0.655736	1.488	34561	42201	0.818962
+P19	inc1	del	1.026818	0.734954	1.397	34153	19132	1.785124
+P19	inc1	ins	1.299704	0.520638	2.496	34153	53285	0.640950
+P19	inc3	del	0.862460	1.423235	0.606	41922	11363	3.689343
+P19	inc3	ins	1.180612	0.732256	1.612	41922	53285	0.786750
+P19	inc5	del	0.722430	1.994920	0.362	44641	8644	5.164391
+P19	inc5	ins	1.196871	0.891869	1.342	44641	53285	0.837778
+P20	inc1	del	0.912271	0.519754	1.755	7900	36518	0.216332
+P20	inc1	ins	1.005359	0.322497	3.117	7900	44418	0.177856
+P20	inc3	del	0.790884	1.009805	0.783	18409	26009	0.707793
+P20	inc3	ins	1.002361	0.480662	2.085	18409	44418	0.414449
+P20	inc5	del	0.729993	1.524599	0.479	24406	20012	1.219568
+P20	inc5	ins	0.928317	0.636884	1.458	24406	44418	0.549462
+```
+
+#### 2026-01-11 (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph)
+Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc1/inc3/inc5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_trimmed_eval.
+```tsv
+Case	Delta	Turn	Full_SEM_s	Inc_SEM_s	Speedup	DeltaRuleApps	GraphEdges	DeltaEdgeRatio
+P1	inc1	del	0.004743	0.002514	1.887	0	58	0.000000
+P1	inc1	ins	0.004392	0.000987	4.448	0	58	0.000000
+P1	inc3	del	0.004344	0.000980	4.431	0	58	0.000000
+P1	inc3	ins	0.004562	0.001215	3.755	0	58	0.000000
+P1	inc5	del	0.001337	0.019502	0.069	0	58	0.000000
+P1	inc5	ins	0.004464	0.008072	0.553	0	58	0.000000
+P3	inc1	del	0.002458	0.019236	0.128	0	58	0.000000
+P3	inc1	ins	0.004907	0.006778	0.724	0	58	0.000000
+P3	inc3	del	0.002005	0.018872	0.106	0	58	0.000000
+P3	inc3	ins	0.004519	0.006775	0.667	0	58	0.000000
+P3	inc5	del	0.001783	0.019515	0.091	0	58	0.000000
+P3	inc5	ins	0.006603	0.007456	0.886	0	58	0.000000
+P4	inc1	del	0.000242	0.002511	0.096	4	15	0.266667
+P4	inc1	ins	0.000261	0.001367	0.191	4	19	0.210526
+P4	inc3	del	0.000228	0.001048	0.218	4	15	0.266667
+P4	inc3	ins	0.000344	0.000871	0.395	4	19	0.210526
+P4	inc5	del	0.000234	0.000539	0.434	5	14	0.357143
+P4	inc5	ins	0.000234	0.002628	0.089	5	19	0.263158
+P5	inc1	del	0.000298	0.001770	0.169	5	28	0.178571
+P5	inc1	ins	0.000299	0.001114	0.268	5	33	0.151515
+P5	inc3	del	0.000295	0.001214	0.243	5	28	0.178571
+P5	inc3	ins	0.000395	0.002563	0.154	5	33	0.151515
+P5	inc5	del	0.000311	0.002252	0.138	10	23	0.434783
+P5	inc5	ins	0.000355	0.001292	0.275	10	33	0.303030
+P6	inc1	del	0.000494	0.001690	0.292	0	61	0.000000
+P6	inc1	ins	0.000417	0.001266	0.329	0	61	0.000000
+P6	inc3	del	0.000387	0.001962	0.197	21	40	0.525000
+P6	inc3	ins	0.000516	0.001318	0.392	21	61	0.344262
+P6	inc5	del	0.000388	0.001505	0.258	22	39	0.564103
+P6	inc5	ins	0.000491	0.001223	0.402	22	61	0.360656
+P7	inc1	del	0.000918	0.001241	0.740	23	148	0.155405
+P7	inc1	ins	0.000986	0.001470	0.671	23	171	0.134503
+P7	inc3	del	0.001008	0.001814	0.556	48	123	0.390244
+P7	inc3	ins	0.001194	0.001994	0.599	48	171	0.280702
+P7	inc5	del	0.000777	0.004235	0.184	66	105	0.628571
+P7	inc5	ins	0.001042	0.002830	0.368	66	171	0.385965
+P8	inc1	del	0.001619	0.001447	1.119	31	256	0.121094
+P8	inc1	ins	0.002586	0.001378	1.877	31	287	0.108014
+P8	inc3	del	0.001140	0.001548	0.736	131	156	0.839744
+P8	inc3	ins	0.001791	0.001501	1.193	131	287	0.456446
+P8	inc5	del	0.001054	0.002834	0.372	162	125	1.296000
+P8	inc5	ins	0.001975	0.002585	0.764	162	287	0.564460
+P9	inc1	del	0.001463	0.001394	1.050	18	191	0.094241
+P9	inc1	ins	0.001239	0.001204	1.029	18	209	0.086124
+P9	inc3	del	0.001117	0.002986	0.374	27	182	0.148352
+P9	inc3	ins	0.001157	0.001173	0.986	27	209	0.129187
+P9	inc5	del	0.000989	0.001262	0.784	60	149	0.402685
+P9	inc5	ins	0.001137	0.001295	0.878	60	209	0.287081
+P10	inc1	del	0.010677	0.006068	1.760	1185	1146	1.034031
+P10	inc1	ins	0.017543	0.005938	2.955	1185	2331	0.508366
+P10	inc3	del	0.007039	0.007867	0.895	1901	430	4.420930
+P10	inc3	ins	0.016966	0.010369	1.636	1901	2331	0.815530
+P10	inc5	del	0.006235	0.008821	0.707	1963	368	5.334239
+P10	inc5	ins	0.014899	0.009525	1.564	1963	2331	0.842128
+P11	inc1	del	0.011549	0.007544	1.531	1344	974	1.379877
+P11	inc1	ins	0.021025	0.006399	3.286	1344	2318	0.579810
+P11	inc3	del	0.006676	0.007554	0.884	1978	340	5.817647
+P11	inc3	ins	0.019375	0.007536	2.571	1978	2318	0.853322
+P11	inc5	del	0.006796	0.008546	0.795	2033	285	7.133333
+P11	inc5	ins	0.019100	0.008368	2.282	2033	2318	0.877049
+P12	inc1	del	0.013257	0.004136	3.205	392	1923	0.203848
+P12	inc1	ins	0.012471	0.003676	3.393	392	2315	0.169330
+P12	inc3	del	0.011190	0.005048	2.217	845	1470	0.574830
+P12	inc3	ins	0.018049	0.004250	4.247	845	2315	0.365011
+P12	inc5	del	0.009671	0.006657	1.453	1146	1169	0.980325
+P12	inc5	ins	0.017568	0.005519	3.183	1146	2315	0.495032
+P13	inc1	del	0.033115	0.007896	4.194	1003	3527	0.284378
+P13	inc1	ins	0.039622	0.006199	6.391	1003	4530	0.221413
+P13	inc3	del	0.020484	0.010539	1.944	2290	2240	1.022321
+P13	inc3	ins	0.033269	0.009800	3.395	2290	4530	0.505519
+P13	inc5	del	0.012205	0.012813	0.953	2957	1573	1.879847
+P13	inc5	ins	0.035694	0.010787	3.309	2957	4530	0.652759
+P14	inc1	del	0.038203	0.013184	2.898	1872	4873	0.384158
+P14	inc1	ins	0.062351	0.011808	5.280	1872	6745	0.277539
+P14	inc3	del	0.019084	0.023567	0.810	3973	2772	1.433261
+P14	inc3	ins	0.039272	0.019502	2.014	3973	6745	0.589029
+P14	inc5	del	0.017785	0.017414	1.021	4749	1996	2.379259
+P14	inc5	ins	0.048149	0.016584	2.903	4749	6745	0.704077
+P15	inc1	del	0.083113	0.035372	2.350	4668	9430	0.495016
+P15	inc1	ins	0.119745	0.043150	2.775	4668	14098	0.331111
+P15	inc3	del	0.064004	0.043043	1.487	8778	5320	1.650000
+P15	inc3	ins	0.095203	0.046392	2.052	8778	14098	0.622642
+P15	inc5	del	0.045485	0.045516	0.999	10984	3114	3.527296
+P15	inc5	ins	0.113216	0.051747	2.188	10984	14098	0.779118
+P16	inc1	del	0.147153	0.072585	2.027	13587	10886	1.248117
+P16	inc1	ins	0.259013	0.076654	3.379	13587	24473	0.555183
+P16	inc3	del	0.090289	0.075636	1.194	17770	6703	2.651052
+P16	inc3	ins	0.217355	0.097046	2.240	17770	24473	0.726106
+P16	inc5	del	0.068150	0.083557	0.816	19468	5005	3.889710
+P16	inc5	ins	0.216881	0.101574	2.135	19468	24473	0.795489
+P17	inc1	del	0.175295	0.099465	1.762	19519	13818	1.412578
+P17	inc1	ins	0.350136	0.123004	2.847	19519	33337	0.585506
+P17	inc3	del	0.134602	0.123260	1.092	25794	7543	3.419594
+P17	inc3	ins	0.303583	0.136419	2.225	25794	33337	0.773735
+P17	inc5	del	0.119744	0.133294	0.898	27251	6086	4.477654
+P17	inc5	ins	0.310351	0.137578	2.256	27251	33337	0.817440
+P18	inc1	del	0.271961	0.165667	1.642	25836	16361	1.579121
+P18	inc1	ins	0.389432	0.162323	2.399	25836	42197	0.612271
+P18	inc3	del	0.151291	0.171126	0.884	32445	9752	3.327010
+P18	inc3	ins	0.462724	0.167023	2.770	32445	42197	0.768894
+P18	inc5	del	0.138465	0.163466	0.847	34514	7683	4.492256
+P18	inc5	ins	0.420255	0.183545	2.290	34514	42197	0.817925
+P19	inc1	del	0.355481	0.229725	1.547	33022	20258	1.630072
+P19	inc1	ins	0.548455	0.270420	2.028	33022	53280	0.619782
+P19	inc3	del	0.198553	0.228191	0.870	41813	11467	3.646377
+P19	inc3	ins	0.502165	0.266115	1.887	41813	53280	0.784779
+P19	inc5	del	0.212476	0.193918	1.096	43944	9336	4.706941
+P19	inc5	ins	0.488407	0.294687	1.657	43944	53280	0.824775
+P20	inc1	del	0.408499	0.127433	3.206	7435	36895	0.201518
+P20	inc1	ins	0.446217	0.122291	3.649	7435	44330	0.167719
+P20	inc3	del	0.598049	0.145318	4.115	18466	25864	0.713965
+P20	inc3	ins	0.610870	0.129668	4.711	18466	44330	0.416558
+P20	inc5	del	0.303287	0.198381	1.529	24674	19656	1.255291
+P20	inc5	ins	0.566586	0.191767	2.955	24674	44330	0.556598
+```
+
+Legacy SEM delta tables below are pre apply_delta_graph (do not compare ΔE/|E|).
+
+#### 2026-01-11 (full ruleset, det-opt)
+Legacy run: 2026-01-11, full ruleset, det-opt, pre apply_delta_graph; ΔE/|E| uses pruned view edges (do not compare).
+```tsv
+Case	Delta	Turn	Full_SEM_s	Inc_SEM_s	Speedup	DeltaRuleApps	GraphEdges	DeltaEdgeRatio
+P1	inc1	del	0.004251	0.001509	2.818	0	40	0.000000
+P1	inc1	ins	0.004478	0.005950	0.753	0	40	0.000000
+P1	inc3	del	0.003155	0.007915	0.399	0	40	0.000000
+P1	inc3	ins	0.004452	0.001304	3.413	0	40	0.000000
+P1	inc5	del	0.001473	0.010097	0.146	0	40	0.000000
+P1	inc5	ins	0.004766	0.002672	1.784	0	40	0.000000
+P3	inc1	del	0.002297	0.015203	0.151	0	40	0.000000
+P3	inc1	ins	0.004700	0.003420	1.374	0	40	0.000000
+P3	inc3	del	0.002324	0.011148	0.208	29	20	1.450000
+P3	inc3	ins	0.004608	0.001191	3.870	29	40	0.725000
+P3	inc5	del	0.001052	0.009461	0.111	29	20	1.450000
+P3	inc5	ins	0.004785	0.002811	1.702	29	40	0.725000
+P4	inc1	del	0.000302	0.004944	0.061	0	1	0.000000
+P4	inc1	ins	0.000442	0.001038	0.426	0	1	0.000000
+P4	inc3	del	0.000312	0.002161	0.145	0	1	0.000000
+P4	inc3	ins	0.000325	0.002006	0.162	0	1	0.000000
+P4	inc5	del	0.000392	0.001742	0.225	0	1	0.000000
+P4	inc5	ins	0.000307	0.002253	0.136	0	1	0.000000
+P5	inc1	del	0.000242	0.006048	0.040	13	15	0.866667
+P5	inc1	ins	0.000302	0.003256	0.093	13	15	0.866667
+P5	inc3	del	0.000261	0.001235	0.211	13	15	0.866667
+P5	inc3	ins	0.000304	0.002696	0.113	13	15	0.866667
+P5	inc5	del	0.000204	0.001952	0.105	23	1	23.000000
+P5	inc5	ins	0.000320	0.003192	0.100	23	15	1.533333
+P6	inc1	del	0.000831	0.013218	0.063	1	61	0.016393
+P6	inc1	ins	0.000879	0.004374	0.201	1	62	0.016129
+P6	inc3	del	0.000724	0.012503	0.058	17	40	0.425000
+P6	inc3	ins	0.000723	0.008265	0.088	17	62	0.274194
+P6	inc5	del	0.000676	0.004099	0.165	20	33	0.606061
+P6	inc5	ins	0.000741	0.005760	0.129	20	62	0.322581
+P7	inc1	del	0.002124	0.014671	0.145	28	81	0.345679
+P7	inc1	ins	0.002021	0.004589	0.440	16	82	0.195122
+P7	inc3	del	0.002022	0.004234	0.477	45	62	0.725806
+P7	inc3	ins	0.002694	0.007001	0.385	33	82	0.402439
+P7	inc5	del	0.001698	0.002656	0.639	58	36	1.611111
+P7	inc5	ins	0.002232	0.001980	1.127	46	82	0.560976
+P8	inc1	del	0.003797	0.022280	0.170	45	135	0.333333
+P8	inc1	ins	0.004016	0.007588	0.529	45	144	0.312500
+P8	inc3	del	0.003454	0.007939	0.435	95	82	1.158537
+P8	inc3	ins	0.003848	0.006126	0.628	85	134	0.634328
+P8	inc5	del	0.004138	0.006612	0.626	132	52	2.538462
+P8	inc5	ins	0.004168	0.002592	1.608	122	134	0.910448
+P9	inc1	del	0.002218	0.018669	0.119	54	108	0.500000
+P9	inc1	ins	0.002604	0.007336	0.355	54	198	0.272727
+P9	inc3	del	0.002041	0.010515	0.194	99	76	1.302632
+P9	inc3	ins	0.002537	0.005795	0.438	99	198	0.500000
+P9	inc5	del	0.002015	0.006511	0.309	118	63	1.873016
+P9	inc5	ins	0.002585	0.003643	0.710	108	188	0.574468
+P10	inc1	del	0.020981	0.020477	1.025	1132	36	31.444444
+P10	inc1	ins	0.026745	0.013681	1.955	1132	37	30.594595
+P10	inc3	del	0.016264	0.013988	1.163	1849	36	51.361111
+P10	inc3	ins	0.026539	0.017276	1.536	1849	37	49.972973
+P10	inc5	del	0.016651	0.017872	0.932	1999	34	58.794118
+P10	inc5	ins	0.027808	0.014015	1.984	1999	37	54.027027
+P11	inc1	del	0.020579	0.018087	1.138	1153	16	72.062500
+P11	inc1	ins	0.031059	0.011481	2.705	1153	16	72.062500
+P11	inc3	del	0.018832	0.016069	1.172	1857	15	123.800000
+P11	inc3	ins	0.028418	0.014512	1.958	1857	16	116.062500
+P11	inc5	del	0.015537	0.016590	0.937	1920	14	137.142857
+P11	inc5	ins	0.026677	0.013775	1.937	1920	16	120.000000
+P12	inc1	del	0.049613	0.024790	2.001	347	1054	0.329222
+P12	inc1	ins	0.045153	0.011840	3.814	346	1318	0.262519
+P12	inc3	del	0.037833	0.029860	1.267	844	598	1.411371
+P12	inc3	ins	0.047211	0.013767	3.429	843	1318	0.639605
+P12	inc5	del	0.032127	0.041353	0.777	1231	272	4.525735
+P12	inc5	ins	0.050788	0.010736	4.731	1228	1316	0.933131
+P13	inc1	del	0.079615	0.039754	2.003	931	2117	0.439773
+P13	inc1	ins	0.089094	0.019020	4.684	931	3038	0.306452
+P13	inc3	del	0.068048	0.056309	1.208	2099	1056	1.987689
+P13	inc3	ins	0.093261	0.019942	4.677	2097	3036	0.690711
+P13	inc5	del	0.056393	0.091148	0.619	2756	609	4.525452
+P13	inc5	ins	0.082277	0.022039	3.733	2753	3035	0.907084
+P14	inc1	del	0.108704	0.057824	1.880	1826	2668	0.684408
+P14	inc1	ins	0.133728	0.028363	4.715	1826	4475	0.408045
+P14	inc3	del	0.097584	0.094255	1.035	3331	1324	2.515861
+P14	inc3	ins	0.131120	0.031611	4.148	3331	4475	0.744358
+P14	inc5	del	0.084118	0.120522	0.698	4231	554	7.637184
+P14	inc5	ins	0.126602	0.034240	3.698	4231	4475	0.945475
+P15	inc1	del	0.273208	0.174149	1.569	5512	3868	1.425026
+P15	inc1	ins	0.307830	0.112487	2.737	5512	9045	0.609397
+P15	inc3	del	0.229333	0.222286	1.032	9762	397	24.589421
+P15	inc3	ins	0.300941	0.083295	3.613	9762	9045	1.079270
+P15	inc5	del	0.216101	0.294825	0.733	10826	217	49.889401
+P15	inc5	ins	0.372062	0.095902	3.880	10826	9045	1.196904
+P16	inc1	del	0.425021	0.242774	1.751	13089	3948	3.315350
+P16	inc1	ins	0.551677	0.134090	4.114	13088	15964	0.819845
+P16	inc3	del	0.421373	0.323300	1.303	17875	1042	17.154511
+P16	inc3	ins	0.462971	0.152172	3.042	17874	15964	1.119644
+P16	inc5	del	0.349955	0.446609	0.784	19524	355	54.997183
+P16	inc5	ins	0.508594	0.174257	2.919	19521	15962	1.222967
+P17	inc1	del	0.563367	0.320419	1.758	18393	5071	3.627095
+P17	inc1	ins	0.706945	0.194515	3.634	18393	21719	0.846862
+P17	inc3	del	0.655752	0.483841	1.355	24780	1247	19.871692
+P17	inc3	ins	0.748730	0.228624	3.275	24780	21719	1.140937
+P17	inc5	del	0.486171	0.624983	0.778	26833	588	45.634354
+P17	inc5	ins	0.721795	0.246373	2.930	26832	21718	1.235473
+P18	inc1	del	0.754565	0.423318	1.783	25016	5748	4.352122
+P18	inc1	ins	0.967544	0.322139	3.003	25016	27477	0.910434
+P18	inc3	del	0.606934	0.598993	1.013	32088	1444	22.221607
+P18	inc3	ins	0.960113	0.318369	3.016	32088	27477	1.167813
+P18	inc5	del	0.623686	0.789984	0.789	34562	506	68.304348
+P18	inc5	ins	0.945563	0.317627	2.977	34561	27476	1.257861
+P19	inc1	del	1.004522	0.573492	1.752	34154	4998	6.833533
+P19	inc1	ins	1.185190	0.392632	3.019	34153	34669	0.985116
+P19	inc3	del	0.864874	0.824897	1.048	41924	972	43.131687
+P19	inc3	ins	1.192149	0.389017	3.065	41922	34668	1.209242
+P19	inc5	del	0.687928	1.018640	0.675	44643	320	139.509375
+P19	inc5	ins	1.196731	0.476608	2.511	44641	34668	1.287672
+P20	inc1	del	0.896109	0.432936	2.070	7946	25557	0.310913
+P20	inc1	ins	1.013685	0.288688	3.511	7900	36252	0.217919
+P20	inc3	del	0.808855	0.636448	1.271	18425	13543	1.360481
+P20	inc3	ins	0.966461	0.311388	3.104	18361	36234	0.506734
+P20	inc5	del	0.806323	0.761576	1.059	24422	7949	3.072336
+P20	inc5	ins	1.050306	0.354827	2.960	24358	36234	0.672242
+```
+
 ### SEMINAIVE stage vs delta counts (DeltaNodes/DeltaEdges)
 Delta* columns come from `[inc-naive] delta counts` in FORWARD_COMPILATION logs.
 #### 2026-01-10 (full ruleset, equal_assign)
+Legacy run: 2026-01-10, full ruleset (equal_assign), inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_eval.
 ```tsv
 Case	Delta	Turn	Full_SEM_s	Inc_SEM_s	Speedup	DeltaInsNodes	DeltaInsEdges	DeltaDelNodes	DeltaDelEdges
 P1	inc1	del	0.308619	0.003080	100.193	0	0	0	0
@@ -2272,6 +5351,7 @@ P20	inc5	ins	23.712349	4.724020	5.020	94035	105345	0	0
 ```
 
 #### 2026-01-10 (trimmed ruleset, no equal_assign)
+Legacy run: 2026-01-10, trimmed ruleset (no equal_assign), inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_trimmed_eval.
 ```tsv
 Case	Delta	Turn	Full_SEM_s	Inc_SEM_s	Speedup	DeltaInsNodes	DeltaInsEdges	DeltaDelNodes	DeltaDelEdges
 P1	inc1	del	0.036916	0.107275	0.344	0	0	0	0
@@ -2415,42 +5495,65 @@ From repo root, with build Souffle on PATH:
 export PATH="/home/hugh/research/datalog/souffle/build/src:$PATH"
 
 # Generate cases (P1, P3, P4-P20)
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval generate --cases 1,3,4-20 --cleanup
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval generate --cases 1,3,4-20 --cleanup
 
 # Generate deltas (default change spec inc1/inc3/inc5)
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval delta --cases 1,3,4-20 --cleanup
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval delta --cases 1,3,4-20 --cleanup
 
 # Compile compute for each case using online CLI support
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval compile --cases 1,3,4-20 --timeout 600
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval compile --cases 1,3,4-20 --timeout 300
 
 # Run baseline (full+inc) and one sample of inc1/inc3/inc5 per case
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval run   --cases 1,3,4-20 --delta-labels inc1,inc3,inc5 --delta-samples 1 --timeout 600
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval run   --cases 1,3,4-20 --delta-labels inc1,inc3,inc5 --delta-samples 1 --timeout 180 --run-arg=--det-opt
 
 # Collect TSV
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval collect --cases 1,3,4-20
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval collect --cases 1,3,4-20
 ```
 
 ### Trimmed ruleset run (no equal_assign)
 ```bash
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval \
   generate --cases 1,3,4-20 --cleanup --rule-set trimmed
 
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval \
   delta --cases 1,3,4-20 --cleanup
 
 JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval \
-  compile --cases 1,3,4-20 --timeout 600 --jobs ${JOBS}
+  compile --cases 1,3,4-20 --timeout 300 --jobs ${JOBS}
 
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval \
-  run --cases 1,3,4-20 --delta-labels inc1,inc3,inc5 --delta-samples 1 --timeout 600
+  run --cases 1,3,4-20 --delta-labels inc1,inc3,inc5 --delta-samples 1 --timeout 180 --run-arg=--det-opt
 
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval \
+  collect --cases 1,3,4-20
+```
+### Trimmed ruleset run (0.1/0.3/0.5% deltas)
+```bash
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_trimmed_eval_small \
+  generate --cases 1,3,4-20 --cleanup --rule-set trimmed
+
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_trimmed_eval_small \
+  delta --cases 1,3,4-20 --cleanup --change-spec "inc0p1=0.001,inc0p3=0.003,inc0p5=0.005"
+
+JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_trimmed_eval_small \
+  compile --cases 1,3,4-20 --timeout 300 --jobs ${JOBS}
+
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_trimmed_eval_small \
+  run --cases 1,3,4-20 --delta-labels inc0p1,inc0p3,inc0p5 --delta-samples 1 --timeout 180 --run-arg=--det-opt
+
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
+  --base-dir experiments/side_channel_inc_trimmed_eval_small \
   collect --cases 1,3,4-20
 ```
 ### Legacy inc10 run (2025-12-21)
@@ -2458,19 +5561,19 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
 export PATH="/home/hugh/research/datalog/souffle/cmake-build-release/src:$PATH"
 
 # Generate cases P4-P13 (skip P1/P3 due to current inc loop issue)
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_eval generate --cases 4-13 --cleanup
 
 # Generate deltas (overwrite delta/)
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_eval delta --cases 4-13 --cleanup
 
 # Compile compute for each case using online CLI support
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_eval compile --cases 4-13 --timeout 300
 
 # Run baseline (full+inc) and one sample of inc10 per case, timeout 30s
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py \
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_eval run \
   --cases 4-13 --delta-labels inc10 --delta-samples 1 --timeout 30
 ```

@@ -926,9 +926,21 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 
         void visit_(type_identity<LogSize>, const LogSize& size, std::ostream& out) override {
             PRINT_BEGIN_COMMENT(out);
-            out << "ProfileEventSingleton::instance().makeQuantityEvent( R\"(";
-            out << size.getMessage() << ")\",";
-            out << synthesiser.getRelationName(synthesiser.lookup(size.getRelation())) << "->size(),iter);";
+            const std::string& message = size.getMessage();
+            constexpr const char* dredLoopPrefix = "@dred-loop;";
+            const auto* rel = synthesiser.lookup(size.getRelation());
+            auto relName = synthesiser.getRelationName(rel);
+            if (message.rfind(dredLoopPrefix, 0) == 0) {
+                out << "if (dredProfileEnabled) {\n";
+                out << "auto __dred_loop_size = " << relName << "->size();\n";
+                out << "std::cout << \"[dred-loop] " << message
+                    << " iter=\" << iter << \" size=\" << __dred_loop_size << std::endl;\n";
+                out << "}\n";
+            } else {
+                out << "ProfileEventSingleton::instance().makeQuantityEvent( R\"(";
+                out << message << ")\",";
+                out << relName << "->size(),iter);";
+            }
             PRINT_END_COMMENT(out);
         }
 
@@ -2471,16 +2483,18 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     // over-deletion...
                     out << "std::uint64_t __dred_overdelete_start = 0;\n";
                     out << "if (dredProfileEnabled) { __dred_overdelete_start = DerivationManager::nowNanos(); }\n";
+                    out << "if (ruleSetComplete != nullptr) {\n";
                     out << "for (const auto& ruleApp: *ruleSetComplete) {" << std::endl;
-                        out << "if(ruleManager.isRecursive(ruleApp.ruleId)) {\n";
-                        out << "ruleSet->insert(ruleApp);\n";
-                        out << "ruleSet2->insert(ruleApp);\n";
-                        out << "if (DerivationManager::isSemStatsEnabled()) {\n";
-                        out << "DerivationManager::dredStats.del_ruleapp_overdelete++;\n";
-                        out << "DerivationManager::bumpDredSccOverdelete();\n";
-                        out << "}\n";
-                        out << "}\n";
+                    out << "if(ruleManager.isRecursive(ruleApp.ruleId)) {\n";
+                    out << "ruleSet->insert(ruleApp);\n";
+                    out << "ruleSet2->insert(ruleApp);\n";
+                    out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                    out << "DerivationManager::dredStats.del_ruleapp_overdelete++;\n";
+                    out << "DerivationManager::bumpDredSccOverdelete();\n";
+                    out << "}\n";
+                    out << "}\n";
                     out << "}" << std::endl;
+                    out << "}\n";
                     out << "if (dredProfileEnabled) {\n";
                     out << "DerivationManager::addDredTime(DerivationManager::DredTimeBucket::DelOverdelete,\n";
                     out << "        DerivationManager::elapsedNanos(__dred_overdelete_start));\n";
@@ -2500,6 +2514,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
         }
 
         void visit_(type_identity<DeltaUnion>, const DeltaUnion& deltaUnion, std::ostream& out) override {
+            out << "{\n";
             /**
              * Rnew, Rrealinsert, Rrealdelete <= Rold, Rderinsert, Rderdelete
              */
@@ -2535,6 +2550,8 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 both = true;
             }
             assert ((deleteOnly && insertOnly) == false);
+            out << "const bool detRel = detOptEnabled && isDetRelation(\""
+                << deltaUnion.getRelation() << "\");\n";
             // if (deltaUnion.getDel)
             // INSERT
             if (both || insertOnly) {
@@ -2548,7 +2565,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "auto untypedDeltaDervTupleInsert = UntypedTuple::fromTypedTuple(\""
                     << deltaUnion.getRelation() << "\",tupleDeltaDervInsert);\n";
                 // if (insertOnly) { // also means recursive...
-                    out << "auto*& untypedDeltaDervTupleInsertRuleSet = DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
+                    out << "std::unordered_set<RuleApplication>* untypedDeltaDervTupleInsertRuleSet = nullptr;\n";
+                    out << "if (!detRel) {\n";
+                    out << "auto*& untypedDeltaDervTupleInsertRuleSetRef = DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n";
+                    out << "untypedDeltaDervTupleInsertRuleSet = untypedDeltaDervTupleInsertRuleSetRef;\n";
+                    out << "}\n";
                 // out << "if (untypedDeltaDervTupleInsertRuleSet == nullptr) {\n";
                 // out << "untypedDeltaDervTupleInsertRuleSet = new std::unordered_set<RuleApplication>();\n" << std::endl;
                 // out << "}\n";
@@ -2569,6 +2590,15 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     out << "DerivationManager::bumpDredSccRederiveDeltaRuleapps(deltaInsertRuleAppCount);\n";
                     out << "}\n";
                 }
+                out << "if (detRel) {\n";
+                out << "if(!isInputFact(untypedDeltaDervTupleInsert)) {\n";
+                out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleInsertRel())) << "->insert(tupleDeltaDervInsert);\n";
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.ins_tuple_inserts++;\n";
+                out << "}\n";
+                out << "}\n";
+                out << "continue;\n";
+                out << "}\n";
                 out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
                 out << "if (untypedDeltaDervTupleRuleSet == nullptr) {" << std::endl;
                 out << "untypedDeltaDervTupleRuleSet = untypedDeltaDervTupleInsertRuleSet;\n" << std::endl;
@@ -2607,7 +2637,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "auto untypedDeltaDervTupleDelete = UntypedTuple::fromTypedTuple(\""
                     << deltaUnion.getRelation() << "\",tupleDeltaDervDelete);\n";
                 // if (deleteOnly) {
-                    out << "auto*& untypedDeltaDervTupleDeleteRuleSet = DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
+                    out << "std::unordered_set<RuleApplication>* untypedDeltaDervTupleDeleteRuleSet = nullptr;\n";
+                    out << "if (!detRel) {\n";
+                    out << "auto*& untypedDeltaDervTupleDeleteRuleSetRef = DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
+                    out << "untypedDeltaDervTupleDeleteRuleSet = untypedDeltaDervTupleDeleteRuleSetRef;\n";
+                    out << "}\n";
                 // } else {
                 //     out << "auto*& untypedDeltaDervTupleDeleteRuleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
                 // }
@@ -2617,6 +2651,15 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "DerivationManager::dredStats.del_delta_tuples++;\n";
                 out << "DerivationManager::dredStats.del_delta_ruleapps += deltaDeleteRuleAppCount;\n";
                 out << "DerivationManager::dredStats.del_ruleapp_erases += deltaDeleteRuleAppCount;\n";
+                out << "}\n";
+                out << "if (detRel) {\n";
+                out << "if(!isInputFact(untypedDeltaDervTupleDelete)) {\n";
+                out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel())) << "->insert(tupleDeltaDervDelete);\n";
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.del_tuple_deletes++;\n";
+                out << "}\n";
+                out << "}\n";
+                out << "continue;\n";
                 out << "}\n";
                 out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
                 out << "std::uint64_t __dred_ruleapp_erase_start = 0;\n";
@@ -2671,6 +2714,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             } else {
                 assert (false);
             }
+            out << "}\n";
         }
 
         void visit_(type_identity<Erase>, const Erase& erase, std::ostream& out) override {
@@ -2895,22 +2939,25 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 
             // if it is total we use the contains function
             if (isa->isTotalSignature(&derivationCheck)) {
+                const std::string baseRelName = getBaseRelationName(derivationCheck.getRelation());
                 out << "(" << relName << "->"
                     << "contains(Tuple<RamDomain," << arity << ">{{" << join(derivationCheck.getValues(), ",", rec)
                     << "}}," << ctxName << ")" << ")";
                 out << "&& ";
-                out << "((";
+                out << "(";
+                out << "(detOptEnabled && isDetRelation(\"" << baseRelName << "\"))";
+                out << " || ";
                 out << "DerivationManager::ruleAppExistsInCompleteSet("
                     << "UntypedTuple::fromTypedTuple("
-                    << "\"" << getBaseRelationName(derivationCheck.getRelation()) << "\""
+                    << "\"" << baseRelName << "\""
                     << ", Tuple<RamDomain," << arity << ">{{" << join(derivationCheck.getValues(), ",", rec)
                     << "}}),"
                     << "RuleApplication{"
                     << derivationCheck.clauseID
                     << ",";
-                    derivationCheck.outputVarExprsString(out, rec);
+                derivationCheck.outputVarExprsString(out, rec);
                 out << "})";
-                out << "))";
+                out << ")";
                 PRINT_END_COMMENT(out);
                 return;
             }
@@ -4402,6 +4449,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "if (!opt.parse(argc,argv)) return 1;\n";
     hook << "detOptEnabled = opt.isDetOptEnabled();\n";
     hook << "dredProfileEnabled = opt.isDredProfileEnabled();\n";
+    hook << "incProfileEnabled = opt.isIncProfileEnabled();\n";
 
     if (!db.getNS(false).empty()) {
         hook << db.getNS(false) << "::";
@@ -4445,7 +4493,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // }
     hook << "debugger.startTurn();\n";
     hook << "try {\n";
-    hook << "if (opt.isDetOptEnabled()) {\n";
+    hook << "if (detOptEnabled) {\n";
     hook << "auto* detStage = debugger.startStage(StageKind::IO_LOAD_FULL);\n";
     hook << "auto detNowMs = [](auto start) {\n";
     hook << "    return std::chrono::duration_cast<std::chrono::milliseconds>(\n";
@@ -4571,7 +4619,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "debugger.startStage(StageKind::SEMINAIVE_FULL);\n";
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
     hook << "debugger.endStage();\n";
-    hook << "if (!opt.isDetOptEnabled()) {\n";
+    hook << "if (!detOptEnabled) {\n";
     hook << "debugger.startStage(StageKind::IO_LOAD_FULL);\n";
     hook << "{\n";
     hook << "FunctionTimer timer(\"Reading fact probability from \" + opt.getInputFileDir());\n";

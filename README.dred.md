@@ -7,6 +7,14 @@
 ## Status
 - Active implementation and performance note for online DRed.
 
+## Recent changes (2026-01-11)
+- Rederive now covers non-recursive clauses in recursive strata (e.g., base `equal_assign` rules), so det-opt
+  rederive can restore deleted tuples that still have non-recursive support.
+- Non-recursive rederive body atoms now scan `@inc_tuple_overdelete_*` instead of `@inc_derv_overdelete_*` to
+  avoid non-terminating fixpoints when derivation sets are intentionally omitted for deterministic relations.
+- Rederive prefill seeds `@inc_delta_tuple_rederive_*` from `@inc_tuple_overdelete_*`, and `--dred-profile`
+  loop-size logging is enabled for delete/insert/rederive phases.
+
 ## Online DRed flow (code-level overview)
 1) CLI parses deltas and writes to `$inc_delta_tuple_{insert,delete}_*`; deletes do not directly erase from base relations.
 2) Generated `runFunctionInc()` calls `inc_table_update` first, then executes each `_inc` stratum in order.

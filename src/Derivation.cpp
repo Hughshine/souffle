@@ -259,6 +259,7 @@ std::vector<DerivationManager::DredSccStats> DerivationManager::dredSccStats = {
 std::size_t DerivationManager::dredCurrentScc = DerivationManager::kInvalidDredScc;
 bool DerivationManager::semStatsEnabled = false;
 bool dredProfileEnabled = false;
+bool incProfileEnabled = false;
 
 void DerivationManager::DredStats::dump(std::ostream& out, const std::string& label) const {
     out << "[seminaive-dred] " << label << " del"

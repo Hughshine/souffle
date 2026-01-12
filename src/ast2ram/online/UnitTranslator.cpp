@@ -1247,6 +1247,19 @@ VecOwn<ram::Statement> UnitTranslator::generateClauseVersionsIncRederive(
 
     // Create each version
     VecOwn<ram::Statement> clauseVersions;
+    if (sccAtoms.empty()) {
+        auto clauseVersion = context->translateRecursiveClauseIncRederive(*clause, scc, 0);
+        if (glb->config().has("profile") && glb->config().has("dred-profile")) {
+            const std::string phaseName = "__inc_dred_rederive_rule_" +
+                                          std::to_string(context->getClauseNum(clause)) +
+                                          "_v0_scc" + std::to_string(sccNumber);
+            const std::string logStmt = LogStatement::tRecursiveRelation(phaseName, clause->getSrcLoc());
+            clauseVersion = mk<ram::LogTimer>(std::move(clauseVersion), logStmt);
+        }
+        appendStmt(clauseVersions, std::move(clauseVersion));
+        assert(clause->getExecutionPlan() == nullptr && "execution plan not supported");
+        return clauseVersions;
+    }
     for (std::size_t version = 0; version < sccAtoms.size(); version++) {
         auto clauseVersion = context->translateRecursiveClauseIncRederive(*clause, scc, version);
         if (glb->config().has("profile") && glb->config().has("dred-profile")) {
@@ -1296,8 +1309,8 @@ Own<ram::Statement> UnitTranslator::translateRecursiveClausesIncRederive(
 
     // Translate each recursive clasue
     for (auto&& clause : context->getProgram()->getClauses(*rel)) {
-        // Skip non-recursive and subsumptive clauses
-        if (!context->isRecursiveClause(clause) || isA<ast::SubsumptiveClause>(clause)) {
+        // Skip subsumptive clauses
+        if (isA<ast::SubsumptiveClause>(clause)) {
             continue;
         }
 
@@ -1573,6 +1586,27 @@ Own<ram::Statement> UnitTranslator::generateStratumRederive(
     VecOwn<ram::Statement> result;
     const ast::Relation* phaseRel = *scc.begin();
     const auto phaseLoc = phaseRel->getSrcLoc();
+    auto makeLoopTrace = [&]() -> Own<ram::Statement> {
+        VecOwn<ram::Statement> logs;
+        auto addLog = [&](const ast::Relation* rel, const std::string& relName, const std::string& kind) {
+            std::ostringstream msg;
+            msg << "@dred-loop;phase=rederive"
+                << ";scc=" << sccNumber
+                << ";rel=" << toString(rel->getQualifiedName())
+                << ";kind=" << kind;
+            appendStmt(logs, mk<ram::LogSize>(relName, msg.str()));
+        };
+        for (const ast::Relation* rel : scc) {
+            addLog(rel, getIncNewDervRederiveRelationName(rel->getQualifiedName()), "new_rederive");
+            addLog(rel, getIncDeltaTupleRederiveRelationName(rel->getQualifiedName()), "delta_tuple_rederive");
+            addLog(rel, getIncTupleOverDeleteRelationName(rel->getQualifiedName()), "tuple_overdelete");
+            addLog(rel, getIncDervOverDeleteRelationName(rel->getQualifiedName()), "derv_overdelete");
+        }
+        if (logs.empty()) {
+            return mk<ram::EmptyStatement>();
+        }
+        return mk<ram::Sequence>(std::move(logs));
+    };
     auto wrapSubTimer = [&](const std::string& label, Own<ram::Statement> stmt) -> Own<ram::Statement> {
         if (!glb->config().has("profile") || !glb->config().has("dred-profile")) {
             return stmt;
@@ -1600,13 +1634,24 @@ Own<ram::Statement> UnitTranslator::generateStratumRederive(
             mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(inc)), false);  // Counter increment each iteration
     // Add in the main fixpoint loop
     auto loopBody = wrapSubTimer("loop_body", generateStratumLoopBodyIncRederive(scc, sccNumber));
+    auto loopTrace = makeLoopTrace();
     auto exitSequence = wrapSubTimer("loop_exit",
             generateStratumExitSequenceIncRederive(scc));  // If new is empty after an iteration, exit; otherwise update tables and continue.
     auto updateSequence = wrapSubTimer("loop_update",
             generateStratumTableUpdatesIncRederive(scc)); // After each iteration, move new->table, new->delta, and clear new.
     auto fixpointLoop = mk<ram::Loop>(mk<ram::Sequence>(std::move(loopBody),
-            std::move(exitSequence), std::move(updateSequence), std::move(increment_counter)));
+            std::move(loopTrace), std::move(exitSequence),
+            std::move(updateSequence), std::move(increment_counter)));
 
+    VecOwn<ram::Statement> prefill;
+    for (const ast::Relation* rel : scc) {
+        auto deltaRederive = getIncDeltaTupleRederiveRelationName(rel->getQualifiedName());
+        auto tupleOverdelete = getIncTupleOverDeleteRelationName(rel->getQualifiedName());
+        appendStmt(prefill, mk<ram::Clear>(deltaRederive));
+        appendStmt(prefill, generateMergeRelations(rel, deltaRederive, tupleOverdelete));
+    }
+
+    appendStmt(result, wrapSubTimer("prefill", mk<ram::Sequence>(std::move(prefill))));
     appendStmt(result, mk<ram::Assign>(mk<ram::Variable>(loop_counter), mk<ram::UnsignedConstant>(1), true));  // Initial counter assignment to 1
     appendStmt(result, std::move(fixpointLoop)); // Semi-naive loop body
     // TODO: delta union only for delete
@@ -1623,6 +1668,34 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratumInc(
     VecOwn<ram::Statement> result;
     const ast::Relation* phaseRel = *scc.begin();
     const auto phaseLoc = phaseRel->getSrcLoc();
+    auto makeLoopTrace = [&](const std::string& phase) -> Own<ram::Statement> {
+        VecOwn<ram::Statement> logs;
+        auto addLog = [&](const ast::Relation* rel, const std::string& relName, const std::string& kind) {
+            std::ostringstream msg;
+            msg << "@dred-loop;phase=" << phase
+                << ";scc=" << sccNumber
+                << ";rel=" << toString(rel->getQualifiedName())
+                << ";kind=" << kind;
+            appendStmt(logs, mk<ram::LogSize>(relName, msg.str()));
+        };
+        for (const ast::Relation* rel : scc) {
+            if (phase == "delete") {
+                addLog(rel, getNewDeletionRelationName(rel->getQualifiedName()), "new_delete");
+                addLog(rel, getDeltaDeletionRelationName(rel->getQualifiedName()), "delta_delete");
+                addLog(rel, getIncDeltaTupleDeleteRelationName(rel->getQualifiedName()), "inc_delta_tuple_delete");
+                addLog(rel, getIncTupleOverDeleteRelationName(rel->getQualifiedName()), "inc_tuple_overdelete");
+                addLog(rel, getIncDervOverDeleteRelationName(rel->getQualifiedName()), "inc_derv_overdelete");
+            } else if (phase == "insert") {
+                addLog(rel, getNewInsertionRelationName(rel->getQualifiedName()), "new_insert");
+                addLog(rel, getDeltaInsertionRelationName(rel->getQualifiedName()), "delta_insert");
+                addLog(rel, getIncDeltaTupleInsertRelationName(rel->getQualifiedName()), "inc_delta_tuple_insert");
+            }
+        }
+        if (logs.empty()) {
+            return mk<ram::EmptyStatement>();
+        }
+        return mk<ram::Sequence>(std::move(logs));
+    };
     auto wrapPhaseTimer = [&](const std::string& phase, Own<ram::Statement> stmt) -> Own<ram::Statement> {
         if (!glb->config().has("profile") || !glb->config().has("dred-profile")) {
             return stmt;
@@ -1670,12 +1743,14 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratumInc(
         auto increment_counter = mk<ram::Assign>(mk<ram::Variable>(loop_counter),
                 mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(inc)), false);
         auto loopBody = wrapPhaseSubTimer("delete", "loop_body", generateStratumLoopBodyInc(scc, true));
+        auto loopTrace = makeLoopTrace("delete");
         auto exitSequence = wrapPhaseSubTimer("delete", "loop_exit",
                 generateStratumExitSequenceInc(scc, true));
         auto updateSequence = wrapPhaseSubTimer("delete", "loop_update",
                 generateStratumTableUpdatesInc(scc, true));
         auto fixpointLoop = mk<ram::Loop>(mk<ram::Sequence>(std::move(loopBody),
-                std::move(exitSequence), std::move(updateSequence), std::move(increment_counter)));
+                std::move(loopTrace), std::move(exitSequence),
+                std::move(updateSequence), std::move(increment_counter)));
 
         appendStmt(deletePhase, mk<ram::Assign>(mk<ram::Variable>(loop_counter),
                                       mk<ram::UnsignedConstant>(1), true));
@@ -1705,12 +1780,14 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratumInc(
         auto increment_counter = mk<ram::Assign>(mk<ram::Variable>(loop_counter),
                 mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(inc)), false);
         auto loopBody = wrapPhaseSubTimer("insert", "loop_body", generateStratumLoopBodyInc(scc, false));
+        auto loopTrace = makeLoopTrace("insert");
         auto exitSequence = wrapPhaseSubTimer("insert", "loop_exit",
                 generateStratumExitSequenceInc(scc, false));
         auto updateSequence = wrapPhaseSubTimer("insert", "loop_update",
                 generateStratumTableUpdatesInc(scc, false));
         auto fixpointLoop = mk<ram::Loop>(mk<ram::Sequence>(std::move(loopBody),
-                std::move(exitSequence), std::move(updateSequence), std::move(increment_counter)));
+                std::move(loopTrace), std::move(exitSequence),
+                std::move(updateSequence), std::move(increment_counter)));
 
         appendStmt(insertPhase, mk<ram::Assign>(mk<ram::Variable>(loop_counter),
                                       mk<ram::UnsignedConstant>(1), true));

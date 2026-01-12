@@ -1608,6 +1608,11 @@ public:
         const std::unordered_map<UntypedTuple, double>& fact_prob = {},
         const std::vector<UntypedTuple>& deletedFacts = {}
     ) {
+        const bool incProfile = incProfileEnabled;
+        using Clock = std::chrono::steady_clock;
+        auto toMs = [](Clock::time_point start) {
+            return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+        };
         auto countRuleApps = [](const auto& m) {
             size_t total = 0;
             for (const auto& [_, s] : m) {
@@ -1622,7 +1627,11 @@ public:
                   << " insRuleApps=" << countRuleApps(deltaInsertRuleApps)
                   << " insFacts=" << fact_prob.size()
                   << std::endl;
+        double clearMs = 0.0;
+        double deletesMs = 0.0;
+        double insertsMs = 0.0;
         {
+            auto t0 = Clock::now();
             FunctionTimer timer("applyDelta: clear state");
             this->deltaInsertNodes.clear();
             this->deltaInsertEdges.clear();
@@ -1640,6 +1649,9 @@ public:
             this->deletedDeterminsticFacts_.clear();
             this->deletedNonDeterministicFacts_.clear();
             this->clearCycleDependencyGraphCache();
+            if (incProfile) {
+                clearMs = toMs(t0);
+            }
         }
 
 //        for (auto& insertedRuleApp : deltaInsertRuleApps) {
@@ -1656,12 +1668,31 @@ public:
 //        }
         // Apply deletes first, then inserts
         {
+            auto t0 = Clock::now();
             FunctionTimer timer("applyDelta: deletes");
             applyDeltaDeletes(deltaDeleteRuleApps, ruleManager, deletedFacts);
+            if (incProfile) {
+                deletesMs = toMs(t0);
+            }
         }
         {
+            auto t0 = Clock::now();
             FunctionTimer timer("applyDelta: inserts");
             applyDeltaInserts(deltaInsertRuleApps, ruleManager, fact_prob);
+            if (incProfile) {
+                insertsMs = toMs(t0);
+            }
+        }
+        if (incProfile) {
+            std::cout << "[inc-profile] stage=PRUNING_INC applyDelta_ms=" << (clearMs + deletesMs + insertsMs)
+                      << " clear_ms=" << clearMs
+                      << " del_ms=" << deletesMs
+                      << " ins_ms=" << insertsMs
+                      << " delRuleApps=" << countRuleApps(deltaDeleteRuleApps)
+                      << " insRuleApps=" << countRuleApps(deltaInsertRuleApps)
+                      << " delFacts=" << deletedFacts.size()
+                      << " insFacts=" << fact_prob.size()
+                      << std::endl;
         }
     }
 
@@ -1829,11 +1860,17 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
     auto elapsedMs = [](Clock::time_point start) {
         return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
     };
+    const bool incProfile = incProfileEnabled;
     double tFindEdgeMs = 0.0;
     double tEraseVecMs = 0.0;
     double tEraseEdgeSetMs = 0.0;
     double tEraseKeyMs = 0.0;
     double tOutputDecisionMs = 0.0;
+    double collectImpactMs = 0.0;
+    double removeRuleAppsMs = 0.0;
+    double removeDanglingMs = 0.0;
+    double removeFactMs = 0.0;
+    double cleanupMs = 0.0;
     size_t totalInVecScan = 0;
     size_t totalOutVecScan = 0;
     size_t removedEdgeCount = 0;
@@ -1844,23 +1881,28 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
     std::unordered_set<NodePtr> inputsToFix;
     std::unordered_set<UntypedTuple> deletedFactsSet(deletedFacts.begin(), deletedFacts.end());
     {
+        auto tCollectStart = Clock::now();
         FunctionTimer scope("applyDeltaDeletes: collect impact of deleted facts");
         // Old logic rebuilds impacted maps after prune; keep interface as a placeholder to minimize overhead.
+        if (incProfile) {
+            collectImpactMs = elapsedMs(tCollectStart);
+        }
     }
 
     // Track nodes to delete.
     std::vector<NodePtr> nodesToRemove;
 
     {
+        auto tRuleAppsStart = Clock::now();
         FunctionTimer scope("applyDeltaDeletes: remove rule applications");
         for (const auto& [tuple, ruleAppSet] : deltaDeleteRuleApps) {
             for (const auto& ruleApp : *ruleAppSet) {
                 // Find the edge to delete - direct map lookup.
                 const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
                 const std::vector<std::string>& vars = rule->getVars();
-                auto t0 = Clock::now();
+                auto tFindStart = Clock::now();
                 EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, vars);
-                tFindEdgeMs += elapsedMs(t0);
+                tFindEdgeMs += elapsedMs(tFindStart);
                 if (existingEdge == nullptr) {
                     std::cout << "Did not find the edge to delete: "
                               << createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure) << std::endl;
@@ -1890,7 +1932,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
         }
 
         // Batch-remove edges to delete from affected nodes.
-        auto t0 = Clock::now();
+        auto tEraseVecStart = Clock::now();
         for (const auto& head : outputsToFix) {
             auto& inEdges = head->getIncomingEdges();
             totalInVecScan += inEdges.size();
@@ -1905,24 +1947,24 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
                 return edgesToRemoveSet.count(e) > 0;
             }), outEdges.end());
         }
-        tEraseVecMs += elapsedMs(t0);
+        tEraseVecMs += elapsedMs(tEraseVecStart);
 
         // Remove from the global edge set.
-        t0 = Clock::now();
+        auto tEraseEdgeStart = Clock::now();
         for (const auto& edge : edgesToRemoveList) {
             edges.erase(edge);
         }
-        tEraseEdgeSetMs += elapsedMs(t0);
+        tEraseEdgeSetMs += elapsedMs(tEraseEdgeStart);
 
         // Remove from edgeKeyToEdgeMap.
-        t0 = Clock::now();
+        auto tEraseKeyStart = Clock::now();
         for (const auto& key : edgeKeysToRemove) {
             edgeKeyToEdgeMap.erase(key);
         }
-        tEraseKeyMs += elapsedMs(t0);
+        tEraseKeyMs += elapsedMs(tEraseKeyStart);
 
         // Check whether output nodes have other derivation paths.
-        t0 = Clock::now();
+        auto tOutputStart = Clock::now();
         for (const auto& outputNode : outputsToFix) {
             if ((!outputNode->isFact || deletedFactsSet.count(outputNode->getTuple())) && outputNode->getIncomingEdges().empty()) {
                 if (deltaInsertNodes.find(outputNode) != deltaInsertNodes.end()) {
@@ -1933,10 +1975,14 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
                 }
             }
         }
-        tOutputDecisionMs += elapsedMs(t0);
+        tOutputDecisionMs += elapsedMs(tOutputStart);
+        if (incProfile) {
+            removeRuleAppsMs = elapsedMs(tRuleAppsStart);
+        }
     }
 
     {
+        auto t0 = Clock::now();
         FunctionTimer scope("applyDeltaDeletes: remove dangling nodes");
         // Finally, remove derived nodes with no incoming edges from the graph.
         for (const auto& nodeToRemove : nodesToRemove) {
@@ -1947,9 +1993,13 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
 //        nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeToRemove), nodes.end());
             nodes.erase(nodeToRemove);
         }
+        if (incProfile) {
+            removeDanglingMs = elapsedMs(t0);
+        }
     }
 
     {
+        auto t0 = Clock::now();
         FunctionTimer scope("applyDeltaDeletes: remove fact nodes");
         for (const auto& tuple : deletedFacts) {
             auto node = this->findNode(tuple);
@@ -1983,9 +2033,13 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
                 // assert (false && "deleted fact not found");
             }
         }
+        if (incProfile) {
+            removeFactMs = elapsedMs(t0);
+        }
     }
 
     {
+        auto t0 = Clock::now();
         FunctionTimer scope("applyDeltaDeletes: cleanup impacted sets");
         for (auto& [fact, impactedEdges] : deletedFactImpactedEdges) {
             for (auto it = impactedEdges.begin(); it != impactedEdges.end(); ) {
@@ -2008,6 +2062,23 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
 //            std::cout << "Deleted fact: " << fact->toString() << " impacts node: " << impactedNode->toString() << std::endl;
             }
         }
+        if (incProfile) {
+            cleanupMs = elapsedMs(t0);
+        }
+    }
+    if (incProfile) {
+        std::cout << "[inc-profile] stage=PRUNING_INC applyDeltaDeletes_ms="
+                  << (collectImpactMs + removeRuleAppsMs + removeDanglingMs + removeFactMs + cleanupMs)
+                  << " collect_ms=" << collectImpactMs
+                  << " ruleapps_ms=" << removeRuleAppsMs
+                  << " dangling_ms=" << removeDanglingMs
+                  << " facts_ms=" << removeFactMs
+                  << " cleanup_ms=" << cleanupMs
+                  << " removedEdges=" << removedEdgeCount
+                  << " delRuleApps=" << removedEdgeCount
+                  << " inVecScan=" << totalInVecScan
+                  << " outVecScan=" << totalOutVecScan
+                  << std::endl;
     }
     std::cout << "[applyDeltaDeletes] detailed: "
               << "findEdge=" << tFindEdgeMs << "ms, "
@@ -2039,6 +2110,22 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Rel
 // pruning is not incremental for now
 IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>& outputRelations) {
     FunctionTimer totalTimer("prune-inc total");
+    const bool incProfile = incProfileEnabled;
+    using Clock = std::chrono::steady_clock;
+    auto toMs = [](Clock::time_point start) {
+        return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+    };
+    auto totalStart = Clock::now();
+    double dumpStatsMs = 0.0;
+    double initOutputsMs = 0.0;
+    double bfsMs = 0.0;
+    double markMs = 0.0;
+    double outputlessMs = 0.0;
+    double filterMs = 0.0;
+    double mergeMs = 0.0;
+    double impactMs = 0.0;
+    double buildViewMs = 0.0;
+    double dumpViewMs = 0.0;
     std::cout << "[prune-inc] delta-delete counts (start): nodes=" << deltaDeleteNodes.size()
               << " edges=" << deltaDeleteEdges.size() << std::endl;
     // std::cout << "[prune-inc] pre-prune graph nodes=" << nodes.size()
@@ -2049,8 +2136,12 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     //           << " deltaDeleteEdges=" << deltaDeleteEdges.size()
     //           << std::endl;
     {
+        auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: dumpStatisticsInc");
         dumpStatisticsInc(std::cout);
+        if (incProfile) {
+            dumpStatsMs = toMs(t0);
+        }
     }
     std::unordered_set<std::string> outputRelationNames;
     outputRelationNames.reserve(outputRelations.size());
@@ -2064,6 +2155,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     std::vector<NodePtr> evidenceNodes;
 
     {
+        auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: init outputs");
         // Initialize: start from all output relation nodes.
         for (const auto& node : nodes) {
@@ -2077,9 +2169,13 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                 evidenceNodes.push_back(node);
             }
         }
+        if (incProfile) {
+            initOutputsMs = toMs(t0);
+        }
     }
 
     {
+        auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: evidence + backward BFS");
         // TODO
         for (const auto& node : evidenceNodes) {
@@ -2110,11 +2206,15 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                 }
             }
         }
+        if (incProfile) {
+            bfsMs = toMs(t0);
+        }
     }
 
     std::unordered_set<NodePtr> liveNodes = std::move(reachableNodes);
     std::unordered_set<EdgePtr> liveEdges = std::move(reachableEdges);
     {
+        auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: mark live/pruned nodes+edges");
         for (const auto& node : nodes) {
             if (liveNodes.count(node)){
@@ -2139,16 +2239,26 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                 edge->pruned = true;
             }
         }
+        if (incProfile) {
+            markMs = toMs(t0);
+        }
     }
     std::cout << "[prune-inc] delta-delete counts (post-mark-pruned): nodes=" << deltaDeleteNodes.size()
               << " edges=" << deltaDeleteEdges.size() << std::endl;
 
-    pruneOutputlessComponents(liveNodes, liveEdges);
+    {
+        auto t0 = Clock::now();
+        pruneOutputlessComponents(liveNodes, liveEdges);
+        if (incProfile) {
+            outputlessMs = toMs(t0);
+        }
+    }
 
     // Filter nodes and edges.
     std::set<NodePtr> newDeltaDeletedNodes;
     std::set<EdgePtr> newDeltaDeletedEdges;
     {
+        auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: filter delta-deleted");
         for (const auto& deletedNode : deltaDeleteNodes) {
             if (!deletedNode->pruned) {
@@ -2159,6 +2269,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
             if (!deletedEdge->pruned) {
                 newDeltaDeletedEdges.insert(deletedEdge);
             }
+        }
+        if (incProfile) {
+            filterMs = toMs(t0);
         }
     }
     std::cout << "[prune-inc] delta-delete counts (filtered): nodes=" << newDeltaDeletedNodes.size()
@@ -2180,11 +2293,15 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
 
     // eqrel merge (if enabled) and cleanup
     {
+        auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: mergeBiImp + cleanup");
         if (mergeBiImpEnabled) {
             mergeBiImpEquivalences(liveNodes, liveEdges);
         }
         removeSelfLoopEdges(liveNodes, liveEdges);
+        if (incProfile) {
+            mergeMs = toMs(t0);
+        }
     }
 
     if (mergeBiImpEnabled) {
@@ -2232,6 +2349,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     newDeletedFactImpactedNodes.reserve(newDeltaDeletedNodes.size());
     newDeletedFactImpactedEdges.reserve(newDeltaDeletedNodes.size());
     {
+        auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: rebuild impacted maps");
         using Clock = std::chrono::steady_clock;
         double insImpactMs = 0.0, delImpactMs = 0.0;
@@ -2302,11 +2420,17 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                   << " delNodes=" << delImpactNodes << " delEdges=" << delImpactEdges
                   << " delTimeMs=" << delImpactMs
                   << std::endl;
+        if (incProfile) {
+            impactMs = toMs(t0);
+        }
     }
 
+    const size_t liveNodeCount = liveNodes.size();
+    const size_t liveEdgeCount = liveEdges.size();
     IncSubgraphView view = [&]() {
+        auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: build view");
-        return IncSubgraphView(std::move(liveNodes), std::move(liveEdges),
+        auto built = IncSubgraphView(std::move(liveNodes), std::move(liveEdges),
                                std::move(newDeltaInsertedNodes),
                                std::move(newDeltaInsertedEdges),
                                std::move(newDeltaDeletedNodes),
@@ -2318,13 +2442,38 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                                std::move(newInsertedReachableNodes),
                                std::move(newInsertedReachableEdges),
                                explicitDeletedFacts_);
+        if (incProfile) {
+            buildViewMs = toMs(t0);
+        }
+        return built;
     }();
     {
+        auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: dumpStatisticsInc(view)");
         view.dumpStatisticsInc(std::cout);
+        if (incProfile) {
+            dumpViewMs = toMs(t0);
+        }
     }
     std::cout << "[prune-inc] delta-delete counts (view): nodes=" << view.getDeltaDeleteNodes().size()
               << " edges=" << view.getDeltaDeleteEdges().size() << std::endl;
+    if (incProfile) {
+        const double totalMs = toMs(totalStart);
+        std::cout << "[inc-profile] stage=PRUNING_INC prune_ms=" << totalMs
+                  << " dumpstats_ms=" << dumpStatsMs
+                  << " init_ms=" << initOutputsMs
+                  << " bfs_ms=" << bfsMs
+                  << " mark_ms=" << markMs
+                  << " outputless_ms=" << outputlessMs
+                  << " filter_ms=" << filterMs
+                  << " merge_ms=" << mergeMs
+                  << " impact_ms=" << impactMs
+                  << " build_view_ms=" << buildViewMs
+                  << " dump_view_ms=" << dumpViewMs
+                  << " live_nodes=" << liveNodeCount
+                  << " live_edges=" << liveEdgeCount
+                  << std::endl;
+    }
     return view;
 }
 
