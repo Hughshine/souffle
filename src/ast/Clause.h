@@ -123,9 +123,7 @@ public:
         return clauseId;
     }
 
-    std::vector<std::string> getVariables() const {
-        return variables;
-    }
+    std::vector<std::string> getVariables() const;
 
     void setVariables(const std::vector<std::string>& v) {
         variables = v;

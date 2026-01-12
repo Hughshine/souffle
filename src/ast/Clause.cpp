@@ -17,6 +17,41 @@
 
 namespace souffle::ast {
 
+namespace {
+struct ClauseVariableSummary {
+    std::vector<std::string> variables;
+    bool hasRederive = false;
+};
+
+ClauseVariableSummary collectClauseVariables(const VecOwn<Literal>& bodyLiterals) {
+    ClauseVariableSummary summary;
+    for (const auto& lit : bodyLiterals) {
+        Atom* atom = nullptr;
+        if (isA<Atom>(lit)) {
+            atom = as<Atom>(lit);
+        } else if (isA<Negation>(lit)) {
+            atom = as<Negation>(lit)->getAtom();
+        } else {
+            continue;
+        }
+        if (atom->isRederive) {
+            summary.hasRederive = true;
+            continue;
+        }
+        for (const auto* arg : atom->getArguments()) {
+            if (const auto* var = as<Variable>(arg)) {
+                const auto& varName = var->getName();
+                if (std::find(summary.variables.begin(), summary.variables.end(), varName) ==
+                        summary.variables.end()) {
+                    summary.variables.emplace_back(varName);
+                }
+            }
+        }
+    }
+    return summary;
+}
+}  // namespace
+
 Clause::Clause(
         NodeKind kind, Own<Atom> head, VecOwn<Literal> bodyLiterals, Own<ExecutionPlan> plan, SrcLocation loc)
         : Node(kind, std::move(loc)), head(std::move(head)), bodyLiterals(std::move(bodyLiterals)),
@@ -25,29 +60,9 @@ Clause::Clause(
     assert(allValidPtrs(this->bodyLiterals));
     assert(kind >= NK_Clause && kind < NK_LastClause);
     // Execution plan can be null
-    if (this->bodyLiterals.empty()) {
-        variables = {};
-    } else {
-        ast::Atom* atom;
-        for (auto& lit : this->bodyLiterals) {
-            if (isA<ast::Atom>(lit)) {
-                atom = as<ast::Atom>(lit);
-            } else if (isA<ast::Negation>(lit)) {
-                atom = as<ast::Negation>(lit)->getAtom();
-            } else {
-                // assert(false && "constraints are not supported");
-                continue;
-            }
-            for (const auto* arg : atom->getArguments()) {
-                if (const auto& var = as<ast::Variable>(arg)) {
-                    const auto& varName = var->getName();
-                    if (std::find(variables.begin(), variables.end(), varName) == variables.end()) {
-                        variables.emplace_back(varName);
-                    }
-                }
-            }
-        }
-    }
+    auto summary = collectClauseVariables(this->bodyLiterals);
+    variables = std::move(summary.variables);
+    isRederive = summary.hasRederive;
 }
 
 Clause::Clause(Own<Atom> head, VecOwn<Literal> bodyLiterals, Own<ExecutionPlan> plan, SrcLocation loc)
@@ -61,36 +76,19 @@ Clause::Clause(QualifiedName name, SrcLocation loc) : Clause(mk<Atom>(name), std
 
 void Clause::addToBody(Own<Literal> literal) {
     assert(literal != nullptr);
-    Atom* atom;
-    if (isA<ast::Atom>(literal)) {
-        atom = as<ast::Atom>(literal);
-    } else if (isA<ast::Negation>(literal)) {
-        atom = as<ast::Negation>(literal)->getAtom();
-    } else {
-        bodyLiterals.push_back(std::move(literal));
-        return;
-    }
-    if (!atom->isRederive) {
-        for (const auto* arg : atom->getArguments()) {
-            if (const auto& var = as<ast::Variable>(arg)) {
-                const auto& varName = var->getName();
-                if (std::find(variables.begin(), variables.end(), varName) == variables.end()) {
-                    variables.emplace_back(varName);
-                }
-            }
-        }
-    } else {
-        isRederive = true;
-    }
     bodyLiterals.push_back(std::move(literal));
+    auto summary = collectClauseVariables(bodyLiterals);
+    variables = std::move(summary.variables);
+    isRederive = summary.hasRederive;
 }
 void Clause::addToBody(VecOwn<Literal>&& literals) {
     assert(allValidPtrs(literals));
     for (auto& lit : literals) {
-        addToBody(std::move(lit));
+        bodyLiterals.push_back(std::move(lit));
     }
-    // bodyLiterals.insert(bodyLiterals.end(), std::make_move_iterator(literals.begin()),
-    //         std::make_move_iterator(literals.end()));
+    auto summary = collectClauseVariables(bodyLiterals);
+    variables = std::move(summary.variables);
+    isRederive = summary.hasRederive;
 }
 
 void Clause::setHead(Own<Atom> h) {
@@ -101,31 +99,13 @@ void Clause::setHead(Own<Atom> h) {
 void Clause::setBodyLiterals(VecOwn<Literal> body) {
     assert(allValidPtrs(body));
     bodyLiterals = std::move(body);
+    auto summary = collectClauseVariables(bodyLiterals);
+    variables = std::move(summary.variables);
+    isRederive = summary.hasRederive;
+}
 
-    variables.clear();
-    isRederive = false;
-    for (auto& lit : bodyLiterals) {
-        ast::Atom* atom = nullptr;
-        if (isA<ast::Atom>(lit)) {
-            atom = as<ast::Atom>(lit);
-        } else if (isA<ast::Negation>(lit)) {
-            atom = as<ast::Negation>(lit)->getAtom();
-        } else {
-            continue;
-        }
-        if (atom->isRederive) {
-            isRederive = true;
-            continue;
-        }
-        for (const auto* arg : atom->getArguments()) {
-            if (const auto* var = as<ast::Variable>(arg)) {
-                const auto& name = var->getName();
-                if (std::find(variables.begin(), variables.end(), name) == variables.end()) {
-                    variables.emplace_back(name);
-                }
-            }
-        }
-    }
+std::vector<std::string> Clause::getVariables() const {
+    return collectClauseVariables(bodyLiterals).variables;
 }
 
 std::vector<Literal*> Clause::getBodyLiterals() const {
@@ -190,7 +170,7 @@ Clause* Clause::cloning() const {
     auto* cl = new Clause(clone(head), clone(bodyLiterals), clone(plan), getSrcLoc());
     cl->setClauseId(clauseId);
     cl->setProbability(probability);
-    cl->setVariables(variables);
+    cl->setVariables(getVariables());
     cl->isRederive = isRederive;
     cl->setRecursive(recursive);
     cl->setInRecursiveStratum(inRecursiveStratum);
