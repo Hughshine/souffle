@@ -55,6 +55,33 @@
 - Insert preConfig share in this run is ~0.69 (down from ~0.93 in the earlier spike
   run), so the slowdown is reduced but not eliminated.
 
+### Reordering runtime vs explicit variable reordering (2026-01-13, fc-profile v4)
+- Source: `output_fc_profile_v4` (inc) and `output_fc_profile_full_v4` (full) logs for
+  P18–P20, turn3 (insert).
+- `reordering_runtime` (CUDD dynamic reordering) is 0 in inc for these cases, so it
+  does not explain the inc slowdowns. The dominant reordering cost comes from the
+  explicit "Variable reordering takes" step in inc, which is ~2.4–3.1s vs ~0.6–1.3s
+  in full.
+
+```tsv
+Case	Delta	FullReorder_s	IncReorder_s	FullVarOrder_ms	IncVarReorder_ms
+P18	inc0p1	4.220	0.000	563.506	2904
+P18	inc0p3	4.250	0.000	606.597	2588
+P18	inc0p5	4.180	0.000	600.057	2667
+P19	inc0p1	5.580	0.000	577.484	2953
+P19	inc0p3	5.520	0.000	659.838	2984
+P19	inc0p5	5.570	0.000	647.535	3094
+P20	inc0p1	1.860	0.000	1282.096	2497
+P20	inc0p3	1.850	0.000	1026.752	2376
+P20	inc0p5	1.860	0.000	1046.892	2435
+```
+
+Notes:
+- P17 differs: inc reordering_runtime is non-zero there (~3–4s), so it can still be
+  a contributor in that case.
+- For P18–P20, inc slowdowns are better explained by explicit variable reordering +
+  insert-loop work (e.g., `make_and` dominated loops).
+
 ## Profiling Run (2026-01-10, --inc-profile, full ruleset)
 - Cases: P12, P17; deltas: inc1 (1%), inc5 (5%); 1 sample each.
 - Command pattern:
