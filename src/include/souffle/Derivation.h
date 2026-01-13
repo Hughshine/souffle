@@ -145,6 +145,8 @@ extern std::unordered_set<RuleApplication> testRuleApplicationSet2;
 extern std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> testUntypedTuple2RuleApplications;
 extern bool dredProfileEnabled;
 extern bool incProfileEnabled;
+extern bool fcProfileEnabled;
+extern bool postDelEnabled;
 
 class DerivationManager {
 public:

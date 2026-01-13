@@ -83,6 +83,8 @@ protected:
     bool dump_const = false;  // dump constant pre-analysis details
     bool dred_profile = false;  // enable detailed DRed profiling
     bool inc_profile = false;  // enable incremental stage profiling
+    bool fc_profile = false;  // enable detailed forward-compilation profiling
+    bool post_del = false;  // enable postprocessUselessVariables after deletion
     bool det_opt = false;  // enable deterministic-relation analysis and det gating
     bool single_rand_fast = true;  // enable single-randvar fast path in component FC
 public:
@@ -93,11 +95,13 @@ public:
             bool dumpjson = false, bool dumpdot = false, bool dumpstat = false, bool dumpconst = false,
             bool dredProfile = false,
             const std::string& splitmode = "naive-split",
-            bool incProfile = false)
+            bool incProfile = false,
+            bool fcProfile = false,
+            bool postDel = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
     , incMode(mode), merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
       dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
-      dred_profile(dredProfile), inc_profile(incProfile),
+      dred_profile(dredProfile), inc_profile(incProfile), fc_profile(fcProfile), post_del(postDel),
       split_mode(splitmode) {}
 
     CmdOptions() {}
@@ -182,6 +186,12 @@ public:
     bool isIncProfileEnabled() const {
         return inc_profile;
     }
+    bool isFcProfileEnabled() const {
+        return fc_profile;
+    }
+    bool isPostDelEnabled() const {
+        return post_del;
+    }
     bool isDetOptEnabled() const {
         return det_opt;
     }
@@ -235,6 +245,8 @@ public:
                 {"dumpconst", false, nullptr, 'U'},
                 {"dred-profile", false, nullptr, 1002},
                 {"inc-profile", false, nullptr, 1003},
+                {"fc-profile", false, nullptr, 1005},
+                {"post-del", false, nullptr, 1006},
                 {"det-opt", false, nullptr, 'Z'},
                 {"no-single-rand-fast", false, nullptr, 1001},
                 // the terminal option -- needs to be null
@@ -379,6 +391,12 @@ public:
                 case 1003:
                     inc_profile = true;
                     break;
+                case 1005:
+                    fc_profile = true;
+                    break;
+                case 1006:
+                    post_del = true;
+                    break;
                 case 'Z':
                     det_opt = true;
                     break;
@@ -428,6 +446,8 @@ private:
         std::cerr << "    --dumpstat                   -- Dump derivation graph stats after prune\n";
         std::cerr << "    --dred-profile               -- Enable detailed DRed profiling (requires --profile)\n";
         std::cerr << "    --inc-profile                -- Enable incremental stage profiling\n";
+        std::cerr << "    --fc-profile                 -- Enable detailed forward-compilation profiling\n";
+        std::cerr << "    --post-del                   -- Enable post-delete variable postprocess (FC)\n";
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
         std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
         std::cerr << "    --no-single-rand-fast        -- Disable single-randvar fast path in component FC\n";

@@ -21,6 +21,14 @@ using Clock = std::chrono::steady_clock;
 using Duration = std::chrono::duration<double>;
 
 static constexpr bool kCuddVerbose = false;
+extern bool fcProfileEnabled;
+inline std::string cuddPreConfigTag;
+inline void setCuddPreConfigTag(const std::string& tag) {
+    cuddPreConfigTag = tag;
+}
+inline const std::string& getCuddPreConfigTag() {
+    return cuddPreConfigTag;
+}
 Cudd_ReorderingType currentReorderingType = CUDD_REORDER_SAME;
 std::chrono::time_point<Clock> _cudd_gc_start_time;
 std::chrono::time_point<Clock> _cudd_gc_end_time;
@@ -157,7 +165,7 @@ public:
         unsigned long maxMemory;
 
         InitConfig()
-                : numVars(1000), numVarsZ(0), numSlots(4096), cacheSize(1u << 24),
+                : numVars(1000), numVarsZ(0), numSlots(512), cacheSize(1u << 24),
                   maxMemory(32UL * 1024 * 1024 * 1024) {}
     };
 
@@ -221,8 +229,20 @@ public:
         static size_t iteration = 0;
         using namespace std::chrono;
         auto toMs = [](auto d) { return duration<double, std::milli>(d).count(); };
+        const bool fcProfile = fcProfileEnabled;
+        const auto totalStart = steady_clock::now();
+        double cacheMs = 0.0;
+        double factCreateMs = 0.0;
+        double edgeCreateMs = 0.0;
+        double reorderMs = 0.0;
 
-        wmcCache_.clear();
+        if (fcProfile) {
+            auto cacheStart = steady_clock::now();
+            wmcCache_.clear();
+            cacheMs = toMs(steady_clock::now() - cacheStart);
+        } else {
+            wmcCache_.clear();
+        }
         auto oldCuddVarSize = Cudd_ReadSize(manager.get());
         size_t factVars = 0;
         size_t edgeVars = 0;
@@ -231,9 +251,13 @@ public:
         for (const auto& node : view.getNodes()) {
             if (node->isFact && node->getProbability() < 1.0) {
                 int idx = getVarIndex(*node);
-                auto cvStart = steady_clock::now();
-                createVar(idx, *node);
-                double cvMs = toMs(steady_clock::now() - cvStart);
+                if (fcProfile) {
+                    auto cvStart = steady_clock::now();
+                    createVar(idx, *node);
+                    factCreateMs += toMs(steady_clock::now() - cvStart);
+                } else {
+                    createVar(idx, *node);
+                }
                 // std::cout << "[CUDD] createVar(fact " << node->getId()
                 //           << " -> idx " << idx << ") took "
                 //           << cvMs << " ms" << std::endl;
@@ -246,9 +270,13 @@ public:
         for (const auto& edge : view.getEdges()) {
             if (!edge->isDeterministic()) {
                 int idx = getVarIndex(*edge);
-                auto cvStart = steady_clock::now();
-                createVar(idx, *edge);
-                double cvMs = toMs(steady_clock::now() - cvStart);
+                if (fcProfile) {
+                    auto cvStart = steady_clock::now();
+                    createVar(idx, *edge);
+                    edgeCreateMs += toMs(steady_clock::now() - cvStart);
+                } else {
+                    createVar(idx, *edge);
+                }
                 // std::cout << "[CUDD] createVar(edge " << edge->getId()
                 //           << " -> idx " << idx << ") took "
                 //           << cvMs << " ms" << std::endl;
@@ -256,6 +284,7 @@ public:
             }
         }
         double edgeMs = toMs(steady_clock::now() - edgeStart);
+        auto newCuddVarSize = Cudd_ReadSize(manager.get());
         size_t totalVarsAdded = factVars + edgeVars;
         std::cout << "[CUDD] vars created: facts=" << factVars
                   << " edges=" << edgeVars
@@ -265,8 +294,32 @@ public:
 
         // Rely on CUDD adaptive dynamic reordering; skip heavy static heuristic ordering.
         std::cout << "[CUDD] Enabling adaptive dynamic reordering (skip static ordering)" << std::endl;
-        adaptiveReorder(manager.get());
+        if (fcProfile) {
+            auto reorderStart = steady_clock::now();
+            adaptiveReorder(manager.get());
+            reorderMs = toMs(steady_clock::now() - reorderStart);
+        } else {
+            adaptiveReorder(manager.get());
+        }
         std::cout << "[CUDD] Adaptive reordering initialized" << std::endl;
+        if (fcProfile) {
+            const auto totalMs = toMs(steady_clock::now() - totalStart);
+            const std::string& rawTag = getCuddPreConfigTag();
+            const std::string tag = rawTag.empty() ? "unknown" : rawTag;
+            std::cout << "[fc-profile] stage=CUDD_PRECONFIG tag=" << tag
+                      << " total_ms=" << totalMs
+                      << " cache_ms=" << cacheMs
+                      << " fact_loop_ms=" << factMs
+                      << " fact_create_ms=" << factCreateMs
+                      << " edge_loop_ms=" << edgeMs
+                      << " edge_create_ms=" << edgeCreateMs
+                      << " reorder_ms=" << reorderMs
+                      << " old_var_size=" << oldCuddVarSize
+                      << " new_var_size=" << newCuddVarSize
+                      << " fact_vars=" << factVars
+                      << " edge_vars=" << edgeVars
+                      << std::endl;
+        }
     }
 
     // Basic BDD operations
@@ -492,72 +545,259 @@ std::shared_ptr<DdManager> WeightedBDDManager::initManager() {
     });
 }
 
+struct CuddCreateVarStats {
+    unsigned int gc = 0;
+    unsigned int reorder = 0;
+    unsigned int swaps = 0;
+    size_t node = 0;
+    unsigned int dead = 0;
+    unsigned int slots = 0;
+    unsigned int used_slots = 0;
+    unsigned int keys = 0;
+};
+
+static inline CuddCreateVarStats readCuddCreateVarStats(DdManager* dd) {
+    CuddCreateVarStats stats;
+    stats.gc = Cudd_ReadGarbageCollections(dd);
+    stats.reorder = Cudd_ReadReorderings(dd);
+    stats.swaps = Cudd_ReadSwapSteps(dd);
+    stats.node = Cudd_ReadNodeCount(dd);
+    stats.dead = Cudd_ReadDead(dd);
+    stats.slots = Cudd_ReadSlots(dd);
+    stats.used_slots = Cudd_ReadUsedSlots(dd);
+    stats.keys = Cudd_ReadKeys(dd);
+    return stats;
+}
+
+static inline void emitCuddCreateVarStats(const std::string& tag, const char* kind, int index,
+        const CuddCreateVarStats& before, const CuddCreateVarStats& after) {
+    std::cout << "[fc-profile] stage=CUDD_CREATEVAR_STATS tag=" << tag
+              << " kind=" << kind
+              << " index=" << index
+              << " gc_before=" << before.gc << " gc_after=" << after.gc
+              << " gc_delta=" << static_cast<long long>(after.gc) - static_cast<long long>(before.gc)
+              << " reorder_before=" << before.reorder << " reorder_after=" << after.reorder
+              << " reorder_delta=" << static_cast<long long>(after.reorder) - static_cast<long long>(before.reorder)
+              << " swap_before=" << before.swaps << " swap_after=" << after.swaps
+              << " swap_delta=" << static_cast<long long>(after.swaps) - static_cast<long long>(before.swaps)
+              << " node_before=" << before.node << " node_after=" << after.node
+              << " node_delta=" << static_cast<long long>(after.node) - static_cast<long long>(before.node)
+              << " dead_before=" << before.dead << " dead_after=" << after.dead
+              << " dead_delta=" << static_cast<long long>(after.dead) - static_cast<long long>(before.dead)
+              << " slots_before=" << before.slots << " slots_after=" << after.slots
+              << " slots_delta=" << static_cast<long long>(after.slots) - static_cast<long long>(before.slots)
+              << " used_slots_before=" << before.used_slots << " used_slots_after=" << after.used_slots
+              << " used_slots_delta=" << static_cast<long long>(after.used_slots) - static_cast<long long>(before.used_slots)
+              << " keys_before=" << before.keys << " keys_after=" << after.keys
+              << " keys_delta=" << static_cast<long long>(after.keys) - static_cast<long long>(before.keys)
+              << std::endl;
+}
+
 BddNodeRef WeightedBDDManager::createVar(int index) {
-    if (variableRegistry.find(index) != variableRegistry.end()) {
-        return variableRegistry[index];
+    const bool stats_enabled = fcProfileEnabled && !getCuddPreConfigTag().empty();
+    if (!stats_enabled) {
+        if (variableRegistry.find(index) != variableRegistry.end()) {
+            return variableRegistry[index];
+        }
+        DdNode* var = Cudd_bddIthVar(manager.get(), index);
+        BddNodeRef ref(manager, var);
+        variableRegistry[index] = ref;
+        return ref;
     }
-    auto start = std::chrono::steady_clock::now();
+
+    using Clock = std::chrono::steady_clock;
+    auto toMs = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
+    auto totalStart = Clock::now();
+    auto lookupStart = Clock::now();
+    auto it = variableRegistry.find(index);
+    double lookupMs = toMs(Clock::now() - lookupStart);
+    if (it != variableRegistry.end()) {
+        auto copyStart = Clock::now();
+        BddNodeRef ref = it->second;
+        double copyMs = toMs(Clock::now() - copyStart);
+        double totalMs = toMs(Clock::now() - totalStart);
+        std::cout << "[fc-profile] stage=CUDD_CREATEVAR tag=" << getCuddPreConfigTag()
+                  << " kind=index index=" << index
+                  << " hit=1"
+                  << " lookup_ms=" << lookupMs
+                  << " copy_ms=" << copyMs
+                  << " total_ms=" << totalMs
+                  << std::endl;
+        return ref;
+    }
+    auto statsStart = Clock::now();
+    CuddCreateVarStats stats_before = readCuddCreateVarStats(manager.get());
+    double statsBeforeMs = toMs(Clock::now() - statsStart);
+    auto start = Clock::now();
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
-    double ithMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - start).count();
-    start = std::chrono::steady_clock::now();
+    double ithMs = toMs(Clock::now() - start);
+    statsStart = Clock::now();
+    CuddCreateVarStats stats_after = readCuddCreateVarStats(manager.get());
+    double statsAfterMs = toMs(Clock::now() - statsStart);
+    start = Clock::now();
     BddNodeRef ref(manager, var);
-    double wrapMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - start).count();
+    double wrapMs = toMs(Clock::now() - start);
+    auto insertStart = Clock::now();
     variableRegistry[index] = ref;
-    if (kCuddVerbose) {
-        std::cout << "[CUDD] createVar(index=" << index << ") ithVar=" << ithMs
-                  << " ms wrap=" << wrapMs << " ms" << std::endl;
-    }
+    double insertMs = toMs(Clock::now() - insertStart);
+    double totalMs = toMs(Clock::now() - totalStart);
+    double statsMs = statsBeforeMs + statsAfterMs;
+    std::cout << "[fc-profile] stage=CUDD_CREATEVAR tag=" << getCuddPreConfigTag()
+              << " kind=index index=" << index
+              << " hit=0"
+              << " lookup_ms=" << lookupMs
+              << " stats_before_ms=" << statsBeforeMs
+              << " stats_after_ms=" << statsAfterMs
+              << " stats_ms=" << statsMs
+              << " ith_ms=" << ithMs
+              << " wrap_ms=" << wrapMs
+              << " insert_ms=" << insertMs
+              << " total_ms=" << totalMs
+              << std::endl;
+    emitCuddCreateVarStats(getCuddPreConfigTag(), "index", index, stats_before, stats_after);
     return ref;
 //    BddNodeRef(manager, var);
 }
 
 BddNodeRef WeightedBDDManager::createVar(int index, const Node& node) {
-    if (variableRegistry.find(index) != variableRegistry.end()) {
-        return variableRegistry[index];
+    const bool stats_enabled = fcProfileEnabled && !getCuddPreConfigTag().empty();
+    if (!stats_enabled) {
+        if (variableRegistry.find(index) != variableRegistry.end()) {
+            return variableRegistry[index];
+        }
+        DdNode* var = Cudd_bddIthVar(manager.get(), index);
+        if (var == nullptr) {
+            throw std::runtime_error("Failed to create BDD variable");
+        }
+        BddNodeRef ref(manager, var, node);
+        variableRegistry[index] = ref;
+        return ref;
     }
-    auto start = std::chrono::steady_clock::now();
+
+    using Clock = std::chrono::steady_clock;
+    auto toMs = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
+    auto totalStart = Clock::now();
+    auto lookupStart = Clock::now();
+    auto it = variableRegistry.find(index);
+    double lookupMs = toMs(Clock::now() - lookupStart);
+    if (it != variableRegistry.end()) {
+        auto copyStart = Clock::now();
+        BddNodeRef ref = it->second;
+        double copyMs = toMs(Clock::now() - copyStart);
+        double totalMs = toMs(Clock::now() - totalStart);
+        std::cout << "[fc-profile] stage=CUDD_CREATEVAR tag=" << getCuddPreConfigTag()
+                  << " kind=fact index=" << index
+                  << " hit=1"
+                  << " lookup_ms=" << lookupMs
+                  << " copy_ms=" << copyMs
+                  << " total_ms=" << totalMs
+                  << std::endl;
+        return ref;
+    }
+    auto statsStart = Clock::now();
+    CuddCreateVarStats stats_before = readCuddCreateVarStats(manager.get());
+    double statsBeforeMs = toMs(Clock::now() - statsStart);
+    auto start = Clock::now();
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
-    double ithMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - start).count();
+    double ithMs = toMs(Clock::now() - start);
+    statsStart = Clock::now();
+    CuddCreateVarStats stats_after = readCuddCreateVarStats(manager.get());
+    double statsAfterMs = toMs(Clock::now() - statsStart);
     if (var == nullptr) {
         throw std::runtime_error("Failed to create BDD variable");
     }
-    start = std::chrono::steady_clock::now();
+    start = Clock::now();
     BddNodeRef ref(manager, var, node);
-    double wrapMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - start).count();
+    double wrapMs = toMs(Clock::now() - start);
+    auto insertStart = Clock::now();
     variableRegistry[index] = ref;
-    if (kCuddVerbose) {
-        std::cout << "[CUDD] createVar(fact " << node.getId()
-                  << ") ithVar=" << ithMs << " ms wrap=" << wrapMs << " ms"
-                  << std::endl;
-    }
+    double insertMs = toMs(Clock::now() - insertStart);
+    double totalMs = toMs(Clock::now() - totalStart);
+    double statsMs = statsBeforeMs + statsAfterMs;
+    std::cout << "[fc-profile] stage=CUDD_CREATEVAR tag=" << getCuddPreConfigTag()
+              << " kind=fact index=" << index
+              << " hit=0"
+              << " lookup_ms=" << lookupMs
+              << " stats_before_ms=" << statsBeforeMs
+              << " stats_after_ms=" << statsAfterMs
+              << " stats_ms=" << statsMs
+              << " ith_ms=" << ithMs
+              << " wrap_ms=" << wrapMs
+              << " insert_ms=" << insertMs
+              << " total_ms=" << totalMs
+              << std::endl;
+    emitCuddCreateVarStats(getCuddPreConfigTag(), "fact", index, stats_before, stats_after);
     return ref;
 }
 
 BddNodeRef WeightedBDDManager::createVar(int index, const Hyperedge& edge) {
-    if (variableRegistry.find(index) != variableRegistry.end()) {
-        return variableRegistry[index];
+    const bool stats_enabled = fcProfileEnabled && !getCuddPreConfigTag().empty();
+    if (!stats_enabled) {
+        if (variableRegistry.find(index) != variableRegistry.end()) {
+            return variableRegistry[index];
+        }
+        DdNode* var = Cudd_bddIthVar(manager.get(), index);
+        if (var == nullptr) {
+            throw std::runtime_error("Failed to create BDD variable");
+        }
+        BddNodeRef ref(manager, var, edge);
+        variableRegistry[index] = ref;
+        return ref;
     }
-    auto start = std::chrono::steady_clock::now();
+
+    using Clock = std::chrono::steady_clock;
+    auto toMs = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
+    auto totalStart = Clock::now();
+    auto lookupStart = Clock::now();
+    auto it = variableRegistry.find(index);
+    double lookupMs = toMs(Clock::now() - lookupStart);
+    if (it != variableRegistry.end()) {
+        auto copyStart = Clock::now();
+        BddNodeRef ref = it->second;
+        double copyMs = toMs(Clock::now() - copyStart);
+        double totalMs = toMs(Clock::now() - totalStart);
+        std::cout << "[fc-profile] stage=CUDD_CREATEVAR tag=" << getCuddPreConfigTag()
+                  << " kind=edge index=" << index
+                  << " hit=1"
+                  << " lookup_ms=" << lookupMs
+                  << " copy_ms=" << copyMs
+                  << " total_ms=" << totalMs
+                  << std::endl;
+        return ref;
+    }
+    auto statsStart = Clock::now();
+    CuddCreateVarStats stats_before = readCuddCreateVarStats(manager.get());
+    double statsBeforeMs = toMs(Clock::now() - statsStart);
+    auto start = Clock::now();
     DdNode* var = Cudd_bddIthVar(manager.get(), index);
-    double ithMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - start).count();
+    double ithMs = toMs(Clock::now() - start);
+    statsStart = Clock::now();
+    CuddCreateVarStats stats_after = readCuddCreateVarStats(manager.get());
+    double statsAfterMs = toMs(Clock::now() - statsStart);
     if (var == nullptr) {
         throw std::runtime_error("Failed to create BDD variable");
     }
-    start = std::chrono::steady_clock::now();
+    start = Clock::now();
     BddNodeRef ref(manager, var, edge);
-    double wrapMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - start).count();
+    double wrapMs = toMs(Clock::now() - start);
+    auto insertStart = Clock::now();
     variableRegistry[index] = ref;
-    if (kCuddVerbose) {
-        std::cout << "[CUDD] createVar(edge " << edge.getId()
-                  << ") ithVar=" << ithMs << " ms wrap=" << wrapMs << " ms"
-                  << std::endl;
-    }
+    double insertMs = toMs(Clock::now() - insertStart);
+    double totalMs = toMs(Clock::now() - totalStart);
+    double statsMs = statsBeforeMs + statsAfterMs;
+    std::cout << "[fc-profile] stage=CUDD_CREATEVAR tag=" << getCuddPreConfigTag()
+              << " kind=edge index=" << index
+              << " hit=0"
+              << " lookup_ms=" << lookupMs
+              << " stats_before_ms=" << statsBeforeMs
+              << " stats_after_ms=" << statsAfterMs
+              << " stats_ms=" << statsMs
+              << " ith_ms=" << ithMs
+              << " wrap_ms=" << wrapMs
+              << " insert_ms=" << insertMs
+              << " total_ms=" << totalMs
+              << std::endl;
+    emitCuddCreateVarStats(getCuddPreConfigTag(), "edge", index, stats_before, stats_after);
 //    return BddNodeRef(manager, var, edge);
     return ref;
 }

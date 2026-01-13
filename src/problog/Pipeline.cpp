@@ -44,20 +44,18 @@ static std::size_t estimateBddVarCount(const SubgraphView& view) {
 
 static WeightedBDDManager::InitConfig makeCuddInitConfig(std::size_t varCount) {
     WeightedBDDManager::InitConfig cfg;
+    const auto maxVars = std::numeric_limits<unsigned int>::max();
+    const auto doubledVars = varCount > maxVars / 2 ? maxVars : static_cast<unsigned int>(varCount * 2);
+    cfg.numVars = doubledVars;
+    cfg.numSlots = 512;
     // Smaller graphs downscale cache/memory; large graphs keep the default (largest) config.
     if (varCount <= 256) {
-        cfg.numVars = 256;
-        cfg.numSlots = 2048;
         cfg.cacheSize = 1u << 18;
         cfg.maxMemory = 1UL << 30;
     } else if (varCount <= 1024) {
-        cfg.numVars = 512;
-        cfg.numSlots = 4096;
         cfg.cacheSize = 1u << 20;
         cfg.maxMemory = 4UL << 30;
     } else if (varCount <= 4096) {
-        cfg.numVars = 1000;
-        cfg.numSlots = 4096;
         cfg.cacheSize = 1u << 22;
         cfg.maxMemory = 8UL << 30;
     }
@@ -1495,6 +1493,7 @@ void runPipeline(
     DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());
     DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
     DerivationGraph::setMergeBiImpEnabled(opt.isMergeBiImpEnabled());
+    DerivationGraph::setPruneExtraEnabled(opt.isPruneExtraEnabled());
     DerivationGraph::setConstFoldEnabled(opt.isConstFoldEnabled());
     DerivationGraph::setConstDumpEnabled(opt.isDumpConstEnabled());
     precomputedProbResult.clear();

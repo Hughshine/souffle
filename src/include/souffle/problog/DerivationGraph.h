@@ -656,6 +656,22 @@ public:
     virtual const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& getEdgeImpactedByDeltaInsert() const = 0;
     virtual const std::unordered_set<NodePtr>& getDeltaInsertReachableNodes() const = 0;
     virtual const std::unordered_set<EdgePtr>& getDeltaInsertReachableEdges() const = 0;
+    virtual const std::unordered_set<NodePtr>& getDeleteImpactDetNodes() const {
+        static const std::unordered_set<NodePtr> empty;
+        return empty;
+    }
+    virtual const std::unordered_set<EdgePtr>& getDeleteImpactDetEdges() const {
+        static const std::unordered_set<EdgePtr> empty;
+        return empty;
+    }
+    virtual const std::unordered_set<NodePtr>& getDeleteImpactNonDetNodes() const {
+        static const std::unordered_set<NodePtr> empty;
+        return empty;
+    }
+    virtual const std::unordered_set<EdgePtr>& getDeleteImpactNonDetEdges() const {
+        static const std::unordered_set<EdgePtr> empty;
+        return empty;
+    }
     const std::set<NodePtr>& getValidNodes() {
         if (validNodes_.size() > 0) {
             return validNodes_;
@@ -773,6 +789,10 @@ public:
             const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& edgeImpactedByDeltaInsert = {},
             const std::unordered_set<NodePtr>& deltaInsertReachableNodes = {},
             const std::unordered_set<EdgePtr>& deltaInsertReachableEdges = {},
+            const std::unordered_set<NodePtr>& deleteImpactDetNodes = {},
+            const std::unordered_set<EdgePtr>& deleteImpactDetEdges = {},
+            const std::unordered_set<NodePtr>& deleteImpactNonDetNodes = {},
+            const std::unordered_set<EdgePtr>& deleteImpactNonDetEdges = {},
             const std::set<NodePtr>& explicitDeletedFacts = {})
             : SubgraphView(nodes, edges),
               deltaInsertNodes_(deltaInsertNodes),
@@ -784,7 +804,11 @@ public:
             nodeImpactedByDeltaInsert_(nodeImpactedByDeltaInsert),
             edgeImpactedByDeltaInsert_(edgeImpactedByDeltaInsert),
             deltaInsertReachableNodes_(deltaInsertReachableNodes),
-            deltaInsertReachableEdges_(deltaInsertReachableEdges) {
+            deltaInsertReachableEdges_(deltaInsertReachableEdges),
+            deleteImpactDetNodes_(deleteImpactDetNodes),
+            deleteImpactDetEdges_(deleteImpactDetEdges),
+            deleteImpactNonDetNodes_(deleteImpactNonDetNodes),
+            deleteImpactNonDetEdges_(deleteImpactNonDetEdges) {
             explicitDeletedFacts_ = explicitDeletedFacts;
         }
 
@@ -816,6 +840,18 @@ public:
     const std::unordered_set<EdgePtr>& getDeltaInsertReachableEdges() const override {
         return deltaInsertReachableEdges_;
     }
+    const std::unordered_set<NodePtr>& getDeleteImpactDetNodes() const override {
+        return deleteImpactDetNodes_;
+    }
+    const std::unordered_set<EdgePtr>& getDeleteImpactDetEdges() const override {
+        return deleteImpactDetEdges_;
+    }
+    const std::unordered_set<NodePtr>& getDeleteImpactNonDetNodes() const override {
+        return deleteImpactNonDetNodes_;
+    }
+    const std::unordered_set<EdgePtr>& getDeleteImpactNonDetEdges() const override {
+        return deleteImpactNonDetEdges_;
+    }
 
 
     // Optional: dumpDot for incremental view
@@ -831,12 +867,22 @@ protected:
     std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> edgeImpactedByDeltaInsert_;
     std::unordered_set<NodePtr> deltaInsertReachableNodes_;
     std::unordered_set<EdgePtr> deltaInsertReachableEdges_;
+    std::unordered_set<NodePtr> deleteImpactDetNodes_;
+    std::unordered_set<EdgePtr> deleteImpactDetEdges_;
+    std::unordered_set<NodePtr> deleteImpactNonDetNodes_;
+    std::unordered_set<EdgePtr> deleteImpactNonDetEdges_;
 };
 
 class DerivationGraph: virtual public DerivationGraphViewInterface {
 public:
     static void setMergeBiImpEnabled(bool enabled) {
         mergeBiImpEnabled = enabled;
+    }
+    static void setPruneExtraEnabled(bool enabled) {
+        pruneExtraEnabled = enabled;
+    }
+    static bool isPruneExtraEnabled() {
+        return pruneExtraEnabled;
     }
     static void setConstFoldEnabled(bool enabled) {
         constFoldEnabled = enabled;
@@ -1250,6 +1296,19 @@ public:
     }
 
     SubgraphView prune(const std::vector<std::string>& outputRelations) {
+        const bool incProfile = incProfileEnabled;
+        using Clock = std::chrono::steady_clock;
+        auto toMs = [](Clock::time_point start) {
+            return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+        };
+        auto totalStart = Clock::now();
+        double initMs = 0.0;
+        double bfsMs = 0.0;
+        double filterNodeMs = 0.0;
+        double filterEdgeMs = 0.0;
+        double updateEdgesMs = 0.0;
+        double outputlessMs = 0.0;
+        double mergeMs = 0.0;
         std::unordered_set<std::string> outputRelationNames(outputRelations.begin(), outputRelations.end());
 
         // Mark reachable nodes and edges.
@@ -1258,79 +1317,137 @@ public:
         std::queue<NodePtr> workQueue;
 
         // Initialize: start from all output relation nodes.
-        for (const auto& node : nodes) {
-            if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
+        {
+            auto t0 = Clock::now();
+            for (const auto& node : nodes) {
+                if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
 //                std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
-                reachableNodes.insert(node);
-                workQueue.push(node);
-                node->setQuery();
+                    reachableNodes.insert(node);
+                    workQueue.push(node);
+                    node->setQuery();
+                }
+            }
+            if (incProfile) {
+                initMs = toMs(t0);
             }
         }
 
         // Reverse BFS traversal.
-        while (!workQueue.empty()) {
-            NodePtr current = workQueue.front();
-            workQueue.pop();
-            if (current->isFact) {
-                continue;  // skip input fact nodes
-            }
-            for (const auto& edge : current->getIncomingEdges()) {
-                if (edge->hasSelfDependency()) {
-                    continue;  // if the edge reports self-dependency, then it is redundant
+        {
+            auto t0 = Clock::now();
+            while (!workQueue.empty()) {
+                NodePtr current = workQueue.front();
+                workQueue.pop();
+                if (current->isFact) {
+                    continue;  // skip input fact nodes
                 }
-                reachableEdges.insert(edge);
-                for (const auto& inputNode : edge->getInputs()) {
-                    if (reachableNodes.insert(inputNode).second) {
-                        workQueue.push(inputNode);
+                for (const auto& edge : current->getIncomingEdges()) {
+                    if (edge->hasSelfDependency()) {
+                        continue;  // if the edge reports self-dependency, then it is redundant
+                    }
+                    reachableEdges.insert(edge);
+                    for (const auto& inputNode : edge->getInputs()) {
+                        if (reachableNodes.insert(inputNode).second) {
+                            workQueue.push(inputNode);
+                        }
                     }
                 }
+            }
+            if (incProfile) {
+                bfsMs = toMs(t0);
             }
         }
 
         // Filter nodes and edges.
         std::unordered_set<NodePtr> newNodes;
-        for (const auto& node : nodes) {
-            if (reachableNodes.count(node)){
-                newNodes.insert(node);
-            if (!reachableNodes.count(node)) {
-                node->setQuery();
+        {
+            auto t0 = Clock::now();
+            for (const auto& node : nodes) {
+                if (reachableNodes.count(node)){
+                    newNodes.insert(node);
+                if (!reachableNodes.count(node)) {
+                    node->setQuery();
+                }
+                }
             }
+            if (incProfile) {
+                filterNodeMs = toMs(t0);
             }
         }
 
         std::unordered_set<EdgePtr> newEdges;
-        for (const auto& edge : edges) {
-            if (reachableEdges.count(edge)) {
-                newEdges.insert(edge);
+        {
+            auto t0 = Clock::now();
+            for (const auto& edge : edges) {
+                if (reachableEdges.count(edge)) {
+                    newEdges.insert(edge);
+                }
+            }
+            if (incProfile) {
+                filterEdgeMs = toMs(t0);
             }
         }
 
         // TODO: update nodes incoming and outgoing edges
-        for (const auto& node : newNodes) {
-            std::vector<EdgePtr> newIncomingEdges;
-            std::vector<EdgePtr> newOutgoingEdges;
-            for (const auto& edge : node->getIncomingEdges()) {
+        {
+            auto t0 = Clock::now();
+            for (const auto& node : newNodes) {
+                std::vector<EdgePtr> newIncomingEdges;
+                std::vector<EdgePtr> newOutgoingEdges;
+                for (const auto& edge : node->getIncomingEdges()) {
+                    if (reachableEdges.count(edge)) {
+                        newIncomingEdges.push_back(edge);
+                    }
+                }
+            for (const auto& edge : node->getOutgoingEdges()) {
                 if (reachableEdges.count(edge)) {
-                    newIncomingEdges.push_back(edge);
+                    newOutgoingEdges.push_back(edge);
                 }
             }
-        for (const auto& edge : node->getOutgoingEdges()) {
-            if (reachableEdges.count(edge)) {
-                newOutgoingEdges.push_back(edge);
+        node->incomingEdges = std::move(newIncomingEdges);
+        node->outgoingEdges = std::move(newOutgoingEdges);
+    }
+            if (incProfile) {
+                updateEdgesMs = toMs(t0);
             }
         }
-    node->incomingEdges = std::move(newIncomingEdges);
-    node->outgoingEdges = std::move(newOutgoingEdges);
-}
 
-    pruneOutputlessComponents(newNodes, newEdges);
+        if (pruneExtraEnabled) {
+            auto t0 = Clock::now();
+            pruneOutputlessComponents(newNodes, newEdges);
+            if (incProfile) {
+                outputlessMs = toMs(t0);
+            }
+        }
 
-    // eqrel merge (if enabled) and cleanup
-    mergeBiImpEquivalences(newNodes, newEdges);
-    removeSelfLoopEdges(newNodes, newEdges);
+        // eqrel merge (if enabled) and cleanup
+        {
+            auto t0 = Clock::now();
+            mergeBiImpEquivalences(newNodes, newEdges);
+            removeSelfLoopEdges(newNodes, newEdges);
+            if (incProfile) {
+                mergeMs = toMs(t0);
+            }
+        }
+        if (incProfile) {
+            const double totalMs = toMs(totalStart);
+            const size_t liveNodeCount = newNodes.size();
+            const size_t liveEdgeCount = newEdges.size();
+            std::cout << "[inc-profile] stage=PRUNING_FULL prune_ms=" << totalMs
+                      << " init_ms=" << initMs
+                      << " bfs_ms=" << bfsMs
+                      << " filter_nodes_ms=" << filterNodeMs
+                      << " filter_edges_ms=" << filterEdgeMs
+                      << " update_edges_ms=" << updateEdgesMs
+                      << " outputless_ms=" << outputlessMs
+                      << " merge_ms=" << mergeMs
+                      << " live_nodes=" << liveNodeCount
+                      << " live_edges=" << liveEdgeCount
+                      << std::endl;
+        }
 
-    return SubgraphView(std::move(newNodes), std::move(newEdges));
-}
+        return SubgraphView(std::move(newNodes), std::move(newEdges));
+    }
 
     static DerivationGraph createExample() {
         DerivationGraph graph;
@@ -1402,6 +1519,7 @@ protected:
     size_t nextEdgeId;
     const RuleManager* ruleManager;
     static inline bool mergeBiImpEnabled = true;
+    static inline bool pruneExtraEnabled = false;
     static inline bool constFoldEnabled = false;
     static inline bool constDumpEnabled = false;
     bool biImpMerged = false;
@@ -2255,7 +2373,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     std::cout << "[prune-inc] delta-delete counts (post-mark-pruned): nodes=" << deltaDeleteNodes.size()
               << " edges=" << deltaDeleteEdges.size() << std::endl;
 
-    {
+    if (pruneExtraEnabled) {
         auto t0 = Clock::now();
         pruneOutputlessComponents(liveNodes, liveEdges);
         if (incProfile) {
@@ -2351,6 +2469,10 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> newInsertedFactImpactedEdges;
     std::unordered_map<NodePtr, std::unordered_set<NodePtr>> newDeletedFactImpactedNodes;
     std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> newDeletedFactImpactedEdges;
+    std::unordered_set<NodePtr> newDeletedFactImpactDetNodes;
+    std::unordered_set<EdgePtr> newDeletedFactImpactDetEdges;
+    std::unordered_set<NodePtr> newDeletedFactImpactNonDetNodes;
+    std::unordered_set<EdgePtr> newDeletedFactImpactNonDetEdges;
     newInsertedReachableNodes.reserve(newDeltaInsertedNodes.size());
     newInsertedReachableEdges.reserve(newDeltaInsertedEdges.size());
     newInsertedFactImpactedNodes.reserve(newDeltaInsertedNodes.size());
@@ -2360,71 +2482,9 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     {
         auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: rebuild impacted maps");
-        using Clock = std::chrono::steady_clock;
         double insImpactMs = 0.0, delImpactMs = 0.0;
         size_t insImpactNodes = 0, insImpactEdges = 0, insSources = 0;
         size_t delImpactNodes = 0, delImpactEdges = 0, delSources = 0;
-        auto computeImpact = [&](const NodePtr& src, std::unordered_set<NodePtr>& outNodes,
-                                 std::unordered_set<EdgePtr>& outEdges) -> std::pair<size_t, size_t> {
-            std::queue<NodePtr> q;
-            std::unordered_set<NodePtr> visited;
-            if (!src || !liveNodes.count(src)) {
-                return {0, 0};
-            }
-            q.push(src);
-            visited.insert(src);
-            outNodes.insert(src);
-            while (!q.empty()) {
-                NodePtr cur = q.front();
-                q.pop();
-                for (const auto& e : cur->getOutgoingEdges()) {
-                    if (!liveEdges.count(e)) {
-                        continue;
-                    }
-                    outEdges.insert(e);
-                    NodePtr nxt = e->getOutput();
-                    if (nxt && liveNodes.count(nxt) && visited.insert(nxt).second) {
-                        outNodes.insert(nxt);
-                        q.push(nxt);
-                    }
-                }
-            }
-            return {outNodes.size(), outEdges.size()};
-        };
-
-        // Insert impacts are only needed for inc-regional; delete impacts only for explicit deleted facts.
-        if (buildInsertImpacts_) {
-            for (const auto& fact : newDeltaInsertedNodes) {
-                std::unordered_set<NodePtr> impactedNodes;
-                std::unordered_set<EdgePtr> impactedEdges;
-                auto t0 = Clock::now();
-                auto counts = computeImpact(fact, impactedNodes, impactedEdges);
-                insImpactMs += std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-                if (!impactedNodes.empty() || !impactedEdges.empty()) {
-                    newInsertedReachableNodes.insert(impactedNodes.begin(), impactedNodes.end());
-                    newInsertedReachableEdges.insert(impactedEdges.begin(), impactedEdges.end());
-                    newInsertedFactImpactedNodes[fact] = std::move(impactedNodes);
-                    newInsertedFactImpactedEdges[fact] = std::move(impactedEdges);
-                    insImpactNodes += counts.first;
-                    insImpactEdges += counts.second;
-                    insSources++;
-                }
-            }
-        }
-        for (const auto& fact : explicitDeletedFacts_) {
-            std::unordered_set<NodePtr> impactedNodes;
-            std::unordered_set<EdgePtr> impactedEdges;
-            auto t0 = Clock::now();
-            auto counts = computeImpact(fact, impactedNodes, impactedEdges);
-            delImpactMs += std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-            if (!impactedNodes.empty() || !impactedEdges.empty()) {
-                newDeletedFactImpactedNodes[fact] = std::move(impactedNodes);
-                newDeletedFactImpactedEdges[fact] = std::move(impactedEdges);
-                delImpactNodes += counts.first;
-                delImpactEdges += counts.second;
-                delSources++;
-            }
-        }
         std::cout << "[prune-inc impact] insSources=" << insSources
                   << " insNodes=" << insImpactNodes << " insEdges=" << insImpactEdges
                   << " insTimeMs=" << insImpactMs
@@ -2453,6 +2513,10 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                                std::move(newInsertedFactImpactedEdges),
                                std::move(newInsertedReachableNodes),
                                std::move(newInsertedReachableEdges),
+                               std::move(newDeletedFactImpactDetNodes),
+                               std::move(newDeletedFactImpactDetEdges),
+                               std::move(newDeletedFactImpactNonDetNodes),
+                               std::move(newDeletedFactImpactNonDetEdges),
                                explicitDeletedFacts_);
         if (incProfile) {
             buildViewMs = toMs(t0);

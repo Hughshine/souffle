@@ -881,12 +881,48 @@ private:
         } else {
             const auto& nodeImpacted = view_.getNodeImpactedByDeltaInsert();
             const auto& edgeImpacted = view_.getEdgeImpactedByDeltaInsert();
-            for (const auto& kv : nodeImpacted) {
-                DR.nodes.insert(kv.first);
-                DR.nodes.insert(kv.second.begin(), kv.second.end());
-            }
-            for (const auto& kv : edgeImpacted) {
-                DR.edges.insert(kv.second.begin(), kv.second.end());
+            if (!nodeImpacted.empty() || !edgeImpacted.empty()) {
+                for (const auto& kv : nodeImpacted) {
+                    DR.nodes.insert(kv.first);
+                    DR.nodes.insert(kv.second.begin(), kv.second.end());
+                }
+                for (const auto& kv : edgeImpacted) {
+                    DR.edges.insert(kv.second.begin(), kv.second.end());
+                }
+            } else {
+                const auto& liveNodes = view_.getNodes();
+                const auto& liveEdges = view_.getEdges();
+                std::queue<NodePtr> q;
+                auto seed = [&](const NodePtr& src) {
+                    if (!src || !liveNodes.count(src)) {
+                        return;
+                    }
+                    if (DR.nodes.insert(src).second) {
+                        q.push(src);
+                    }
+                };
+                for (const auto& n : view_.getDeltaInsertNodes()) {
+                    seed(n);
+                }
+                for (const auto& e : view_.getDeltaInsertEdges()) {
+                    if (auto h = view_.getOutput(e)) {
+                        seed(h);
+                    }
+                }
+                while (!q.empty()) {
+                    NodePtr cur = q.front();
+                    q.pop();
+                    for (const auto& e : cur->getOutgoingEdges()) {
+                        if (!liveEdges.count(e)) {
+                            continue;
+                        }
+                        DR.edges.insert(e);
+                        NodePtr nxt = e->getOutput();
+                        if (nxt && liveNodes.count(nxt) && DR.nodes.insert(nxt).second) {
+                            q.push(nxt);
+                        }
+                    }
+                }
             }
         }
         for (const auto& n : view_.getDeltaInsertNodes()) {

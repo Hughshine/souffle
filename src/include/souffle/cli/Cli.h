@@ -367,6 +367,8 @@ public:
         DerivationGraphViewInterface::setDumpStatsEnabled(options.isDumpStatEnabled());
         DerivationManager::setSemStatsEnabled(options.isDumpStatEnabled());
         incProfileEnabled = options.isIncProfileEnabled();
+        fcProfileEnabled = options.isFcProfileEnabled();
+        postDelEnabled = options.isPostDelEnabled();
         auto& mode = options.getIncMode();
         if (mode == "full" || mode == "full-hard") {
             setIncMode(IncMode::FULL_HARD);
