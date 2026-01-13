@@ -287,7 +287,7 @@ PATH=./build/src:$PATH python /home/hugh/research/datalog/problog-benchmark/side
   compile --cases 12 --souffle-arg=--profile=profile.log --souffle-arg=--dred-profile
 
 cd /home/hugh/research/datalog/souffle/experiments/side_channel_inc_eval/P12
-./compute -F input -D output --setmode inc --derv-only=true --dumpstat --dred-profile -p profile_inc1.json \
+./compute -F input -D output --setmode inc --derv-only --dumpstat --dred-profile -p profile_inc1.json \
   --logfile log_P12_inc1_dred < delta/inc1_1.txt > run_inc1_dred.stdout 2>&1
 ```
 

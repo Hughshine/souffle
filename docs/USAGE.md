@@ -52,13 +52,14 @@ listed below; use `-h` for the authoritative values.
 - `-p, --profile <FILE>`: profile file, default empty (only if compiled with profiling)
 - `-k, --knowledge <bdd|sdd>`: default `bdd`
 - `-l, --logfile <FILE>`: debugger JSON base name, default `log.txt`
-- `-d, --derv-only <true|false>`: default `false`
+- `-d, --derv-only[=<true|false>]`: default `false` (omit value to set `true`)
 - `-m, --setmode <inc-naive|inc-regional|full-hard|full-soft|full|elastic>`:
   default `inc-naive`
   - aliases: `inc`, `incr`, `incremental` map to `inc-naive`
   - `full` maps to `full-hard` (hard reset each turn); `full-soft` reuses the
     DD manager state
 - `-e, --merge-bi-imp`: default `false`
+- `--prune-extra`: default `false` (enable outputless-component pruning in prune)
 - `-r, --rewrite`: default `false`
 - `--det-opt`: default `false` (enable deterministic-first derivation gating)
 - `--split-mode=<no-split|naive-split|complete-split>`: default `naive-split`

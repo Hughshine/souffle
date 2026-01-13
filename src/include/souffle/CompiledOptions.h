@@ -73,6 +73,7 @@ protected:
     */
     std::string knowledge_representation;  // bdd, sdd are supported
     bool merge_bi_imp = true;  // enable merging mutually implying deterministic nodes
+    bool prune_extra = false;  // enable extra prune pass (outputless components)
     bool fold_const = false;  // enable deterministic constant pre-analysis (no prune rewrite)
     bool enable_rewrite = false;  // enable SISO-based graph rewriting
     std::string split_mode = "naive-split";  // split mode for rewrite: no-split/naive-split/complete-split
@@ -141,6 +142,9 @@ public:
 
     bool isMergeBiImpEnabled() const {
         return merge_bi_imp;
+    }
+    bool isPruneExtraEnabled() const {
+        return prune_extra;
     }
     bool isConstFoldEnabled() const {
         return fold_const;
@@ -222,8 +226,8 @@ public:
         option longOptions[] = {{"facts", true, nullptr, 'F'}, {"output", true, nullptr, 'D'},
                 {"profile", true, nullptr, 'p'}, {"jobs", true, nullptr, 'j'}, {"index", true, nullptr, 'i'},
                 {"knowledge", true, nullptr, 'k'}, {"logfile", true, nullptr, 'l'},
-                {"derv-only", true, nullptr, 'd'}, {"setmode", true, nullptr, 'm'},
-                {"merge-bi-imp", false, nullptr, 'e'}, {"fold-const", false, nullptr, 'C'},
+                {"derv-only", optional_argument, nullptr, 'd'}, {"setmode", true, nullptr, 'm'},
+                {"merge-bi-imp", false, nullptr, 'e'}, {"prune-extra", false, nullptr, 1004}, {"fold-const", false, nullptr, 'C'},
                 {"rewrite", false, nullptr, 'r'},
                 {"split-mode", true, nullptr, 'P'},
                 {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
@@ -240,7 +244,7 @@ public:
         bool ok = true;
         knowledge_representation = "bdd";  // default knowledge representation
         int c; /* command-line arguments processing */
-        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d:em:C:rP:JTSUZ", longOptions, nullptr)) != EOF) {
+        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d::em:C:rP:JTSUZ", longOptions, nullptr)) != EOF) {
             switch (c) {
                 /* Fact directories */
                 case 'F':
@@ -300,16 +304,22 @@ public:
                         log_file_name = "log";
                     }
                     break;
-                case 'd':
-                    if (std::string(optarg) == "true") {
+                case 'd': {
+                    if (optarg == nullptr) {
                         derivation_only = true;
-                    } else if (std::string(optarg) == "false") {
+                        break;
+                    }
+                    const std::string value(optarg);
+                    if (value == "true") {
+                        derivation_only = true;
+                    } else if (value == "false") {
                         derivation_only = false;
                     } else {
                         std::cerr << "Invalid value for derv-only [-d]: " << optarg << "\n";
                         ok = false;
                     }
                     break;
+                }
                 case 'm': {
                     std::string modeArg(optarg);
                     if (modeArg == "inc" || modeArg == "incremental" || modeArg == "incr") {
@@ -327,6 +337,9 @@ public:
                 }
                 case 'e':
                     merge_bi_imp = true;
+                    break;
+                case 1004:
+                    prune_extra = true;
                     break;
                 case 'C':
                     fold_const = true;
@@ -404,8 +417,9 @@ private:
         }
         std::cerr << "    -k <KR>, --knowledge=<KR>    -- Specify knowledge representation (bdd or sdd)\n";
         std::cerr << "                                    (default: " << knowledge_representation << ")\n";
-        std::cerr << "    -d, --derv-only              -- Only compute the derivation graph\n";
+        std::cerr << "    -d, --derv-only[=<true|false>] -- Only compute the derivation graph\n";
         std::cerr << "    -e, --merge-bi-imp           -- Enable merging mutually implying deterministic nodes during pruning\n";
+        std::cerr << "    --prune-extra                -- Enable outputless-component pruning in prune\n";
         std::cerr << "    -C, --fold-const             -- Enable deterministic constant pre-analysis (no prune rewrite; negation ignored)\n";
         std::cerr << "    -r, --rewrite                -- Enable SISO-based graph rewriting\n";
         std::cerr << "    --split-mode=<MODE>          -- Split mode for rewrite: no-split, naive-split, complete-split\n";

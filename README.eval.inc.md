@@ -4738,7 +4738,7 @@ DeltaEdges come from apply_delta_view (pre-prune); total edges come from dumpSta
 Delete ratios can exceed 1.0 when removed edges outnumber the remaining edges after the delete turn.
 #### 2026-01-10 (full ruleset, equal_assign)
 Legacy run: 2026-01-10, full ruleset (equal_assign), inc1/inc3/inc5, sample=1, base-dir experiments/side_channel_inc_eval.
-Collected via `--dumpstat --derv-only=true` to read dumpStatisticsInc totals.
+Collected via `--dumpstat --derv-only` to read dumpStatisticsInc totals.
 ```tsv
 Case	Delta	DelEdges	DelTotalEdges	DelEdgeRatio	InsEdges	InsTotalEdges	InsEdgeRatio
 P1	inc1	406	88293	0.004598	406	88699	0.004577
@@ -5472,6 +5472,10 @@ P20	inc5	ins	18.059595	4.419234	4.087	97639	73529	0	0
 
 ## Notes
 - Do not commit anything under `experiments/`; keep it local.
+- `side_channel_inc.py` invokes `souffle` from PATH; always point PATH at
+  `build/src` (repo build) so compile/run uses the latest binary, and verify
+  `souffle --version` matches `build/src/souffle --version` before collecting
+  results.
 - If you edit delta files manually (`delta/inc1*.txt`), rerun compile+run so
   probabilities match.
 - If you edit legacy delta files (`delta/inc10_*.txt`), rerun compile+run so
