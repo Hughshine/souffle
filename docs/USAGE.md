@@ -62,6 +62,7 @@ listed below; use `-h` for the authoritative values.
 - `--prune-extra`: default `false` (enable outputless-component pruning in prune)
 - `-r, --rewrite`: default `false`
 - `--det-opt`: default `false` (enable deterministic-first derivation gating)
+- `--det-force`: default `false` (force deterministic evaluation; skip derivation graph and emit 1.0 probs)
 - `--split-mode=<no-split|naive-split|complete-split>`: default `naive-split`
   (rewrite only)
 - `--dumpjson`: default `false`
@@ -126,6 +127,8 @@ Example (batch from delta file):
   `FC_WMC_HYBRID`.
 - Deterministic-first derivation gating (`--det-opt`) to skip recording
   derivations for deterministic relations.
+- Deterministic-force mode (`--det-force`) to bypass the derivation graph and
+  emit probability `1.0` for all outputs (useful for deterministic baselines).
 - Optional deterministic constant pre-analysis in FC (`--fold-const`); use
   `--dumpconst` to write true/false nodes and edges (see `README.const.md`).
 - Debug/profiling outputs: JSON/DOT/stats dumps after prune.

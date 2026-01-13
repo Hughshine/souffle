@@ -86,6 +86,7 @@ protected:
     bool fc_profile = false;  // enable detailed forward-compilation profiling
     bool post_del = false;  // enable postprocessUselessVariables after deletion
     bool det_opt = false;  // enable deterministic-relation analysis and det gating
+    bool det_force = false;  // force deterministic evaluation (skip derivation graph)
     bool single_rand_fast = true;  // enable single-randvar fast path in component FC
 public:
     // all argument constructor
@@ -195,6 +196,9 @@ public:
     bool isDetOptEnabled() const {
         return det_opt;
     }
+    bool isDetForceEnabled() const {
+        return det_force;
+    }
     bool isSingleRandFastEnabled() const {
         return single_rand_fast;
     }
@@ -248,6 +252,7 @@ public:
                 {"fc-profile", false, nullptr, 1005},
                 {"post-del", false, nullptr, 1006},
                 {"det-opt", false, nullptr, 'Z'},
+                {"det-force", false, nullptr, 1007},
                 {"no-single-rand-fast", false, nullptr, 1001},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
@@ -400,6 +405,9 @@ public:
                 case 'Z':
                     det_opt = true;
                     break;
+                case 1007:
+                    det_force = true;
+                    break;
                 case 1001:
                     single_rand_fast = false;
                     break;
@@ -450,6 +458,7 @@ private:
         std::cerr << "    --post-del                   -- Enable post-delete variable postprocess (FC)\n";
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
         std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
+        std::cerr << "    --det-force                  -- Force deterministic mode (skip derivation graph; emit prob=1.0)\n";
         std::cerr << "    --no-single-rand-fast        -- Disable single-randvar fast path in component FC\n";
 #ifdef _OPENMP
         std::cerr << "    -j <NUM>, --jobs=<NUM>       -- Specify number of threads\n";

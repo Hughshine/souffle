@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -246,6 +247,27 @@ std::string makeOutputPath(const CmdOptions& opt, const std::string& filename) {
         return dir + filename;
     }
     return dir + "/" + filename;
+}
+
+static void dumpDeterministicProbabilities(const CmdOptions& opt, SouffleProgram& program) {
+    std::vector<std::string> outputTuples;
+    for (auto* rel : program.getOutputRelations()) {
+        if (rel == nullptr) {
+            continue;
+        }
+        for (auto& tup : *rel) {
+            outputTuples.push_back(tup.toString());
+        }
+    }
+    std::sort(outputTuples.begin(), outputTuples.end());
+    const std::string outPath = makeOutputPath(opt, "facts.prob");
+    std::ofstream outputFile(outPath);
+    outputFile << std::setprecision(8);
+    for (const auto& tupleStr : outputTuples) {
+        outputFile << tupleStr << " : 1.0\n";
+    }
+    std::cout << "[det-force] dumpProbabilities outputs=" << outputTuples.size()
+              << " file=" << outPath << std::endl;
 }
 
 static std::vector<std::pair<NodePtr, bool>> applyEvidence(
@@ -1498,6 +1520,17 @@ void runPipeline(
     DerivationGraph::setConstDumpEnabled(opt.isDumpConstEnabled());
     precomputedProbResult.clear();
     bool rewritePerformed = false;
+
+    if (::detForceEnabled) {
+        std::cout << "[det-force] enabled; skip derivation graph and emit prob=1.0" << std::endl;
+        dumpDeterministicProbabilities(opt, program);
+        if (enableOnlineCli) {
+            std::cout << "[det-force] incremental CLI disabled" << std::endl;
+        }
+        debugger.endTurn();
+        dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter0.txt");
+        return;
+    }
 
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);
     auto t0 = std::chrono::steady_clock::now();

@@ -4448,6 +4448,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";
     hook << "detOptEnabled = opt.isDetOptEnabled();\n";
+    hook << "detForceEnabled = opt.isDetForceEnabled();\n";
     hook << "dredProfileEnabled = opt.isDredProfileEnabled();\n";
     hook << "incProfileEnabled = opt.isIncProfileEnabled();\n";
 
