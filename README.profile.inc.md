@@ -18,6 +18,42 @@
 - WMC_INC still iterates all valid nodes; it only skips per-node recomputation using
   changedNodes but retains full-node scans.
 - `--inc-profile` prints `[inc-profile]` lines with PRUNING/FC/WMC sub-step timings.
+- `--fc-profile` prints `[fc-profile]` lines with FC sub-phase counters/timings (see `docs/USAGE.md`).
+
+## FC Profiling Update (2026-01-13, --fc-profile)
+- Runs: P17–P20, inc0p1/inc0p3/inc0p5, `--det-opt --fc-profile` (post-del disabled by default).
+- Data files:
+  - `experiments/side_channel_inc_eval_small/fc-profile-summary-p17-p20-v4.tsv`
+  - `experiments/side_channel_inc_eval_small/fc-preconfig-summary-p17-p20-v4.tsv`
+  - `experiments/side_channel_inc_eval_small/cudd-createvar-summary-p17-p20-v4.tsv`
+  - `experiments/side_channel_inc_eval_small/cudd-createvar-top5-p17-p20-v4.tsv`
+- Insert time is usually dominated by CUDD preConfig: `insert_preconfig_ms/total_ms`
+  ranges 0.41–0.87 (avg ~0.73). Insert loop remains non-trivial: `insert_loop_ms/total_ms`
+  ranges 0.02–0.56 (avg ~0.19).
+- CUDD preConfig is mostly `createVar(...)` time, and the long tail is driven by a
+  small number of very slow fact-variable creates (up to ~2.5s each).
+- `--post-del` (default false) eliminates delete-side variable postprocess overhead:
+  delete total dropped ~5–6x on average; insert total improved ~10% (v3→v4).
+- Full-mode FC output currently prints only iter1+iter2 (no explicit insert stage);
+  need a follow-up run that isolates full insert to compare per-turn FC fairly.
+
+### CUDD createVar spike check (2026-01-13, P17 inc0p1)
+- Added `CUDD_CREATEVAR_STATS` lines (GC/reorder/swap/node/dead/slots/keys deltas) to
+  correlate slow `Cudd_bddIthVar(...)` calls with CUDD internal events.
+- Sample run: `experiments/side_channel_inc_eval_small/P17/output_fc_profile_spike/fc-profile-inc0p1-inc.stdout`.
+- In the slowest createVar calls, `gc_delta` and `reorder_delta` stay 0, while
+  `slots_delta` jumps (e.g., +104,734,720), indicating unique-table resize/rehash
+  as the dominant spike source.
+
+### numSlots adjustment follow-up (2026-01-13, P17 inc0p1)
+- Rebuilt after changing `numSlots` init size; reran P17 inc0p1 with `--fc-profile`.
+- Output: `experiments/side_channel_inc_eval_small/P17/output_fc_profile_spike2/fc-profile-inc0p1-inc.stdout`.
+- Max `CUDD_CREATEVAR` time dropped to ~65ms (previously ~0.9–1.5s).
+- `gc_delta/reorder_delta/swap_delta` remain 0; the largest spike still coincides
+  with `slots_delta` growth (now +13,091,840), so resize/rehash is still the root
+  cause, just much smaller.
+- Insert preConfig share in this run is ~0.69 (down from ~0.93 in the earlier spike
+  run), so the slowdown is reduced but not eliminated.
 
 ## Profiling Run (2026-01-10, --inc-profile, full ruleset)
 - Cases: P12, P17; deltas: inc1 (1%), inc5 (5%); 1 sample each.

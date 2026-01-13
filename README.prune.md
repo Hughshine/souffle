@@ -21,7 +21,8 @@
 ## What prune computes
 - A subgraph reachable from output relations and evidence nodes (backward reachability).
 - Node/edge `pruned` flags and a live subset (`liveNodes`, `liveEdges`).
-- Outputless-component pruning (removes disconnected components after reachability).
+- Outputless-component pruning (removes disconnected components after reachability);
+  gated by `--prune-extra` (default off, see `docs/USAGE.md`).
 - Delta-delete filtering: retain only deltas still pruned after reachability.
 - For inc: build `IncSubgraphView` (delta sets + impacted maps + delta-reach cache).
 - For full: optional bi-imp merge (when enabled) and cleanup.
@@ -56,6 +57,15 @@
 - PRUNING_INC delete turns are roughly flat to slightly slower:
   avg PRN across P17-P20 moved from ~0.58/0.50/0.54s to ~0.63/0.67/0.68s.
 - Remaining bottleneck: insert FC dominates (e.g., P20 inc3/inc5 insert FC still ~65–68s).
+
+## Update log (2026-01-12, delete impact union BFS, trimmed ruleset, det-opt, P17-P20, inc1/inc3/inc5)
+- Change: delete impact maps are now computed as **union BFS** for deterministic and non-deterministic deleted facts
+  (per-fact BFS removed); non-deterministic conditioning is applied once per impacted node/edge using the full
+  deleted-var list.
+- Correctness: all deltas OK (max|Δ|=0).
+- PRUNING_INC delete turns improved: avg PRN across P17-P20 moved from ~0.62/0.67/0.68s to ~0.46/0.45/0.45s
+  for inc1/inc3/inc5 (≈1.3–1.5x faster).
+- PRUNING_INC insert turns also improved modestly (avg ~1.04/1.07/1.25s → ~0.77/0.85/1.03s).
 
 ## Correctness constraints: bi-imp merge
 - In multi-turn incremental mode (non full-only), bi-imp merge must remain disabled.

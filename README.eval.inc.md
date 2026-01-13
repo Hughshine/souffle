@@ -3,12 +3,14 @@
 Incremental side-channel benchmark notes (context + procedures). Experiments live
 under `experiments/side_channel_inc_eval/` (legacy),
 `experiments/side_channel_inc_trimmed_eval/` (trimmed ruleset, no equal_assign),
-and `experiments/side_channel_inc_trimmed_eval_small/` (trimmed ruleset, 0.1/0.3/0.5% deltas),
+`experiments/side_channel_inc_trimmed_eval_small/` (trimmed ruleset, 0.1/0.3/0.5% deltas),
+and `experiments/side_channel_inc_eval_small/` (full ruleset, 0.1/0.3/0.5% deltas),
 using the Souffle binary built from this repo. Do not git-add anything under
 `experiments/` or other generated artifacts.
 
 ## Status
 - Active evaluation workflow.
+- 2026-01-12 (full ruleset, det-opt, apply_delta_graph): P1,P3,P4-P20, inc0p1/inc0p3/inc0p5, sample=1, all OK.
 - 2026-01-11 (trimmed ruleset, det-opt, apply_delta_graph): P1,P3,P4-P20, inc0p1/inc0p3/inc0p5, sample=1, all OK.
 - 2026-01-11 (full ruleset, det-opt, apply_delta_graph): P1,P3,P4-P20, inc1/inc3/inc5, sample=1, all OK.
 - 2026-01-11 (trimmed ruleset, det-opt, apply_delta_graph): P1,P3,P4-P20, inc1/inc3/inc5, sample=1, all OK.
@@ -45,14 +47,14 @@ using the Souffle binary built from this repo. Do not git-add anything under
 # 1) Generate inputs from SMT
 python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval generate --cases 1 --cleanup
 
-# 2) Generate delta workloads (default change spec; overwrites delta/)
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval delta --cases 1 --cleanup
+# 2) Generate delta workloads (0.1/0.3/0.5% deltas; overwrites delta/)
+python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval delta --cases 1 --cleanup --change-spec inc0p1=0.001,inc0p3=0.003,inc0p5=0.005
 
 # 3) Compile Souffle (online default; produces ./compute in P1/)
 python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval compile --cases 1 --timeout 600
 
-# 4) Run baseline (full+inc) and one sample for inc1/inc3/inc5
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval run   --cases 1 --delta-labels inc1,inc3,inc5 --delta-samples 1 --timeout 600 --run-arg=--det-opt
+# 4) Run baseline (full+inc) and one sample for inc0p1/inc0p3/inc0p5
+python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval run   --cases 1 --delta-labels inc0p1,inc0p3,inc0p5 --delta-samples 1 --timeout 600 --run-arg=--det-opt
 
 # 5) Collect summary TSV
 python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval collect --cases 1
@@ -64,7 +66,7 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --bas
   prefixed per delta, e.g.
   `output/delta-<label>-<sample>-{inc-naive,inc-regional,full}-fact-iterN-<mode>.prob`.
 - Logs: debugger JSON reports land in `output/` (e.g.,
-  `output/log_P1_inc1_1_inc_*.json`); stdout from manual runs (e.g.,
+  `output/log_P1_inc0p1_1_inc_*.json`); stdout from manual runs (e.g.,
   `log_inc_applyDelta_inc*.stdout`) still holds CLI prints.
 - Debugger JSON `turns[].mode` shows `FULL-HARD` / `FULL-SOFT` / `INC`.
 - CLI runs in inc mode print delta size:
@@ -92,6 +94,7 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --bas
 - `src/include/souffle/cli/Cli.h`: applyDelta + mode dispatch (inc-naive/inc-regional).
 
 ## Latest status / known issues
+- 2026-01-12 (full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc0p1 15/19 faster, inc0p3 15/19 faster, inc0p5 15/19 faster. Avg speedup 1.28/1.22/1.17x (inc0p1/inc0p3/inc0p5).
 - 2026-01-11 (trimmed ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc0p1 15/19 faster, inc0p3 16/19 faster, inc0p5 14/19 faster. Avg ΔE/|E| now 9.8–33.9% (ins) and 10.9–51.2% (del).
 - 2026-01-11 (full ruleset, det-opt, apply_delta_graph): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc1 6/19 faster, inc3 3/19 faster, inc5 2/19 faster. ΔE/|E| now uses post-applyDelta full-graph edges (not pruned view edges).
 - 2026-01-11 (trimmed ruleset, det-opt, apply_delta_graph): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc1 7/19 faster, inc3 6/19 faster, inc5 1/19 faster.
@@ -99,7 +102,7 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --bas
 - 2026-01-10 (full ruleset): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc1 17/19 faster, inc3 14/19 faster, inc5 6/19 faster; P1/P3 forced trimmed ruleset in generator.
 - 2026-01-09 (post-fix rerun): correctness OK for P1,P3,P4-P20 (P2 missing in source). Summary counts: inc1 16/19 faster (ok=19/19), inc3 8/19 faster (ok=19/19), inc5 2/19 faster (ok=19/19).
 - 2026-01-09 (pre-fix run): correctness mismatches (inc_iter1_vs_full_iter1): P7 inc1/inc3/inc5 mismatches=1 max|d|=0.10239319; P20 inc5 mismatches=2 max|d|=0.2522536. Summary counts: inc1 16/19 faster (ok=18/19), inc3 10/19 faster (ok=18/19), inc5 6/19 faster (ok=17/19).
-- Delta-size sensitivity: inc1 often faster, inc3 mixed, inc5 usually slower (full recompute wins for larger deltas).
+- Delta-size sensitivity: 0.1/0.3/0.5% deltas are mostly faster in full ruleset; 1/3/5% deltas remain mixed-to-slower (full recompute often wins for larger deltas).
 - PRUNING_INC dominates on larger cases and especially on insert turns; see the
   per-stage breakdown table for ratios (Speedup < 1.0 indicates inc slower).
 - ΔE/|E| is based on rule-app deltas vs total derived edges after applyDelta; small
@@ -145,6 +148,9 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --bas
 
 ## Results (inc1/inc3/inc5 + inc0p1/inc0p3/inc0p5, sample=1)
 Data sources:
+- `experiments/side_channel_inc_eval_small/results-souffle-inc.tsv` (end-to-end, 2026-01-12 det-opt run, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+- `experiments/side_channel_inc_eval_small/P*/output/log_P*_<label>_1_{inc,full}_*.json`
+  (per-stage breakdown, delta counts, 2026-01-12 inc0p1/inc0p3/inc0p5 run)
 - `experiments/side_channel_inc_eval/end-to-end-inc-vs-full.tsv` (end-to-end, 2026-01-11 det-opt run, apply_delta_graph)
 - `experiments/side_channel_inc_eval/stage-breakdown.tsv` (per-stage breakdown, 2026-01-11 det-opt run, apply_delta_graph)
 - `experiments/side_channel_inc_eval/semnaive-comparison-with-graph.tsv` (SEM + graph/delta counts, 2026-01-11 det-opt run, apply_delta_graph)
@@ -163,6 +169,10 @@ Data sources:
 - `experiments/side_channel_inc_trimmed_eval_small/results-souffle-inc.tsv` (end-to-end, 2026-01-11 det-opt run, apply_delta_graph, inc0p1/inc0p3/inc0p5)
 - `experiments/side_channel_inc_trimmed_eval_small/P*/output/log_P*_<label>_1_{inc,full}_*.json`
   (per-stage breakdown, delta counts, 2026-01-11 inc0p1/inc0p3/inc0p5 run)
+- `experiments/side_channel_inc_eval_small/stage-breakdown-20260113_040129.tsv`
+  (per-turn stage breakdown, 2026-01-13 det-opt run, full ruleset)
+- `experiments/side_channel_inc_eval_small/stage-compare-20260113_040129.tsv`
+  (per-turn full/inc stage comparison, 2026-01-13 det-opt run, full ruleset)
 - `experiments/side_channel_inc_trimmed_eval/results-souffle-inc.tsv` (end-to-end, 2026-01-10 legacy)
 - `experiments/side_channel_inc_trimmed_eval/P*/output/log_P*_<label>_1_{inc,full}_*.json`
   (per-stage breakdown, delta counts, 2026-01-10 legacy)
@@ -173,6 +183,41 @@ Data sources:
   `experiments/side_channel_inc_eval/` and `experiments/side_channel_inc_trimmed_eval/` were overwritten by the
   2026-01-11 apply_delta_graph runs. The 0.1/0.3/0.5% run uses
   `experiments/side_channel_inc_trimmed_eval_small/`.
+
+#### 2026-01-13 run notes (full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+- Config change: CUDD init uses `numVars = 2 * rand_vars`, `numSlots = 512`, cache/memory tiers unchanged.
+- Correctness: all P1,P3,P4-P20 OK (P2 missing in source); see `experiments/side_channel_inc_eval_small/results-souffle-inc.tsv`.
+- End-to-end wins: inc faster in 17/19 (inc0p1), 18/19 (inc0p3), 17/19 (inc0p5).
+- Avg speedup (end-to-end): 1.50/1.33/1.28 mean and 1.46/1.28/1.18 median (inc0p1/inc0p3/inc0p5).
+- Total delta-run time: sum of inc+full across all cases/deltas ≈ 6.4 min (from `results-souffle-inc.tsv`).
+- Per-turn full vs inc stage speedups (median with mean in parentheses), from `stage-compare-20260113_040129.tsv`:
+
+Turn2 = delete:
+```tsv
+Delta	N	Total	SEM	PRN	FC	WMC
+inc0p1	19	4.271 (4.871)	3.799 (3.129)	1.491 (1.554)	2.187 (6.349)	1.320 (1.962)
+inc0p3	19	3.114 (3.443)	2.469 (1.991)	1.233 (1.231)	2.470 (6.018)	1.058 (1.660)
+inc0p5	19	2.641 (2.926)	1.940 (1.685)	0.908 (1.028)	2.216 (6.160)	1.231 (1.482)
+ALL	57	3.114 (3.746)	2.206 (2.268)	1.247 (1.271)	2.264 (6.175)	1.144 (1.702)
+```
+
+Turn3 = insert:
+```tsv
+Delta	N	Total	SEM	PRN	FC	WMC
+inc0p1	19	1.607 (3.114)	4.550 (3.290)	1.702 (1.825)	2.221 (3.280)	1.006 (1.091)
+inc0p3	19	1.411 (2.083)	3.442 (2.581)	1.440 (1.442)	1.721 (2.199)	0.984 (0.967)
+inc0p5	19	1.537 (2.033)	3.076 (2.469)	0.984 (1.226)	2.117 (2.236)	0.935 (0.958)
+ALL	57	1.537 (2.410)	3.434 (2.780)	1.539 (1.498)	1.979 (2.572)	0.975 (1.005)
+```
+- Interpretation: delete turn still shows strong SEM/FC gains; insert turn is improved but smaller (PRN/FC closer to 1x).
+  WMC remains ~1x overall; gains primarily come from SEM/FC.
+
+#### 2026-01-12 run notes (full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+- Correctness: all P1,P3,P4-P20 OK (P2 missing in source); see `experiments/side_channel_inc_eval_small/results-souffle-inc.tsv`.
+- End-to-end wins: inc faster in 15/19 for inc0p1, 15/19 for inc0p3, 15/19 for inc0p5.
+- Avg speedup (end-to-end): 1.28/1.22/1.17 (inc0p1/inc0p3/inc0p5).
+- Total delta-run time: sum of inc+full across all cases/deltas ≈ 9.5 min (from `results-souffle-inc.tsv`).
+- Small-case overheads persist (e.g., P1 inc0p1/inc0p3/inc0p5 slower than full).
 
 #### 2026-01-11 run notes (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
 - Correctness: all P1,P3,P4-P20 OK (P2 missing in source); see `experiments/side_channel_inc_trimmed_eval_small/results-souffle-inc.tsv`.
@@ -186,6 +231,68 @@ Data sources:
 
 ### End-to-end wall time (inc vs full)
 Speedup = FullTime / IncTime (>1.0 means inc faster).
+#### 2026-01-12 (full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
+Run: 2026-01-12, full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_eval_small.
+```tsv
+Case	Delta	IncTime	FullTime	Speedup	OK
+P1	inc0p1	0.042899	0.033619	0.784	1
+P1	inc0p3	0.041344	0.028463	0.688	1
+P1	inc0p5	0.040129	0.026489	0.660	1
+P3	inc0p1	0.018466	0.029382	1.591	1
+P3	inc0p3	0.019826	0.029007	1.463	1
+P3	inc0p5	0.017766	0.029328	1.651	1
+P4	inc0p1	0.013757	0.015915	1.157	1
+P4	inc0p3	0.013818	0.018020	1.304	1
+P4	inc0p5	0.014983	0.015101	1.008	1
+P5	inc0p1	0.016296	0.016929	1.039	1
+P5	inc0p3	0.020293	0.015727	0.775	1
+P5	inc0p5	0.017483	0.016596	0.949	1
+P6	inc0p1	0.023806	0.021884	0.919	1
+P6	inc0p3	0.023422	0.019675	0.840	1
+P6	inc0p5	0.021260	0.021835	1.027	1
+P7	inc0p1	0.027216	0.027934	1.026	1
+P7	inc0p3	0.024882	0.026946	1.083	1
+P7	inc0p5	0.027564	0.029162	1.058	1
+P8	inc0p1	0.028370	0.038650	1.362	1
+P8	inc0p3	0.032353	0.035046	1.083	1
+P8	inc0p5	0.028386	0.036604	1.290	1
+P9	inc0p1	0.028358	0.032846	1.158	1
+P9	inc0p3	0.029802	0.033661	1.129	1
+P9	inc0p5	0.034823	0.033740	0.969	1
+P10	inc0p1	0.083247	0.117125	1.407	1
+P10	inc0p3	0.095453	0.132324	1.386	1
+P10	inc0p5	0.121340	0.130274	1.074	1
+P11	inc0p1	0.073135	0.117683	1.609	1
+P11	inc0p3	0.080932	0.121896	1.506	1
+P11	inc0p5	0.107690	0.141504	1.314	1
+P12	inc0p1	0.258476	0.244762	0.947	1
+P12	inc0p3	0.225484	0.265559	1.178	1
+P12	inc0p5	0.259122	0.273533	1.056	1
+P13	inc0p1	1.522332	1.267542	0.833	1
+P13	inc0p3	1.478988	1.362523	0.921	1
+P13	inc0p5	1.473755	1.403295	0.952	1
+P14	inc0p1	2.307727	2.621900	1.136	1
+P14	inc0p3	2.304292	2.748651	1.193	1
+P14	inc0p5	2.257188	2.857119	1.266	1
+P15	inc0p1	5.145898	8.729962	1.696	1
+P15	inc0p3	5.177864	9.121451	1.762	1
+P15	inc0p5	5.461147	7.523133	1.378	1
+P16	inc0p1	8.410716	16.115973	1.916	1
+P16	inc0p3	10.706071	14.303890	1.336	1
+P16	inc0p5	10.878710	15.125275	1.390	1
+P17	inc0p1	15.367531	19.115634	1.244	1
+P17	inc0p3	15.299272	18.356729	1.200	1
+P17	inc0p5	16.255446	18.713376	1.151	1
+P18	inc0p1	13.854728	21.760777	1.571	1
+P18	inc0p3	13.658217	20.727942	1.518	1
+P18	inc0p5	14.306483	21.464643	1.500	1
+P19	inc0p1	16.655813	26.738287	1.605	1
+P19	inc0p3	17.692098	25.783089	1.457	1
+P19	inc0p5	18.762402	25.926468	1.382	1
+P20	inc0p1	11.782686	15.371419	1.305	1
+P20	inc0p3	12.201853	15.349571	1.258	1
+P20	inc0p5	12.402981	15.380011	1.240	1
+```
 #### 2026-01-11 (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
 Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_trimmed_eval_small.
 ```tsv

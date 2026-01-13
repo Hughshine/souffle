@@ -35,7 +35,9 @@
 - `README.eval.inc.md`: incremental evaluation workflows.
 - `README.profile.md`: profiling guidance.
 - `README.profile.inc.md`: incremental profiling notes and experiment plan.
+- `README.fc.profile.md`: forward-compilation profiling notes and field definitions.
 - `README.prune.md`: prune-stage behavior and performance notes.
+- `README.fc.delete.md`: incremental forward-compilation deletion logic (det vs non-det).
 - `README.problog.md`: ProbLog baseline timing runs (historical).
 
 ## Experiments

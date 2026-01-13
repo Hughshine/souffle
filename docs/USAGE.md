@@ -69,6 +69,9 @@ listed below; use `-h` for the authoritative values.
 - `--dumpstat`: default `false`
 - `--dred-profile`: default `false` (requires compile-time `--profile --dred-profile` to emit DRed sub-phase timers;
   per-SCC workload counters also need `--dumpstat`)
+- `--inc-profile`: default `false` (print per-stage incremental timings to stdout)
+- `--fc-profile`: default `false` (print detailed forward-compilation sub-phase counters/timings to stdout)
+- `--post-del`: default `false` (enable post-delete variable postprocess in FC)
 - `-h`: help
 
 ## Online Incremental CLI (Interactive or Batch)

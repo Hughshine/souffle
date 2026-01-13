@@ -105,8 +105,10 @@ For every row:
 
 We group rows by:
 
-- edit ratio `DeltaPct` in `{0.01, 0.03, 0.05}` and
+- edit ratio `DeltaPct` in `{0.001, 0.003, 0.005}` (0.1/0.3/0.5% deltas) and
 - update type `Turn` in `{ins, del}`.
+
+For legacy 1/3/5% runs, use `{0.01, 0.03, 0.05}` instead.
 
 For each group (Δ, Turn), compute:
 
@@ -191,7 +193,7 @@ Compute per row:
 - ΔE = DeltaInsertEdges if Turn=ins else DeltaDeleteEdges
 - |E| = GraphEdges
 
-Group by DeltaPct in {0.01,0.03,0.05} and Turn in {ins,del}. For each group output:
+Group by DeltaPct in {0.001,0.003,0.005} and Turn in {ins,del}. For each group output:
 - Avg ΔE/|E| as (sum_i ΔE_i)/(sum_i |E_i|), formatted as a percentage with 1 decimal.
 - Avg T_full = mean_i Full_SEM_s, 2 decimals.
 - Avg T_inc  = mean_i Inc_SEM_s, 2 decimals.
@@ -200,7 +202,7 @@ Group by DeltaPct in {0.01,0.03,0.05} and Turn in {ins,del}. For each group outp
 Table columns (keep it narrow):
 Δ (%), Update (Insert/Delete), Avg ΔE/|E|, Avg T_full (s), Avg T_inc (s), Avg spdup.
 
-Use Δ (%) values 1,3,5 (not 0.01 etc).
+Use Δ (%) values 0.1,0.3,0.5 (not 0.001 etc).
 Turn mapping: ins→Insert, del→Delete.
 Sort rows by Δ then Update (Insert first, Delete second).
 Caption must define ΔE/|E| and explain that for deletions it underestimates work
