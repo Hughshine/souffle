@@ -1510,6 +1510,8 @@ void runPipeline(
         bool enableOnlineCli) {
     std::cout << std::fixed << std::setprecision(8);
     Debugger& debugger = Debugger::getInstance();
+    fcProfileEnabled = opt.isFcProfileEnabled();
+    postDelEnabled = opt.isPostDelEnabled();
     DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
     DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());
     DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());
