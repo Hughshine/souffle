@@ -1776,6 +1776,11 @@ Script: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/plot_fc_speed
 - Plot overlays the theoretical `1/x` curve, clamps x to `[0,1]`, and caps y at the max observed speedup.
 - Outliers match the 1/DeltaLiveRatio view: P18 insert still has the largest gap (dynamic reordering dominates), while
   the remaining insert points sit below the theoretical line due to BDD insertion overhead and reordering noise.
+- The near-1x outliers are all P12: its FC times are ~0.01s, so fixed overhead dominates and incremental runs only reach
+  ~1.3-1.6x; consider excluding P12 from plots/tables when comparing theoretical speedups.
+- The variance in the plot is expected: delete runs are cheaper (conditioning + caching) and do not trigger reordering,
+  while insert/delete both reuse the variable order, which avoids repeating CUDD’s expensive reordering work that guards
+  against exponential blowups.
 
 ##### Insert FC slower-than-full analysis (2026-01-14 run)
 Source: per-turn FC logs under `experiments/side_channel_inc_eval_p12_p20_nofcprofile/P*/output/log_P*_*_inc_*.json`
