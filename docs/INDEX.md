@@ -25,6 +25,7 @@
 - `README.dred.md`: online DRed internals and deletion bottlenecks.
 - `README.inc.region.md`: inc-regional pipeline design/profiling notes.
 - `README.ordering.md`, `README.eqrel.md`, `README.lazy.md`, `README.refactor.md`: design roadmaps and refactor notes.
+- `README.cudd.reordering.md`: CUDD reordering configuration and profiling notes.
 - `README.precompile.md`: precompile refactor log (historical, build-related).
 - `README.rewrite.120725.md`, `README.rewrite.120825.md`, `README.rewrite.2.md`,
   `README.rewrite.conj.md`, `README.rewrite.impl.md`: historical rewrite notes and alternative plans.
