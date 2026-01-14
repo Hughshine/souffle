@@ -9,6 +9,7 @@
 #include <iostream>
 #include <cmath>
 #include <optional>
+#include <unordered_set>
 #include "souffle/problog/formula/FormulaManager.h"
 #include "souffle/problog/DerivationGraph.h"
 #include "souffle/problog/formula/GraphHeuristics.h"
@@ -175,7 +176,20 @@ public:
     int getVarIndex(const Node& node) override {
         auto it = nodeIndex_.find(&node);
         if (it != nodeIndex_.end()) return it->second;
-        int idx = nextVarIndex_++;
+        int idx = -1;
+        if (reuseVarIndexEnabled) {
+            auto freeIt = freeNodeIndexByTuple_.find(node.getTuple());
+            if (freeIt != freeNodeIndexByTuple_.end()) {
+                idx = freeIt->second;
+                dropFreeIndex(idx);
+            } else if (!freeIndices_.empty()) {
+                idx = *freeIndices_.begin();
+                dropFreeIndex(idx);
+            }
+        }
+        if (idx < 0) {
+            idx = nextVarIndex_++;
+        }
         nodeIndex_[&node] = idx;
         return idx;
     }
@@ -183,9 +197,56 @@ public:
     int getVarIndex(const Hyperedge& edge) override {
         auto it = edgeIndex_.find(&edge);
         if (it != edgeIndex_.end()) return it->second;
-        int idx = nextVarIndex_++;
+        int idx = -1;
+        if (reuseVarIndexEnabled) {
+            auto freeIt = freeEdgeIndexByRuleApp_.find(edge.getRuleApp());
+            if (freeIt != freeEdgeIndexByRuleApp_.end()) {
+                idx = freeIt->second;
+                dropFreeIndex(idx);
+            } else if (!freeIndices_.empty()) {
+                idx = *freeIndices_.begin();
+                dropFreeIndex(idx);
+            }
+        }
+        if (idx < 0) {
+            idx = nextVarIndex_++;
+        }
         edgeIndex_[&edge] = idx;
         return idx;
+    }
+    void releaseVarIndex(const Node& node) override {
+        if (!reuseVarIndexEnabled) {
+            return;
+        }
+        auto it = nodeIndex_.find(&node);
+        if (it == nodeIndex_.end()) {
+            return;
+        }
+        int idx = it->second;
+        nodeIndex_.erase(it);
+        variableRegistry.erase(idx);
+        weights.erase(idx);
+        dropFreeIndex(idx);
+        freeIndices_.insert(idx);
+        freeNodeIndexByTuple_[node.getTuple()] = idx;
+        freeIndexToTuple_[idx] = node.getTuple();
+    }
+    void releaseVarIndex(const Hyperedge& edge) override {
+        if (!reuseVarIndexEnabled) {
+            return;
+        }
+        auto it = edgeIndex_.find(&edge);
+        if (it == edgeIndex_.end()) {
+            return;
+        }
+        int idx = it->second;
+        edgeIndex_.erase(it);
+        variableRegistry.erase(idx);
+        weights.erase(idx);
+        dropFreeIndex(idx);
+        freeIndices_.insert(idx);
+        freeEdgeIndexByRuleApp_[edge.getRuleApp()] = idx;
+        freeIndexToRuleApp_[idx] = edge.getRuleApp();
     }
 
     void tryGarbageCollection() {
@@ -195,6 +256,11 @@ public:
         nodeIndex_.clear();
         edgeIndex_.clear();
         nextVarIndex_ = 0;
+        freeIndices_.clear();
+        freeNodeIndexByTuple_.clear();
+        freeEdgeIndexByRuleApp_.clear();
+        freeIndexToTuple_.clear();
+        freeIndexToRuleApp_.clear();
         variableRegistry.clear();
         weights.clear();
         wmcCache_.clear();
@@ -210,6 +276,11 @@ public:
         nodeIndex_.clear();
         edgeIndex_.clear();
         nextVarIndex_ = 0;
+        freeIndices_.clear();
+        freeNodeIndexByTuple_.clear();
+        freeEdgeIndexByRuleApp_.clear();
+        freeIndexToTuple_.clear();
+        freeIndexToRuleApp_.clear();
         variableRegistry.clear();
         weights.clear();
         wmcCache_.clear();
@@ -227,6 +298,25 @@ public:
     int nextVarIndex_ = 0;
     std::unordered_map<const Node*, int> nodeIndex_;
     std::unordered_map<const Hyperedge*, int> edgeIndex_;
+    std::unordered_set<int> freeIndices_;
+    std::unordered_map<UntypedTuple, int> freeNodeIndexByTuple_;
+    std::unordered_map<RuleApplication, int> freeEdgeIndexByRuleApp_;
+    std::unordered_map<int, UntypedTuple> freeIndexToTuple_;
+    std::unordered_map<int, RuleApplication> freeIndexToRuleApp_;
+
+    void dropFreeIndex(int idx) {
+        freeIndices_.erase(idx);
+        auto itTuple = freeIndexToTuple_.find(idx);
+        if (itTuple != freeIndexToTuple_.end()) {
+            freeNodeIndexByTuple_.erase(itTuple->second);
+            freeIndexToTuple_.erase(itTuple);
+        }
+        auto itRule = freeIndexToRuleApp_.find(idx);
+        if (itRule != freeIndexToRuleApp_.end()) {
+            freeEdgeIndexByRuleApp_.erase(itRule->second);
+            freeIndexToRuleApp_.erase(itRule);
+        }
+    }
     void preConfig(DerivationGraphViewInterface& view) override {
         static size_t iteration = 0;
         using namespace std::chrono;
@@ -418,6 +508,9 @@ public:
         stats["reordering_runtime"] = std::string(buf);
         last_reordering_time_ = current_reordering_time;
         return stats;
+    }
+    std::size_t getLiveNodeCount() const override {
+        return static_cast<std::size_t>(Cudd_ReadNodeCount(manager.get()));
     }
     double getReorderingTimeSeconds() const {
         return static_cast<double>(Cudd_ReadReorderingTime(manager.get())) / 1000.0;

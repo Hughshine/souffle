@@ -1523,6 +1523,15 @@ void buildFormulasIncCyclewise(
     std::size_t insertNonFactCount = 0;
     std::size_t insertDetEdges = 0;
     std::size_t insertNonDetEdges = 0;
+    std::size_t deleteCondChangedNodes = 0;
+    std::size_t deleteOverdeleteChangedNodes = 0;
+    std::size_t insertChangedNodes = 0;
+    std::size_t deleteCondLiveNodes = 0;
+    std::size_t deleteOverdeleteLiveNodes = 0;
+    std::size_t insertLiveNodes = 0;
+    std::unordered_set<NodePtr> deleteCondChangedSet;
+    std::unordered_set<NodePtr> deleteOverdeleteChangedSet;
+    std::unordered_set<NodePtr> insertChangedSet;
     double insertInitFactTrueMs = 0.0;
     double insertInitFactVarMs = 0.0;
     double insertInitFactWeightMs = 0.0;
@@ -1533,6 +1542,14 @@ void buildFormulasIncCyclewise(
     double insertInitEdgeEnqueueMs = 0.0;
     const std::size_t viewNodeCount = view.getNodes().size();
     const std::size_t viewEdgeCount = view.getEdges().size();
+    auto markChangedNode = [&](const NodePtr& node,
+                               std::unordered_set<NodePtr>& phaseSet,
+                               std::size_t& phaseCount) {
+        changedNodes.insert(node);
+        if (fcProfile && phaseSet.insert(node).second) {
+            ++phaseCount;
+        }
+    };
     auto makeAndProfile = [&](const std::vector<FormulaNodeRef>& inputs, FcProfileStats& stats) {
         if (!fcProfile) {
             return formulaManager.makeAnd(inputs);
@@ -1764,7 +1781,7 @@ void buildFormulasIncCyclewise(
                 auto newNodeFormula = makeConditionProfile(nodeFormulas[node], {}, deletedNonDetVars, deleteCondStats);
                 if (!formulaManager.isSame(nodeFormulas[node], newNodeFormula)) {
                     nodeFormulas[node] = newNodeFormula;
-                    changedNodes.insert(node);
+                    markChangedNode(node, deleteCondChangedSet, deleteCondChangedNodes);
                     if (fcProfile) {
                         deleteCondStats.node_updated++;
                     }
@@ -1797,6 +1814,9 @@ void buildFormulasIncCyclewise(
                 deleteCondMs = toMs(condStart, Clock::now());
             }
         }
+        if (fcProfile) {
+            deleteCondLiveNodes = formulaManager.getLiveNodeCount();
+        }
 
         // since we've optimized deterministic facts (which will reduce the size of formulas by a large constant factor) during full compilation,
         // we cannot simply conditioning formulas on the deleted deterministic facts since they are not in the formulas
@@ -1816,7 +1836,7 @@ void buildFormulasIncCyclewise(
                     continue;
                 }
                 nodeFormulas[node] = formulaManager.getFalse();
-                changedNodes.insert(node);
+                markChangedNode(node, deleteOverdeleteChangedSet, deleteOverdeleteChangedNodes);
             }
             for (auto edge : detImpactEdges) {
                 if (deltaDeletedEdges.count(edge)) {
@@ -2011,7 +2031,7 @@ void buildFormulasIncCyclewise(
                     if (fcProfile) {
                         rederiveStats.node_updated++;
                     }
-                    changedNodes.insert(output);
+                    markChangedNode(output, deleteOverdeleteChangedSet, deleteOverdeleteChangedNodes);
                     for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
                         assert (depGraph.edgeToCycleIndex.count(outEdge));
                         auto it = depGraph.edgeToCycleIndex.find(outEdge);
@@ -2040,6 +2060,17 @@ void buildFormulasIncCyclewise(
         rederiveLoopMsProfile = toMs(rederiveStart, Clock::now());
     }
     debugger.logMessage(Level::INFO, "rederive time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+    if (fcProfile) {
+        deleteOverdeleteLiveNodes = formulaManager.getLiveNodeCount();
+    }
+    if (reuseVarIndexEnabled) {
+        for (const auto& node : view.getDeletedFacts()) {
+            formulaManager.releaseVarIndex(*node);
+        }
+        for (const auto& edge : deltaDeletedEdges) {
+            formulaManager.releaseVarIndex(*edge);
+        }
+    }
     // should reset variable ordering like information after deletion
     // should change to a light weight version?
 
@@ -2113,7 +2144,7 @@ void buildFormulasIncCyclewise(
                 }
                 ++insertNonFactCount;
             }
-            changedNodes.insert(node);
+            markChangedNode(node, insertChangedSet, insertChangedNodes);
         }
         // TODO
         end = high_resolution_clock::now();
@@ -2338,7 +2369,7 @@ void buildFormulasIncCyclewise(
                     } else if (formulaManager.isSame(newNode, formulaManager.getTrue())) {
                         std::cout << "    [NODE-TRUE] " << output->toString() << " became True\n";
                     }
-                    changedNodes.insert(output);
+                    markChangedNode(output, insertChangedSet, insertChangedNodes);
                     for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
                         auto it = depGraph.edgeToCycleIndex.find(outEdge);
                         assert (depGraph.edgeToCycleIndex.count(outEdge));
@@ -2384,6 +2415,9 @@ void buildFormulasIncCyclewise(
             insertLoopMsProfile = toMs(insertLoopStart, Clock::now());
         }
     }
+    if (fcProfile) {
+        insertLiveNodes = formulaManager.getLiveNodeCount();
+    }
     end = high_resolution_clock::now();
     debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
     debugger.logMessage(Level::INFO, "Iteration rounds: " + std::to_string(round));
@@ -2392,6 +2426,14 @@ void buildFormulasIncCyclewise(
         debugger.addInfo(key, value);
     }
     debugger.addInfo("changed_node_count", std::to_string(changedNodes.size()));
+    if (fcProfile) {
+        debugger.addInfo("del_cond_delta_live_nodes", std::to_string(deleteCondChangedNodes));
+        debugger.addInfo("del_cond_live_nodes", std::to_string(deleteCondLiveNodes));
+        debugger.addInfo("del_overdelete_delta_live_nodes", std::to_string(deleteOverdeleteChangedNodes));
+        debugger.addInfo("del_overdelete_live_nodes", std::to_string(deleteOverdeleteLiveNodes));
+        debugger.addInfo("insert_delta_live_nodes", std::to_string(insertChangedNodes));
+        debugger.addInfo("insert_live_nodes", std::to_string(insertLiveNodes));
+    }
     if (incProfile) {
         const double totalMs = toMs(totalStart, Clock::now());
         std::cout << "[inc-profile] stage=FORWARD_COMPILATION_INC total_ms=" << totalMs
@@ -2434,10 +2476,14 @@ void buildFormulasIncCyclewise(
                   << " make_condition_ms=" << deleteCondStats.make_condition_ms
                   << " node_updated=" << deleteCondStats.node_updated
                   << " edge_updated=" << deleteCondStats.edge_updated
+                  << " delta_live_nodes=" << deleteCondChangedNodes
+                  << " live_nodes=" << deleteCondLiveNodes
                   << std::endl;
         std::cout << "[fc-profile] stage=FORWARD_COMPILATION_INC phase=delete_overdelete ms=" << deleteOverdeleteMs
                   << " det_imp_nodes=" << detImpactNodesCount
                   << " det_imp_edges=" << detImpactEdgesCount
+                  << " delta_live_nodes=" << deleteOverdeleteChangedNodes
+                  << " live_nodes=" << deleteOverdeleteLiveNodes
                   << std::endl;
         std::cout << "[fc-profile] stage=FORWARD_COMPILATION_INC phase=delete_varorder ms=" << deleteVarOrderMs
                   << " collect_ms=" << deleteVarCollectMs
@@ -2508,6 +2554,8 @@ void buildFormulasIncCyclewise(
                   << " input_literal_calls=" << insertStats.input_literal_calls
                   << " input_literal_missing=" << insertStats.input_literal_missing
                   << " input_literal_ms=" << insertStats.input_literal_ms
+                  << " delta_live_nodes=" << insertChangedNodes
+                  << " live_nodes=" << insertLiveNodes
                   << std::endl;
     }
 
@@ -3075,6 +3123,14 @@ void buildFormulasIncRegionalCyclewise(
         }
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "rederive time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+        if (reuseVarIndexEnabled) {
+            for (const auto& node : view.getDeletedFacts()) {
+                formulaManager.releaseVarIndex(*node);
+            }
+            for (const auto& edge : deltaDeletedEdges) {
+                formulaManager.releaseVarIndex(*edge);
+            }
+        }
     } else {
         debugger.logMessage(Level::INFO, "[inc-regional] No deletions; skipping deletion phase");
     }

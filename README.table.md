@@ -175,6 +175,37 @@ Table style:
 
 ---
 
+## D. FC analysis plots (non-table artifacts)
+
+These plots are used as supplemental analysis (not LaTeX tables). Keep paths and
+data sources explicit in the README so results are reproducible.
+
+Plotting checklist:
+- Update the TSV first (from the latest experiment logs).
+- Run the script from its folder, e.g. `python3 plot_fc_speedup_vs_delta_live_ratio.py`.
+- If matplotlib cannot write its config cache, set `MPLCONFIGDIR=/tmp/mplconfig` before running.
+- Verify the PNG path listed below is regenerated and matches the new TSV content.
+- Commit PNG + TSV + script together.
+
+- FC speedup vs `1/DeltaLiveRatio` (P12–P20, inc0p1/inc0p3/inc0p5):
+  - Plot: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114/fc_speedup_vs_inv_delta_live_ratio.png`
+  - Data: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114/fc_inv_delta_live_ratio.tsv`
+  - Script: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114/plot_fc_speedup_vs_inv_delta_live_ratio.py`
+  - Note: x-axis is `1/DeltaLiveRatio = LiveNodes / DeltaLiveNodes` computed from inc FC logs
+    (`changed_node_count` / `live_nodes`); y-axis is FC speedup (Full / Inc).
+- FC speedup vs `1/DeltaLiveRatio` (reuse-var-index run, P12–P20, inc0p1/inc0p3/inc0p5):
+  - Plot: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114_reuse/fc_speedup_vs_inv_delta_live_ratio.png`
+  - Data: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114_reuse/fc_inv_delta_live_ratio.tsv`
+  - Script: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114_reuse/plot_fc_speedup_vs_inv_delta_live_ratio.py`
+  - Note: reuse-var-index is enabled; use this plot to contrast with the baseline distribution above.
+- FC speedup vs `DeltaLiveRatio` (reuse-var-index run, P12–P20, inc0p1/inc0p3/inc0p5):
+  - Plot: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/fc_speedup_vs_delta_live_ratio.png`
+  - Data: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/fc_delta_live_ratio.tsv`
+  - Script: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/plot_fc_speedup_vs_delta_live_ratio.py`
+  - Note: x-axis uses `DeltaLiveRatio = DeltaLiveNodes / LiveNodes` (smaller is better).
+
+---
+
 ## C. Ready-to-use Codex prompts
 
 ### Prompt T1: SEM summary table (Avg ΔE/|E| + Avg times + Avg speedup)

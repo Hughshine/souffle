@@ -147,6 +147,7 @@ extern bool dredProfileEnabled;
 extern bool incProfileEnabled;
 extern bool fcProfileEnabled;
 extern bool postDelEnabled;
+extern bool reuseVarIndexEnabled;
 
 class DerivationManager {
 public:

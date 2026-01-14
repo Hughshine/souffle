@@ -39,12 +39,17 @@ public:
     virtual double computeWeightedModelCount(const NodeRef& node) = 0;
     virtual int getVarIndex(const Node& node) = 0;
     virtual int getVarIndex(const Hyperedge& edge) = 0;
+    virtual void releaseVarIndex(const Node&) {}
+    virtual void releaseVarIndex(const Hyperedge&) {}
 
     virtual void printInfo(const NodeRef& node, const std::string& name) = 0;
     virtual void dumpProfilingStatistics() = 0;
     virtual void stopDynamicOptimization() {};
     virtual std::map<std::string, std::string> getProfilingStatistics() {
         return {};
+    }
+    virtual std::size_t getLiveNodeCount() const {
+        return 0;
     }
     virtual void tryGarbageCollection() {};
     virtual void reset() {};

@@ -212,6 +212,21 @@ ALL	57	1.537 (2.410)	3.434 (2.780)	1.539 (1.498)	1.979 (2.572)	0.975 (1.005)
 - Interpretation: delete turn still shows strong SEM/FC gains; insert turn is improved but smaller (PRN/FC closer to 1x).
   WMC remains ~1x overall; gains primarily come from SEM/FC.
 
+#### 2026-01-14 run notes (full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, P12-P20 only, no fc-profile)
+- Base dir: `experiments/side_channel_inc_eval_p12_p20_nofcprofile/`.
+- Cases: P12-P20 (P1-P11 skipped to avoid tiny/noisy runtimes).
+- Correctness: all deltas OK (see `results-souffle-inc.tsv` under base dir).
+- Purpose: recheck FC speedups without the heavy `--fc-profile` overhead.
+
+#### 2026-01-14 run notes (reuse-var-index, full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, P12-P20 only, no fc-profile)
+- Base dir: `experiments/side_channel_inc_eval_p12_p20_nofcprofile/`.
+- Cases: P12-P20.
+- Run args: `--det-opt --reuse-var-index`.
+- Correctness: all deltas OK (see `results-souffle-inc.tsv` under base dir).
+- FC insert improvements: all 27 insert rows improved vs the earliest no-reuse run; previously slow cases
+  (P13/P14/P15/P17/P18) now show FC speedups >1x. Comparison table:
+  `experiments/side_channel_inc_eval_p12_p20_nofcprofile/fc-insert-speedup-reuse-compare.tsv`.
+
 #### 2026-01-12 run notes (full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
 - Correctness: all P1,P3,P4-P20 OK (P2 missing in source); see `experiments/side_channel_inc_eval_small/results-souffle-inc.tsv`.
 - End-to-end wins: inc faster in 15/19 for inc0p1, 15/19 for inc0p3, 15/19 for inc0p5.
@@ -1611,6 +1626,178 @@ ins	46912	221157	0	0
 
 ### Per-stage breakdown (turn2=delete, turn3=insert)
 Speedup = Full_s / Inc_s (>1.0 means inc faster).
+#### 2026-01-14 (full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, P12-P20 only, no fc-profile)
+Run: 2026-01-14, full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, sample=1, run timeout=600s, compile timeout=600s, base-dir experiments/side_channel_inc_eval_p12_p20_nofcprofile.
+```tsv
+Case	Delta	Turn	Full_FC_s	Inc_FC_s	Speedup
+P12	inc0p1	del	0.010974	0.006553	1.675
+P12	inc0p1	ins	0.010721	0.008781	1.221
+P12	inc0p3	del	0.009362	0.007240	1.293
+P12	inc0p3	ins	0.010905	0.009412	1.159
+P12	inc0p5	del	0.008740	0.006398	1.366
+P12	inc0p5	ins	0.011117	0.010834	1.026
+P13	inc0p1	del	0.119868	0.020279	5.911
+P13	inc0p1	ins	0.122558	0.194095	0.631
+P13	inc0p3	del	0.120468	0.015153	7.950
+P13	inc0p3	ins	0.117971	0.225429	0.523
+P13	inc0p5	del	0.122414	0.018268	6.701
+P13	inc0p5	ins	0.119400	0.202273	0.590
+P14	inc0p1	del	0.270253	0.041149	6.568
+P14	inc0p1	ins	0.250988	0.323350	0.776
+P14	inc0p3	del	0.260793	0.027491	9.487
+P14	inc0p3	ins	0.257288	0.270270	0.952
+P14	inc0p5	del	0.268954	0.024817	10.838
+P14	inc0p5	ins	0.261207	0.278162	0.939
+P15	inc0p1	del	0.623979	0.063471	9.831
+P15	inc0p1	ins	0.606106	0.773111	0.784
+P15	inc0p3	del	0.602573	0.047922	12.574
+P15	inc0p3	ins	0.581755	0.575849	1.010
+P15	inc0p5	del	0.265133	0.036079	7.349
+P15	inc0p5	ins	0.554832	0.533848	1.039
+P16	inc0p1	del	1.043616	0.090812	11.492
+P16	inc0p1	ins	1.949656	0.217665	8.957
+P16	inc0p3	del	1.112335	0.084298	13.195
+P16	inc0p3	ins	1.913632	0.286140	6.688
+P16	inc0p5	del	0.502494	0.065957	7.619
+P16	inc0p5	ins	1.886797	0.361555	5.219
+P17	inc0p1	del	2.950080	0.152423	19.355
+P17	inc0p1	ins	2.876821	0.282871	10.170
+P17	inc0p3	del	1.611664	0.138742	11.616
+P17	inc0p3	ins	2.922361	0.478214	6.111
+P17	inc0p5	del	0.727965	0.088974	8.182
+P17	inc0p5	ins	2.891903	3.614899	0.800
+P18	inc0p1	del	3.506628	0.193211	18.149
+P18	inc0p1	ins	3.426745	6.126412	0.559
+P18	inc0p3	del	2.128058	0.131529	16.179
+P18	inc0p3	ins	3.406902	6.005507	0.567
+P18	inc0p5	del	0.986998	0.146111	6.755
+P18	inc0p5	ins	3.507023	6.386191	0.549
+P19	inc0p1	del	5.087865	0.295742	17.204
+P19	inc0p1	ins	8.946519	0.728925	12.274
+P19	inc0p3	del	3.178468	0.174705	18.193
+P19	inc0p3	ins	9.153917	0.974576	9.393
+P19	inc0p5	del	1.419814	0.176985	8.022
+P19	inc0p5	ins	9.189030	1.207633	7.609
+P20	inc0p1	del	2.728552	0.393514	6.934
+P20	inc0p1	ins	2.787628	0.582046	4.789
+P20	inc0p3	del	2.648662	0.308617	8.582
+P20	inc0p3	ins	2.737045	0.601279	4.552
+P20	inc0p5	del	2.588641	0.349981	7.397
+P20	inc0p5	ins	2.757853	0.617845	4.464
+```
+
+##### Delta live_nodes ratio (FC workload proxy, 2026-01-14 run)
+From `FORWARD_COMPILATION_INC` stage info: `changed_node_count / live_nodes` per turn. This captures how much of the
+live node set is updated in FC for each delta.
+```tsv
+Case	Delta	Turn	DeltaLiveNodes	LiveNodes	DeltaLiveRatio
+P12	inc0p1	del	9	1720	0.005233
+P12	inc0p1	ins	26	1744	0.014908
+P12	inc0p3	del	97	1577	0.061509
+P12	inc0p3	ins	290	1762	0.164586
+P12	inc0p5	del	132	1502	0.087883
+P12	inc0p5	ins	398	1773	0.224478
+P13	inc0p1	del	21	4178	0.005026
+P13	inc0p1	ins	60	3824	0.015690
+P13	inc0p3	del	191	3912	0.048824
+P13	inc0p3	ins	585	4044	0.144659
+P13	inc0p5	del	269	3709	0.072526
+P13	inc0p5	ins	829	4173	0.198658
+P14	inc0p1	del	254	7069	0.035932
+P14	inc0p1	ins	735	7160	0.102654
+P14	inc0p3	del	389	6684	0.058199
+P14	inc0p3	ins	1136	6945	0.163571
+P14	inc0p5	del	585	6195	0.094431
+P14	inc0p5	ins	1696	7162	0.236805
+P15	inc0p1	del	933	22069	0.042276
+P15	inc0p1	ins	2620	26356	0.099408
+P15	inc0p3	del	2286	16133	0.141697
+P15	inc0p3	ins	6214	30967	0.200665
+P15	inc0p5	del	3129	13308	0.235122
+P15	inc0p5	ins	8622	31855	0.270664
+P16	inc0p1	del	2356	53243	0.044250
+P16	inc0p1	ins	6409	76198	0.084110
+P16	inc0p3	del	5570	32649	0.170602
+P16	inc0p3	ins	15399	82499	0.186657
+P16	inc0p5	del	8087	20601	0.392554
+P16	inc0p5	ins	21734	87986	0.247017
+P17	inc0p1	del	2400	114421	0.020975
+P17	inc0p1	ins	6367	145095	0.043882
+P17	inc0p3	del	7760	62835	0.123498
+P17	inc0p3	ins	20914	152425	0.137208
+P17	inc0p5	del	11517	37471	0.307358
+P17	inc0p5	ins	30641	160497	0.190913
+P18	inc0p1	del	5329	165064	0.032284
+P18	inc0p1	ins	14413	251820	0.057235
+P18	inc0p3	del	12276	82607	0.148607
+P18	inc0p3	ins	32605	258446	0.126158
+P18	inc0p5	del	16095	47978	0.335466
+P18	inc0p5	ins	42105	260226	0.161802
+P19	inc0p1	del	8096	247005	0.032777
+P19	inc0p1	ins	21658	396653	0.054602
+P19	inc0p3	del	17105	114196	0.149786
+P19	inc0p3	ins	45737	399671	0.114437
+P19	inc0p5	del	21131	71174	0.296892
+P19	inc0p5	ins	54924	418120	0.131359
+P20	inc0p1	del	754	82283	0.009163
+P20	inc0p1	ins	2631	84441	0.031158
+P20	inc0p3	del	2989	74211	0.040277
+P20	inc0p3	ins	10415	84796	0.122824
+P20	inc0p5	del	4498	69929	0.064322
+P20	inc0p5	ins	15898	85362	0.186242
+```
+
+##### FC speedup vs 1/DeltaLiveRatio (2026-01-14 run)
+Plot: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114/fc_speedup_vs_inv_delta_live_ratio.png`
+Data: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114/fc_inv_delta_live_ratio.tsv`
+Script: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114/plot_fc_speedup_vs_inv_delta_live_ratio.py`
+- Expectation: FC speedup should roughly follow 1/DeltaLiveRatio if the workload scales linearly with the number of
+  updated live nodes.
+- Observed outliers:
+  - P18 insert: speedup ~0.55-0.57 even with moderate 1/DeltaLiveRatio (~6-17). The gap is dominated by dynamic
+    reordering (inc reorder ~5.2-5.5s vs full ~2.9s), which overwhelms the theoretical delta savings.
+  - P13/P14/P15 and P17 inc0p5 insert: speedup <1 despite high 1/DeltaLiveRatio. PreConfig deltas are tiny (ms), so the
+    mismatch is explained by higher insertion time plus smaller-but-nontrivial reordering overhead; inc rounds are
+    fewer than full, so the cost is per-round BDD work rather than iteration count.
+
+##### FC speedup vs 1/DeltaLiveRatio (2026-01-14 reuse-var-index run)
+Plot: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114_reuse/fc_speedup_vs_inv_delta_live_ratio.png`
+Data: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114_reuse/fc_inv_delta_live_ratio.tsv`
+Script: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114_reuse/plot_fc_speedup_vs_inv_delta_live_ratio.py`
+- This run enables `--reuse-var-index`; all insert points shift upward (FC speedups >1).
+- The prior outliers (P13/P14/P15/P17/P18 insert) are resolved; see
+  `experiments/side_channel_inc_eval_p12_p20_nofcprofile/fc-insert-speedup-reuse-compare.tsv`.
+
+##### FC speedup vs DeltaLiveRatio (2026-01-14 reuse-var-index run)
+Plot: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/fc_speedup_vs_delta_live_ratio.png`
+Data: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/fc_delta_live_ratio.tsv`
+Script: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/plot_fc_speedup_vs_delta_live_ratio.py`
+- x-axis is `DeltaLiveRatio = DeltaLiveNodes / LiveNodes`; ideal linear scaling implies speedup ~ `1/DeltaLiveRatio`.
+- Plot overlays the theoretical `1/x` curve, clamps x to `[0,1]`, and caps y at the max observed speedup.
+- Outliers match the 1/DeltaLiveRatio view: P18 insert still has the largest gap (dynamic reordering dominates), while
+  the remaining insert points sit below the theoretical line due to BDD insertion overhead and reordering noise.
+
+##### Insert FC slower-than-full analysis (2026-01-14 run)
+Source: per-turn FC logs under `experiments/side_channel_inc_eval_p12_p20_nofcprofile/P*/output/log_P*_*_inc_*.json`
+and `log_P*_*_full_*.json` (turn3 insert).
+```tsv
+Case	Delta	Speedup	Full_FC_s	Inc_FC_s	Full_pre_ms	Inc_pre_ms	Full_ins_ms	Inc_ins_ms	Full_rounds	Inc_rounds	Full_reorder_s	Inc_reorder_s	Full_cache_hit	Inc_cache_hit
+P13	inc0p1	0.631	0.122558	0.194095	0.541187	3.0	108.0	175.0	3038	25	0.090	0.170	0.129116%	0.064236%
+P13	inc0p3	0.523	0.117971	0.225429	0.494902	4.0	105.0	201.0	3038	248	0.090	0.180	0.126863%	0.086755%
+P13	inc0p5	0.590	0.119400	0.202273	0.53134	3.0	104.0	178.0	3038	351	0.090	0.160	0.133222%	0.081555%
+P14	inc0p1	0.776	0.250988	0.323350	0.639949	10.0	230.0	283.0	4475	307	0.200	0.260	0.000000%	0.000000%
+P14	inc0p3	0.952	0.257288	0.270270	0.630933	5.0	235.0	233.0	4475	476	0.200	0.220	0.008706%	0.000000%
+P14	inc0p5	0.939	0.261207	0.278162	0.635342	5.0	240.0	245.0	4475	710	0.210	0.220	0.000000%	0.000000%
+P15	inc0p1	0.784	0.606106	0.773111	1.226166	19.0	548.0	667.0	9045	1110	0.470	0.610	0.383169%	0.398827%
+P17	inc0p5	0.800	2.891903	3.614899	3.348509	43.0	2715.0	3327.0	21719	13012	2.480	2.910	0.000000%	0.050320%
+P18	inc0p1	0.559	3.426745	6.126412	3.604545	78.0	3212.0	5805.0	27477	6109	2.910	5.470	0.000000%	0.026252%
+P18	inc0p3	0.567	3.406902	6.005507	3.400634	54.0	3190.0	5722.0	27477	13844	2.890	5.180	0.000000%	0.036515%
+P18	inc0p5	0.549	3.507023	6.386191	3.786028	63.0	3259.0	6026.0	27477	17903	2.940	5.360	0.000000%	0.032655%
+```
+- In these cases, insert slowdown correlates with higher inc insertion time (Inc_ins_ms > Full_ins_ms) and, for P18,
+  substantially higher reordering time (inc ~5.2-5.5s vs full ~2.9s). PreConfig deltas are small (3-78ms) and do not
+  explain multi-second FC gaps. Inc rounds are lower than full rounds, so the per-round cost is higher for inc in
+  these cases (likely due to BDD operation cost / reordering overhead), not iteration count.
 #### 2026-01-11 (trimmed ruleset, no equal_assign, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
 Run: 2026-01-11, trimmed ruleset (no equal_assign), det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, sample=1, run timeout=180s, compile timeout=300s, base-dir experiments/side_channel_inc_trimmed_eval_small.
 ```tsv
@@ -5601,71 +5788,73 @@ P20	inc5	ins	18.059595	4.419234	4.087	97639	73529	0	0
   collecting if you want a clean inc1/inc3/inc5-only TSV.
 
 ## How I run the inc experiments (exact commands)
+Note: for future inc evaluations, only run P12–P20; smaller cases are too
+short/noisy for meaningful comparisons. Legacy runs above include P1/P3/P4-P20.
 From repo root, with build Souffle on PATH:
 ```bash
 export PATH="/home/hugh/research/datalog/souffle/build/src:$PATH"
 
-# Generate cases (P1, P3, P4-P20)
-python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval generate --cases 1,3,4-20 --cleanup
+# Generate cases (P12-P20)
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval generate --cases 12-20 --cleanup
 
 # Generate deltas (default change spec inc1/inc3/inc5)
-python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval delta --cases 1,3,4-20 --cleanup
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval delta --cases 12-20 --cleanup
 
 # Compile compute for each case using online CLI support
-python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval compile --cases 1,3,4-20 --timeout 300
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval compile --cases 12-20 --timeout 300
 
 # Run baseline (full+inc) and one sample of inc1/inc3/inc5 per case
-python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval run   --cases 1,3,4-20 --delta-labels inc1,inc3,inc5 --delta-samples 1 --timeout 180 --run-arg=--det-opt
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval run   --cases 12-20 --delta-labels inc1,inc3,inc5 --delta-samples 1 --timeout 180 --run-arg=--det-opt
 
 # Collect TSV
-python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval collect --cases 1,3,4-20
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval collect --cases 12-20
 ```
 
 ### Trimmed ruleset run (no equal_assign)
 ```bash
 python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval \
-  generate --cases 1,3,4-20 --cleanup --rule-set trimmed
+  generate --cases 12-20 --cleanup --rule-set trimmed
 
 python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval \
-  delta --cases 1,3,4-20 --cleanup
+  delta --cases 12-20 --cleanup
 
 JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
 python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval \
-  compile --cases 1,3,4-20 --timeout 300 --jobs ${JOBS}
+  compile --cases 12-20 --timeout 300 --jobs ${JOBS}
 
 python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval \
-  run --cases 1,3,4-20 --delta-labels inc1,inc3,inc5 --delta-samples 1 --timeout 180 --run-arg=--det-opt
+  run --cases 12-20 --delta-labels inc1,inc3,inc5 --delta-samples 1 --timeout 180 --run-arg=--det-opt
 
 python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval \
-  collect --cases 1,3,4-20
+  collect --cases 12-20
 ```
 ### Trimmed ruleset run (0.1/0.3/0.5% deltas)
 ```bash
 python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval_small \
-  generate --cases 1,3,4-20 --cleanup --rule-set trimmed
+  generate --cases 12-20 --cleanup --rule-set trimmed
 
 python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval_small \
-  delta --cases 1,3,4-20 --cleanup --change-spec "inc0p1=0.001,inc0p3=0.003,inc0p5=0.005"
+  delta --cases 12-20 --cleanup --change-spec "inc0p1=0.001,inc0p3=0.003,inc0p5=0.005"
 
 JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
 python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval_small \
-  compile --cases 1,3,4-20 --timeout 300 --jobs ${JOBS}
+  compile --cases 12-20 --timeout 300 --jobs ${JOBS}
 
 python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval_small \
-  run --cases 1,3,4-20 --delta-labels inc0p1,inc0p3,inc0p5 --delta-samples 1 --timeout 180 --run-arg=--det-opt
+  run --cases 12-20 --delta-labels inc0p1,inc0p3,inc0p5 --delta-samples 1 --timeout 180 --run-arg=--det-opt
 
 python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py \
   --base-dir experiments/side_channel_inc_trimmed_eval_small \
-  collect --cases 1,3,4-20
+  collect --cases 12-20
 ```
 ### Legacy inc10 run (2025-12-21)
 ```bash
