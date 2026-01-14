@@ -37,6 +37,15 @@ doc
 .idea/
 *build*/
 
+# local problog benchmark clone
+/problog-benchmark/
+
+# local plotting cache
+**/.mplconfig/
+
+# generated souffle scratch files in repo root
+/compute.souffle*
+
 *.swp
 *.tgz
 *-pak
