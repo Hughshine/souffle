@@ -185,7 +185,9 @@ Data sources:
   `experiments/side_channel_inc_trimmed_eval_small/`.
 
 #### 2026-01-13 run notes (full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5)
-- Config change: CUDD init uses `numVars = 2 * rand_vars`, `numSlots = 512`, cache/memory tiers unchanged.
+- Config change: CUDD init uses `numVars = 2 * rand_vars` from the initial graph (random facts only),
+  `numSlots = 512`, cache/memory tiers unchanged; this fixes the initial manager sizing while keeping the rest of the
+  allocator policy the same.
 - Correctness: all P1,P3,P4-P20 OK (P2 missing in source); see `experiments/side_channel_inc_eval_small/results-souffle-inc.tsv`.
 - End-to-end wins: inc faster in 17/19 (inc0p1), 18/19 (inc0p3), 17/19 (inc0p5).
 - Avg speedup (end-to-end): 1.50/1.33/1.28 mean and 1.46/1.28/1.18 median (inc0p1/inc0p3/inc0p5).
@@ -222,6 +224,8 @@ ALL	57	1.537 (2.410)	3.434 (2.780)	1.539 (1.498)	1.979 (2.572)	0.975 (1.005)
 - Base dir: `experiments/side_channel_inc_eval_p12_p20_nofcprofile/`.
 - Cases: P12-P20.
 - Run args: `--det-opt --reuse-var-index`.
+- Note: CUDD does not natively support variable deletion/reuse; we add a `--reuse-var-index` path that reuses freed
+  variable indices for deleted nodes/edges to avoid unbounded growth of the manager’s variable space.
 - Correctness: all deltas OK (see `results-souffle-inc.tsv` under base dir).
 - FC insert improvements: all 27 insert rows improved vs the earliest no-reuse run; previously slow cases
   (P13/P14/P15/P17/P18) now show FC speedups >1x. Comparison table:
