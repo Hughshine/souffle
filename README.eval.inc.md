@@ -226,6 +226,8 @@ ALL	57	1.537 (2.410)	3.434 (2.780)	1.539 (1.498)	1.979 (2.572)	0.975 (1.005)
 - Run args: `--det-opt --reuse-var-index`.
 - Note: CUDD does not natively support variable deletion/reuse; we add a `--reuse-var-index` path that reuses freed
   variable indices for deleted nodes/edges to avoid unbounded growth of the manager’s variable space.
+- Note: setmode full always reconstructs the BDD manager each turn, so variable indices are not reused across turns;
+  reuse only applies to incremental runs that keep a persistent manager.
 - Correctness: all deltas OK (see `results-souffle-inc.tsv` under base dir).
 - FC insert improvements: all 27 insert rows improved vs the earliest no-reuse run; previously slow cases
   (P13/P14/P15/P17/P18) now show FC speedups >1x. Comparison table:
