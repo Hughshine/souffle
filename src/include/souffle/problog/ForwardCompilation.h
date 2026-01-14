@@ -406,7 +406,9 @@ void buildFormulasCyclewise(
      formulaManager.preConfig(view);
      setCuddPreConfigTag("");
     auto preConfigMs = toMs(Clock::now() - preStart);
-    debugger.logMessage(Level::INFO, "Variable ordering takes " + std::to_string(preConfigMs) + " ms");
+    debugger.logMessage(Level::INFO,
+            "preConfig (cache clear + var scan/create + dyn-reorder setup) took " +
+                    std::to_string(preConfigMs) + " ms");
 
     auto depStart = Clock::now();
     auto& depGraph = view.getCycleDependencyGraph();
@@ -2048,14 +2050,20 @@ void buildFormulasIncCyclewise(
     } else {
         auto insertPrepStart = Clock::now();
         start = high_resolution_clock::now();
-        auto insertPreConfigStart = Clock::now();
-        setCuddPreConfigTag("inc_insert");
-        formulaManager.preConfig(view);
-        setCuddPreConfigTag("");
-        end = high_resolution_clock::now();
-        debugger.logMessage(Level::INFO, "Variable reordering takes: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-        if (fcProfile) {
-            insertPreConfigMs = toMs(insertPreConfigStart, Clock::now());
+        if (incPreconfigEnabled) {
+            auto insertPreConfigStart = Clock::now();
+            setCuddPreConfigTag("inc_insert");
+            formulaManager.preConfig(view);
+            setCuddPreConfigTag("");
+            end = high_resolution_clock::now();
+            debugger.logMessage(Level::INFO,
+                    "preConfig (cache clear + var scan/create + dyn-reorder setup) took " +
+                            std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+            if (fcProfile) {
+                insertPreConfigMs = toMs(insertPreConfigStart, Clock::now());
+            }
+        } else {
+            debugger.logMessage(Level::INFO, "preConfig skipped (inc-preconfig disabled)");
         }
         start = high_resolution_clock::now();
         std::vector<size_t> inDegree = depGraph.inDegrees;
@@ -2464,6 +2472,7 @@ void buildFormulasIncCyclewise(
         std::cout << "[fc-profile] stage=FORWARD_COMPILATION_INC phase=insert_init ms="
                   << (insertPreConfigMs + insertInitNodesMs + insertInitEdgesMs)
                   << " preConfig_ms=" << insertPreConfigMs
+                  << " preconfig_enabled=" << (incPreconfigEnabled ? 1 : 0)
                   << " init_nodes_ms=" << insertInitNodesMs
                   << " init_edges_ms=" << insertInitEdgesMs
                   << " insert_fact_vars=" << insertFactVars
@@ -2541,7 +2550,9 @@ void buildFormulasCyclewiseOnDemand(
      setCuddPreConfigTag("");
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    debugger.logMessage(Level::INFO, "Variable ordering takes " + std::to_string(duration) + " ms");
+    debugger.logMessage(Level::INFO,
+            "preConfig (cache clear + var scan/create + dyn-reorder setup) took " +
+                    std::to_string(duration) + " ms");
 
     auto& depGraph = view.getCycleDependencyGraph();
 //    depGraph.dumpCycles(std::cout);

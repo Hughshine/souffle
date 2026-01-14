@@ -82,6 +82,36 @@ Notes:
 - For P18–P20, inc slowdowns are better explained by explicit variable reordering +
   insert-loop work (e.g., `make_and` dominated loops).
 
+### Inc preConfig toggle (2026-01-14, P17–P20 inc0p1/inc0p3/inc0p5)
+- Goal: evaluate skipping `preConfig(view)` in inc insert (`--inc-preconfig`).
+- Runs:
+  - `experiments/side_channel_inc_preconfig_off` (default, preConfig skipped)
+  - `experiments/side_channel_inc_preconfig_on` (`--inc-preconfig`)
+  - Both with `--det-opt`, `--timeout 600`, `--delta-labels inc0p1,inc0p3,inc0p5`.
+- Result: skipping preConfig is slightly faster but causes correctness mismatches in
+  P17 (inc0p3/0p5) and all P18 deltas. P19/P20 remain correct.
+
+```tsv
+Case	Delta	Inc_off_s	Inc_on_s	Full_off_s	Full_on_s	OK_off	OK_on
+P17	inc0p1	5.309	5.578	12.309	13.194	1	1
+P17	inc0p3	8.770	9.002	10.048	11.301	0	1
+P17	inc0p5	9.121	10.549	10.564	11.599	0	1
+P18	inc0p1	12.182	12.402	15.294	14.999	0	1
+P18	inc0p3	13.788	12.945	14.567	13.843	0	1
+P18	inc0p5	13.561	13.317	14.965	14.340	0	1
+P19	inc0p1	13.221	14.050	28.797	29.005	1	1
+P19	inc0p3	16.331	14.649	27.388	27.918	1	1
+P19	inc0p5	15.239	15.953	28.015	27.948	1	1
+P20	inc0p1	7.699	9.039	14.640	15.716	1	1
+P20	inc0p3	9.051	9.083	15.121	17.305	1	1
+P20	inc0p5	7.542	8.609	14.871	15.067	1	1
+```
+
+Implication:
+- `--inc-preconfig` currently appears required for correctness on some cases.
+  Skipping it likely leaves stale CUDD/cache/var registry state that affects WMC.
+  Until the root cause is fixed, keep `--inc-preconfig` enabled for reliable results.
+
 ## Profiling Run (2026-01-10, --inc-profile, full ruleset)
 - Cases: P12, P17; deltas: inc1 (1%), inc5 (5%); 1 sample each.
 - Command pattern:

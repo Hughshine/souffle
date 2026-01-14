@@ -1512,6 +1512,7 @@ void runPipeline(
     Debugger& debugger = Debugger::getInstance();
     fcProfileEnabled = opt.isFcProfileEnabled();
     postDelEnabled = opt.isPostDelEnabled();
+    incPreconfigEnabled = opt.isIncPreconfigEnabled();
     DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
     DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());
     DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());

@@ -73,6 +73,7 @@ listed below; use `-h` for the authoritative values.
 - `--inc-profile`: default `false` (print per-stage incremental timings to stdout)
 - `--fc-profile`: default `false` (print detailed forward-compilation sub-phase counters/timings to stdout)
 - `--post-del`: default `false` (enable post-delete variable postprocess in FC)
+- `--inc-preconfig`: default `false` (enable preConfig during incremental insertion)
 - `-h`: help
 
 ## Online Incremental CLI (Interactive or Batch)

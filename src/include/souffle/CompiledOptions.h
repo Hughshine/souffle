@@ -85,6 +85,7 @@ protected:
     bool inc_profile = false;  // enable incremental stage profiling
     bool fc_profile = false;  // enable detailed forward-compilation profiling
     bool post_del = false;  // enable postprocessUselessVariables after deletion
+    bool inc_preconfig = false;  // enable preConfig() during incremental insertion
     bool det_opt = false;  // enable deterministic-relation analysis and det gating
     bool det_force = false;  // force deterministic evaluation (skip derivation graph)
     bool single_rand_fast = true;  // enable single-randvar fast path in component FC
@@ -98,11 +99,13 @@ public:
             const std::string& splitmode = "naive-split",
             bool incProfile = false,
             bool fcProfile = false,
-            bool postDel = false)
+            bool postDel = false,
+            bool incPreconfig = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
     , incMode(mode), merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
       dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
       dred_profile(dredProfile), inc_profile(incProfile), fc_profile(fcProfile), post_del(postDel),
+      inc_preconfig(incPreconfig),
       split_mode(splitmode) {}
 
     CmdOptions() {}
@@ -193,6 +196,9 @@ public:
     bool isPostDelEnabled() const {
         return post_del;
     }
+    bool isIncPreconfigEnabled() const {
+        return inc_preconfig;
+    }
     bool isDetOptEnabled() const {
         return det_opt;
     }
@@ -251,6 +257,7 @@ public:
                 {"inc-profile", false, nullptr, 1003},
                 {"fc-profile", false, nullptr, 1005},
                 {"post-del", false, nullptr, 1006},
+                {"inc-preconfig", false, nullptr, 1008},
                 {"det-opt", false, nullptr, 'Z'},
                 {"det-force", false, nullptr, 1007},
                 {"no-single-rand-fast", false, nullptr, 1001},
@@ -402,6 +409,9 @@ public:
                 case 1006:
                     post_del = true;
                     break;
+                case 1008:
+                    inc_preconfig = true;
+                    break;
                 case 'Z':
                     det_opt = true;
                     break;
@@ -456,6 +466,7 @@ private:
         std::cerr << "    --inc-profile                -- Enable incremental stage profiling\n";
         std::cerr << "    --fc-profile                 -- Enable detailed forward-compilation profiling\n";
         std::cerr << "    --post-del                   -- Enable post-delete variable postprocess (FC)\n";
+        std::cerr << "    --inc-preconfig              -- Enable preConfig() during inc insertion (FC)\n";
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
         std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
         std::cerr << "    --det-force                  -- Force deterministic mode (skip derivation graph; emit prob=1.0)\n";

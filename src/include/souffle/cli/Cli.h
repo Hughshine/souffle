@@ -369,6 +369,7 @@ public:
         incProfileEnabled = options.isIncProfileEnabled();
         fcProfileEnabled = options.isFcProfileEnabled();
         postDelEnabled = options.isPostDelEnabled();
+        incPreconfigEnabled = options.isIncPreconfigEnabled();
         auto& mode = options.getIncMode();
         if (mode == "full" || mode == "full-hard") {
             setIncMode(IncMode::FULL_HARD);
