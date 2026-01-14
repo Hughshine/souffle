@@ -42,6 +42,9 @@
 - Dynamic reordering itself is triggered by CUDD during BDD operations
   (e.g., `Cudd_bddAnd`, `Cudd_bddOr`, `Cudd_bddIthVar`). It is not forced by
   `preConfig(...)` beyond enabling a heuristic.
+  - In incremental turns, `preConfig(...)` scans only delta-inserted nodes/edges
+    for `createVar(...)` (cache clear still happens every turn). The adaptive
+    reordering heuristic is configured once per manager, on the first full run.
 
 ## Reordering Hooks and Counters
 - `myVRFunc` is registered for `CUDD_PRE_REORDERING_HOOK` and

@@ -2050,20 +2050,16 @@ void buildFormulasIncCyclewise(
     } else {
         auto insertPrepStart = Clock::now();
         start = high_resolution_clock::now();
-        if (incPreconfigEnabled) {
-            auto insertPreConfigStart = Clock::now();
-            setCuddPreConfigTag("inc_insert");
-            formulaManager.preConfig(view);
-            setCuddPreConfigTag("");
-            end = high_resolution_clock::now();
-            debugger.logMessage(Level::INFO,
-                    "preConfig (cache clear + var scan/create + dyn-reorder setup) took " +
-                            std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-            if (fcProfile) {
-                insertPreConfigMs = toMs(insertPreConfigStart, Clock::now());
-            }
-        } else {
-            debugger.logMessage(Level::INFO, "preConfig skipped (inc-preconfig disabled)");
+        auto insertPreConfigStart = Clock::now();
+        setCuddPreConfigTag("inc_insert");
+        formulaManager.preConfig(view);
+        setCuddPreConfigTag("");
+        end = high_resolution_clock::now();
+        debugger.logMessage(Level::INFO,
+                "preConfig (cache clear + var scan/create + dyn-reorder setup) took " +
+                        std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+        if (fcProfile) {
+            insertPreConfigMs = toMs(insertPreConfigStart, Clock::now());
         }
         start = high_resolution_clock::now();
         std::vector<size_t> inDegree = depGraph.inDegrees;
@@ -2472,7 +2468,6 @@ void buildFormulasIncCyclewise(
         std::cout << "[fc-profile] stage=FORWARD_COMPILATION_INC phase=insert_init ms="
                   << (insertPreConfigMs + insertInitNodesMs + insertInitEdgesMs)
                   << " preConfig_ms=" << insertPreConfigMs
-                  << " preconfig_enabled=" << (incPreconfigEnabled ? 1 : 0)
                   << " init_nodes_ms=" << insertInitNodesMs
                   << " init_edges_ms=" << insertInitEdgesMs
                   << " insert_fact_vars=" << insertFactVars

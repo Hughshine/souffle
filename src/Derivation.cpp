@@ -262,7 +262,6 @@ bool dredProfileEnabled = false;
 bool incProfileEnabled = false;
 bool fcProfileEnabled = false;
 bool postDelEnabled = false;
-bool incPreconfigEnabled = false;
 
 void DerivationManager::DredStats::dump(std::ostream& out, const std::string& label) const {
     out << "[seminaive-dred] " << label << " del"

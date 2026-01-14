@@ -198,6 +198,7 @@ public:
         variableRegistry.clear();
         weights.clear();
         wmcCache_.clear();
+        reorderConfigured_ = false;
         unsigned int maxCacheHard = Cudd_ReadMaxCacheHard(manager.get());
         if (maxCacheHard > 1) {
             Cudd_SetMaxCacheHard(manager.get(), 1);
@@ -213,6 +214,7 @@ public:
         weights.clear();
         wmcCache_.clear();
         last_reordering_time_ = 0;
+        reorderConfigured_ = false;
         manager.reset();
         manager = initManager();
     }
@@ -247,40 +249,77 @@ public:
         size_t factVars = 0;
         size_t edgeVars = 0;
 
+        const auto* incView = dynamic_cast<const IncrementalDerivationGraphViewInterface*>(&view);
+        const bool hasDelta =
+                incView != nullptr &&
+                (!incView->getDeltaInsertNodes().empty() || !incView->getDeltaInsertEdges().empty() ||
+                        !incView->getDeltaDeleteNodes().empty() || !incView->getDeltaDeleteEdges().empty());
         auto factStart = steady_clock::now();
-        for (const auto& node : view.getNodes()) {
-            if (node->isFact && node->getProbability() < 1.0) {
-                int idx = getVarIndex(*node);
-                if (fcProfile) {
-                    auto cvStart = steady_clock::now();
-                    createVar(idx, *node);
-                    factCreateMs += toMs(steady_clock::now() - cvStart);
-                } else {
-                    createVar(idx, *node);
+        if (incView != nullptr && hasDelta) {
+            for (const auto& node : incView->getDeltaInsertNodes()) {
+                if (node->isFact && node->getProbability() < 1.0) {
+                    int idx = getVarIndex(*node);
+                    if (fcProfile) {
+                        auto cvStart = steady_clock::now();
+                        createVar(idx, *node);
+                        factCreateMs += toMs(steady_clock::now() - cvStart);
+                    } else {
+                        createVar(idx, *node);
+                    }
+                    ++factVars;
                 }
-                // std::cout << "[CUDD] createVar(fact " << node->getId()
-                //           << " -> idx " << idx << ") took "
-                //           << cvMs << " ms" << std::endl;
-                ++factVars;
+            }
+        } else {
+            for (const auto& node : view.getNodes()) {
+                if (node->isFact && node->getProbability() < 1.0) {
+                    int idx = getVarIndex(*node);
+                    if (fcProfile) {
+                        auto cvStart = steady_clock::now();
+                        createVar(idx, *node);
+                        factCreateMs += toMs(steady_clock::now() - cvStart);
+                    } else {
+                        createVar(idx, *node);
+                    }
+                    // std::cout << "[CUDD] createVar(fact " << node->getId()
+                    //           << " -> idx " << idx << ") took "
+                    //           << cvMs << " ms" << std::endl;
+                    ++factVars;
+                }
             }
         }
         double factMs = toMs(steady_clock::now() - factStart);
 
         auto edgeStart = steady_clock::now();
-        for (const auto& edge : view.getEdges()) {
-            if (!edge->isDeterministic()) {
-                int idx = getVarIndex(*edge);
-                if (fcProfile) {
-                    auto cvStart = steady_clock::now();
-                    createVar(idx, *edge);
-                    edgeCreateMs += toMs(steady_clock::now() - cvStart);
-                } else {
-                    createVar(idx, *edge);
+        if (incView != nullptr && hasDelta) {
+            for (const auto& edge : incView->getDeltaInsertEdges()) {
+                if (!edge->isDeterministic()) {
+                    int idx = getVarIndex(*edge);
+                    if (fcProfile) {
+                        auto cvStart = steady_clock::now();
+                        createVar(idx, *edge);
+                        edgeCreateMs += toMs(steady_clock::now() - cvStart);
+                    } else {
+                        createVar(idx, *edge);
+                    }
+                    ++edgeVars;
                 }
-                // std::cout << "[CUDD] createVar(edge " << edge->getId()
-                //           << " -> idx " << idx << ") took "
-                //           << cvMs << " ms" << std::endl;
-                ++edgeVars;
+            }
+        } else {
+            for (const auto& edge : view.getEdges()) {
+                if (!edge->isDeterministic()) {
+                    int idx = getVarIndex(*edge);
+                    if (fcProfile) {
+                        auto cvStart = steady_clock::now();
+                        createVar(idx, *edge);
+                        edgeCreateMs += toMs(steady_clock::now() - cvStart);
+                    } else {
+                        createVar(idx, *edge);
+                    }
+                    // std::cout << "[CUDD] createVar(edge " << edge->getId()
+                    //           << " -> idx " << idx << ") took "
+                    //           << cvMs << " ms" << std::endl;
+                    ++edgeVars;
+                }
             }
         }
         double edgeMs = toMs(steady_clock::now() - edgeStart);
@@ -292,16 +331,19 @@ public:
                   << " (facts " << factMs << " ms, edges " << edgeMs << " ms)"
                   << std::endl;
 
-        // Rely on CUDD adaptive dynamic reordering; skip heavy static heuristic ordering.
-        std::cout << "[CUDD] Enabling adaptive dynamic reordering (skip static ordering)" << std::endl;
-        if (fcProfile) {
-            auto reorderStart = steady_clock::now();
-            adaptiveReorder(manager.get());
-            reorderMs = toMs(steady_clock::now() - reorderStart);
-        } else {
-            adaptiveReorder(manager.get());
+        if (!reorderConfigured_) {
+            // Rely on CUDD adaptive dynamic reordering; skip heavy static heuristic ordering.
+            std::cout << "[CUDD] Enabling adaptive dynamic reordering (skip static ordering)" << std::endl;
+            if (fcProfile) {
+                auto reorderStart = steady_clock::now();
+                adaptiveReorder(manager.get());
+                reorderMs = toMs(steady_clock::now() - reorderStart);
+            } else {
+                adaptiveReorder(manager.get());
+            }
+            std::cout << "[CUDD] Adaptive reordering initialized" << std::endl;
+            reorderConfigured_ = true;
         }
-        std::cout << "[CUDD] Adaptive reordering initialized" << std::endl;
         if (fcProfile) {
             const auto totalMs = toMs(steady_clock::now() - totalStart);
             const std::string& rawTag = getCuddPreConfigTag();
@@ -400,6 +442,7 @@ private:
     std::unordered_map<int, BddNodeRef> variableRegistry;
     std::unordered_map<DdNode*, double> wmcCache_;
     long last_reordering_time_ = 0;
+    bool reorderConfigured_ = false;
     InitConfig initConfig_;
 
 

@@ -82,11 +82,11 @@ Notes:
 - For P18–P20, inc slowdowns are better explained by explicit variable reordering +
   insert-loop work (e.g., `make_and` dominated loops).
 
-### Inc preConfig toggle (2026-01-14, P17–P20 inc0p1/inc0p3/inc0p5)
-- Goal: evaluate skipping `preConfig(view)` in inc insert (`--inc-preconfig`).
-- Runs:
-  - `experiments/side_channel_inc_preconfig_off` (default, preConfig skipped)
-  - `experiments/side_channel_inc_preconfig_on` (`--inc-preconfig`)
+### Inc preConfig toggle (historical; flag removed) (2026-01-14, P17–P20 inc0p1/inc0p3/inc0p5)
+- Goal: evaluate skipping `preConfig(view)` in inc insert (flag removed since).
+- Runs (historical):
+  - `experiments/side_channel_inc_preconfig_off` (preConfig skipped)
+  - `experiments/side_channel_inc_preconfig_on` (preConfig forced)
   - Both with `--det-opt`, `--timeout 600`, `--delta-labels inc0p1,inc0p3,inc0p5`.
 - Result: skipping preConfig is slightly faster but causes correctness mismatches in
   P17 (inc0p3/0p5) and all P18 deltas. P19/P20 remain correct.
@@ -108,9 +108,36 @@ P20	inc0p5	7.542	8.609	14.871	15.067	1	1
 ```
 
 Implication:
-- `--inc-preconfig` currently appears required for correctness on some cases.
-  Skipping it likely leaves stale CUDD/cache/var registry state that affects WMC.
-  Until the root cause is fixed, keep `--inc-preconfig` enabled for reliable results.
+- Full skip of preConfig is unsafe for correctness (likely due to stale WMC cache).
+  The new behavior keeps the correctness-sensitive parts (cache clear) while
+  limiting createVar scans to delta inserts, and only sets reordering heuristics
+  on the first full turn.
+
+### Inc preConfig (turn-sensitive delta scan) (2026-01-14, P17–P20 inc0p1/inc0p3/inc0p5)
+- Behavior: preConfig runs every turn to clear WMC cache; when a delta exists it
+  only scans `deltaInsert{Nodes,Edges}` for createVar. Dynamic reordering
+  heuristics are set only on the first full turn.
+- Runs:
+  - `experiments/side_channel_inc_preconfig_delta` (delta-only createVar)
+  - compared against `experiments/side_channel_inc_preconfig_on` (full preConfig)
+- Result: delta-only preConfig is correct on all P17–P20 deltas; runtime changes
+  are modest and mixed (often within noise; P20 shows consistent wins).
+
+```tsv
+Case	Delta	Inc_delta_s	Inc_full_preconfig_s	Full_delta_s	Full_full_preconfig_s	OK_delta	OK_full
+P17	inc0p1	5.534	5.578	13.104	13.194	1	1
+P17	inc0p3	9.339	9.002	11.424	11.301	1	1
+P17	inc0p5	9.664	10.549	11.735	11.599	1	1
+P18	inc0p1	13.234	12.402	16.269	14.999	1	1
+P18	inc0p3	13.217	12.945	14.493	13.843	1	1
+P18	inc0p5	13.007	13.317	13.468	14.340	1	1
+P19	inc0p1	14.126	14.050	29.248	29.005	1	1
+P19	inc0p3	13.824	14.649	26.598	27.918	1	1
+P19	inc0p5	14.124	15.953	26.595	27.948	1	1
+P20	inc0p1	6.436	9.039	12.999	15.716	1	1
+P20	inc0p3	7.129	9.083	14.099	17.305	1	1
+P20	inc0p5	7.408	8.609	14.028	15.067	1	1
+```
 
 ## Profiling Run (2026-01-10, --inc-profile, full ruleset)
 - Cases: P12, P17; deltas: inc1 (1%), inc5 (5%); 1 sample each.
