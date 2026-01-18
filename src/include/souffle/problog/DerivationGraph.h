@@ -705,9 +705,6 @@ public:
             return deletedFacts_;
         }
         deletedFacts_.insert(explicitDeletedFacts_.begin(), explicitDeletedFacts_.end());
-        for (const auto& kv : getNodeImpactedByDeltaDelete()) {
-            deletedFacts_.insert(kv.first);
-        }
         return deletedFacts_;
     }
     const std::set<NodePtr>& getDeletedDeterminsticFacts() {
@@ -3754,6 +3751,26 @@ void IncrementalDerivationGraphViewInterface::dumpJsonInc(const std::string& fil
             {"bodies", bodies}
         };
     };
+    // For delta edges, avoid view-filtered accessors so we can emit full head/body info
+    // even if the edge's nodes are no longer in the view after prune.
+    auto edge_to_json_raw = [](const EdgePtr& e) -> Json {
+        Json bodies = Json::array();
+        const auto& inputs = e->getInputsStable();
+        const auto& negs   = e->getBodyNegationsStable();
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            bool neg = (i < negs.size()) ? negs[i] : false;
+            json_array_append(bodies, Json::object{
+                {"negation", neg},
+                {"name", inputs[i]->getTuple().toString()}
+            });
+        }
+        NodePtr head = e->getOutput();
+        return Json::object{
+            {"head", head ? head->getTuple().toString() : std::string("<null-head>")},
+            {"probability", e->getProbability()},
+            {"bodies", bodies}
+        };
+    };
 
     // Main body: use the "valid subgraph", excluding delta-delete.
     Json facts = Json::array();
@@ -3790,7 +3807,7 @@ void IncrementalDerivationGraphViewInterface::dumpJsonInc(const std::string& fil
             json_array_append(del_facts, fact_to_json(n));
     }
     for (const auto& e : this->getDeltaDeleteEdges()) {
-        json_array_append(del_edges, edge_to_json(e));
+        json_array_append(del_edges, edge_to_json_raw(e));
     }
 
     Json root = Json::object{

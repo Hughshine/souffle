@@ -193,12 +193,12 @@ Plotting checklist:
   - Script: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114/plot_fc_speedup_vs_inv_delta_live_ratio.py`
   - Note: x-axis is `1/DeltaLiveRatio = LiveNodes / DeltaLiveNodes` computed from inc FC logs
     (`changed_node_count` / `live_nodes`); y-axis is FC speedup (Full / Inc).
-- FC speedup vs `1/DeltaLiveRatio` (reuse-var-index run, P12–P20, inc0p1/inc0p3/inc0p5):
+- FC speedup vs `1/DeltaLiveRatio` (reuse-var-index enabled run, P12–P20, inc0p1/inc0p3/inc0p5):
   - Plot: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114_reuse/fc_speedup_vs_inv_delta_live_ratio.png`
   - Data: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114_reuse/fc_inv_delta_live_ratio.tsv`
   - Script: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114_reuse/plot_fc_speedup_vs_inv_delta_live_ratio.py`
-  - Note: reuse-var-index is enabled; use this plot to contrast with the baseline distribution above.
-- FC speedup vs `DeltaLiveRatio` (reuse-var-index run, P12–P20, inc0p1/inc0p3/inc0p5):
+  - Note: reuse-var-index is enabled by default (disable with `--no-reuse-var-index`); use this plot to contrast with the baseline distribution above.
+- FC speedup vs `DeltaLiveRatio` (reuse-var-index enabled run, P12–P20, inc0p1/inc0p3/inc0p5):
   - Plot: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/fc_speedup_vs_delta_live_ratio.png`
   - Data: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/fc_delta_live_ratio.tsv`
   - Script: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/plot_fc_speedup_vs_delta_live_ratio.py`

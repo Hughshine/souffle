@@ -23,11 +23,46 @@
 #include <type_traits>
 #include <utility>
 #include <fstream>
+#include <cstdlib>
+#include <sstream>
 #include "souffle/problog/debug/Debugger.h"
 #include "souffle/problog/RegionalIncremental.h"
 
 
 Debugger& debugger = Debugger::getInstance();
+
+static inline const std::unordered_set<std::string>& fcTraceTargets() {
+    static std::unordered_set<std::string> targets;
+    static bool loaded = false;
+    if (loaded) {
+        return targets;
+    }
+    loaded = true;
+    const char* raw = std::getenv("SOUFFLE_FC_TRACE_TUPLES");
+    if (!raw || !*raw) {
+        return targets;
+    }
+    std::stringstream ss(raw);
+    std::string tok;
+    while (std::getline(ss, tok, ',')) {
+        if (!tok.empty()) {
+            targets.insert(tok);
+        }
+    }
+    return targets;
+}
+
+static inline bool fcTraceEnabled() {
+    return !fcTraceTargets().empty();
+}
+
+static inline bool fcTraceMatch(const NodePtr& node) {
+    if (!node || !fcTraceEnabled()) {
+        return false;
+    }
+    const auto& targets = fcTraceTargets();
+    return targets.find(node->getTuple().toString()) != targets.end();
+}
 
 inline void assertProbabilityInRange(double p, const std::string& ctx) {
 //    std::cout << "[ForwardCompilation] probability check " << p << " at " << ctx << std::endl;
@@ -46,8 +81,8 @@ static inline void collectImpactUnion(
     if (sources.empty()) {
         return;
     }
-    const auto& liveNodes = view.getNodes();
-    const auto& liveEdges = view.getEdges();
+    const auto& liveNodes = view.getValidNodes();
+    const auto& liveEdges = view.getValidEdges();
     std::queue<NodePtr> q;
     for (const auto& src : sources) {
         if (!src) {
@@ -105,7 +140,7 @@ static inline void collectImpactUnionWithDeletedEdges(
     const auto& liveEdges = view.getEdges();
     std::queue<NodePtr> q;
     for (const auto& src : sources) {
-        if (!src || !liveNodes.count(src)) {
+        if (!src) {
             continue;
         }
         if (outNodes.insert(src).second) {
@@ -115,14 +150,17 @@ static inline void collectImpactUnionWithDeletedEdges(
     while (!q.empty()) {
         NodePtr cur = q.front();
         q.pop();
-        for (const auto& e : cur->getOutgoingEdges()) {
-            if (!liveEdges.count(e)) {
-                continue;
-            }
-            outEdges.insert(e);
-            NodePtr nxt = e->getOutput();
-            if (nxt && liveNodes.count(nxt) && outNodes.insert(nxt).second) {
-                q.push(nxt);
+        const bool curIsLive = liveNodes.count(cur) > 0;
+        if (curIsLive) {
+            for (const auto& e : cur->getOutgoingEdges()) {
+                if (!liveEdges.count(e)) {
+                    continue;
+                }
+                outEdges.insert(e);
+                NodePtr nxt = e->getOutput();
+                if (nxt && liveNodes.count(nxt) && outNodes.insert(nxt).second) {
+                    q.push(nxt);
+                }
             }
         }
         auto it = deletedOutEdges.find(cur);
@@ -1546,7 +1584,7 @@ void buildFormulasIncCyclewise(
                                std::unordered_set<NodePtr>& phaseSet,
                                std::size_t& phaseCount) {
         changedNodes.insert(node);
-        if (fcProfile && phaseSet.insert(node).second) {
+        if (phaseSet.insert(node).second && fcProfile) {
             ++phaseCount;
         }
     };
@@ -1681,6 +1719,16 @@ void buildFormulasIncCyclewise(
         std::set<NodePtr> deletedNonDeterminsticFacts = view.getDeletedNonDeterministicFacts();
         deletedDetFactsCount = deletedDeterminsticFacts.size();
         deletedNonDetFactsCount = deletedNonDeterminsticFacts.size();
+        if (fcTraceEnabled()) {
+            for (auto deletedFact : deletedFacts) {
+                if (fcTraceMatch(deletedFact)) {
+                    std::cout << "[fc-trace] deletedFact=" << deletedFact->getTuple().toString()
+                              << " det=" << (deletedDeterminsticFacts.count(deletedFact) ? 1 : 0)
+                              << " nondet=" << (deletedNonDeterminsticFacts.count(deletedFact) ? 1 : 0)
+                              << std::endl;
+                }
+            }
+        }
         for (auto deletedFact: deletedFacts) {
             assertProbabilityInRange(0.0, "deleted fact weight");
             formulaManager.setVariableWeight(formulaManager.getVarIndex(*deletedFact), 0.0, 1.0);
@@ -1715,10 +1763,55 @@ void buildFormulasIncCyclewise(
                                             deletedDeterminsticFacts.end());
             collectImpactUnionWithDeletedEdges(view, detSources, deletedOutEdges, detImpactNodes, detImpactEdges);
         }
+        // Deterministic derived deletions may not be explicit facts; include delta-deleted det nodes
+        // that still participate in the current view (old view membership heuristic).
+        std::vector<NodePtr> detDeltaDeleteSources;
+        detDeltaDeleteSources.reserve(deltaDeletedNodes.size());
+        if (!deltaDeletedNodes.empty()) {
+            const auto& liveEdges = view.getValidEdges();
+            for (const auto& node : deltaDeletedNodes) {
+                if (!node || node->getProbability() != 1.0) {
+                    continue;
+                }
+                bool inView = false;
+                for (const auto& e : node->getOutgoingEdges()) {
+                    if (liveEdges.count(e)) {
+                        inView = true;
+                        break;
+                    }
+                }
+                if (inView) {
+                    detDeltaDeleteSources.push_back(node);
+                }
+            }
+        }
+        if (!detDeltaDeleteSources.empty()) {
+            collectImpactUnionWithDeletedEdges(view, detDeltaDeleteSources, deletedOutEdges,
+                                               detImpactNodes, detImpactEdges);
+        }
         if (!deletedNonDeterminsticFacts.empty()) {
             std::vector<NodePtr> nonDetSources(deletedNonDeterminsticFacts.begin(),
                                                deletedNonDeterminsticFacts.end());
             collectImpactUnionWithDeletedEdges(view, nonDetSources, deletedOutEdges, nonDetImpactNodes, nonDetImpactEdges);
+        }
+        for (auto edge : deltaDeletedEdges) {
+            NodePtr out = view.getOutput(edge);
+            if (!out || out->isFact) {
+                continue;
+            }
+            detImpactNodes.insert(out);
+        }
+        if (fcTraceEnabled()) {
+            for (auto node : detImpactNodes) {
+                if (fcTraceMatch(node)) {
+                    std::cout << "[fc-trace] detImpact=" << node->getTuple().toString() << std::endl;
+                }
+            }
+            for (auto node : nonDetImpactNodes) {
+                if (fcTraceMatch(node)) {
+                    std::cout << "[fc-trace] nonDetImpact=" << node->getTuple().toString() << std::endl;
+                }
+            }
         }
         if (!deletedNonDeterminsticFacts.empty()) {
             deletedNonDetVars.reserve(deletedNonDeterminsticFacts.size());
@@ -1778,6 +1871,9 @@ void buildFormulasIncCyclewise(
                 if (node->isFact) {
                     continue;
                 }
+                if (fcTraceMatch(node)) {
+                    std::cout << "[fc-trace] nonDet-only conditioning node=" << node->getTuple().toString() << std::endl;
+                }
                 auto newNodeFormula = makeConditionProfile(nodeFormulas[node], {}, deletedNonDetVars, deleteCondStats);
                 if (!formulaManager.isSame(nodeFormulas[node], newNodeFormula)) {
                     nodeFormulas[node] = newNodeFormula;
@@ -1797,6 +1893,11 @@ void buildFormulasIncCyclewise(
                 auto it = edgeFormulas.find(edge);
                 if (it == edgeFormulas.end() || !it->second.get()) {
                     continue;
+                }
+                NodePtr out = view.getOutput(edge);
+                if (fcTraceMatch(out)) {
+                    std::cout << "[fc-trace] nonDet-only conditioning edge head="
+                              << out->getTuple().toString() << std::endl;
                 }
                 auto newEdgeFormula = makeConditionProfile(it->second, {}, deletedNonDetVars, deleteCondStats);
                 if (!formulaManager.isSame(it->second, newEdgeFormula)) {
@@ -1835,8 +1936,14 @@ void buildFormulasIncCyclewise(
                 if (node->isFact) {
                     continue;
                 }
+                if (fcTraceMatch(node)) {
+                    std::cout << "[fc-trace] overdelete node=" << node->getTuple().toString() << std::endl;
+                }
                 nodeFormulas[node] = formulaManager.getFalse();
                 markChangedNode(node, deleteOverdeleteChangedSet, deleteOverdeleteChangedNodes);
+                for (EdgePtr inEdge : view.getIncomingEdges(node)) {
+                    enqueueEdge(inEdge);
+                }
             }
             for (auto edge : detImpactEdges) {
                 if (deltaDeletedEdges.count(edge)) {
@@ -1903,6 +2010,20 @@ void buildFormulasIncCyclewise(
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Finished updating variable ordering after deletion (non-deterministic). Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+        if (fcTraceEnabled()) {
+            for (const auto& node : view.getNodes()) {
+                if (!fcTraceMatch(node)) {
+                    continue;
+                }
+                auto it = nodeFormulas.find(node);
+                const bool present = it != nodeFormulas.end();
+                const bool isFalse = present && formulaManager.isSame(it->second, formulaManager.getFalse());
+                std::cout << "[fc-trace] post-delete node=" << node->getTuple().toString()
+                          << " formula_present=" << (present ? 1 : 0)
+                          << " formula_false=" << (isFalse ? 1 : 0)
+                          << std::endl;
+            }
+        }
         if (fcProfile) {
             deleteVarOrderMs = toMs(delVarOrderStart, Clock::now());
         }
@@ -1958,6 +2079,15 @@ void buildFormulasIncCyclewise(
                         if (!inputLiteralProfile(inputs[i], negs[i], lit, rederiveStats)) {
     //                    std::cout << "    [WAIT] Missing input: " << inputs[i]->toString() << std::endl;
                             allAvailable = false;
+                            if (fcTraceEnabled()) {
+                                NodePtr out = view.getOutput(edge);
+                                if (fcTraceMatch(out)) {
+                                    std::cout << "[fc-trace] rederive missing input for head="
+                                              << out->getTuple().toString()
+                                              << " input=" << inputs[i]->getTuple().toString()
+                                              << std::endl;
+                                }
+                            }
                             break;
                         }
                         inputFormulas.push_back(lit);
@@ -1982,23 +2112,42 @@ void buildFormulasIncCyclewise(
                 if (!deletedNonDetVars.empty() && nonDetImpactEdges.count(edge)) {
                     newEdge = makeConditionProfile(newEdge, {}, deletedNonDetVars, rederiveStats);
                 }
-                if (formulaManager.isSame(edgeFormulas[edge], newEdge)) {
+                NodePtr output = view.getOutput(edge);
+                const bool edgeSame = formulaManager.isSame(edgeFormulas[edge], newEdge);
+                const bool forceNodeUpdate = output && deleteOverdeleteChangedSet.count(output);
+                if (edgeSame && !forceNodeUpdate) {
+                    if (fcTraceEnabled()) {
+                        if (fcTraceMatch(output)) {
+                            std::cout << "[fc-trace] rederive edge unchanged head="
+                                      << output->getTuple().toString() << std::endl;
+                        }
+                    }
 //                    std::cout << "    [SKIP] No change\n";
                     debugger.endIteration();
                     continue;
                 }
 
 //                std::cout << "    [CHANGE] Edge formula changed\n";
-                edgeFormulas[edge] = newEdge;
-                if (fcProfile) {
-                    rederiveStats.edge_updated++;
+                if (!edgeSame) {
+                    edgeFormulas[edge] = newEdge;
+                    if (fcProfile) {
+                        rederiveStats.edge_updated++;
+                    }
+                } else if (fcTraceEnabled()) {
+                    if (fcTraceMatch(output)) {
+                        std::cout << "[fc-trace] rederive edge unchanged; forcing node update head="
+                                  << output->getTuple().toString() << std::endl;
+                    }
                 }
 
-                NodePtr output = view.getOutput(edge);
                 if (!output || output->isFact) {
 //                    std::cout << "    [SKIP] Output is null or a fact\n";
                     debugger.endIteration();
                     continue;
+                }
+                if (fcTraceMatch(output)) {
+                    std::cout << "[fc-trace] rederive edge updated head="
+                              << output->getTuple().toString() << std::endl;
                 }
 
                 FormulaNodeRef newNode;
@@ -2030,6 +2179,10 @@ void buildFormulasIncCyclewise(
                     nodeFormulas[output] = newNode;
                     if (fcProfile) {
                         rederiveStats.node_updated++;
+                    }
+                    if (fcTraceMatch(output)) {
+                        std::cout << "[fc-trace] rederive node updated="
+                                  << output->getTuple().toString() << std::endl;
                     }
                     markChangedNode(output, deleteOverdeleteChangedSet, deleteOverdeleteChangedNodes);
                     for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
@@ -2878,6 +3031,30 @@ void buildFormulasIncRegionalCyclewise(
             std::vector<NodePtr> detSources(deletedDeterminsticFacts.begin(),
                                             deletedDeterminsticFacts.end());
             collectImpactUnionWithDeletedEdges(view, detSources, deletedOutEdges, detImpactNodes, detImpactEdges);
+        }
+        std::vector<NodePtr> detDeltaDeleteSources;
+        detDeltaDeleteSources.reserve(deltaDeletedNodes.size());
+        if (!deltaDeletedNodes.empty()) {
+            const auto& liveEdges = view.getValidEdges();
+            for (const auto& node : deltaDeletedNodes) {
+                if (!node || node->getProbability() != 1.0) {
+                    continue;
+                }
+                bool inView = false;
+                for (const auto& e : node->getOutgoingEdges()) {
+                    if (liveEdges.count(e)) {
+                        inView = true;
+                        break;
+                    }
+                }
+                if (inView) {
+                    detDeltaDeleteSources.push_back(node);
+                }
+            }
+        }
+        if (!detDeltaDeleteSources.empty()) {
+            collectImpactUnionWithDeletedEdges(view, detDeltaDeleteSources, deletedOutEdges,
+                                               detImpactNodes, detImpactEdges);
         }
         if (!deletedNonDeterminsticFacts.empty()) {
             std::vector<NodePtr> nonDetSources(deletedNonDeterminsticFacts.begin(),

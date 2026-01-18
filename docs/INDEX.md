@@ -24,6 +24,7 @@
 - `README.const.md`: deterministic-first (det-opt) design and FC integration.
 - `README.dred.md`: online DRed internals and deletion bottlenecks.
 - `README.inc.region.md`: inc-regional pipeline design/profiling notes.
+- `README.disjunct.md`: disjunction-strengthening log and det-opt segfault triage.
 - `README.ordering.md`, `README.eqrel.md`, `README.lazy.md`, `README.refactor.md`: design roadmaps and refactor notes.
 - `README.cudd.reordering.md`: CUDD reordering configuration and profiling notes.
 - `README.precompile.md`: precompile refactor log (historical, build-related).
@@ -34,6 +35,7 @@
 ## Evaluation and Profiling
 - `README.eval.md`: full-mode evaluation workflows.
 - `README.eval.inc.md`: incremental evaluation workflows.
+- `README.artifact.inc.md`: reproducible artifact steps for incremental side-channel runs.
 - `README.profile.md`: profiling guidance.
 - `README.profile.inc.md`: incremental profiling notes and experiment plan.
 - `README.fc.profile.md`: forward-compilation profiling notes and field definitions.

@@ -571,6 +571,8 @@ void Synthesiser::emitRules (std::ostream& out) {
 }
 
 void Synthesiser::emitProblogPipeline(std::ostream& out) {
+    out << "souffle::problog::setFullOnlyMode("
+        << (glb.config().has("full-only") ? "true" : "false") << ");\n";
     out << "souffle::problog::runPipeline(opt, obj, ruleManager, queryManager, fact_prob, evidences, "
         << (glb.config().has("online") && !glb.config().has("full-only") ? "true" : "false") << ");\n";
 }
@@ -2560,15 +2562,45 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "if (dredProfileEnabled) { __dred_delta_ins_start = DerivationManager::nowNanos(); }\n";
                 const bool isRederiveDeltaTuple =
                         deltaUnion.getDeltaTupleInsertRel().find("@inc_delta_tuple_rederive_") == 0;
-                out << "for(const auto& tupleDeltaDervInsert: *" <<
-                    synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaDervInsertRel())) << ") {" << std::endl;
+                const auto deltaDervInsertRelName =
+                        synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaDervInsertRel()));
+                const auto deltaTupleInsertRelName =
+                        synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleInsertRel()));
+                out << "if (detRel) {\n";
+                out << "for(const auto& tupleDeltaDervInsert: *" << deltaTupleInsertRelName << ") {\n";
                 out << "auto untypedDeltaDervTupleInsert = UntypedTuple::fromTypedTuple(\""
                     << deltaUnion.getRelation() << "\",tupleDeltaDervInsert);\n";
+                out << "std::size_t deltaInsertRuleAppCount = 0;\n";
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.ins_delta_tuples++;\n";
+                out << "DerivationManager::dredStats.ins_delta_ruleapps += deltaInsertRuleAppCount;\n";
+                out << "}\n";
+                if (isRederiveDeltaTuple) {
+                    out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                    out << "DerivationManager::dredStats.rederive_delta_tuples++;\n";
+                    out << "DerivationManager::dredStats.rederive_delta_ruleapps += deltaInsertRuleAppCount;\n";
+                    out << "DerivationManager::bumpDredSccRederiveDeltaTuples();\n";
+                    out << "DerivationManager::bumpDredSccRederiveDeltaRuleapps(deltaInsertRuleAppCount);\n";
+                    out << "}\n";
+                }
+                out << "DerivationManager::recordDetDeltaInsert(untypedDeltaDervTupleInsert);\n";
+                out << "if(!isInputFact(untypedDeltaDervTupleInsert)) {\n";
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.ins_tuple_inserts++;\n";
+                out << "}\n";
+                out << "}\n";
+                out << "}\n";
+                out << "} else {\n";
+                out << "for(const auto& tupleDeltaDervInsert: *" << deltaDervInsertRelName << ") {\n";
+                out << "auto untypedDeltaDervTupleInsert = UntypedTuple::fromTypedTuple(\""
+                    << deltaUnion.getRelation() << "\",tupleDeltaDervInsert);\n";
+                out << "std::size_t deltaInsertRuleAppCount = 0;\n";
                 // if (insertOnly) { // also means recursive...
                     out << "std::unordered_set<RuleApplication>* untypedDeltaDervTupleInsertRuleSet = nullptr;\n";
                     out << "if (!detRel) {\n";
                     out << "auto*& untypedDeltaDervTupleInsertRuleSetRef = DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n";
                     out << "untypedDeltaDervTupleInsertRuleSet = untypedDeltaDervTupleInsertRuleSetRef;\n";
+                    out << "if (untypedDeltaDervTupleInsertRuleSet != nullptr) { deltaInsertRuleAppCount = untypedDeltaDervTupleInsertRuleSet->size(); }\n";
                     out << "}\n";
                 // out << "if (untypedDeltaDervTupleInsertRuleSet == nullptr) {\n";
                 // out << "untypedDeltaDervTupleInsertRuleSet = new std::unordered_set<RuleApplication>();\n" << std::endl;
@@ -2576,8 +2608,6 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 // } else {
                 //     out << "auto*& untypedDeltaDervTupleInsertRuleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
                 // }
-                out << "std::size_t deltaInsertRuleAppCount = 0;\n";
-                out << "if (untypedDeltaDervTupleInsertRuleSet != nullptr) { deltaInsertRuleAppCount = untypedDeltaDervTupleInsertRuleSet->size(); }\n";
                 out << "if (DerivationManager::isSemStatsEnabled()) {\n";
                 out << "DerivationManager::dredStats.ins_delta_tuples++;\n";
                 out << "DerivationManager::dredStats.ins_delta_ruleapps += deltaInsertRuleAppCount;\n";
@@ -2591,8 +2621,8 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     out << "}\n";
                 }
                 out << "if (detRel) {\n";
+                out << "DerivationManager::recordDetDeltaInsert(untypedDeltaDervTupleInsert);\n";
                 out << "if(!isInputFact(untypedDeltaDervTupleInsert)) {\n";
-                out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleInsertRel())) << "->insert(tupleDeltaDervInsert);\n";
                 out << "if (DerivationManager::isSemStatsEnabled()) {\n";
                 out << "DerivationManager::dredStats.ins_tuple_inserts++;\n";
                 out << "}\n";
@@ -2626,35 +2656,57 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "        DerivationManager::elapsedNanos(__dred_delta_ins_start));\n";
                 out << "}\n";
                 out << "}\n";
+                out << "}\n";
             }
             // DELETE
             if (both || deleteOnly) {
                 out << "{\n";
                 out << "std::uint64_t __dred_delta_del_start = 0;\n";
                 out << "if (dredProfileEnabled) { __dred_delta_del_start = DerivationManager::nowNanos(); }\n";
-                out << "for(const auto& tupleDeltaDervDelete: *" <<
-        synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaDervDeleteRel())) << ") {" << std::endl;
+                const auto deltaDervDeleteRelName =
+                        synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaDervDeleteRel()));
+                const auto deltaTupleDeleteRelName =
+                        synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel()));
+                out << "if (detRel) {\n";
+                out << "for(const auto& tupleDeltaDervDelete: *" << deltaTupleDeleteRelName << ") {\n";
                 out << "auto untypedDeltaDervTupleDelete = UntypedTuple::fromTypedTuple(\""
                     << deltaUnion.getRelation() << "\",tupleDeltaDervDelete);\n";
+                out << "std::size_t deltaDeleteRuleAppCount = 0;\n";
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.del_delta_tuples++;\n";
+                out << "DerivationManager::dredStats.del_delta_ruleapps += deltaDeleteRuleAppCount;\n";
+                out << "DerivationManager::dredStats.del_ruleapp_erases += deltaDeleteRuleAppCount;\n";
+                out << "}\n";
+                out << "DerivationManager::recordDetDeltaDelete(untypedDeltaDervTupleDelete);\n";
+                out << "if(!isInputFact(untypedDeltaDervTupleDelete)) {\n";
+                out << "if (DerivationManager::isSemStatsEnabled()) {\n";
+                out << "DerivationManager::dredStats.del_tuple_deletes++;\n";
+                out << "}\n";
+                out << "}\n";
+                out << "}\n";
+                out << "} else {\n";
+                out << "for(const auto& tupleDeltaDervDelete: *" << deltaDervDeleteRelName << ") {\n";
+                out << "auto untypedDeltaDervTupleDelete = UntypedTuple::fromTypedTuple(\""
+                    << deltaUnion.getRelation() << "\",tupleDeltaDervDelete);\n";
+                out << "std::size_t deltaDeleteRuleAppCount = 0;\n";
                 // if (deleteOnly) {
                     out << "std::unordered_set<RuleApplication>* untypedDeltaDervTupleDeleteRuleSet = nullptr;\n";
                     out << "if (!detRel) {\n";
                     out << "auto*& untypedDeltaDervTupleDeleteRuleSetRef = DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
                     out << "untypedDeltaDervTupleDeleteRuleSet = untypedDeltaDervTupleDeleteRuleSetRef;\n";
+                    out << "if (untypedDeltaDervTupleDeleteRuleSet != nullptr) { deltaDeleteRuleAppCount = untypedDeltaDervTupleDeleteRuleSet->size(); }\n";
                     out << "}\n";
                 // } else {
                 //     out << "auto*& untypedDeltaDervTupleDeleteRuleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
                 // }
-                out << "std::size_t deltaDeleteRuleAppCount = 0;\n";
-                out << "if (untypedDeltaDervTupleDeleteRuleSet != nullptr) { deltaDeleteRuleAppCount = untypedDeltaDervTupleDeleteRuleSet->size(); }\n";
                 out << "if (DerivationManager::isSemStatsEnabled()) {\n";
                 out << "DerivationManager::dredStats.del_delta_tuples++;\n";
                 out << "DerivationManager::dredStats.del_delta_ruleapps += deltaDeleteRuleAppCount;\n";
                 out << "DerivationManager::dredStats.del_ruleapp_erases += deltaDeleteRuleAppCount;\n";
                 out << "}\n";
                 out << "if (detRel) {\n";
+                out << "DerivationManager::recordDetDeltaDelete(untypedDeltaDervTupleDelete);\n";
                 out << "if(!isInputFact(untypedDeltaDervTupleDelete)) {\n";
-                out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel())) << "->insert(tupleDeltaDervDelete);\n";
                 out << "if (DerivationManager::isSemStatsEnabled()) {\n";
                 out << "DerivationManager::dredStats.del_tuple_deletes++;\n";
                 out << "}\n";
@@ -2690,6 +2742,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "if (dredProfileEnabled) {\n";
                 out << "DerivationManager::addDredTime(DerivationManager::DredTimeBucket::DelDeltaUnion,\n";
                 out << "        DerivationManager::elapsedNanos(__dred_delta_del_start));\n";
+                out << "}\n";
                 out << "}\n";
                 out << "}\n";
             }

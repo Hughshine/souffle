@@ -27,6 +27,7 @@
 namespace souffle::problog {
 
 namespace {
+bool fullOnlyMode = false;
 
 static std::size_t estimateBddVarCount(const SubgraphView& view) {
     std::size_t count = 0;
@@ -237,6 +238,14 @@ static std::vector<ComponentAnalysis> analyzeComponents(
 }
 
 } // namespace
+
+void setFullOnlyMode(bool enabled) {
+    fullOnlyMode = enabled;
+}
+
+bool isFullOnlyMode() {
+    return fullOnlyMode;
+}
 
 std::string makeOutputPath(const CmdOptions& opt, const std::string& filename) {
     const std::string& dir = opt.getOutputFileDir();
@@ -1516,7 +1525,7 @@ void runPipeline(
     DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());
     DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());
     DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
-    DerivationGraph::setMergeBiImpEnabled(opt.isMergeBiImpEnabled());
+    DerivationGraph::setMergeBiImpEnabled(fullOnlyMode && opt.isMergeBiImpEnabled());
     DerivationGraph::setPruneExtraEnabled(opt.isPruneExtraEnabled());
     DerivationGraph::setConstFoldEnabled(opt.isConstFoldEnabled());
     DerivationGraph::setConstDumpEnabled(opt.isDumpConstEnabled());

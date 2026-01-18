@@ -220,12 +220,12 @@ ALL	57	1.537 (2.410)	3.434 (2.780)	1.539 (1.498)	1.979 (2.572)	0.975 (1.005)
 - Correctness: all deltas OK (see `results-souffle-inc.tsv` under base dir).
 - Purpose: recheck FC speedups without the heavy `--fc-profile` overhead.
 
-#### 2026-01-14 run notes (reuse-var-index, full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, P12-P20 only, no fc-profile)
+#### 2026-01-14 run notes (reuse-var-index enabled, full ruleset, det-opt, apply_delta_graph, inc0p1/inc0p3/inc0p5, P12-P20 only, no fc-profile)
 - Base dir: `experiments/side_channel_inc_eval_p12_p20_nofcprofile/`.
 - Cases: P12-P20.
-- Run args: `--det-opt --reuse-var-index`.
-- Note: CUDD does not natively support variable deletion/reuse; we add a `--reuse-var-index` path that reuses freed
-  variable indices for deleted nodes/edges to avoid unbounded growth of the manager’s variable space.
+- Run args: `--det-opt` (reuse-var-index enabled by default; disable with `--no-reuse-var-index`).
+- Note: CUDD does not natively support variable deletion/reuse; we enable reuse by default to reuse freed variable indices
+  for deleted nodes/edges and avoid unbounded growth of the manager’s variable space.
 - Note: setmode full always reconstructs the BDD manager each turn, so variable indices are not reused across turns;
   reuse only applies to incremental runs that keep a persistent manager.
 - Correctness: all deltas OK (see `results-souffle-inc.tsv` under base dir).
@@ -1766,15 +1766,15 @@ Script: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114/plot_fc_speedup
     mismatch is explained by higher insertion time plus smaller-but-nontrivial reordering overhead; inc rounds are
     fewer than full, so the cost is per-round BDD work rather than iteration count.
 
-##### FC speedup vs 1/DeltaLiveRatio (2026-01-14 reuse-var-index run)
+##### FC speedup vs 1/DeltaLiveRatio (2026-01-14 reuse-var-index enabled run)
 Plot: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114_reuse/fc_speedup_vs_inv_delta_live_ratio.png`
 Data: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114_reuse/fc_inv_delta_live_ratio.tsv`
 Script: `img/fc_speedup_vs_inv_delta_live_ratio_p12_p20_20260114_reuse/plot_fc_speedup_vs_inv_delta_live_ratio.py`
-- This run enables `--reuse-var-index`; all insert points shift upward (FC speedups >1).
+- This run uses reuse-var-index (enabled by default; disable with `--no-reuse-var-index`); all insert points shift upward (FC speedups >1).
 - The prior outliers (P13/P14/P15/P17/P18 insert) are resolved; see
   `experiments/side_channel_inc_eval_p12_p20_nofcprofile/fc-insert-speedup-reuse-compare.tsv`.
 
-##### FC speedup vs DeltaLiveRatio (2026-01-14 reuse-var-index run)
+##### FC speedup vs DeltaLiveRatio (2026-01-14 reuse-var-index enabled run)
 Plot: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/fc_speedup_vs_delta_live_ratio.png`
 Data: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/fc_delta_live_ratio.tsv`
 Script: `img/fc_speedup_vs_delta_live_ratio_p12_p20_20260114_reuse/plot_fc_speedup_vs_delta_live_ratio.py`

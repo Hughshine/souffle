@@ -87,7 +87,7 @@ protected:
     bool post_del = false;  // enable postprocessUselessVariables after deletion
     bool det_opt = false;  // enable deterministic-relation analysis and det gating
     bool det_force = false;  // force deterministic evaluation (skip derivation graph)
-    bool reuse_var_index = false;  // reuse freed variable indices in CUDD
+    bool reuse_var_index = true;  // reuse freed variable indices in CUDD (default on)
     bool single_rand_fast = true;  // enable single-randvar fast path in component FC
 public:
     // all argument constructor
@@ -257,7 +257,7 @@ public:
                 {"post-del", false, nullptr, 1006},
                 {"det-opt", false, nullptr, 'Z'},
                 {"det-force", false, nullptr, 1007},
-                {"reuse-var-index", false, nullptr, 1008},
+                {"no-reuse-var-index", false, nullptr, 1008},
                 {"no-single-rand-fast", false, nullptr, 1001},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
@@ -414,7 +414,7 @@ public:
                     det_force = true;
                     break;
                 case 1008:
-                    reuse_var_index = true;
+                    reuse_var_index = false;
                     break;
                 case 1001:
                     single_rand_fast = false;
@@ -467,7 +467,7 @@ private:
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
         std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
         std::cerr << "    --det-force                  -- Force deterministic mode (skip derivation graph; emit prob=1.0)\n";
-        std::cerr << "    --reuse-var-index            -- Reuse freed CUDD variable indices (unsafe unless deletion fully removes vars)\n";
+        std::cerr << "    --no-reuse-var-index         -- Disable reuse of freed CUDD variable indices (reuse is unsafe unless deletion fully removes vars)\n";
         std::cerr << "    --no-single-rand-fast        -- Disable single-randvar fast path in component FC\n";
 #ifdef _OPENMP
         std::cerr << "    -j <NUM>, --jobs=<NUM>       -- Specify number of threads\n";

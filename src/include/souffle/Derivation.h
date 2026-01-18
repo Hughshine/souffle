@@ -302,6 +302,12 @@ public:
     static void bumpDredSccRederiveRuleappErases(std::uint64_t inc = 1);
     static void addDredTime(DredTimeBucket bucket, std::uint64_t ns);
 
+    static void clearDetDeltaTuples();
+    static void recordDetDeltaDelete(const UntypedTuple& tuple);
+    static void recordDetDeltaInsert(const UntypedTuple& tuple);
+    static const std::unordered_set<UntypedTuple>& getDetDeltaDeleteTuples();
+    static const std::unordered_set<UntypedTuple>& getDetDeltaInsertTuples();
+
     static std::uint64_t nowNanos() {
         return static_cast<std::uint64_t>(
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -314,6 +320,8 @@ public:
 
 private:
     static bool semStatsEnabled;
+    static std::unordered_set<UntypedTuple> detDeltaDeleteTuples;
+    static std::unordered_set<UntypedTuple> detDeltaInsertTuples;
 };
 
 // relation string -> int mapping, for optimization, reuse string

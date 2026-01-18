@@ -2,6 +2,7 @@
 #define CLI_H
 #include <chrono>
 #include <ctime>
+#include <array>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -10,6 +11,7 @@
 #include <iomanip>
 #include <fstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <stdexcept>
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -355,11 +357,7 @@ public:
     void setCmdOptions(const souffle::CmdOptions& options) {
         opt = options;
         setDerivationOnly(options.isDerivationOnly());
-        if (options.isMergeBiImpEnabled()) {
-            DerivationGraph::setMergeBiImpEnabled(true);
-        } else {
-            DerivationGraph::setMergeBiImpEnabled(false);
-        }
+        DerivationGraph::setMergeBiImpEnabled(false);
         DerivationGraph::setConstFoldEnabled(options.isConstFoldEnabled());
         DerivationGraph::setConstDumpEnabled(options.isDumpConstEnabled());
         DerivationGraphViewInterface::setDumpDotEnabled(options.isDumpDotEnabled());
@@ -670,17 +668,86 @@ public:
                 fact_prob_inc[getTuple(op)] = op.probability;
             }
         }
+        if (detOptEnabled) {
+            const std::string prefix = "$inc_delta_tuple_insert_";
+            for (auto* rel : program->getAllRelations()) {
+                const std::string& relName = rel->getName();
+                if (relName.rfind(prefix, 0) != 0) {
+                    continue;
+                }
+                const std::string baseName = relName.substr(prefix.size());
+                if (!isDetRelation(baseName)) {
+                    continue;
+                }
+                const auto arity = rel->getArity();
+                for (auto& tuple : *rel) {
+                    UntypedTuple detTuple{baseName, {}};
+                    detTuple.fields.reserve(arity);
+                    for (size_t i = 0; i < arity; ++i) {
+                        detTuple.fields.push_back(tuple[i]);
+                    }
+                    if (fact_prob_inc.find(detTuple) == fact_prob_inc.end()) {
+                        fact_prob_inc.emplace(std::move(detTuple), 1.0);
+                    }
+                }
+            }
+        }
         return fact_prob_inc;
     }
 
-    std::vector<UntypedTuple> getDeletedFacts() {
-        std::vector<UntypedTuple> deletedFacts;
+    std::vector<UntypedTuple> getDeletedFacts(
+            const std::unordered_map<UntypedTuple, double>* insertedFacts = nullptr) {
+        std::unordered_set<UntypedTuple> deletedFacts;
+        deletedFacts.reserve(pendingOperations.size());
         for (const auto& op : pendingOperations) {
             if (op.valid && op.type == Operation::DELETE) {
-                deletedFacts.push_back(getTuple(op));
+                deletedFacts.insert(getTuple(op));
             }
         }
-        return deletedFacts;
+        if (detOptEnabled) {
+            const std::string prefix = "$inc_delta_tuple_delete_";
+            for (auto* rel : program->getAllRelations()) {
+                const std::string& relName = rel->getName();
+                if (relName.rfind(prefix, 0) != 0) {
+                    continue;
+                }
+                const std::string baseName = relName.substr(prefix.size());
+                if (!isDetRelation(baseName)) {
+                    continue;
+                }
+                const auto arity = rel->getArity();
+                for (auto& tuple : *rel) {
+                    UntypedTuple detTuple{baseName, {}};
+                    detTuple.fields.reserve(arity);
+                    for (size_t i = 0; i < arity; ++i) {
+                        detTuple.fields.push_back(tuple[i]);
+                    }
+                    deletedFacts.insert(std::move(detTuple));
+                }
+            }
+            const auto& detDeletes = DerivationManager::getDetDeltaDeleteTuples();
+            const auto& detInserts = DerivationManager::getDetDeltaInsertTuples();
+            for (const auto& tuple : detDeletes) {
+                if (detInserts.count(tuple)) {
+                    continue;
+                }
+                if (graph && graph->findNode(tuple) == nullptr) {
+                    continue;
+                }
+                deletedFacts.insert(tuple);
+            }
+        }
+        if (insertedFacts != nullptr && !insertedFacts->empty()) {
+            for (const auto& [tuple, _] : *insertedFacts) {
+                deletedFacts.erase(tuple);
+            }
+        }
+        std::vector<UntypedTuple> out;
+        out.reserve(deletedFacts.size());
+        for (const auto& tuple : deletedFacts) {
+            out.push_back(tuple);
+        }
+        return out;
     }
 
     void purgeAllIncDeltaRelations() {
@@ -995,7 +1062,7 @@ public:
                 }
                 IncSubgraphView view = [&] {
                     FunctionTimer timer("PRUNING_FULL: prune");
-                    DerivationGraph::setMergeBiImpEnabled(true);
+                    DerivationGraph::setMergeBiImpEnabled(false);
                     return graph->prune(this->outputRelations);
                 }();
                 {
@@ -1223,6 +1290,7 @@ public:
                     if (DerivationManager::isSemStatsEnabled()) {
                         DerivationManager::resetDredStats();
                     }
+                    DerivationManager::clearDetDeltaTuples();
                     debugger.startTurn();
                     debugger.startStage(StageKind::SEMINAIVE_INC);
                     program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);
@@ -1232,6 +1300,24 @@ public:
                         label << "iter=" << iteration << " phase=" << phaseLabel;
                         DerivationManager::dumpDredStats(std::cout, label.str());
                     }
+                    if (opt.isDredProfileEnabled()) {
+                        std::cout << "[dred-debug] relation sizes after SEMINAIVE_INC:\n";
+                        const std::array<std::string, 4> prefixes = {
+                                "$inc_delta_derv_delete_",
+                                "$inc_delta_tuple_delete_",
+                                "$inc_derv_overdelete_",
+                                "$inc_tuple_overdelete_",
+                        };
+                        for (auto* rel : program->getAllRelations()) {
+                            const std::string& name = rel->getName();
+                            for (const auto& prefix : prefixes) {
+                                if (name.rfind(prefix, 0) == 0) {
+                                    std::cout << "  " << name << " size=" << rel->size() << "\n";
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
                 DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
                 debugger.startStage(StageKind::PRUNING_INC);
@@ -1240,7 +1326,7 @@ public:
                     graph->dumpStatisticsInc(std::cout);
                 }
                 auto factProbInc = getFactProbInc();
-                auto deletedFacts = getDeletedFacts();
+                auto deletedFacts = getDeletedFacts(&factProbInc);
                 {
                     FunctionTimer timer("PRUNING_INC: applyDelta");
                     graph->applyDelta(
@@ -1251,6 +1337,7 @@ public:
                         deletedFacts
                     );
                 }
+                DerivationManager::clearDetDeltaTuples();
                 logApplyDeltaOpsSummary(
                     DerivationManager::untypedTuple2DeltaInsertRuleApplications,
                     DerivationManager::untypedTuple2DeltaDeleteRuleApplications,
@@ -1496,7 +1583,7 @@ public:
                 debugger.startStage(StageKind::PRUNING_FULL);
                 IncSubgraphView view = [&] {
                     FunctionTimer timer("PRUNING_FULL: prune");
-                    DerivationGraph::setMergeBiImpEnabled(true);
+                    DerivationGraph::setMergeBiImpEnabled(false);
                     return graph->prune(program->getOutputRelations());
                 }();
                 {

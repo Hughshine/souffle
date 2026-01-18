@@ -258,11 +258,34 @@ DerivationManager::DredStats DerivationManager::dredStats = {};
 std::vector<DerivationManager::DredSccStats> DerivationManager::dredSccStats = {};
 std::size_t DerivationManager::dredCurrentScc = DerivationManager::kInvalidDredScc;
 bool DerivationManager::semStatsEnabled = false;
+std::unordered_set<UntypedTuple> DerivationManager::detDeltaDeleteTuples = {};
+std::unordered_set<UntypedTuple> DerivationManager::detDeltaInsertTuples = {};
 bool dredProfileEnabled = false;
 bool incProfileEnabled = false;
 bool fcProfileEnabled = false;
 bool postDelEnabled = false;
-bool reuseVarIndexEnabled = false;
+bool reuseVarIndexEnabled = true;
+
+void DerivationManager::clearDetDeltaTuples() {
+    detDeltaDeleteTuples.clear();
+    detDeltaInsertTuples.clear();
+}
+
+void DerivationManager::recordDetDeltaDelete(const UntypedTuple& tuple) {
+    detDeltaDeleteTuples.insert(tuple);
+}
+
+void DerivationManager::recordDetDeltaInsert(const UntypedTuple& tuple) {
+    detDeltaInsertTuples.insert(tuple);
+}
+
+const std::unordered_set<UntypedTuple>& DerivationManager::getDetDeltaDeleteTuples() {
+    return detDeltaDeleteTuples;
+}
+
+const std::unordered_set<UntypedTuple>& DerivationManager::getDetDeltaInsertTuples() {
+    return detDeltaInsertTuples;
+}
 
 void DerivationManager::DredStats::dump(std::ostream& out, const std::string& label) const {
     out << "[seminaive-dred] " << label << " del"
