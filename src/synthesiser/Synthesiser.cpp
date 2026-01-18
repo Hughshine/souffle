@@ -2567,7 +2567,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 const auto deltaTupleInsertRelName =
                         synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleInsertRel()));
                 out << "if (detRel) {\n";
-                out << "for(const auto& tupleDeltaDervInsert: *" << deltaTupleInsertRelName << ") {\n";
+                out << "for(const auto& tupleDeltaDervInsert: *" << deltaDervInsertRelName << ") {\n";
                 out << "auto untypedDeltaDervTupleInsert = UntypedTuple::fromTypedTuple(\""
                     << deltaUnion.getRelation() << "\",tupleDeltaDervInsert);\n";
                 out << "std::size_t deltaInsertRuleAppCount = 0;\n";
@@ -2585,6 +2585,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 }
                 out << "DerivationManager::recordDetDeltaInsert(untypedDeltaDervTupleInsert);\n";
                 out << "if(!isInputFact(untypedDeltaDervTupleInsert)) {\n";
+                out << deltaTupleInsertRelName << "->insert(tupleDeltaDervInsert);\n";
                 out << "if (DerivationManager::isSemStatsEnabled()) {\n";
                 out << "DerivationManager::dredStats.ins_tuple_inserts++;\n";
                 out << "}\n";
@@ -2668,7 +2669,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 const auto deltaTupleDeleteRelName =
                         synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel()));
                 out << "if (detRel) {\n";
-                out << "for(const auto& tupleDeltaDervDelete: *" << deltaTupleDeleteRelName << ") {\n";
+                out << "for(const auto& tupleDeltaDervDelete: *" << deltaDervDeleteRelName << ") {\n";
                 out << "auto untypedDeltaDervTupleDelete = UntypedTuple::fromTypedTuple(\""
                     << deltaUnion.getRelation() << "\",tupleDeltaDervDelete);\n";
                 out << "std::size_t deltaDeleteRuleAppCount = 0;\n";
@@ -2679,6 +2680,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "}\n";
                 out << "DerivationManager::recordDetDeltaDelete(untypedDeltaDervTupleDelete);\n";
                 out << "if(!isInputFact(untypedDeltaDervTupleDelete)) {\n";
+                out << deltaTupleDeleteRelName << "->insert(tupleDeltaDervDelete);\n";
                 out << "if (DerivationManager::isSemStatsEnabled()) {\n";
                 out << "DerivationManager::dredStats.del_tuple_deletes++;\n";
                 out << "}\n";

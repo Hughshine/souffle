@@ -480,9 +480,23 @@ public:
 
         // === 1) Analyze region ===
         incra::RegionAnalyzer analyzer(view);
-        std::vector<NodePtr> delta_inputs;
+        std::unordered_set<NodePtr> delta_input_set;
+        delta_input_set.reserve(deltaInsertedNodes.size() + deltaInsertedEdges.size());
         for (auto n : deltaInsertedNodes) {
-            if (n->isFact) delta_inputs.push_back(n);
+            if (n) {
+                delta_input_set.insert(n);
+            }
+        }
+        for (auto e : deltaInsertedEdges) {
+            NodePtr out = view.getOutput(e);
+            if (out) {
+                delta_input_set.insert(out);
+            }
+        }
+        std::vector<NodePtr> delta_inputs;
+        delta_inputs.reserve(delta_input_set.size());
+        for (auto n : delta_input_set) {
+            delta_inputs.push_back(n);
         }
         // Regional pipeline expects an existing baseline; enforce it.
         assert(!(nodeFormulas.empty() && edgeFormulas.empty()) &&

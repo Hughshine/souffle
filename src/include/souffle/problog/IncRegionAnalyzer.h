@@ -596,11 +596,21 @@ private:
 
     ReachInfo reachFromCache_(const std::set<NodePtr>& sources) {
         ReachInfo info;
-        (void)sources;  // No patching needed; delta-reachable cache is assumed complete.
         const auto& cacheNodes = view_.getDeltaInsertReachableNodes();
         const auto& cacheEdges = view_.getDeltaInsertReachableEdges();
-        info.nodes.insert(cacheNodes.begin(), cacheNodes.end());
-        info.edges.insert(cacheEdges.begin(), cacheEdges.end());
+        if (!cacheNodes.empty() || !cacheEdges.empty()) {
+            info.nodes.insert(cacheNodes.begin(), cacheNodes.end());
+            info.edges.insert(cacheEdges.begin(), cacheEdges.end());
+            return info;
+        }
+        std::vector<NodePtr> srcVec;
+        srcVec.reserve(sources.size());
+        for (const auto& n : sources) {
+            srcVec.push_back(n);
+        }
+        Region dr = deltaReachable_(srcVec);
+        info.nodes.insert(dr.nodes.begin(), dr.nodes.end());
+        info.edges.insert(dr.edges.begin(), dr.edges.end());
         return info;
     }
 

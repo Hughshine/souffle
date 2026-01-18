@@ -3322,6 +3322,18 @@ void buildFormulasIncRegionalCyclewise(
         return;
     }
 
+    {
+        auto start = std::chrono::steady_clock::now();
+        setCuddPreConfigTag("inc_regional_insert");
+        formulaManager.preConfig(view);
+        setCuddPreConfigTag("");
+        auto end = std::chrono::steady_clock::now();
+        debugger.logMessage(Level::INFO,
+                "preConfig (cache clear + var scan/create + dyn-reorder setup) took " +
+                        std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()) +
+                        " milliseconds");
+    }
+
     using FMType = std::remove_reference_t<decltype(formulaManager)>;
     RegionalIncrementalForwardCompilation<FMType, FormulaNodeRef> orchestrator;
     orchestrator.applyUpdate(view, formulaManager, nodeFormulas, edgeFormulas, changedNodes, constInfoPtr);
