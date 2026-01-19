@@ -26,7 +26,9 @@
 - `README.inc.region.md`: inc-regional pipeline design/profiling notes.
 - `README.disjunct.md`: disjunction-strengthening log and det-opt segfault triage.
 - `README.ordering.md`, `README.eqrel.md`, `README.lazy.md`, `README.refactor.md`: design roadmaps and refactor notes.
+- `README.cudd.md`: CUDD (BDD backend) overview and tuning pointers.
 - `README.cudd.reordering.md`: CUDD reordering configuration and profiling notes.
+- `README.sdd.md`: SDD manager status and remaining parity gaps vs CUDD.
 - `README.precompile.md`: precompile refactor log (historical, build-related).
 - `README.rewrite.120725.md`, `README.rewrite.120825.md`, `README.rewrite.2.md`,
   `README.rewrite.conj.md`, `README.rewrite.impl.md`: historical rewrite notes and alternative plans.
@@ -35,6 +37,7 @@
 ## Evaluation and Profiling
 - `README.eval.md`: full-mode evaluation workflows.
 - `README.eval.inc.md`: incremental evaluation workflows.
+- `README.eval.final.md`: consolidated P1–P20 incremental run log (seeds, defaults, outcomes).
 - `README.artifact.inc.md`: reproducible artifact steps for incremental side-channel runs.
 - `README.profile.md`: profiling guidance.
 - `README.profile.inc.md`: incremental profiling notes and experiment plan.

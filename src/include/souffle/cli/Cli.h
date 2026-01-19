@@ -1199,7 +1199,9 @@ public:
                             relTuple << std::stoi(op.values[i]);  // TODO optimize
                             origTuple << std::stoi(op.values[i]);
                         }
-                        if (origRel->contains(origTuple)) {
+                        const auto untypedTuple = UntypedTuple::fromSouffleTuple(origTuple);
+                        auto& currentInputs = initialInputRelations[op.relationName];
+                        if (currentInputs.count(untypedTuple)) {
                             std::cout << "Relation already contains the tuple to insert, omitted: " << relTuple.toString() << std::endl;
                             op.valid = false;
                             continue;
@@ -1207,8 +1209,8 @@ public:
                             std::cout << "Inserting tuple: " << origTuple.toString() << std::endl;
                         }
                         rel->insert(relTuple);
-                        initialInputRelations[op.relationName].insert(UntypedTuple::fromSouffleTuple(origTuple));
-                        fact_prob[UntypedTuple::fromSouffleTuple(origTuple)] = op.probability;
+                        currentInputs.insert(untypedTuple);
+                        fact_prob[untypedTuple] = op.probability;
                     } else if (op.type == Operation::DELETE) {
                         auto* origRel = program->getRelation(op.relationName);
                         auto* rel = program->getRelation(getIncDeltaTupleDeleteRelationName(op.relationName));
@@ -1232,7 +1234,9 @@ public:
                             origTuple << std::stoi(op.values[i]);
                             insTuple << std::stoi(op.values[i]);
                         }
-                        if (!origRel->contains(origTuple)) {
+                        const auto untypedTuple = UntypedTuple::fromSouffleTuple(origTuple);
+                        auto& currentInputs = initialInputRelations[op.relationName];
+                        if (!currentInputs.count(untypedTuple)) {
                             std::cout << "Relation does not contains the tuple to delete, omitted: " << origTuple.toString() << std::endl;
                             op.valid = false;
                             continue;
@@ -1243,8 +1247,8 @@ public:
                             continue;
                         }
                         rel->insert(relTuple);
-                        initialInputRelations[op.relationName].erase(UntypedTuple::fromSouffleTuple(origTuple));
-                        fact_prob.erase(UntypedTuple::fromSouffleTuple(origTuple));
+                        currentInputs.erase(untypedTuple);
+                        fact_prob.erase(untypedTuple);
                         // should also delete all its derivations...
                         // input fact is possibly derivable
                         auto& deletedFactRuleAppSet = DerivationManager::untypedTuple2RuleApplications[UntypedTuple::fromSouffleTuple(origTuple)];

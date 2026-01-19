@@ -51,6 +51,12 @@ public:
     virtual std::size_t getLiveNodeCount() const {
         return 0;
     }
+    virtual std::size_t getDeadNodeCount() const {
+        return 0;
+    }
+    virtual std::size_t getTotalNodeCount() const {
+        return getLiveNodeCount() + getDeadNodeCount();
+    }
     virtual void tryGarbageCollection() {};
     virtual void reset() {};
     virtual void resetHard() {};

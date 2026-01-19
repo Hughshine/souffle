@@ -496,7 +496,11 @@ public:
     };
     std::map<std::string, std::string> getProfilingStatistics() override {
         std::map<std::string, std::string> stats;
-        stats["live_nodes"] = std::to_string(Cudd_ReadNodeCount(manager.get()));
+        const auto live_nodes = static_cast<std::size_t>(Cudd_ReadNodeCount(manager.get()));
+        const auto dead_nodes = static_cast<std::size_t>(Cudd_ReadDead(manager.get()));
+        stats["live_nodes"] = std::to_string(live_nodes);
+        stats["dead_nodes"] = std::to_string(dead_nodes);
+        stats["total_nodes"] = std::to_string(live_nodes + dead_nodes);
         stats["memory_usage_mb"] = std::to_string(Cudd_ReadMemoryInUse(manager.get()) / (1024.0 * 1024));
         stats["cache_hits"] = std::to_string(Cudd_ReadCacheHits(manager.get()));
         stats["cache_lookups"] = std::to_string(Cudd_ReadCacheLookUps(manager.get()));
@@ -511,6 +515,12 @@ public:
     }
     std::size_t getLiveNodeCount() const override {
         return static_cast<std::size_t>(Cudd_ReadNodeCount(manager.get()));
+    }
+    std::size_t getDeadNodeCount() const override {
+        return static_cast<std::size_t>(Cudd_ReadDead(manager.get()));
+    }
+    std::size_t getTotalNodeCount() const override {
+        return getLiveNodeCount() + getDeadNodeCount();
     }
     double getReorderingTimeSeconds() const {
         return static_cast<double>(Cudd_ReadReorderingTime(manager.get())) / 1000.0;

@@ -60,6 +60,8 @@ static WeightedBDDManager::InitConfig makeCuddInitConfig(std::size_t varCount) {
     } else if (varCount <= 4096) {
         cfg.cacheSize = 1u << 22;
         cfg.maxMemory = 8UL << 30;
+    } else if (varCount > 10000) {
+        cfg.cacheSize = 1u << 26;
     }
     return cfg;
 }

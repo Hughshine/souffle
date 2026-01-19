@@ -168,7 +168,11 @@ static inline void collectImpactUnionWithDeletedEdges(
             for (const auto& e : it->second) {
                 outEdges.insert(e);
                 NodePtr nxt = e->getOutput();
-                if (nxt && liveNodes.count(nxt) && outNodes.insert(nxt).second) {
+                if (!nxt) {
+                    continue;
+                }
+                // Allow traversing deleted chains so we can reach live nodes beyond a deleted node.
+                if ((liveNodes.count(nxt) || deletedOutEdges.count(nxt)) && outNodes.insert(nxt).second) {
                     q.push(nxt);
                 }
             }
@@ -1801,6 +1805,21 @@ void buildFormulasIncCyclewise(
             }
             detImpactNodes.insert(out);
         }
+        if (!deltaDeletedEdges.empty()) {
+            std::vector<NodePtr> detEdgeOutputs;
+            detEdgeOutputs.reserve(deltaDeletedEdges.size());
+            for (const auto& edge : deltaDeletedEdges) {
+                NodePtr out = view.getOutput(edge);
+                if (!out || out->isFact) {
+                    continue;
+                }
+                detEdgeOutputs.push_back(out);
+            }
+            if (!detEdgeOutputs.empty()) {
+                collectImpactUnionWithDeletedEdges(view, detEdgeOutputs, deletedOutEdges,
+                                                   detImpactNodes, detImpactEdges);
+            }
+        }
         if (fcTraceEnabled()) {
             for (auto node : detImpactNodes) {
                 if (fcTraceMatch(node)) {
@@ -3060,6 +3079,22 @@ void buildFormulasIncRegionalCyclewise(
             std::vector<NodePtr> nonDetSources(deletedNonDeterminsticFacts.begin(),
                                                deletedNonDeterminsticFacts.end());
             collectImpactUnionWithDeletedEdges(view, nonDetSources, deletedOutEdges, nonDetImpactNodes, nonDetImpactEdges);
+        }
+        if (!deltaDeletedEdges.empty()) {
+            std::vector<NodePtr> detEdgeOutputs;
+            detEdgeOutputs.reserve(deltaDeletedEdges.size());
+            for (const auto& edge : deltaDeletedEdges) {
+                NodePtr out = view.getOutput(edge);
+                if (!out || out->isFact) {
+                    continue;
+                }
+                detImpactNodes.insert(out);
+                detEdgeOutputs.push_back(out);
+            }
+            if (!detEdgeOutputs.empty()) {
+                collectImpactUnionWithDeletedEdges(view, detEdgeOutputs, deletedOutEdges,
+                                                   detImpactNodes, detImpactEdges);
+            }
         }
         if (!deletedNonDeterminsticFacts.empty()) {
             deletedNonDetVars.reserve(deletedNonDeterminsticFacts.size());

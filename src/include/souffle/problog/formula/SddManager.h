@@ -7,8 +7,10 @@
 #include <sdd/sdd.h>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <stdexcept>
 #include <iostream>
 #include <cmath>
@@ -22,50 +24,50 @@
 class SddNodeRef {
     friend class SddFormulaManager;
 public:
-    SddNodeRef() : ptr_(nullptr), mgr_(nullptr) {}
+    SddNodeRef() = default;
 
-    SddNodeRef(SddManager* m, SddNode* n) : ptr_(n), mgr_(m) {
-        if (ptr_) sdd_ref(ptr_, mgr_);
+    SddNodeRef(std::shared_ptr<SddManager> m, SddNode* n) : ptr_(n), mgr_(std::move(m)) {
+        if (ptr_ && mgr_) sdd_ref(ptr_, mgr_.get());
     }
 
-    SddNodeRef(SddManager* m, SddNode* n, const Node& node)
-        : ptr_(n), mgr_(m), node(&node) {
-        if (ptr_) sdd_ref(ptr_, mgr_);
+    SddNodeRef(std::shared_ptr<SddManager> m, SddNode* n, const Node& node)
+        : ptr_(n), mgr_(std::move(m)), node(&node) {
+        if (ptr_ && mgr_) sdd_ref(ptr_, mgr_.get());
     }
 
-    SddNodeRef(SddManager* m, SddNode* n, const Hyperedge& edge)
-        : ptr_(n), mgr_(m), edge(&edge) {
-        if (ptr_) sdd_ref(ptr_, mgr_);
+    SddNodeRef(std::shared_ptr<SddManager> m, SddNode* n, const Hyperedge& edge)
+        : ptr_(n), mgr_(std::move(m)), edge(&edge) {
+        if (ptr_ && mgr_) sdd_ref(ptr_, mgr_.get());
     }
 
     SddNodeRef(const SddNodeRef& other)
         : ptr_(other.ptr_), mgr_(other.mgr_), node(other.node), edge(other.edge) {
-        if (ptr_) sdd_ref(ptr_, mgr_);
+        if (ptr_ && mgr_) sdd_ref(ptr_, mgr_.get());
     }
 
     SddNodeRef& operator=(const SddNodeRef& other) {
         if (this != &other) {
-            if (ptr_ && mgr_) sdd_deref(ptr_, mgr_);
+            if (ptr_ && mgr_) sdd_deref(ptr_, mgr_.get());
             ptr_ = other.ptr_;
             mgr_ = other.mgr_;
             node = other.node;
             edge = other.edge;
-            if (ptr_) sdd_ref(ptr_, mgr_);
+            if (ptr_ && mgr_) sdd_ref(ptr_, mgr_.get());
         }
         return *this;
     }
 
     SddNodeRef(SddNodeRef&& other) noexcept
-        : ptr_(other.ptr_), mgr_(other.mgr_),
+        : ptr_(other.ptr_), mgr_(std::move(other.mgr_)),
           node(other.node), edge(other.edge) {
         other.ptr_ = nullptr;
     }
 
     SddNodeRef& operator=(SddNodeRef&& other) noexcept {
         if (this != &other) {
-            if (ptr_ && mgr_) sdd_deref(ptr_, mgr_);
+            if (ptr_ && mgr_) sdd_deref(ptr_, mgr_.get());
             ptr_ = other.ptr_;
-            mgr_ = other.mgr_;
+            mgr_ = std::move(other.mgr_);
             node = other.node;
             edge = other.edge;
             other.ptr_ = nullptr;
@@ -74,14 +76,14 @@ public:
     }
 
     ~SddNodeRef() {
-        if (ptr_ && mgr_) sdd_deref(ptr_, mgr_);
+        if (ptr_ && mgr_) sdd_deref(ptr_, mgr_.get());
     }
 
     SddNode* get() const { return ptr_; }
 
 private:
-    SddNode* ptr_;
-    SddManager* mgr_;
+    SddNode* ptr_ = nullptr;
+    std::shared_ptr<SddManager> mgr_;
     std::optional<const Node*> node;
     std::optional<const Hyperedge*> edge;
 };
@@ -213,21 +215,47 @@ public:
             double posWeight,
             double negWeight) override;
     FormulaManager<SddNodeRef>::VariableWeight getVariableWeight(int varIndex) const override {
-        int internal = rawToInternalIndex(varIndex);
-        auto it = weight_map_.find(internal);
-        if (it == weight_map_.end()) {
+        if (varIndex == 0) {
+            return FormulaManager<SddNodeRef>::VariableWeight{globalTrueWeight_, 0.0};
+        }
+        if (varIndex < 0) {
             return FormulaManager<SddNodeRef>::VariableWeight{1.0, 0.0};
         }
-        return FormulaManager<SddNodeRef>::VariableWeight{it->second.posWeight, it->second.negWeight};
+        auto itRaw = rawToInternal.find(varIndex);
+        if (itRaw != rawToInternal.end()) {
+            auto it = weight_map_.find(itRaw->second);
+            if (it == weight_map_.end()) {
+                return FormulaManager<SddNodeRef>::VariableWeight{1.0, 0.0};
+            }
+            return FormulaManager<SddNodeRef>::VariableWeight{it->second.posWeight, it->second.negWeight};
+        }
+        auto itPending = weight_map_by_raw_.find(varIndex);
+        if (itPending == weight_map_by_raw_.end()) {
+            return FormulaManager<SddNodeRef>::VariableWeight{1.0, 0.0};
+        }
+        return FormulaManager<SddNodeRef>::VariableWeight{itPending->second.posWeight, itPending->second.negWeight};
     }
     bool hasVariableWeight(int varIndex) const override {
-        int internal = rawToInternalIndex(varIndex);
-        return weight_map_.find(internal) != weight_map_.end();
+        if (varIndex == 0) {
+            return hasGlobalTrueWeight_;
+        }
+        if (varIndex < 0) {
+            return false;
+        }
+        auto itRaw = rawToInternal.find(varIndex);
+        if (itRaw != rawToInternal.end()) {
+            return weight_map_.find(itRaw->second) != weight_map_.end();
+        }
+        return weight_map_by_raw_.find(varIndex) != weight_map_by_raw_.end();
     }
     double computeWeightedModelCount(const SddNodeRef& node) override;
 
     void printInfo(const SddNodeRef& node, const std::string& name) override;
     void dumpProfilingStatistics() override;
+    std::map<std::string, std::string> getProfilingStatistics() override;
+    std::size_t getLiveNodeCount() const override;
+    std::size_t getDeadNodeCount() const override;
+    std::size_t getTotalNodeCount() const override;
 
     SddNodeRef createWeightedExample() override {
         return getTrue(); // Stub example
@@ -241,10 +269,16 @@ public:
 
     int getVarIndex(const Node& node) override;
     int getVarIndex(const Hyperedge& edge) override;
+    void releaseVarIndex(const Node& node) override;
+    void releaseVarIndex(const Hyperedge& edge) override;
+    void tryGarbageCollection() override;
+    void reset() override;
+    void resetHard() override;
 
 private:
-    SddManager* manager_;
+    std::shared_ptr<SddManager> manager_;
     bool auto_gc_;
+    SddLiteral initialVarCount_ = 1;
     std::shared_ptr<VtreeWrapper> vtree_;
     Debugger& debugger_;
 
@@ -258,22 +292,44 @@ private:
 
 
     std::unordered_map<int, SddVariableWeight> weight_map_;
+    std::unordered_map<int, SddVariableWeight> weight_map_by_raw_;
 
 
     std::unordered_map<int, SddNodeRef> variableRegistry;
     std::unordered_map<int, SddLiteral> atom2var;
     std::unordered_map<int, SddLiteral> var2atom;
 
+    std::unordered_set<int> freeIndices_;
+    std::unordered_map<UntypedTuple, int> freeNodeIndexByTuple_;
+    std::unordered_map<RuleApplication, int> freeEdgeIndexByRuleApp_;
+    std::unordered_map<int, UntypedTuple> freeIndexToTuple_;
+    std::unordered_map<int, RuleApplication> freeIndexToRuleApp_;
+
     bool hasGlobalTrueWeight_ = false;
     double globalTrueWeight_ = 1.0;
+    bool didGcForReuse_ = false;
 
-    int rawToInternalIndex(int rawIndex) const {
-        auto it = rawToInternal.find(rawIndex);
-        if (it == rawToInternal.end()) {
-            throw std::runtime_error("SDD variable not registered for raw index " +
-                                     std::to_string(rawIndex));
+    void dropFreeIndex(int idx) {
+        freeIndices_.erase(idx);
+        auto itTuple = freeIndexToTuple_.find(idx);
+        if (itTuple != freeIndexToTuple_.end()) {
+            freeNodeIndexByTuple_.erase(itTuple->second);
+            freeIndexToTuple_.erase(itTuple);
         }
-        return it->second;
+        auto itRule = freeIndexToRuleApp_.find(idx);
+        if (itRule != freeIndexToRuleApp_.end()) {
+            freeEdgeIndexByRuleApp_.erase(itRule->second);
+            freeIndexToRuleApp_.erase(itRule);
+        }
+    }
+
+    void ensureGarbageCollectedForReuse() {
+        if (didGcForReuse_ || !manager_) {
+            return;
+        }
+        // sdd_manager_is_var_used() only reflects liveness after garbage collection.
+        sdd_manager_garbage_collect(manager_.get());
+        didGcForReuse_ = true;
     }
 };
 
@@ -287,10 +343,17 @@ inline SddFormulaManager::SddFormulaManager(
       auto_gc_(auto_gc_and_minimize),
       debugger_(Debugger::getInstance()) {
 
-    if (var_count <= 0) {var_count = 1;}
+    if (var_count <= 0) {
+        var_count = 1;
+    }
+    initialVarCount_ = var_count;
     vtree_ = nullptr;
     std::cout << "using vtree: " << vtree_ << std::endl;
-    manager_ = sdd_manager_create(var_count, 0);
+    manager_.reset(sdd_manager_create(var_count, auto_gc_and_minimize ? 1 : 0),
+                   [](SddManager* mgr) { sdd_manager_free(mgr); });
+    if (!manager_) {
+        throw std::runtime_error("sdd_manager_create failed");
+    }
 
         std::cout << "[SDD][Init] var_count=" << var_count
                   << " auto_gc=" << auto_gc_and_minimize
@@ -298,10 +361,10 @@ inline SddFormulaManager::SddFormulaManager(
                   << std::endl;
 
         std::cout << "[SDD][Init] manager var_count = "
-                  << sdd_manager_var_count(manager_) << std::endl;
+                  << sdd_manager_var_count(manager_.get()) << std::endl;
 
 
-        nextInternalVar = static_cast<int>(sdd_manager_var_count(manager_));
+        nextInternalVar = 0;
         nextRawVar = 1;
     }
 
@@ -313,13 +376,20 @@ inline SddNodeRef SddFormulaManager::createVar(int rawIndex) {
     int internal;
     auto it = rawToInternal.find(rawIndex);
     if (it == rawToInternal.end()) {
-        internal = ++nextInternalVar;
-        rawToInternal[rawIndex] = internal;
-
-        int varCount = sdd_manager_var_count(manager_);
-        if (varCount < internal) {
-            sdd_manager_add_var_after_last(manager_);
+        internal = -1;
+        if (reuseVarIndexEnabled && !freeIndices_.empty()) {
+            internal = *freeIndices_.begin();
+            dropFreeIndex(internal);
         }
+        if (internal < 0) {
+            internal = ++nextInternalVar;
+            int varCount = sdd_manager_var_count(manager_.get());
+            while (varCount < internal) {
+                sdd_manager_add_var_after_last(manager_.get());
+                varCount = sdd_manager_var_count(manager_.get());
+            }
+        }
+        rawToInternal[rawIndex] = internal;
     } else {
         internal = it->second;
     }
@@ -329,7 +399,13 @@ inline SddNodeRef SddFormulaManager::createVar(int rawIndex) {
         return litIt->second;
     }
 
-    SddNode* var = sdd_manager_literal(internal, manager_);
+    auto rawWeightIt = weight_map_by_raw_.find(rawIndex);
+    if (rawWeightIt != weight_map_by_raw_.end()) {
+        weight_map_[internal] = rawWeightIt->second;
+        weight_map_by_raw_.erase(rawWeightIt);
+    }
+
+    SddNode* var = sdd_manager_literal(internal, manager_.get());
     if (!var) {
         throw std::runtime_error("Failed to create SDD literal");
     }
@@ -347,13 +423,26 @@ inline SddNodeRef SddFormulaManager::createVar(int rawIndex, const Node& node) {
     int internal;
     auto it = rawToInternal.find(rawIndex);
     if (it == rawToInternal.end()) {
-        internal = ++nextInternalVar;
-        rawToInternal[rawIndex] = internal;
-
-        int varCount = sdd_manager_var_count(manager_);
-        if (varCount < internal) {
-            sdd_manager_add_var_after_last(manager_);
+        internal = -1;
+        if (reuseVarIndexEnabled) {
+            auto freeIt = freeNodeIndexByTuple_.find(node.getTuple());
+            if (freeIt != freeNodeIndexByTuple_.end()) {
+                internal = freeIt->second;
+                dropFreeIndex(internal);
+            } else if (!freeIndices_.empty()) {
+                internal = *freeIndices_.begin();
+                dropFreeIndex(internal);
+            }
         }
+        if (internal < 0) {
+            internal = ++nextInternalVar;
+            int varCount = sdd_manager_var_count(manager_.get());
+            while (varCount < internal) {
+                sdd_manager_add_var_after_last(manager_.get());
+                varCount = sdd_manager_var_count(manager_.get());
+            }
+        }
+        rawToInternal[rawIndex] = internal;
     } else {
         internal = it->second;
     }
@@ -365,7 +454,13 @@ inline SddNodeRef SddFormulaManager::createVar(int rawIndex, const Node& node) {
         return rit->second;
     }
 
-    SddNode* lit = sdd_manager_literal(internal, manager_);
+    auto rawWeightIt = weight_map_by_raw_.find(rawIndex);
+    if (rawWeightIt != weight_map_by_raw_.end()) {
+        weight_map_[internal] = rawWeightIt->second;
+        weight_map_by_raw_.erase(rawWeightIt);
+    }
+
+    SddNode* lit = sdd_manager_literal(internal, manager_.get());
     if (!lit) {
         throw std::runtime_error("Failed to create SDD literal");
     }
@@ -385,13 +480,26 @@ inline SddNodeRef SddFormulaManager::createVar(int rawIndex, const Hyperedge& ed
     int internal;
     auto it = rawToInternal.find(rawIndex);
     if (it == rawToInternal.end()) {
-        internal = ++nextInternalVar;
-        rawToInternal[rawIndex] = internal;
-
-        int varCount = sdd_manager_var_count(manager_);
-        if (varCount < internal) {
-            sdd_manager_add_var_after_last(manager_);
+        internal = -1;
+        if (reuseVarIndexEnabled) {
+            auto freeIt = freeEdgeIndexByRuleApp_.find(edge.getRuleApp());
+            if (freeIt != freeEdgeIndexByRuleApp_.end()) {
+                internal = freeIt->second;
+                dropFreeIndex(internal);
+            } else if (!freeIndices_.empty()) {
+                internal = *freeIndices_.begin();
+                dropFreeIndex(internal);
+            }
         }
+        if (internal < 0) {
+            internal = ++nextInternalVar;
+            int varCount = sdd_manager_var_count(manager_.get());
+            while (varCount < internal) {
+                sdd_manager_add_var_after_last(manager_.get());
+                varCount = sdd_manager_var_count(manager_.get());
+            }
+        }
+        rawToInternal[rawIndex] = internal;
     } else {
         internal = it->second;
     }
@@ -403,7 +511,13 @@ inline SddNodeRef SddFormulaManager::createVar(int rawIndex, const Hyperedge& ed
         return rit->second;
     }
 
-    SddNode* lit = sdd_manager_literal(internal, manager_);
+    auto rawWeightIt = weight_map_by_raw_.find(rawIndex);
+    if (rawWeightIt != weight_map_by_raw_.end()) {
+        weight_map_[internal] = rawWeightIt->second;
+        weight_map_by_raw_.erase(rawWeightIt);
+    }
+
+    SddNode* lit = sdd_manager_literal(internal, manager_.get());
     if (!lit) {
         throw std::runtime_error("Failed to create SDD literal");
     }
@@ -437,7 +551,7 @@ inline SddNodeRef SddFormulaManager::makeAnd(
     if (!a.get() || !b.get()) {
         throw std::runtime_error("makeAnd received null SDD node");
     }
-    SddNode* res = sdd_conjoin(a.get(), b.get(), manager_);
+    SddNode* res = sdd_conjoin(a.get(), b.get(), manager_.get());
     if (!res) {
         throw std::runtime_error("sdd_conjoin failed");
     }
@@ -459,7 +573,7 @@ inline SddNodeRef SddFormulaManager::makeOr(
     if (!a.get() || !b.get()) {
         throw std::runtime_error("makeOr received null SDD node");
     }
-    return SddNodeRef(manager_, sdd_disjoin(a.get(), b.get(), manager_));
+    return SddNodeRef(manager_, sdd_disjoin(a.get(), b.get(), manager_.get()));
 }
 
 inline SddNodeRef SddFormulaManager::makeOr(
@@ -473,15 +587,15 @@ inline SddNodeRef SddFormulaManager::makeOr(
 }
 
 inline SddNodeRef SddFormulaManager::makeNot(const SddNodeRef& a) {
-    return SddNodeRef(manager_, sdd_negate(a.get(), manager_));
+    return SddNodeRef(manager_, sdd_negate(a.get(), manager_.get()));
 }
 
 inline SddNodeRef SddFormulaManager::getTrue() {
-    return SddNodeRef(manager_, sdd_manager_true(manager_));
+    return SddNodeRef(manager_, sdd_manager_true(manager_.get()));
 }
 
 inline SddNodeRef SddFormulaManager::getFalse() {
-    return SddNodeRef(manager_, sdd_manager_false(manager_));
+    return SddNodeRef(manager_, sdd_manager_false(manager_.get()));
 }
 
 
@@ -502,13 +616,25 @@ inline SddNodeRef SddFormulaManager::makeCondition(
         int internal;
         auto it = rawToInternal.find(rawIdx);
         if (it == rawToInternal.end()) {
-            internal = ++nextInternalVar;
+            internal = -1;
+            if (reuseVarIndexEnabled && !freeIndices_.empty()) {
+                internal = *freeIndices_.begin();
+                dropFreeIndex(internal);
+            }
+            if (internal < 0) {
+                internal = ++nextInternalVar;
+                int varCount = sdd_manager_var_count(manager_.get());
+                while (varCount < internal) {
+                    sdd_manager_add_var_after_last(manager_.get());
+                    varCount = sdd_manager_var_count(manager_.get());
+                }
+            }
             rawToInternal[rawIdx] = internal;
 
-            int varCount = sdd_manager_var_count(manager_);
-            while (varCount < internal) {
-                sdd_manager_add_var_after_last(manager_);
-                varCount = sdd_manager_var_count(manager_);
+            auto rawWeightIt = weight_map_by_raw_.find(rawIdx);
+            if (rawWeightIt != weight_map_by_raw_.end()) {
+                weight_map_[internal] = rawWeightIt->second;
+                weight_map_by_raw_.erase(rawWeightIt);
             }
         } else {
             internal = it->second;
@@ -517,7 +643,7 @@ inline SddNodeRef SddFormulaManager::makeCondition(
         SddNode* conditioned =
                 sdd_condition(static_cast<SddLiteral>(internal),
                               result.get(),
-                              manager_);
+                              manager_.get());
         result = SddNodeRef(manager_, conditioned);
     }
 
@@ -529,13 +655,25 @@ inline SddNodeRef SddFormulaManager::makeCondition(
         int internal;
         auto it = rawToInternal.find(rawIdx);
         if (it == rawToInternal.end()) {
-            internal = ++nextInternalVar;
+            internal = -1;
+            if (reuseVarIndexEnabled && !freeIndices_.empty()) {
+                internal = *freeIndices_.begin();
+                dropFreeIndex(internal);
+            }
+            if (internal < 0) {
+                internal = ++nextInternalVar;
+                int varCount = sdd_manager_var_count(manager_.get());
+                while (varCount < internal) {
+                    sdd_manager_add_var_after_last(manager_.get());
+                    varCount = sdd_manager_var_count(manager_.get());
+                }
+            }
             rawToInternal[rawIdx] = internal;
 
-            int varCount = sdd_manager_var_count(manager_);
-            while (varCount < internal) {
-                sdd_manager_add_var_after_last(manager_);
-                varCount = sdd_manager_var_count(manager_);
+            auto rawWeightIt = weight_map_by_raw_.find(rawIdx);
+            if (rawWeightIt != weight_map_by_raw_.end()) {
+                weight_map_[internal] = rawWeightIt->second;
+                weight_map_by_raw_.erase(rawWeightIt);
             }
         } else {
             internal = it->second;
@@ -544,7 +682,7 @@ inline SddNodeRef SddFormulaManager::makeCondition(
         SddNode* conditioned =
                 sdd_condition(static_cast<SddLiteral>(-internal),
                               result.get(),
-                              manager_);
+                              manager_.get());
         result = SddNodeRef(manager_, conditioned);
     }
 
@@ -570,30 +708,21 @@ inline void SddFormulaManager::setVariableWeight(
     if (rawIndex < 0) {
         throw std::runtime_error("SDD weight index must be >= 0");
     }
-    if (rawIndex == 0) {
-        return;
-    }
 
     int internal;
     auto it = rawToInternal.find(rawIndex);
     if (it == rawToInternal.end()) {
-        internal = ++nextInternalVar;
-        rawToInternal[rawIndex] = internal;
-
-        int varCount = sdd_manager_var_count(manager_);
-        while (varCount < internal) {
-            sdd_manager_add_var_after_last(manager_);
-            varCount = sdd_manager_var_count(manager_);
-        }
-    } else {
-        internal = it->second;
+        // If the variable isn't mapped/used, don't force manager growth just to store a weight.
+        return;
     }
 
+    internal = it->second;
     weight_map_[internal] = {posWeight, negWeight};
+    weight_map_by_raw_.erase(rawIndex);
 }
 
 inline std::vector<double> SddFormulaManager::buildWeightArray() const {
-    int varCount = sdd_manager_var_count(manager_);
+    int varCount = sdd_manager_var_count(manager_.get());
 
     std::vector<double> weights(varCount * 2, 0.0);
 
@@ -617,7 +746,7 @@ inline void SddFormulaManager::setLiteralWeightsFromArray(
         const std::vector<double>& weights,
         WmcManager* wmc_) {
 
-    int varCount = sdd_manager_var_count(manager_);
+    int varCount = sdd_manager_var_count(manager_.get());
     if (weights.size() != static_cast<size_t>(varCount * 2)) {
         throw std::runtime_error(
                 "Weight array size mismatch: expected 2*varCount.");
@@ -637,7 +766,7 @@ inline double SddFormulaManager::computeWeightedModelCount(
     if (!node.get()) {
         return 0.0;
     }
-    WmcManager* wmc = wmc_manager_new(node.get(), 0, manager_);
+    WmcManager* wmc = wmc_manager_new(node.get(), 0, manager_.get());
     auto weights = buildWeightArray();
     setLiteralWeightsFromArray(weights, wmc);
     double result = wmc_propagate(wmc);
@@ -654,15 +783,15 @@ inline void SddFormulaManager::printInfo(
         const SddNodeRef& node, const std::string& name) {
     std::cout << "=== Info for: " << name << " ===\n";
     std::cout << "Size: " << sdd_size(node.get()) << "\n";
-    std::cout << "Model Count: " << sdd_model_count(node.get(), manager_) << "\n";
+    std::cout << "Model Count: " << sdd_model_count(node.get(), manager_.get()) << "\n";
 }
 
 inline void SddFormulaManager::dumpProfilingStatistics() {
 
-    auto n = sdd_manager_var_count(manager_);
+    auto n = sdd_manager_var_count(manager_.get());
     auto approx = 2LL * n - 1;
 
-    auto v = sdd_manager_vtree(manager_);
+    auto v = sdd_manager_vtree(manager_.get());
     std::cout << "[SDD][Chk] var_count=" << n
           << " vtree_count=" << sdd_vtree_count(v)
           << " expected~=" << approx
@@ -674,8 +803,134 @@ inline void SddFormulaManager::dumpProfilingStatistics() {
     std::cout << "Vtree live count:  " << sdd_vtree_live_count(v) << "\n";
     std::cout << "Vtree dead count:  " << sdd_vtree_dead_count(v) << "\n";
 
-    std::cout << "Live nodes: " << sdd_manager_live_size(manager_) << "\n";
-    std::cout << "Dead nodes: " << sdd_manager_dead_size(manager_) << "\n";
+    std::cout << "Live nodes: " << sdd_manager_live_size(manager_.get()) << "\n";
+    std::cout << "Dead nodes: " << sdd_manager_dead_size(manager_.get()) << "\n";
+}
+
+inline std::map<std::string, std::string> SddFormulaManager::getProfilingStatistics() {
+    std::map<std::string, std::string> stats;
+    const auto live_nodes = static_cast<std::size_t>(sdd_manager_live_size(manager_.get()));
+    const auto dead_nodes = static_cast<std::size_t>(sdd_manager_dead_size(manager_.get()));
+    stats["live_nodes"] = std::to_string(live_nodes);
+    stats["dead_nodes"] = std::to_string(dead_nodes);
+    stats["total_nodes"] = std::to_string(live_nodes + dead_nodes);
+    return stats;
+}
+
+inline std::size_t SddFormulaManager::getLiveNodeCount() const {
+    return static_cast<std::size_t>(sdd_manager_live_size(manager_.get()));
+}
+
+inline std::size_t SddFormulaManager::getDeadNodeCount() const {
+    return static_cast<std::size_t>(sdd_manager_dead_size(manager_.get()));
+}
+
+inline std::size_t SddFormulaManager::getTotalNodeCount() const {
+    return getLiveNodeCount() + getDeadNodeCount();
+}
+
+inline void SddFormulaManager::releaseVarIndex(const Node& node) {
+    if (!reuseVarIndexEnabled) {
+        return;
+    }
+    ensureGarbageCollectedForReuse();
+    auto it = nodeToRawIndex_.find(&node);
+    if (it == nodeToRawIndex_.end()) {
+        return;
+    }
+    int raw = it->second;
+    nodeToRawIndex_.erase(it);
+
+    auto internalIt = rawToInternal.find(raw);
+    if (internalIt == rawToInternal.end()) {
+        weight_map_by_raw_.erase(raw);
+        return;
+    }
+    int internal = internalIt->second;
+    rawToInternal.erase(internalIt);
+    weight_map_by_raw_.erase(raw);
+
+    if (manager_ && sdd_manager_is_var_used(internal, manager_.get())) {
+        return;
+    }
+
+    weight_map_.erase(internal);
+    variableRegistry.erase(internal);
+    dropFreeIndex(internal);
+    freeIndices_.insert(internal);
+    freeNodeIndexByTuple_[node.getTuple()] = internal;
+    freeIndexToTuple_[internal] = node.getTuple();
+}
+
+inline void SddFormulaManager::releaseVarIndex(const Hyperedge& edge) {
+    if (!reuseVarIndexEnabled) {
+        return;
+    }
+    ensureGarbageCollectedForReuse();
+    auto it = edgeToRawIndex_.find(&edge);
+    if (it == edgeToRawIndex_.end()) {
+        return;
+    }
+    int raw = it->second;
+    edgeToRawIndex_.erase(it);
+
+    auto internalIt = rawToInternal.find(raw);
+    if (internalIt == rawToInternal.end()) {
+        weight_map_by_raw_.erase(raw);
+        return;
+    }
+    int internal = internalIt->second;
+    rawToInternal.erase(internalIt);
+    weight_map_by_raw_.erase(raw);
+
+    if (manager_ && sdd_manager_is_var_used(internal, manager_.get())) {
+        return;
+    }
+
+    weight_map_.erase(internal);
+    variableRegistry.erase(internal);
+    dropFreeIndex(internal);
+    freeIndices_.insert(internal);
+    freeEdgeIndexByRuleApp_[edge.getRuleApp()] = internal;
+    freeIndexToRuleApp_[internal] = edge.getRuleApp();
+}
+
+inline void SddFormulaManager::tryGarbageCollection() {
+    if (!manager_) {
+        return;
+    }
+    // Avoid doing full GC every turn; let the library decide based on dead-node ratio.
+    sdd_manager_garbage_collect_if(0.30f, manager_.get());
+    didGcForReuse_ = false;
+}
+
+inline void SddFormulaManager::reset() {
+    nodeToRawIndex_.clear();
+    edgeToRawIndex_.clear();
+    rawToInternal.clear();
+    nextRawVar = 1;
+    nextInternalVar = 0;
+    weight_map_.clear();
+    weight_map_by_raw_.clear();
+    variableRegistry.clear();
+    freeIndices_.clear();
+    freeNodeIndexByTuple_.clear();
+    freeEdgeIndexByRuleApp_.clear();
+    freeIndexToTuple_.clear();
+    freeIndexToRuleApp_.clear();
+    hasGlobalTrueWeight_ = false;
+    globalTrueWeight_ = 1.0;
+    didGcForReuse_ = false;
+    tryGarbageCollection();
+}
+
+inline void SddFormulaManager::resetHard() {
+    reset();
+    manager_.reset(sdd_manager_create(initialVarCount_, auto_gc_ ? 1 : 0),
+                   [](SddManager* mgr) { sdd_manager_free(mgr); });
+    if (!manager_) {
+        throw std::runtime_error("sdd_manager_create failed");
+    }
 }
 
 #endif // SDDMANAGER_H
