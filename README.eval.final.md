@@ -377,6 +377,9 @@ python3 side_channel_inc.py --base-dir side_channel_inc_strengthen_p1_14_d003_d0
 - Compile: 2026-01-20 02:52:37 → 02:56:54
 - Run: 2026-01-20 02:57:08 → 02:58:59
 - Collect: 2026-01-20 02:59:17
+- Rerun (subset after WMC-cache fix; `--det-opt`):
+  - P9 inc10: 2026-01-20 04:28:15
+  - P13 inc6+inc10: 2026-01-20 04:28:22 → 04:28:42
 
 ### Run Results (end-to-end, elapsed_s)
 
@@ -405,7 +408,7 @@ python3 side_channel_inc.py --base-dir side_channel_inc_strengthen_p1_14_d003_d0
 | P8 | inc10 | 0.061 | 0.060 | 0.049 | OK | - | 0.00e+00 |
 | P9 | inc3 | 0.151 | 0.151 | 0.307 | OK | - | 0.00e+00 |
 | P9 | inc6 | 0.164 | 0.165 | 0.380 | OK | - | 0.00e+00 |
-| P9 | inc10 | 0.163 | 0.163 | 0.280 | mismatch | 6 | 9.66e-02 |
+| P9 | inc10 | 0.154 | 0.160 | 0.297 | OK | - | 0.00e+00 |
 | P10 | inc3 | 0.124 | 0.125 | 0.176 | OK | - | 0.00e+00 |
 | P10 | inc6 | 0.141 | 0.154 | 0.180 | OK | - | 0.00e+00 |
 | P10 | inc10 | 0.169 | 0.165 | 0.208 | OK | - | 0.00e+00 |
@@ -416,8 +419,8 @@ python3 side_channel_inc.py --base-dir side_channel_inc_strengthen_p1_14_d003_d0
 | P12 | inc6 | 0.648 | 0.647 | 1.435 | OK | - | 0.00e+00 |
 | P12 | inc10 | 0.680 | 0.668 | 1.509 | OK | - | 0.00e+00 |
 | P13 | inc3 | 1.686 | 1.640 | 4.194 | OK | - | 0.00e+00 |
-| P13 | inc6 | 1.891 | 1.795 | 4.203 | mismatch | 6 | 3.84e-03 |
-| P13 | inc10 | 2.079 | 2.076 | 3.930 | mismatch | 6 | 3.84e-03 |
+| P13 | inc6 | 1.760 | 1.792 | 4.153 | OK | - | 0.00e+00 |
+| P13 | inc10 | 2.088 | 2.108 | 3.850 | OK | - | 0.00e+00 |
 | P14 | inc3 | 4.147 | 3.932 | 9.479 | OK | - | 0.00e+00 |
 | P14 | inc6 | 4.328 | 4.245 | 9.103 | OK | - | 0.00e+00 |
 | P14 | inc10 | 4.746 | 4.649 | 8.781 | OK | - | 0.00e+00 |

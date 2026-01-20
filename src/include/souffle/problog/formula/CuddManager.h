@@ -10,6 +10,7 @@
 #include <cmath>
 #include <optional>
 #include <unordered_set>
+#include <cstdint>
 #include "souffle/problog/formula/FormulaManager.h"
 #include "souffle/problog/DerivationGraph.h"
 #include "souffle/problog/formula/GraphHeuristics.h"
@@ -225,7 +226,9 @@ public:
         int idx = it->second;
         nodeIndex_.erase(it);
         variableRegistry.erase(idx);
-        weights.erase(idx);
+        if (weights.erase(idx) > 0) {
+            ++weightsEpoch_;
+        }
         dropFreeIndex(idx);
         freeIndices_.insert(idx);
         freeNodeIndexByTuple_[node.getTuple()] = idx;
@@ -242,7 +245,9 @@ public:
         int idx = it->second;
         edgeIndex_.erase(it);
         variableRegistry.erase(idx);
-        weights.erase(idx);
+        if (weights.erase(idx) > 0) {
+            ++weightsEpoch_;
+        }
         dropFreeIndex(idx);
         freeIndices_.insert(idx);
         freeEdgeIndexByRuleApp_[edge.getRuleApp()] = idx;
@@ -264,6 +269,8 @@ public:
         variableRegistry.clear();
         weights.clear();
         wmcCache_.clear();
+        weightsEpoch_ = 0;
+        wmcCacheEpoch_ = 0;
         reorderConfigured_ = false;
         unsigned int maxCacheHard = Cudd_ReadMaxCacheHard(manager.get());
         if (maxCacheHard > 1) {
@@ -284,6 +291,8 @@ public:
         variableRegistry.clear();
         weights.clear();
         wmcCache_.clear();
+        weightsEpoch_ = 0;
+        wmcCacheEpoch_ = 0;
         last_reordering_time_ = 0;
         reorderConfigured_ = false;
         manager.reset();
@@ -331,9 +340,11 @@ public:
         if (fcProfile) {
             auto cacheStart = steady_clock::now();
             wmcCache_.clear();
+            wmcCacheEpoch_ = weightsEpoch_;
             cacheMs = toMs(steady_clock::now() - cacheStart);
         } else {
             wmcCache_.clear();
+            wmcCacheEpoch_ = weightsEpoch_;
         }
         auto oldCuddVarSize = Cudd_ReadSize(manager.get());
         size_t factVars = 0;
@@ -538,12 +549,14 @@ private:
 
     std::shared_ptr<DdManager> manager;
     std::unordered_map<int, VariableWeight> weights;
+    std::uint64_t weightsEpoch_ = 0;
 
     std::string toStringRecursive(DdNode* node,
                             std::unordered_map<DdNode*, std::string>& cache);
     std::string getVariableName(int varIndex);
     std::unordered_map<int, BddNodeRef> variableRegistry;
     std::unordered_map<DdNode*, double> wmcCache_;
+    std::uint64_t wmcCacheEpoch_ = 0;
     long last_reordering_time_ = 0;
     bool reorderConfigured_ = false;
     InitConfig initConfig_;
@@ -1129,7 +1142,12 @@ bool WeightedBDDManager::isSame(const BddNodeRef& a, const BddNodeRef& b) {
 }
 
 void WeightedBDDManager::setVariableWeight(int varIndex, double posWeight, double negWeight) {
+    auto it = weights.find(varIndex);
+    if (it != weights.end() && it->second.posWeight == posWeight && it->second.negWeight == negWeight) {
+        return;
+    }
     weights[varIndex] = VariableWeight{posWeight, negWeight};
+    ++weightsEpoch_;
 }
 
 FormulaManager<BddNodeRef>::VariableWeight WeightedBDDManager::getVariableWeight(int varIndex) const {
@@ -1153,6 +1171,10 @@ double WeightedBDDManager::computeWeightedModelCount(const BddNodeRef& node) {
 //                      << ", negWeight = " << weight.negWeight << std::endl;
 //        }
 //    }
+    if (wmcCacheEpoch_ != weightsEpoch_) {
+        wmcCache_.clear();
+        wmcCacheEpoch_ = weightsEpoch_;
+    }
     return recursiveWeightedModelCount(node.get(), wmcCache_);
 }
 
