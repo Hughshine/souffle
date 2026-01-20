@@ -1522,6 +1522,7 @@ void runPipeline(
     std::cout << std::fixed << std::setprecision(8);
     Debugger& debugger = Debugger::getInstance();
     fcProfileEnabled = opt.isFcProfileEnabled();
+    incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();
     postDelEnabled = opt.isPostDelEnabled();
     DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
     DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());

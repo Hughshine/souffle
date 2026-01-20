@@ -366,6 +366,7 @@ public:
         DerivationManager::setSemStatsEnabled(options.isDumpStatEnabled());
         incProfileEnabled = options.isIncProfileEnabled();
         fcProfileEnabled = options.isFcProfileEnabled();
+        incRegionalProfileEnabled = options.isIncRegionalProfileEnabled();
         postDelEnabled = options.isPostDelEnabled();
         reuseVarIndexEnabled = options.isReuseVarIndexEnabled();
         auto& mode = options.getIncMode();

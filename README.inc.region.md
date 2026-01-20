@@ -58,16 +58,25 @@ Key steps (correspond to `[inc-analyze] timing(ms)`):
 - `classifyBoundaries_()` + `expandToFixpoint_()`: expand region by boundary rules.
 - `upstreamClose_()`: add ancestors upstream (limited by reach_filter), reclassify/expand if needed.
 - `deltaReachable_()` + `intersectWithDeltaReachable_()`: ensure region stays inside delta-reachable.
-- `computeMergeableAnchors_()`: cache mergeable old incoming-edge candidates for boundary nodes.
+- `computeMergeableAnchors_()`: cache mergeable anchor candidates for boundary nodes.
 
 Boundary classification:
 - `out_induced` / `scope_induced` / `residual` boundary nodes.
 
 Mergeable anchor criteria (`mergeableEdgeAtHead_`):
 - Not a delta insert edge.
-- Non-deterministic edge (deterministic edges are excluded).
+- Non-deterministic edge (deterministic edges are excluded from direct edge anchors).
 - Respects scopes.
 - Non-subsumed.
+
+Anchor candidates:
+- Anchors can be **edges** (non-det incoming edges), or **nodes** (non-det fact nodes).
+- Anchor paths must not cross output nodes (currently treated as output/evidence for safety).
+- If a boundary head is fed by a deterministic edge and the path from head to anchor
+  contains no output/evidence nodes, we allow anchors from that deterministic edge’s inputs:
+  - non-det fact inputs become **node anchors**
+  - otherwise, any incoming **non-det edge** to those inputs becomes an edge anchor
+  This supports cases where all direct incoming edges are deterministic.
 
 Note: region uses `unordered_set`, iteration order is unstable.
 
@@ -122,7 +131,7 @@ Timing output (`[inc-regional rebuild]`):
 ---
 
 ## Calibration (BoundaryGateCalibrator)
-Goal: compute gate calibration parameter `p*` for boundary nodes (not auto-applied yet).
+Goal: compute gate calibration parameter `p*` for boundary nodes (applied by `RegionalIncrementalForwardCompilation`).
 
 Flow (per boundary node v):
 1) `target = Pr_new(v)` (computed from rebuilt formulas).
@@ -133,8 +142,11 @@ Flow (per boundary node v):
 3) Record `CalibrationRecord` and `weightOverrides`.
 
 Current behavior:
-- `calibrate()` **only computes and returns overrides**, does not write back weights.
-- `RegionalIncrementalForwardCompilation` stores `lastOverrides_` for external use.
+- `calibrate()` computes and returns overrides.
+- `RegionalIncrementalForwardCompilation` applies the overrides via `FormulaManager::setVariableWeight`
+  and stores `lastOverrides_` for inspection.
+- Degenerate anchors (`alpha ~= beta`) are filtered using boundary snapshots; if a boundary head
+  has no non-degenerate anchors it will trigger fallback (unless disabled).
 
 ---
 
@@ -158,6 +170,18 @@ Common output:
 - `Deletion deletedVarsIndex size: N` (used for variable cleanup during deletion)
 Debug output is off by default; enable as needed:
 - `--dumpjson` / CLI `set dumpjson`: output JSON (after prune).
+- `--profile-inc-regional`: emits inc-regional analysis/boundary/anchor diagnostics and timing.
+
+---
+
+## Known Issue / TODO (Anchors)
+- Some KEY_IND-heavy cases produce **all-degenerate anchors** for boundary heads
+  (alpha ~= beta), leading to `calibration_failed` fallback even though anchors exist.
+- The analyzer now logs the full candidate set per boundary head and prints
+  `degenerate_anchor` when all candidates collapse.
+- Next steps: improve candidate selection for KEY_IND rules (e.g., prefer anchors
+  whose formulas contain non-trivial random variables), or add an alternative
+  calibration path when only degenerate anchors exist.
 - `--dumpdot` / CLI `set dumpdot`: output derivation graph DOT.
 - `--dumpstat` / CLI `set dumpstat`: output `dumpStatisticsInc` / `dumpStatistics`.
 Output location notes:

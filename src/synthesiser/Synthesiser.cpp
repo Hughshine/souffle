@@ -4506,6 +4506,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "detForceEnabled = opt.isDetForceEnabled();\n";
     hook << "dredProfileEnabled = opt.isDredProfileEnabled();\n";
     hook << "incProfileEnabled = opt.isIncProfileEnabled();\n";
+    hook << "incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();\n";
     hook << "reuseVarIndexEnabled = opt.isReuseVarIndexEnabled();\n";
 
     if (!db.getNS(false).empty()) {

@@ -1832,12 +1832,12 @@ void buildFormulasIncCyclewise(
                 }
             }
         }
-        if (!deletedNonDeterminsticFacts.empty()) {
-            deletedNonDetVars.reserve(deletedNonDeterminsticFacts.size());
-            for (auto node : deletedNonDeterminsticFacts) {
-                deletedNonDetVars.push_back(formulaManager.getVarIndex(*node));
-            }
+    if (!deletedNonDeterminsticFacts.empty()) {
+        deletedNonDetVars.reserve(deletedNonDeterminsticFacts.size());
+        for (auto node : deletedNonDeterminsticFacts) {
+            deletedNonDetVars.push_back(formulaManager.getVarIndex(*node));
         }
+    }
         detImpactNodesCount = detImpactNodes.size();
         detImpactEdgesCount = detImpactEdges.size();
         nonDetImpactNodesCount = nonDetImpactNodes.size();
@@ -1855,8 +1855,58 @@ void buildFormulasIncCyclewise(
                 nonDetOnlyEdges.insert(edge);
             }
         }
-        nonDetOnlyNodesCount = nonDetOnlyNodes.size();
-        nonDetOnlyEdgesCount = nonDetOnlyEdges.size();
+    nonDetOnlyNodesCount = nonDetOnlyNodes.size();
+    nonDetOnlyEdgesCount = nonDetOnlyEdges.size();
+
+    if (incProfile) {
+        auto fnv1a = [](const std::string& s) {
+            std::uint64_t h = 1469598103934665603ULL;
+            for (unsigned char c : s) {
+                h ^= c;
+                h *= 1099511628211ULL;
+            }
+            return h;
+        };
+        auto hashNodeSet = [&](const std::unordered_set<NodePtr>& nodes) {
+            std::uint64_t h = 0;
+            for (const auto& n : nodes) {
+                if (!n) continue;
+                h ^= fnv1a(n->getTuple().toString());
+            }
+            return h;
+        };
+        auto hashEdgeSet = [&](const std::unordered_set<EdgePtr>& edges) {
+            std::uint64_t h = 0;
+            for (const auto& e : edges) {
+                if (!e) continue;
+                std::ostringstream oss;
+                auto ins = view.getInputs(e);
+                for (size_t i = 0; i < ins.size(); ++i) {
+                    if (i) oss << ",";
+                    oss << (ins[i] ? ins[i]->getTuple().toString() : "<null>");
+                }
+                NodePtr out = view.getOutput(e);
+                oss << "->" << (out ? out->getTuple().toString() : "<null>");
+                h ^= fnv1a(oss.str());
+            }
+            return h;
+        };
+        debugger.logMessage(Level::INFO,
+            "[inc-delete] detImpactNodes=" + std::to_string(detImpactNodes.size()) +
+            " hash=" + std::to_string(hashNodeSet(detImpactNodes)) +
+            " detImpactEdges=" + std::to_string(detImpactEdges.size()) +
+            " hash=" + std::to_string(hashEdgeSet(detImpactEdges)));
+        debugger.logMessage(Level::INFO,
+            "[inc-delete] nonDetImpactNodes=" + std::to_string(nonDetImpactNodes.size()) +
+            " hash=" + std::to_string(hashNodeSet(nonDetImpactNodes)) +
+            " nonDetImpactEdges=" + std::to_string(nonDetImpactEdges.size()) +
+            " hash=" + std::to_string(hashEdgeSet(nonDetImpactEdges)));
+        debugger.logMessage(Level::INFO,
+            "[inc-delete] nonDetOnlyNodes=" + std::to_string(nonDetOnlyNodes.size()) +
+            " hash=" + std::to_string(hashNodeSet(nonDetOnlyNodes)) +
+            " nonDetOnlyEdges=" + std::to_string(nonDetOnlyEdges.size()) +
+            " hash=" + std::to_string(hashEdgeSet(nonDetOnlyEdges)));
+    }
 
         auto enqueueEdge = [&](EdgePtr edge) {
             auto it = depGraph.edgeToCycleIndex.find(edge);
@@ -2029,6 +2079,7 @@ void buildFormulasIncCyclewise(
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Finished updating variable ordering after deletion (non-deterministic). Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+
         if (fcTraceEnabled()) {
             for (const auto& node : view.getNodes()) {
                 if (!fcTraceMatch(node)) {
@@ -2037,9 +2088,11 @@ void buildFormulasIncCyclewise(
                 auto it = nodeFormulas.find(node);
                 const bool present = it != nodeFormulas.end();
                 const bool isFalse = present && formulaManager.isSame(it->second, formulaManager.getFalse());
+                const bool changed = changedNodes.count(node) > 0;
                 std::cout << "[fc-trace] post-delete node=" << node->getTuple().toString()
                           << " formula_present=" << (present ? 1 : 0)
                           << " formula_false=" << (isFalse ? 1 : 0)
+                          << " changed=" << (changed ? 1 : 0)
                           << std::endl;
             }
         }
@@ -3012,6 +3065,11 @@ void buildFormulasIncRegionalCyclewise(
         std::unordered_set<NodePtr> nonDetImpactNodes;
         std::unordered_set<EdgePtr> nonDetImpactEdges;
         std::vector<int> deletedNonDetVars;
+        std::unordered_set<NodePtr> regionalOverdeleteChangedSet;
+        auto markRegionalOverdelete = [&](const NodePtr& node) {
+            changedNodes.insert(node);
+            regionalOverdeleteChangedSet.insert(node);
+        };
 
         std::set<NodePtr> deletedFacts = view.getDeletedFacts();
         std::set<NodePtr> deletedDeterminsticFacts = view.getDeletedDeterminsticFacts();
@@ -3116,6 +3174,56 @@ void buildFormulasIncRegionalCyclewise(
             }
         }
 
+        if (incRegionalProfileEnabled || incProfileEnabled) {
+            auto fnv1a = [](const std::string& s) {
+                std::uint64_t h = 1469598103934665603ULL;
+                for (unsigned char c : s) {
+                    h ^= c;
+                    h *= 1099511628211ULL;
+                }
+                return h;
+            };
+            auto hashNodeSet = [&](const std::unordered_set<NodePtr>& nodes) {
+                std::uint64_t h = 0;
+                for (const auto& n : nodes) {
+                    if (!n) continue;
+                    h ^= fnv1a(n->getTuple().toString());
+                }
+                return h;
+            };
+            auto hashEdgeSet = [&](const std::unordered_set<EdgePtr>& edges) {
+                std::uint64_t h = 0;
+                for (const auto& e : edges) {
+                    if (!e) continue;
+                    std::ostringstream oss;
+                    auto ins = view.getInputs(e);
+                    for (size_t i = 0; i < ins.size(); ++i) {
+                        if (i) oss << ",";
+                        oss << (ins[i] ? ins[i]->getTuple().toString() : "<null>");
+                    }
+                    NodePtr out = view.getOutput(e);
+                    oss << "->" << (out ? out->getTuple().toString() : "<null>");
+                    h ^= fnv1a(oss.str());
+                }
+                return h;
+            };
+            debugger.logMessage(Level::INFO,
+                "[inc-regional delete] detImpactNodes=" + std::to_string(detImpactNodes.size()) +
+                " hash=" + std::to_string(hashNodeSet(detImpactNodes)) +
+                " detImpactEdges=" + std::to_string(detImpactEdges.size()) +
+                " hash=" + std::to_string(hashEdgeSet(detImpactEdges)));
+            debugger.logMessage(Level::INFO,
+                "[inc-regional delete] nonDetImpactNodes=" + std::to_string(nonDetImpactNodes.size()) +
+                " hash=" + std::to_string(hashNodeSet(nonDetImpactNodes)) +
+                " nonDetImpactEdges=" + std::to_string(nonDetImpactEdges.size()) +
+                " hash=" + std::to_string(hashEdgeSet(nonDetImpactEdges)));
+            debugger.logMessage(Level::INFO,
+                "[inc-regional delete] nonDetOnlyNodes=" + std::to_string(nonDetOnlyNodes.size()) +
+                " hash=" + std::to_string(hashNodeSet(nonDetOnlyNodes)) +
+                " nonDetOnlyEdges=" + std::to_string(nonDetOnlyEdges.size()) +
+                " hash=" + std::to_string(hashEdgeSet(nonDetOnlyEdges)));
+        }
+
         auto enqueueEdge = [&](EdgePtr edge) {
             auto it = depGraph.edgeToCycleIndex.find(edge);
             if (it == depGraph.edgeToCycleIndex.end()) {
@@ -3189,7 +3297,10 @@ void buildFormulasIncRegionalCyclewise(
                     continue;
                 }
                 nodeFormulas[node] = formulaManager.getFalse();
-                changedNodes.insert(node);
+                markRegionalOverdelete(node);
+                for (EdgePtr inEdge : view.getIncomingEdges(node)) {
+                    enqueueEdge(inEdge);
+                }
             }
             for (auto edge : detImpactEdges) {
                 if (deltaDeletedEdges.count(edge)) {
@@ -3231,6 +3342,23 @@ void buildFormulasIncRegionalCyclewise(
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Finished updating variable ordering after deletion (non-deterministic). Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+
+        if (fcTraceEnabled()) {
+            for (const auto& node : view.getNodes()) {
+                if (!fcTraceMatch(node)) {
+                    continue;
+                }
+                auto it = nodeFormulas.find(node);
+                const bool present = it != nodeFormulas.end();
+                const bool isFalse = present && formulaManager.isSame(it->second, formulaManager.getFalse());
+                const bool changed = changedNodes.count(node) > 0;
+                std::cout << "[fc-trace] post-delete node=" << node->getTuple().toString()
+                          << " formula_present=" << (present ? 1 : 0)
+                          << " formula_false=" << (isFalse ? 1 : 0)
+                          << " changed=" << (changed ? 1 : 0)
+                          << std::endl;
+            }
+        }
 
         start = high_resolution_clock::now();
         std::queue<size_t> ready;
@@ -3282,14 +3410,18 @@ void buildFormulasIncRegionalCyclewise(
                 if (!deletedNonDetVars.empty() && nonDetImpactEdges.count(edge)) {
                     newEdge = formulaManager.makeCondition(newEdge, {}, deletedNonDetVars);
                 }
-                if (formulaManager.isSame(edgeFormulas[edge], newEdge)) {
+                NodePtr output = view.getOutput(edge);
+                const bool edgeSame = formulaManager.isSame(edgeFormulas[edge], newEdge);
+                const bool forceNodeUpdate = output && regionalOverdeleteChangedSet.count(output);
+                if (edgeSame && !forceNodeUpdate) {
                     debugger.endIteration();
                     continue;
                 }
 
-                edgeFormulas[edge] = newEdge;
+                if (!edgeSame) {
+                    edgeFormulas[edge] = newEdge;
+                }
 
-                NodePtr output = view.getOutput(edge);
                 if (!output || output->isFact) {
                     debugger.endIteration();
                     continue;
@@ -3314,7 +3446,7 @@ void buildFormulasIncRegionalCyclewise(
                 }
                 if (hasNewNode && !formulaManager.isSame(nodeFormulas[output], newNode)) {
                     nodeFormulas[output] = newNode;
-                    changedNodes.insert(output);
+                    markRegionalOverdelete(output);
                     for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
                         assert (depGraph.edgeToCycleIndex.count(outEdge));
                         auto it = depGraph.edgeToCycleIndex.find(outEdge);
@@ -3335,6 +3467,22 @@ void buildFormulasIncRegionalCyclewise(
         }
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "rederive time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
+        if (fcTraceEnabled()) {
+            for (const auto& node : view.getNodes()) {
+                if (!fcTraceMatch(node)) {
+                    continue;
+                }
+                auto it = nodeFormulas.find(node);
+                const bool present = it != nodeFormulas.end();
+                const bool isFalse = present && formulaManager.isSame(it->second, formulaManager.getFalse());
+                const bool changed = changedNodes.count(node) > 0;
+                std::cout << "[fc-trace] post-rederive node=" << node->getTuple().toString()
+                          << " formula_present=" << (present ? 1 : 0)
+                          << " formula_false=" << (isFalse ? 1 : 0)
+                          << " changed=" << (changed ? 1 : 0)
+                          << std::endl;
+            }
+        }
         if (reuseVarIndexEnabled) {
             for (const auto& node : view.getDeletedFacts()) {
                 formulaManager.releaseVarIndex(*node);
@@ -3372,6 +3520,62 @@ void buildFormulasIncRegionalCyclewise(
     using FMType = std::remove_reference_t<decltype(formulaManager)>;
     RegionalIncrementalForwardCompilation<FMType, FormulaNodeRef> orchestrator;
     orchestrator.applyUpdate(view, formulaManager, nodeFormulas, edgeFormulas, changedNodes, constInfoPtr);
+    if (incRegionalProfileEnabled) {
+        const auto& stats = orchestrator.getStats();
+        const auto& timing = orchestrator.getTiming();
+        const auto& rt = timing.rebuildDetail;
+        debugger.addInfo("inc_regional_analyze_ms", std::to_string(timing.analyzeMs));
+        debugger.addInfo("inc_regional_scc_close_ms", std::to_string(timing.sccCloseMs));
+        debugger.addInfo("inc_regional_plan_ms", std::to_string(timing.planMs));
+        debugger.addInfo("inc_regional_rebuild_ms", std::to_string(timing.rebuildMs));
+        debugger.addInfo("inc_regional_calibrate_ms", std::to_string(timing.calibrateMs));
+        debugger.addInfo("inc_regional_total_ms", std::to_string(timing.totalMs));
+        if (!timing.fallbackReason.empty()) {
+            debugger.addInfo("inc_regional_fallback_reason", timing.fallbackReason);
+        }
+        debugger.addInfo("inc_regional_region_nodes", std::to_string(stats.regionNodeCount));
+        debugger.addInfo("inc_regional_boundary_nodes", std::to_string(stats.boundaryNodeCount));
+        debugger.addInfo("inc_regional_calibrated_nodes", std::to_string(stats.calibratedCount));
+        debugger.addInfo("inc_regional_scc_expanded", stats.sccExpanded ? "1" : "0");
+        debugger.addInfo("inc_regional_used_fallback", stats.usedFallback ? "1" : "0");
+        debugger.addInfo("inc_regional_rebuild_snapshot_ms", std::to_string(rt.snapshotMs));
+        debugger.addInfo("inc_regional_rebuild_init_nodes_ms", std::to_string(rt.initNodesMs));
+        debugger.addInfo("inc_regional_rebuild_init_edges_ms", std::to_string(rt.initEdgesMs));
+        debugger.addInfo("inc_regional_rebuild_dep_graph_ms", std::to_string(rt.depGraphMs));
+        debugger.addInfo("inc_regional_rebuild_region_cycles_ms", std::to_string(rt.regionCyclesMs));
+        debugger.addInfo("inc_regional_rebuild_indegree_ms", std::to_string(rt.indegreeMs));
+        debugger.addInfo("inc_regional_rebuild_loop_ms", std::to_string(rt.rebuildLoopMs));
+        debugger.addInfo("inc_regional_rebuild_total_ms", std::to_string(rt.totalMs));
+        debugger.addInfo("inc_regional_rebuild_reorder_ms", std::to_string(rt.reorderMs));
+        debugger.addInfo("inc_regional_rebuild_edges_processed", std::to_string(rt.edgesProcessed));
+        debugger.addInfo("inc_regional_rebuild_edges_rebuilt", std::to_string(rt.edgesRebuilt));
+        debugger.addInfo("inc_regional_rebuild_nodes_updated", std::to_string(rt.nodesUpdated));
+        debugger.addInfo("inc_regional_rebuild_cycle_count", std::to_string(rt.regionCycleCount));
+        debugger.logMessage(Level::INFO,
+            "[inc-regional-profile] analyze_ms=" + std::to_string(timing.analyzeMs) +
+            " scc_close_ms=" + std::to_string(timing.sccCloseMs) +
+            " plan_ms=" + std::to_string(timing.planMs) +
+            " rebuild_ms=" + std::to_string(timing.rebuildMs) +
+            " calibrate_ms=" + std::to_string(timing.calibrateMs) +
+            " total_ms=" + std::to_string(timing.totalMs));
+        debugger.logMessage(Level::INFO,
+            "[inc-regional-profile] rebuild snapshot_ms=" + std::to_string(rt.snapshotMs) +
+            " init_nodes_ms=" + std::to_string(rt.initNodesMs) +
+            " init_edges_ms=" + std::to_string(rt.initEdgesMs) +
+            " dep_graph_ms=" + std::to_string(rt.depGraphMs) +
+            " region_cycles_ms=" + std::to_string(rt.regionCyclesMs) +
+            " indegree_ms=" + std::to_string(rt.indegreeMs) +
+            " rebuild_loop_ms=" + std::to_string(rt.rebuildLoopMs) +
+            " total_ms=" + std::to_string(rt.totalMs) +
+            " reorder_ms=" + std::to_string(rt.reorderMs));
+        if (stats.usedFallback) {
+            debugger.logMessage(Level::INFO, "[inc-regional-profile] usedFallback=1");
+        }
+        if (!timing.fallbackReason.empty()) {
+            debugger.logMessage(Level::INFO,
+                "[inc-regional-profile] fallback_reason=" + timing.fallbackReason);
+        }
+    }
     formulaManager.dumpProfilingStatistics();
     for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
         debugger.addInfo(key, value);

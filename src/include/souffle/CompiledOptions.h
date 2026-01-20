@@ -84,6 +84,7 @@ protected:
     bool dred_profile = false;  // enable detailed DRed profiling
     bool inc_profile = false;  // enable incremental stage profiling
     bool fc_profile = false;  // enable detailed forward-compilation profiling
+    bool inc_regional_profile = false;  // enable inc-regional profiling/diagnostics
     bool post_del = false;  // enable postprocessUselessVariables after deletion
     bool det_opt = false;  // enable deterministic-relation analysis and det gating
     bool det_force = false;  // force deterministic evaluation (skip derivation graph)
@@ -99,11 +100,13 @@ public:
             const std::string& splitmode = "naive-split",
             bool incProfile = false,
             bool fcProfile = false,
+            bool incRegionalProfile = false,
             bool postDel = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
     , incMode(mode), merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
       dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
-      dred_profile(dredProfile), inc_profile(incProfile), fc_profile(fcProfile), post_del(postDel),
+      dred_profile(dredProfile), inc_profile(incProfile), fc_profile(fcProfile),
+      inc_regional_profile(incRegionalProfile), post_del(postDel),
       split_mode(splitmode) {}
 
     CmdOptions() {}
@@ -191,6 +194,9 @@ public:
     bool isFcProfileEnabled() const {
         return fc_profile;
     }
+    bool isIncRegionalProfileEnabled() const {
+        return inc_regional_profile;
+    }
     bool isPostDelEnabled() const {
         return post_del;
     }
@@ -254,6 +260,7 @@ public:
                 {"dred-profile", false, nullptr, 1002},
                 {"inc-profile", false, nullptr, 1003},
                 {"fc-profile", false, nullptr, 1005},
+                {"profile-inc-regional", false, nullptr, 1009},
                 {"post-del", false, nullptr, 1006},
                 {"det-opt", false, nullptr, 'Z'},
                 {"det-force", false, nullptr, 1007},
@@ -404,6 +411,9 @@ public:
                 case 1005:
                     fc_profile = true;
                     break;
+                case 1009:
+                    inc_regional_profile = true;
+                    break;
                 case 1006:
                     post_del = true;
                     break;
@@ -463,6 +473,7 @@ private:
         std::cerr << "    --dred-profile               -- Enable detailed DRed profiling (requires --profile)\n";
         std::cerr << "    --inc-profile                -- Enable incremental stage profiling\n";
         std::cerr << "    --fc-profile                 -- Enable detailed forward-compilation profiling\n";
+        std::cerr << "    --profile-inc-regional       -- Enable inc-regional diagnostics/profiling\n";
         std::cerr << "    --post-del                   -- Enable post-delete variable postprocess (FC)\n";
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
         std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
