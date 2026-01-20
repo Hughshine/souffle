@@ -10,6 +10,7 @@
 #include <cmath>
 #include <chrono>
 #include <cassert>
+#include <cstdint>
 #include <cstdlib>
 #include <sstream>
 #include "souffle/problog/DerivationGraph.h"
@@ -90,6 +91,62 @@ struct RegionSccClosure {
         return changed;
     }
 };
+
+static bool regionTouchesCycle(
+    IncrementalDerivationGraphViewInterface& view,
+    const std::unordered_set<NodePtr>& regionNodes) {
+    if (regionNodes.empty()) {
+        return false;
+    }
+    std::unordered_map<NodePtr, uint8_t> state;
+    state.reserve(regionNodes.size());
+    std::vector<NodePtr> stack;
+    stack.reserve(regionNodes.size());
+    std::unordered_map<NodePtr, size_t> stackIndex;
+    stackIndex.reserve(regionNodes.size());
+
+    auto dfs = [&](auto&& self, const NodePtr& node) -> bool {
+        state[node] = 1;
+        stackIndex[node] = stack.size();
+        stack.push_back(node);
+        for (const auto& edge : view.getOutgoingEdges(node)) {
+            NodePtr out = view.getOutput(edge);
+            if (!out) continue;
+            auto it = state.find(out);
+            if (it == state.end()) {
+                if (self(self, out)) {
+                    return true;
+                }
+            } else if (it->second == 1) {
+                auto sit = stackIndex.find(out);
+                if (sit == stackIndex.end()) {
+                    continue;
+                }
+                for (size_t i = sit->second; i < stack.size(); ++i) {
+                    if (regionNodes.count(stack[i])) {
+                        return true;
+                    }
+                }
+            }
+        }
+        stack.pop_back();
+        stackIndex.erase(node);
+        state[node] = 2;
+        return false;
+    };
+
+    for (const auto& node : regionNodes) {
+        if (!node) continue;
+        auto it = state.find(node);
+        if (it != state.end() && it->second == 2) {
+            continue;
+        }
+        if (dfs(dfs, node)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // Analysis cache to hand downstream without recomputing.
 struct AnalyzerResultCache {
@@ -677,13 +734,17 @@ public:
         auto t1 = nowMs();
 
         // === 2) Ensure SCC-closed ===
-        auto& depGraph = view.getCycleDependencyGraph();
-        bool expanded = RegionSccClosure::closeToScc(analysis.region, analyzer.lastDeltaReachable(), depGraph);
-        stats_.sccExpanded = expanded;
-        if (expanded) {
-            analysis.boundaries = analyzer.recomputeBoundaries(analysis.region);
-            analysis.mergeableAnchorsByHead = analyzer.recomputeAnchors(analysis.region, analysis.boundaries);
+        bool expanded = false;
+        // Avoid full SCC dependency construction when the region is acyclic.
+        if (regionTouchesCycle(view, analysis.region.nodes)) {
+            auto& depGraph = view.getCycleDependencyGraph();
+            expanded = RegionSccClosure::closeToScc(analysis.region, analyzer.lastDeltaReachable(), depGraph);
+            if (expanded) {
+                analysis.boundaries = analyzer.recomputeBoundaries(analysis.region);
+                analysis.mergeableAnchorsByHead = analyzer.recomputeAnchors(analysis.region, analysis.boundaries);
+            }
         }
+        stats_.sccExpanded = expanded;
         auto t2 = nowMs();
 
         auto boundariesEmpty = [&](const incra::Boundaries& b) {
@@ -821,7 +882,11 @@ public:
             if (!expanded) break;
             analysis.boundaries = analyzer.recomputeBoundaries(analysis.region);
             analysis.mergeableAnchorsByHead = analyzer.recomputeAnchors(analysis.region, analysis.boundaries);
-            bool sccExpanded = RegionSccClosure::closeToScc(analysis.region, analyzer.lastDeltaReachable(), depGraph);
+            bool sccExpanded = false;
+            if (regionTouchesCycle(view, analysis.region.nodes)) {
+                auto& depGraph = view.getCycleDependencyGraph();
+                sccExpanded = RegionSccClosure::closeToScc(analysis.region, analyzer.lastDeltaReachable(), depGraph);
+            }
             if (sccExpanded) {
                 analysis.boundaries = analyzer.recomputeBoundaries(analysis.region);
                 analysis.mergeableAnchorsByHead = analyzer.recomputeAnchors(analysis.region, analysis.boundaries);

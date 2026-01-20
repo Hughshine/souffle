@@ -67,6 +67,13 @@ This is consistent with a mostly-DAG derivation graph or with regions already
 SCC-closed.
 
 ## DAG-focused optimization ideas
+Implementation status (2026-01-20):
+- Added a fast-path in `RegionalIncremental.h` that runs a DFS-based cycle check
+  from region nodes and skips `getCycleDependencyGraph()` when no region node is
+  part of a cycle. This avoids full SCC/dependency/depth computation on DAG-heavy
+  workloads while preserving correctness on cyclic graphs (it still falls back
+  to the full SCC closure when a cycle is detected).
+
 1) **Skip SCC-closure on acyclic programs**
    - If the Datalog program is non-recursive (no rule SCCs), the derivation
      graph is acyclic for all inputs. In that case SCC-closure can be skipped
