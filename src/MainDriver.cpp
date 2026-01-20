@@ -619,6 +619,8 @@ std::vector<MainOption> getMainOptions() {
           "Write HTML debug report to <FILE>."},
       {"disable-transformers", 'z', "TRANSFORMERS", "", false,
           "Disable the given AST transformers."},
+      {"no-souffle-opt", nextOptChar++, "", "", false,
+          "Disable RAM optimizations (transformations, join order, guard hoisting)."},
       {"dl-program", 'o', "FILE", "", false,
           "Generate C++ source code, written to <FILE>, and compile this to a "
           "binary executable (without executing it)."},
@@ -1122,7 +1124,7 @@ int main(Global& glb, const char* souffle_executable) {
         }
 
         // Apply RAM transforms
-        {
+        if (!glb.config().has("no-souffle-opt")) {
             auto ramTransform = ramTransformerSequence(glb);
             ramTransform->apply(*ramTranslationUnit);
         }
