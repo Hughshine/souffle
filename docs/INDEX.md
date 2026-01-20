@@ -24,6 +24,7 @@
 - `README.const.md`: deterministic-first (det-opt) design and FC integration.
 - `README.dred.md`: online DRed internals and deletion bottlenecks.
 - `README.inc.region.md`: inc-regional pipeline design/profiling notes.
+- `README.inc.regional.opt.md`: inc-regional SCC-closure analysis and DAG optimization ideas.
 - `README.disjunct.md`: disjunction-strengthening log and det-opt segfault triage.
 - `README.ordering.md`, `README.eqrel.md`, `README.lazy.md`, `README.refactor.md`: design roadmaps and refactor notes.
 - `README.cudd.md`: CUDD (BDD backend) overview and tuning pointers.
