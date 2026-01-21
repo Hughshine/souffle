@@ -45,19 +45,19 @@ using the Souffle binary built from this repo. Do not git-add anything under
 ## End-to-end for P1 (from repo root)
 ```bash
 # 1) Generate inputs from SMT
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval generate --cases 1 --cleanup
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval generate --cases 1 --cleanup
 
 # 2) Generate delta workloads (0.1/0.3/0.5% deltas; overwrites delta/)
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval delta --cases 1 --cleanup --change-spec inc0p1=0.001,inc0p3=0.003,inc0p5=0.005
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval delta --cases 1 --cleanup --change-spec inc0p1=0.001,inc0p3=0.003,inc0p5=0.005
 
 # 3) Compile Souffle (online default; produces ./compute in P1/)
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval compile --cases 1 --timeout 600
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval compile --cases 1 --timeout 600
 
 # 4) Run baseline (full+inc) and one sample for inc0p1/inc0p3/inc0p5
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval run   --cases 1 --delta-labels inc0p1,inc0p3,inc0p5 --delta-samples 1 --timeout 600 --run-arg=--det-opt
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval run   --cases 1 --delta-labels inc0p1,inc0p3,inc0p5 --delta-samples 1 --timeout 600 --run-arg=--det-opt
 
 # 5) Collect summary TSV
-python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval collect --cases 1
+python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py   --base-dir experiments/side_channel_inc_eval collect --cases 1
 ```
 
 ## What to look at
@@ -87,6 +87,26 @@ python /home/hugh/research/datalog/problog-benchmark/side_channel_inc.py   --bas
   does impacted BFS.
 - Optional debug outputs (default off): `--dumpjson`, `--dumpdot`, `--dumpstat`
   gate JSON/DOT/stats dumps after prune, all written under the `-D` output dir.
+
+## Mismatch debugging workflow
+- Identify what mismatched first: open `output/delta-<label>-<sample>.json` and
+  note which comparison failed (`inc_iter1_vs_full_iter1`, `inc_regional_iter2_vs_full_iter2`, etc.).
+  Use the `output/delta-<label>-<sample>-<mode>-fact-iterN-*.prob` files to diff
+  the exact tuples/probabilities for the failing iter (iter1 = delete, iter2 = insert).
+- Re-run with derivation dumps to compare graphs:
+  - `PATH=/home/hugh/research/datalog/souffle/build/src:$PATH python3 problog-benchmark/side_channel_inc.py --base-dir <base> run --cases <case> --delta-labels <label> --delta-samples <n> --timeout <sec> --run-arg=--det-opt --run-arg=--dumpjson --compare-all`
+  - The CLI writes timestamped dumps in `output/`, e.g.
+    `derivation-inc-after-prune<iter>-<timestamp>.json` and
+    `derivation-full-after-prune<iter>-<timestamp>.json`.
+  - Compare node/edge counts and search for missing tuples/edges; if the
+    derivation graphs differ, track whether the missing pieces align with the
+    delta input relations (bad delta ingestion) or derived edges (FC update).
+- If derivation graphs match but probabilities differ, focus on delete/insert FC:
+  - Inspect CLI stdout for `[applyDelta]` and `[inc-iter N]` counters, and
+    per-stage timers (`--profile-inc-regional`, `--profile-dep-graph`).
+  - Add targeted prints around the suspected phase (delete vs insert, regional
+    analyze/plan/rebuild) and rebuild; re-run the same delta until the first
+    divergence is localized.
 
 ## Implementation pointers (online path)
 - `src/ast2ram/online/UnitTranslator.cpp`: `inc_table_update` + `_inc` strata.

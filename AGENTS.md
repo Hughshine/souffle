@@ -26,7 +26,8 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - Prefer repo-scoped skills: `repo-docs`, `verify-changes`, `pr-ready`.
 
 ## Verification
-- If C++ changes: run format check and rebuild.
+- If C++ changes: rebuild. Run `sh/run_test_format.sh` only when explicitly requested.
+  TODO: Align this with CI expectations once clang-format is available by default.
 - If CLI/runtime behavior changes: run the example script:
   `SOUFFLE_BIN=./build/src/souffle examples/running_example/run.sh`.
 - If tests cannot run, state why and point to `docs/TESTING.md`.

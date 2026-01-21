@@ -10,6 +10,8 @@ benchmarks. For the pipeline overview, see `README.inc.region.md`.
   `src/include/souffle/problog/DerivationGraph.h`.
 - Benchmark context: P1-P14 side-channel runs (seed0, strengthen, delta ratios
   0.003 / 0.006 / 0.01). Run log is in `README.eval.final.md`.
+  Additional runs (2026-01-21): `side_channel_inc_strengthen_fresh` P16–P20
+  insert-turn analysis (see `README.eval.final.md`).
 
 ## DepGraph caching (confirmed)
 `DerivationGraphViewInterface::getCycleDependencyGraph()` caches a
@@ -66,13 +68,70 @@ inc-regional insert path for this benchmark, yet it never expanded the region.
 This is consistent with a mostly-DAG derivation graph or with regions already
 SCC-closed.
 
+## P16–P20 insert-turn observations (2026-01-21)
+Data source: `problog-benchmark/side_channel_inc_strengthen_fresh/P*/output/delta-*.json`.
+
+Key takeaways:
+- **FC insert is usually faster** than inc‑naive (notably P16/P20), but
+  **WMC is consistently slower** for inc‑regional, often dominating total time.
+- Within inc‑regional **analyze**, the top costs are `reexpand`, then `prepare`
+  and `expand`. The pattern worsens with larger deltas (P19 inc5).
+
+Top analyze components (ms; most expensive per case):
+- P16: reexpand 36–72, prepare 40–55, expand 24–48
+- P17: reexpand 85–183, prepare ~47, expand 6–42
+- P18: reexpand 245–346, prepare 67–87, expand 0–64
+- P19: reexpand 473–752, prepare 85–136, expand 10–272
+- P20: prepare 114–128 dominates inc1; reexpand 168–179 dominates inc3/inc5
+
+## Boundary / Anchor observations (stdout trace)
+Data source: `problog-benchmark/side_channel_inc_strengthen_fresh/P15/
+stdout_inc_regional_region_trace12.txt` (mtime 2026-01-20 01:41:26 local).
+The trace is produced by `--profile-inc-regional`, which logs boundary-head
+anchor checks plus per-head anchor lists. This is a *single-case* snapshot to
+understand what boundary heads and anchors look like in practice; it is not a
+full benchmark summary.
+
+Summary (unique heads):
+- Boundary heads (unique): 769
+  - With anchors: 272 (all `RAND(*)` heads)
+  - Missing anchors: 497 (`RAND(*)` 257 + `KEY_IND(*)` 240)
+- Missing-anchor reasons:
+  - `all_incoming_edges_deterministic`: 257 (all `RAND(*)`)
+  - `head_is_output_or_evidence`: 240 (all `KEY_IND(*)`)
+- Anchors (total 1572): node anchors 767 + edge anchors 805
+  - Node anchors are all `RAND(*)` facts
+  - Edge anchors always output `RAND(*)`, and the edge patterns are
+    `xor_assign_left/xor_assign_right/BV_DIFF_REC/RAND`
+
+Anchor-check failures (top reasons for rejected candidates):
+- `edge_deterministic`: 1230
+- `input_fact_prob1`: 1230
+- `input_edge_deterministic`: 663
+- `head_output_or_evidence`: 240
+
+Interpretation:
+- Boundary heads in this trace are almost entirely `RAND(*)` and `KEY_IND(*)`.
+- `KEY_IND(*)` heads are filtered out as anchors because they are treated as
+  output/evidence and thus not anchor-safe.
+- `RAND(*)` heads fail mostly because their incoming candidates are deterministic
+  or probability-1 facts, matching the anchor filters.
+
+## Implementation status (2026-01-21)
+- **Local dep-graph**: build the dependency/SCC graph from the delta‑reachable
+  subgraph, falling back to the full graph only when reach‑edges are empty.
+- **DAG fast‑path**: skip SCC‑closure if the region does not touch a cycle
+  (DFS-based check) to avoid full SCC work on DAG‑heavy workloads.
+- **Anchor hygiene**: anchors inside the region are rejected to avoid calibrating
+  on rebuilt formulas.
+- **Output handling**: removed delta→output slice expansion; WMC now chooses
+  between (a) rebuilt BDD + original weights for region outputs, (b) old BDD +
+  calibrated weights for delta‑reachable outputs outside the region, (c) cached
+  value if outside delta‑reach with unchanged evidence.
+- **Fallback safety**: snapshot/restore region formulas before falling back to
+  classic cyclewise rebuild so partial regional changes do not leak.
+
 ## DAG-focused optimization ideas
-Implementation status (2026-01-20):
-- Added a fast-path in `RegionalIncremental.h` that runs a DFS-based cycle check
-  from region nodes and skips `getCycleDependencyGraph()` when no region node is
-  part of a cycle. This avoids full SCC/dependency/depth computation on DAG-heavy
-  workloads while preserving correctness on cyclic graphs (it still falls back
-  to the full SCC closure when a cycle is detected).
 
 1) **Skip SCC-closure on acyclic programs**
    - If the Datalog program is non-recursive (no rule SCCs), the derivation
@@ -102,6 +161,59 @@ Implementation status (2026-01-20):
    - If another stage already computed `getCycleDependencyGraph()` (e.g., debug
      stats or a prior call in the same turn), ensure the inc-regional path reuses
      that cached instance to avoid redundant SCC builds.
+
+## Idea: reuse dep-graph across insert (no implementation yet)
+Insert FC is monotonic with respect to the graph after the delete stage in the
+same turn: it only **adds** nodes/edges. This raises a potential optimization:
+if a dep-graph already exists for the *post-delete* graph, could we apply the
+insert delta directly to that dep-graph rather than invalidating and rebuilding?
+
+Feasibility notes:
+- The existing `CycleDependencyGraph` is a full SCC + dependency + component +
+  depth structure. Edge inserts can *merge* SCCs, update dependencies, and
+  change depths; there is no incremental update path today.
+- Reusing the **previous turn** dep-graph is not safe without handling deletes,
+  because deletions can **split** SCCs. Dynamic SCC maintenance with deletions
+  is much more complex than insert-only updates.
+- Reusing the **post-delete** dep-graph *within the same turn* is more plausible
+  (insert-only), but would still require implementing dynamic SCC/condensation
+  updates plus component/depth recomputation. This is a non-trivial algorithmic
+  change.
+- A lighter-weight alternative is to keep the current "local dep-graph from
+  deltaReachable" approach, which already shrinks the graph size. Incremental
+  updates might not pay off unless dep-graph dominates overall time.
+
+Bottom line: the idea makes sense conceptually for insert-only phases, but
+implementing a correct incremental update of SCC/dependency/depth is not a
+small change. It is likely only worth doing if dep-graph construction remains
+the dominant cost after local-subgraph optimization.
+
+### Clarification: reuse across turns when a turn has no deletes
+If a turn performs **only inserts**, then the dep-graph after the previous
+turn’s fixpoint is still a valid starting point. In principle, we could carry
+that dep-graph forward and apply the insert delta incrementally. This avoids a
+full rebuild in insert-only turns.
+
+Key requirements / risks:
+- **Detect delete vs insert:** `applyDelta()` currently invalidates caches for
+  any delta. To reuse across turns we need a distinction between “insert-only”
+  and “delete/other,” and only keep the dep-graph in the insert-only case.
+- **Incremental SCC maintenance:** inserting edges can **merge SCCs**. We need
+  dynamic SCC update on a directed graph. This is not a small change and is
+  more complex than a simple union-find.
+- **Condensation / dependencies / depths:** `CycleDependencyGraph` also stores
+  dependencies and depth metadata. Merging SCCs invalidates these, so we need
+  a correct incremental recomputation strategy for these structures too.
+- **Cross-user correctness:** dep-graph is used by multiple paths (forward
+  compilation, rewriter, inc-regional, etc.). Any incremental update must
+  preserve all invariants, not just SCC closure for inc-regional.
+
+Feasibility outlook:
+- **Possible, but substantial:** implementing an incremental SCC + dependency
+  update for insert-only turns is possible in theory but likely larger than the
+  current optimization scope. If we pursue this, it should be justified by
+  profiling showing dep-graph rebuild is still dominant after local-subgraph
+  optimization.
 
 ## Clarifying the least-parent vs SCC intuition
 - Least-parent scopes reason about dominators and merge points (branch joins),

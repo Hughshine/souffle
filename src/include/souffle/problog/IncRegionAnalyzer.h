@@ -25,6 +25,7 @@
 #include <climits>
 #include <initializer_list>
 #include <chrono>
+#include <atomic>
 
 #include "souffle/problog/DerivationGraph.h"
 
@@ -159,6 +160,8 @@ public:
 
         // Reset caches per analysis run.
         resetDerivedCaches_();
+        expandSnapshots_.clear();
+        have_initial_snapshot_ = false;
 
         last_delta_inputs_.clear();
         last_delta_inputs_.insert(delta_input_facts.begin(), delta_input_facts.end());
@@ -191,8 +194,16 @@ public:
         Region region = initialRegion_(delta_input_facts);
         auto t3 = now();
         Boundaries B  = classifyBoundaries_(region);
+        if (incRegionalProfileEnabled) {
+            initial_region_ = region;
+            initial_boundaries_ = B;
+            have_initial_snapshot_ = true;
+        }
         auto t4 = now();
-        expandToFixpoint_(region, B);
+        std::vector<double> expand_iters_ms;
+        std::vector<double> reexpand_iters_ms;
+        const bool wantExpandIters = incRegionalProfileEnabled;
+        expandToFixpoint_(region, B, "expand", wantExpandIters ? &expand_iters_ms : nullptr);
         auto t5 = now();
 
         // Upstream closure: include ancestors (within reach_filter_) feeding region nodes,
@@ -208,7 +219,7 @@ public:
             auto tr1 = now();
             B = classifyBoundaries_(region);
             auto tr2 = now();
-            expandToFixpoint_(region, B);
+            expandToFixpoint_(region, B, "reexpand", wantExpandIters ? &reexpand_iters_ms : nullptr);
             auto tr3 = now();
             reclass_ms = toMs(tr2 - tr1);
             reexpand_ms = toMs(tr3 - tr2);
@@ -243,10 +254,25 @@ public:
         stats.dr_edges     = dr.edges.size();
         stats.region_nodes = region.nodes.size();
         stats.region_edges = region.edges.size();
+        const size_t total_nodes = view_.getNodes().size();
+        const size_t total_edges = view_.getEdges().size();
+        const double dr_edge_ratio = total_edges == 0 ? 0.0 :
+                double(stats.dr_edges) / double(total_edges);
         for (const auto& n : region.nodes) if (!n->isFact) stats.optimized_recomputed++;
         for (const auto& n : dr.nodes)     if (!n->isFact) stats.naive_recomputed++;
 
         // Emit
+        auto joinMs = [](const std::vector<double>& vals) {
+            if (vals.empty()) return std::string();
+            std::ostringstream oss;
+            oss.setf(std::ios::fixed);
+            oss << std::setprecision(3);
+            for (size_t i = 0; i < vals.size(); ++i) {
+                if (i) oss << ",";
+                oss << vals[i];
+            }
+            return oss.str();
+        };
         std::cout << "[inc-analyze] timing(ms): "
                   << " reach=" << toMs(t1 - t0)
                   << " prepare=" << toMs(t2 - t1)
@@ -262,14 +288,38 @@ public:
                   << " deltaNodes=" << last_delta_nodes_.size()
                   << " regionNodes=" << stats.region_nodes
                   << " drNodes=" << stats.dr_nodes
+                  << " regionEdges=" << stats.region_edges
+                  << " drEdges=" << stats.dr_edges
+                  << " totalNodes=" << total_nodes
+                  << " totalEdges=" << total_edges
+                  << " drEdgeRatio=" << dr_edge_ratio
                   << " lpSources=" << lp_set_.size()
                   << " scopeSources=" << node_scope_.size()
                   << " headsIndexed=" << head_scope_index_ready_.size()
-                  << " total=" << toMs(t10 - t0)
+                  << " total=" << toMs(t10 - t0);
+        if (wantExpandIters && !expand_iters_ms.empty()) {
+            std::cout << " expand_iters_ms=" << joinMs(expand_iters_ms);
+        }
+        if (wantExpandIters && !reexpand_iters_ms.empty()) {
+            std::cout << " reexpand_iters_ms=" << joinMs(reexpand_iters_ms);
+        }
+        std::cout
                   << "\n";
         emitConsole_(stats, region, wantVerboseConsole);
         if (!json_out_path.empty()) emitJSON_(stats, region, json_out_path);
         if (!csv_out_path.empty())  emitCSV_(stats, region, csv_out_path);
+        if (DerivationGraphViewInterface::isDumpDotEnabled() || incRegionalProfileEnabled) {
+            static std::atomic<size_t> regionCounter{0};
+            const size_t idx = ++regionCounter;
+            const std::string filename = "inc-region-" + std::to_string(idx) + ".dot";
+            if (DerivationGraphViewInterface::isDumpDotEnabled()) {
+                toDot(DerivationGraphViewInterface::qualifyDumpPath(filename));
+            }
+            if (incRegionalProfileEnabled) {
+                const std::string regionTxt = "region-" + std::to_string(idx) + ".txt";
+                emitText_(stats, region, B, DerivationGraphViewInterface::qualifyDumpPath(regionTxt));
+            }
+        }
 
         return stats;
     }
@@ -737,7 +787,6 @@ private:
 
     bool mergeableEdgeAtHead_(const NodePtr& head, const EdgePtr& edge) {
         if (!head || !edge) return false;
-        if (!is_anchor_path_safe(head)) return false;
         if (edge->isDeterministic()) return false;
         if (delta_insert_edges_cache_.count(edge)) return false;
         ensureHeadScopeIndex_(head);
@@ -748,7 +797,6 @@ private:
 
     std::pair<bool, std::string> edgeAnchorStatus_(const NodePtr& head, const EdgePtr& edge) {
         if (!head || !edge) return {false, "null_edge_or_head"};
-        if (!is_anchor_path_safe(head)) return {false, "head_output_or_evidence"};
         if (edge->isDeterministic()) return {false, "edge_deterministic"};
         if (delta_insert_edges_cache_.count(edge)) return {false, "edge_delta_insert"};
         ensureHeadScopeIndex_(head);
@@ -768,9 +816,6 @@ private:
     // Diagnostic helper to explain why a boundary head has no mergeable anchors.
     std::string explainMissingAnchor_(const NodePtr& head) {
         if (!head) return "null_head";
-        if (!is_anchor_path_safe(head)) {
-            return "head_is_output_or_evidence";
-        }
         const auto& inEdges = view_.getIncomingEdges(head);
         if (inEdges.empty()) {
             return "no_incoming_edges";
@@ -944,7 +989,7 @@ private:
 
     bool hasAnyAnchorCandidate_(const NodePtr& head) {
         if (!head) return false;
-        if (!is_anchor_path_safe(head)) return false;
+        if (delta_insert_nodes_cache_.count(head)) return false;
         const auto& inEs = view_.getIncomingEdges(head);
         for (const auto& e : inEs) {
             if (edgeAnchorStatus_(head, e).first) {
@@ -993,20 +1038,27 @@ private:
                     [](const NodePtr& a, const NodePtr& b) { return node_id(a) < node_id(b); });
         }
         for (const auto& head : boundary_vec) {
-            auto inEs = view_.getIncomingEdges(head);
-            const bool anchorPathOk = is_anchor_path_safe(head);
-            for (auto& e : inEs) {
-                if (!anchorPathOk) {
-                    logAnchorCheck_(head, std::string("edge:") + edge_id(e, view_), false,
-                        "head_output_or_evidence");
-                    continue;
+            if (delta_insert_nodes_cache_.count(head)) {
+                if (incRegionalProfileEnabled) {
+                    std::cout << "[inc-regional] boundary head skip anchors: "
+                              << node_id(head) << " reason=boundary_head_is_delta\n";
                 }
+                continue;
+            }
+            auto inEs = view_.getIncomingEdges(head);
+            for (auto& e : inEs) {
                 auto edgeStatus = edgeAnchorStatus_(head, e);
-                logAnchorCheck_(head, std::string("edge:") + edge_id(e, view_), edgeStatus.first, edgeStatus.second);
                 if (edgeStatus.first) {
+                    if (R.edges.count(e)) {
+                        logAnchorCheck_(head, std::string("edge:") + edge_id(e, view_), false,
+                            "edge_anchor_in_region");
+                        continue;
+                    }
+                    logAnchorCheck_(head, std::string("edge:") + edge_id(e, view_), true, edgeStatus.second);
                     anchors[head].push_back(AnchorCandidate::fromEdge(e));
                     continue;
                 }
+                logAnchorCheck_(head, std::string("edge:") + edge_id(e, view_), false, edgeStatus.second);
                 if (!e || !e->isDeterministic()) {
                     continue;
                 }
@@ -1017,6 +1069,11 @@ private:
                     if (!is_anchor_path_safe(inNode)) {
                         logAnchorCheck_(head, std::string("node:") + node_id(inNode), false,
                             "input_output_or_evidence");
+                        continue;
+                    }
+                    if (R.nodes.count(inNode)) {
+                        logAnchorCheck_(head, std::string("node:") + node_id(inNode), false,
+                            "input_node_in_region");
                         continue;
                     }
                     if (inNode->isFact && inNode->getProbability() < 1.0) {
@@ -1041,6 +1098,11 @@ private:
                         if (inEdge->isDeterministic()) {
                             logAnchorCheck_(head, std::string("edge:") + edge_id(inEdge, view_), false,
                                 "input_edge_deterministic");
+                            continue;
+                        }
+                        if (R.edges.count(inEdge)) {
+                            logAnchorCheck_(head, std::string("edge:") + edge_id(inEdge, view_), false,
+                                "input_edge_in_region");
                             continue;
                         }
                         if (delta_insert_edges_cache_.count(inEdge)) {
@@ -1111,21 +1173,58 @@ private:
         return changed;
     }
 
-    void expandToFixpoint_(Region& R, Boundaries& B) {
+    void expandToFixpoint_(Region& R, Boundaries& B, const char* phase,
+                           std::vector<double>* iter_ms_out) {
         const bool verbose = incRegionalProfileEnabled;
+        auto now = [] { return std::chrono::steady_clock::now(); };
+        auto toMs = [](auto dur) { return std::chrono::duration<double, std::milli>(dur).count(); };
+        auto boundaryCount = [](const Boundaries& b) {
+            return b.out_induced.size() + b.scope_induced.size() + b.residual.size();
+        };
         int guard = 0;
+        auto recordSnapshot = [&](const char* reason, size_t boundary_before, size_t blocking_count,
+                                   bool extended, double iter_ms) {
+            if (!incRegionalProfileEnabled) return;
+            ExpandSnapshot snap;
+            snap.phase = phase;
+            snap.iter = guard;
+            snap.iterMs = iter_ms;
+            snap.boundaryBefore = boundary_before;
+            snap.boundaryAfter = boundaryCount(B);
+            snap.blockingCount = blocking_count;
+            snap.extended = extended;
+            snap.reason = reason;
+            snap.region = R;
+            snap.boundaries = B;
+            expandSnapshots_.push_back(std::move(snap));
+        };
         while (guard++ < 10000) {
+            auto iter_start = now();
             auto boundary_nodes = B.out_induced;
             boundary_nodes.insert(B.scope_induced.begin(), B.scope_induced.end());
             boundary_nodes.insert(B.residual.begin(), B.residual.end());
+            const size_t boundary_count = boundary_nodes.size();
             if (verbose) {
                 std::cout << "[region] expand iter " << guard
                           << " |R_nodes|=" << R.nodes.size()
                           << " |R_edges|=" << R.edges.size()
-                          << " |boundary|=" << boundary_nodes.size()
+                          << " |boundary|=" << boundary_count
                           << std::endl;
             }
             if (boundary_nodes.empty()) {
+                auto iter_end = now();
+                const double iter_ms = toMs(iter_end - iter_start);
+                if (iter_ms_out) iter_ms_out->push_back(iter_ms);
+                recordSnapshot("boundary_empty", boundary_count, 0, false, iter_ms);
+                if (incRegionalProfileEnabled) {
+                    std::cout << "[inc-analyze-expand] phase=" << phase
+                              << " iter=" << guard
+                              << " ms=" << iter_ms
+                              << " boundary=" << boundary_count
+                              << " blocking=0 extended=0 reason=boundary_empty"
+                              << " nodes=" << R.nodes.size()
+                              << " edges=" << R.edges.size() << "\n";
+                }
                 if (verbose) {
                     std::cout << "[region] boundary empty, stopping expansion\n";
                 }
@@ -1137,8 +1236,9 @@ private:
                     blocking.push_back(n);
                 }
             }
+            const size_t blocking_count = blocking.size();
             if (verbose) {
-                std::cout << "[region] blocking boundary count=" << blocking.size() << std::endl;
+                std::cout << "[region] blocking boundary count=" << blocking_count << std::endl;
             }
             if (incRegionalProfileEnabled) {
                 std::cout << "[region] anchor diagnostics begin (iter " << guard << ")\n";
@@ -1146,6 +1246,20 @@ private:
                 std::cout << "[region] anchor diagnostics end (iter " << guard << ")\n";
             }
             if (blocking.empty()) {
+                auto iter_end = now();
+                const double iter_ms = toMs(iter_end - iter_start);
+                if (iter_ms_out) iter_ms_out->push_back(iter_ms);
+                recordSnapshot("all_mergeable", boundary_count, blocking_count, false, iter_ms);
+                if (incRegionalProfileEnabled) {
+                    std::cout << "[inc-analyze-expand] phase=" << phase
+                              << " iter=" << guard
+                              << " ms=" << iter_ms
+                              << " boundary=" << boundary_count
+                              << " blocking=" << blocking_count
+                              << " extended=0 reason=all_mergeable"
+                              << " nodes=" << R.nodes.size()
+                              << " edges=" << R.edges.size() << "\n";
+                }
                 if (verbose) {
                     std::cout << "[region] all boundary nodes mergeable, stopping expansion\n";
                 }
@@ -1194,12 +1308,40 @@ private:
                 }
             }
             if (!extended) {
+                auto iter_end = now();
+                const double iter_ms = toMs(iter_end - iter_start);
+                if (iter_ms_out) iter_ms_out->push_back(iter_ms);
+                recordSnapshot("no_extension", boundary_count, blocking_count, false, iter_ms);
+                if (incRegionalProfileEnabled) {
+                    std::cout << "[inc-analyze-expand] phase=" << phase
+                              << " iter=" << guard
+                              << " ms=" << iter_ms
+                              << " boundary=" << boundary_count
+                              << " blocking=" << blocking_count
+                              << " extended=0 reason=no_extension"
+                              << " nodes=" << R.nodes.size()
+                              << " edges=" << R.edges.size() << "\n";
+                }
                 if (verbose) {
                     std::cout << "[region] scopes added no new items, stopping expansion\n";
                 }
                 break;
             }
             B = classifyBoundaries_(R);
+            auto iter_end = now();
+            const double iter_ms = toMs(iter_end - iter_start);
+            if (iter_ms_out) iter_ms_out->push_back(iter_ms);
+            recordSnapshot("continue", boundary_count, blocking_count, true, iter_ms);
+            if (incRegionalProfileEnabled) {
+                std::cout << "[inc-analyze-expand] phase=" << phase
+                          << " iter=" << guard
+                          << " ms=" << iter_ms
+                          << " boundary=" << boundary_count
+                          << " blocking=" << blocking_count
+                          << " extended=1 reason=continue"
+                          << " nodes=" << R.nodes.size()
+                          << " edges=" << R.edges.size() << "\n";
+            }
         }
         if (guard >= 10000) {
             if (verbose) {
@@ -1410,6 +1552,165 @@ private:
         }
     }
 
+    void emitText_(const Stats& s, const Region& R, const Boundaries& B, const std::string& path) {
+        std::ofstream out(path);
+        if (!out) return;
+
+        auto sortNodes = [&](const auto& nodes) {
+            std::vector<NodePtr> v(nodes.begin(), nodes.end());
+            std::sort(v.begin(), v.end(),
+                    [](const NodePtr& a, const NodePtr& b) { return node_id(a) < node_id(b); });
+            return v;
+        };
+        auto sortEdges = [&](const auto& edges) {
+            std::vector<EdgePtr> v(edges.begin(), edges.end());
+            std::sort(v.begin(), v.end(), [&](const EdgePtr& a, const EdgePtr& b) {
+                return edge_id(a, view_) < edge_id(b, view_);
+            });
+            return v;
+        };
+        auto dumpNodeSet = [&](const char* label, const std::set<NodePtr>& nodes) {
+            out << label << " (" << nodes.size() << ")\n";
+            for (const auto& n : nodes) {
+                out << "  - " << node_id(n) << "\n";
+            }
+        };
+
+        out << "=== Incremental Region Analysis ===\n";
+        out << "Delta nodes: " << last_delta_nodes_.size() << "\n";
+        out << "Delta edges: " << last_delta_edges_.size() << "\n";
+        out << "Region nodes: " << s.region_nodes << " / DR nodes: " << s.dr_nodes << "\n";
+        out << "Region edges: " << s.region_edges << " / DR edges: " << s.dr_edges << "\n";
+        out << "Recompute (optimized): " << s.optimized_recomputed
+            << " ; (naive): " << s.naive_recomputed
+            << " ; ratio: " << std::fixed << std::setprecision(3) << s.ratio()
+            << " ; diff: " << s.diff() << "\n";
+        out << "\n";
+
+        if (have_initial_snapshot_) {
+            out << "Initial region snapshot\n";
+            out << "  nodes=" << initial_region_.nodes.size()
+                << " edges=" << initial_region_.edges.size() << "\n";
+            out << "  boundaries(out=" << initial_boundaries_.out_induced.size()
+                << ", scope=" << initial_boundaries_.scope_induced.size()
+                << ", residual=" << initial_boundaries_.residual.size() << ")\n";
+            out << "  Region nodes (" << initial_region_.nodes.size() << ")\n";
+            for (const auto& n : sortNodes(initial_region_.nodes)) {
+                out << "    - " << node_id(n) << "\n";
+            }
+            out << "  Region edges (" << initial_region_.edges.size() << ")\n";
+            for (const auto& e : sortEdges(initial_region_.edges)) {
+                out << "    - " << edge_id(e, view_) << "\n";
+            }
+            out << "  Boundaries out_induced (" << initial_boundaries_.out_induced.size() << ")\n";
+            for (const auto& n : initial_boundaries_.out_induced) {
+                out << "    - " << node_id(n) << "\n";
+            }
+            out << "  Boundaries scope_induced (" << initial_boundaries_.scope_induced.size() << ")\n";
+            for (const auto& n : initial_boundaries_.scope_induced) {
+                out << "    - " << node_id(n) << "\n";
+            }
+            out << "  Boundaries residual (" << initial_boundaries_.residual.size() << ")\n";
+            for (const auto& n : initial_boundaries_.residual) {
+                out << "    - " << node_id(n) << "\n";
+            }
+            out << "\n";
+        }
+
+        if (!expandSnapshots_.empty()) {
+            out << "Expand iterations (" << expandSnapshots_.size() << ")\n";
+            for (const auto& snap : expandSnapshots_) {
+                out << "  [" << snap.phase << " iter " << snap.iter << "]"
+                    << " ms=" << std::fixed << std::setprecision(3) << snap.iterMs
+                    << " boundary_before=" << snap.boundaryBefore
+                    << " boundary_after=" << snap.boundaryAfter
+                    << " blocking=" << snap.blockingCount
+                    << " extended=" << (snap.extended ? 1 : 0)
+                    << " reason=" << snap.reason
+                    << " nodes=" << snap.region.nodes.size()
+                    << " edges=" << snap.region.edges.size()
+                    << "\n";
+
+                out << "    Region nodes (" << snap.region.nodes.size() << ")\n";
+                for (const auto& n : sortNodes(snap.region.nodes)) {
+                    out << "      - " << node_id(n) << "\n";
+                }
+                out << "    Region edges (" << snap.region.edges.size() << ")\n";
+                for (const auto& e : sortEdges(snap.region.edges)) {
+                    out << "      - " << edge_id(e, view_) << "\n";
+                }
+                out << "    Boundaries out_induced (" << snap.boundaries.out_induced.size() << ")\n";
+                for (const auto& n : snap.boundaries.out_induced) {
+                    out << "      - " << node_id(n) << "\n";
+                }
+                out << "    Boundaries scope_induced (" << snap.boundaries.scope_induced.size() << ")\n";
+                for (const auto& n : snap.boundaries.scope_induced) {
+                    out << "      - " << node_id(n) << "\n";
+                }
+                out << "    Boundaries residual (" << snap.boundaries.residual.size() << ")\n";
+                for (const auto& n : snap.boundaries.residual) {
+                    out << "      - " << node_id(n) << "\n";
+                }
+            }
+            out << "\n";
+        }
+
+        out << "Delta input nodes (" << last_delta_inputs_.size() << ")\n";
+        for (const auto& n : sortNodes(last_delta_inputs_)) {
+            out << "  - " << node_id(n) << "\n";
+        }
+        out << "Delta insert nodes (" << last_delta_nodes_.size() << ")\n";
+        for (const auto& n : sortNodes(last_delta_nodes_)) {
+            out << "  - " << node_id(n) << "\n";
+        }
+        out << "Delta insert edges (" << last_delta_edges_.size() << ")\n";
+        for (const auto& e : sortEdges(last_delta_edges_)) {
+            out << "  - " << edge_id(e, view_) << "\n";
+        }
+        out << "\n";
+
+        out << "Region nodes (" << R.nodes.size() << ")\n";
+        for (const auto& n : sortNodes(R.nodes)) {
+            out << "  - " << node_id(n) << "\n";
+        }
+        out << "Region edges (" << R.edges.size() << ")\n";
+        for (const auto& e : sortEdges(R.edges)) {
+            out << "  - " << edge_id(e, view_) << "\n";
+        }
+        out << "\n";
+
+        out << "Delta-reachable nodes (" << dr_.nodes.size() << ")\n";
+        for (const auto& n : sortNodes(dr_.nodes)) {
+            out << "  - " << node_id(n) << "\n";
+        }
+        out << "Delta-reachable edges (" << dr_.edges.size() << ")\n";
+        for (const auto& e : sortEdges(dr_.edges)) {
+            out << "  - " << edge_id(e, view_) << "\n";
+        }
+        out << "\n";
+
+        dumpNodeSet("Boundary out_induced", B.out_induced);
+        dumpNodeSet("Boundary scope_induced", B.scope_induced);
+        dumpNodeSet("Boundary residual", B.residual);
+        out << "\n";
+
+        out << "Mergeable anchors by head (" << last_analysis_.mergeableAnchorsByHead.size() << ")\n";
+        std::vector<NodePtr> heads;
+        heads.reserve(last_analysis_.mergeableAnchorsByHead.size());
+        for (const auto& kv : last_analysis_.mergeableAnchorsByHead) {
+            heads.push_back(kv.first);
+        }
+        std::sort(heads.begin(), heads.end(),
+                [](const NodePtr& a, const NodePtr& b) { return node_id(a) < node_id(b); });
+        for (const auto& head : heads) {
+            const auto& anchors = last_analysis_.mergeableAnchorsByHead.at(head);
+            out << "  head " << node_id(head) << " (" << anchors.size() << " anchors)\n";
+            for (const auto& anchor : anchors) {
+                out << "    - " << anchor_id(anchor, view_) << "\n";
+            }
+        }
+    }
+
     void emitLegend_(std::ofstream& out, bool includeMerge) const {
         out << "  subgraph cluster_legend {\n";
         out << "    label=\"Legend\";\n";
@@ -1489,6 +1790,23 @@ private:
     std::unordered_set<EdgePtr> delta_insert_edges_cache_;
     std::unordered_set<NodePtr> delta_insert_nodes_cache_;
 
+    struct ExpandSnapshot {
+        std::string phase;
+        int iter = 0;
+        double iterMs = 0.0;
+        size_t boundaryBefore = 0;
+        size_t boundaryAfter = 0;
+        size_t blockingCount = 0;
+        bool extended = false;
+        std::string reason;
+        Region region;
+        Boundaries boundaries;
+    };
+    std::vector<ExpandSnapshot> expandSnapshots_;
+    bool have_initial_snapshot_ = false;
+    Region initial_region_;
+    Boundaries initial_boundaries_;
+
     // Last run
     Region     last_region_;
     Boundaries last_boundaries_;
@@ -1563,9 +1881,11 @@ private:
         }
         std::set<NodePtr> merge_nodes;
         for (auto& [node, count] : branch_counts) {
-            if (count >= 2 && reachable.count(node)) {
-                merge_nodes.insert(node);
-            }
+            if (count < 2 || !reachable.count(node)) continue;
+            auto inIt = incoming_edges_map_.find(node);
+            if (inIt == incoming_edges_map_.end()) continue;
+            if (inIt->second.size() < 2) continue;
+            merge_nodes.insert(node);
         }
         if (merge_nodes.empty()) {
             lp_set_[source] = {};

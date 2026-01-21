@@ -63,15 +63,26 @@ Key steps (correspond to `[inc-analyze] timing(ms)`):
 Boundary classification:
 - `out_induced` / `scope_induced` / `residual` boundary nodes.
 
+Output safety:
+- Delta‑reachable outputs may remain **outside** the region (no output‑slice expansion).
+- WMC distinguishes three modes:
+  1) **Region outputs**: recompute using the rebuilt BDD + original weight map.
+  2) **Delta‑reachable outputs outside region**: reuse old BDD + calibrated weights.
+  3) **Outside delta‑reach**: reuse cached value if evidence unchanged.
+
 Mergeable anchor criteria (`mergeableEdgeAtHead_`):
 - Not a delta insert edge.
 - Non-deterministic edge (deterministic edges are excluded from direct edge anchors).
 - Respects scopes.
 - Non-subsumed.
+- Boundary heads with any incoming delta-insert edge are treated as **non-mergeable**
+  (anchor candidates skipped), forcing region expansion or fallback to avoid calibrating
+  across structural insertions.
 
 Anchor candidates:
 - Anchors can be **edges** (non-det incoming edges), or **nodes** (non-det fact nodes).
-- Anchor paths must not cross output nodes (currently treated as output/evidence for safety).
+- Anchors inside the region are rejected (avoid calibrating on rebuilt formulas).
+- Anchor paths avoid output/evidence nodes for safety.
 - If a boundary head is fed by a deterministic edge and the path from head to anchor
   contains no output/evidence nodes, we allow anchors from that deterministic edge’s inputs:
   - non-det fact inputs become **node anchors**
@@ -113,9 +124,11 @@ Note: region uses `unordered_set`, iteration order is unstable.
 Goal: rebuild only nodes/edges inside the region; keep external formulas unchanged.
 
 Steps:
-- **Snapshot**: save old formulas for boundary nodes (for later calibration).
+- **Snapshot**: save old formulas for region nodes/edges (for fallback) and
+  boundary nodes (for calibration).
 - **Init inserted nodes/edges**: build formulas and set weights for delta insert nodes/edges.
-- **SCC handling**: build `CycleDependencyGraph`, collect cycles in the region, compute indegree.
+- **SCC handling**: build a dep‑graph from delta‑reachable edges (fallback to full
+  graph if reach-edges are empty), collect cycles in the region, compute indegree.
 - **Rebuild loop**:
   - Only process edges that satisfy `shouldRebuildEdge`:
     - head is inside the region, and (edge is delta-insert or has inputs inside the region).
@@ -143,8 +156,9 @@ Flow (per boundary node v):
 
 Current behavior:
 - `calibrate()` computes and returns overrides.
-- `RegionalIncrementalForwardCompilation` applies the overrides via `FormulaManager::setVariableWeight`
-  and stores `lastOverrides_` for inspection.
+- `RegionalIncrementalForwardCompilation` applies the overrides via
+  `FormulaManager::setVariableWeight`, stores `lastOverrides_`, and records
+  region/delta‑reach sets for WMC routing.
 - Degenerate anchors (`alpha ~= beta`) are filtered using boundary snapshots; if a boundary head
   has no non-degenerate anchors it will trigger fallback (unless disabled).
 
@@ -191,9 +205,9 @@ Output location notes:
 ---
 
 ## Known Limitations / TODO
-- Calibration results are not auto-applied yet (computed and cached only).
 - Regional only covers insertion; deletion still uses old logic.
-- Current side-channel inc1 benchmark has no disjunction, so inc-regional effectively degenerates to inc-naive (delta-reachable is mostly deleted parts).
+- Current side-channel inc1 benchmark has little disjunction, so inc-regional often
+  matches inc-naive behavior (delta-reachable is narrow and calibration rarely changes outputs).
 - Anchor selection currently takes the first feasible candidate with no scoring/optimization.
 - Region iteration order is unstable (`unordered_set`); logs and output ordering are not guaranteed stable.
 

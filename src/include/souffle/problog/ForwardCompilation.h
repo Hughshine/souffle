@@ -3005,6 +3005,7 @@ void buildFormulasIncRegionalCyclewise(
     std::set<NodePtr>& changedNodes
 ) {
     debugger.logMessage(Level::INFO, "[inc-regional] start pipeline");
+    incRegionalOutputProfile.reset();
     using namespace std::chrono;
     const bool fcProfile = fcProfileEnabled;
     using Clock = std::chrono::steady_clock;
@@ -3505,22 +3506,68 @@ void buildFormulasIncRegionalCyclewise(
         return;
     }
 
+    auto insertStart = std::chrono::steady_clock::now();
+
     {
         auto start = std::chrono::steady_clock::now();
         setCuddPreConfigTag("inc_regional_insert");
         formulaManager.preConfig(view);
         setCuddPreConfigTag("");
         auto end = std::chrono::steady_clock::now();
+        const auto preConfigMs = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         debugger.logMessage(Level::INFO,
                 "preConfig (cache clear + var scan/create + dyn-reorder setup) took " +
-                        std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()) +
+                        std::to_string(preConfigMs) +
                         " milliseconds");
+        if (incRegionalProfileEnabled) {
+            debugger.addInfo("inc_regional_preconfig_ms", std::to_string(preConfigMs));
+        }
     }
 
     using FMType = std::remove_reference_t<decltype(formulaManager)>;
     RegionalIncrementalForwardCompilation<FMType, FormulaNodeRef> orchestrator;
+    auto updateStart = std::chrono::steady_clock::now();
     orchestrator.applyUpdate(view, formulaManager, nodeFormulas, edgeFormulas, changedNodes, constInfoPtr);
+    auto updateEnd = std::chrono::steady_clock::now();
     if (incRegionalProfileEnabled) {
+        const auto updateMs = std::chrono::duration_cast<std::chrono::milliseconds>(updateEnd - updateStart).count();
+        debugger.addInfo("inc_regional_apply_update_ms", std::to_string(updateMs));
+        const auto& calibrations = orchestrator.getCalibrations();
+        const auto& regionNodes = orchestrator.getRegionNodes();
+        const auto& boundaryNodes = orchestrator.getBoundaryNodes();
+        for (const auto& rec : calibrations) {
+            bool anchorInRegion = false;
+            bool anchorInDelta = false;
+            if (rec.anchor.kind == incra::IncRegionAnalysis::AnchorKind::Node) {
+                if (rec.anchor.node) {
+                    anchorInRegion = regionNodes.count(rec.anchor.node) > 0;
+                    anchorInDelta = incRegionalOutputProfile.deltaReachableNodes.count(rec.anchor.node) > 0;
+                }
+            } else {
+                if (rec.anchor.edge) {
+                    NodePtr out = view.getOutput(rec.anchor.edge);
+                    if (out) {
+                        anchorInRegion = regionNodes.count(out) > 0;
+                        anchorInDelta = incRegionalOutputProfile.deltaReachableNodes.count(out) > 0;
+                    }
+                }
+            }
+            debugger.logMessage(
+                Level::INFO,
+                std::string("[inc-regional-calibration] head=") + incra::node_id(rec.v) +
+                    " head_in_region=" + (regionNodes.count(rec.v) ? "1" : "0") +
+                    " head_in_boundary=" + (boundaryNodes.count(rec.v) ? "1" : "0") +
+                    " anchor=" + incra::anchor_id(rec.anchor, view) +
+                    " anchor_in_region=" + (anchorInRegion ? "1" : "0") +
+                    " anchor_in_delta_reach=" + (anchorInDelta ? "1" : "0") +
+                    " pStar=" + std::to_string(rec.pStar) +
+                    " target=" + std::to_string(rec.target) +
+                    " alpha=" + std::to_string(rec.alpha) +
+                    " beta=" + std::to_string(rec.beta));
+        }
+    }
+    if (incRegionalProfileEnabled) {
+        auto debugStart = std::chrono::steady_clock::now();
         const auto& stats = orchestrator.getStats();
         const auto& timing = orchestrator.getTiming();
         const auto& rt = timing.rebuildDetail;
@@ -3533,7 +3580,41 @@ void buildFormulasIncRegionalCyclewise(
         if (!timing.fallbackReason.empty()) {
             debugger.addInfo("inc_regional_fallback_reason", timing.fallbackReason);
         }
+        debugger.addInfo("inc_regional_analyze_region_nodes", std::to_string(stats.analyzeRegionNodes));
+        debugger.addInfo("inc_regional_analyze_region_edges", std::to_string(stats.analyzeRegionEdges));
+        debugger.addInfo("inc_regional_analyze_dr_nodes", std::to_string(stats.analyzeDrNodes));
+        debugger.addInfo("inc_regional_analyze_dr_edges", std::to_string(stats.analyzeDrEdges));
+        double analyzeRatio = stats.analyzeDrNodes == 0 ? 1.0
+                                                        : static_cast<double>(stats.analyzeRegionNodes) /
+                                                                  static_cast<double>(stats.analyzeDrNodes);
+        debugger.addInfo("inc_regional_analyze_region_dr_ratio", std::to_string(analyzeRatio));
         debugger.addInfo("inc_regional_region_nodes", std::to_string(stats.regionNodeCount));
+        debugger.addInfo("inc_regional_dr_nodes", std::to_string(stats.drNodeCount));
+        debugger.addInfo("inc_regional_dr_edges", std::to_string(stats.drEdgeCount));
+        double regionDrRatio = stats.drNodeCount == 0 ? 1.0
+                                                      : static_cast<double>(stats.regionNodeCount) /
+                                                                static_cast<double>(stats.drNodeCount);
+        debugger.addInfo("inc_regional_region_dr_ratio", std::to_string(regionDrRatio));
+        debugger.addInfo("inc_regional_output_slice_expanded", stats.outputSliceExpanded ? "1" : "0");
+        debugger.addInfo("inc_regional_output_slice_missing_outputs",
+                std::to_string(stats.outputSliceMissingOutputs));
+        debugger.addInfo("inc_regional_output_slice_region_nodes",
+                std::to_string(stats.outputSliceRegionNodes));
+        debugger.addInfo("inc_regional_output_slice_region_edges",
+                std::to_string(stats.outputSliceRegionEdges));
+        debugger.addInfo("inc_regional_boundary_empty_expanded", stats.boundaryEmptyExpanded ? "1" : "0");
+        debugger.addInfo("inc_regional_boundary_empty_region_nodes",
+                std::to_string(stats.boundaryEmptyRegionNodes));
+        debugger.addInfo("inc_regional_boundary_empty_region_edges",
+                std::to_string(stats.boundaryEmptyRegionEdges));
+        debugger.addInfo("inc_regional_plan_expand_attempts",
+                std::to_string(stats.planExpandAttempts));
+        debugger.addInfo("inc_regional_plan_expand_region_nodes",
+                std::to_string(stats.planExpandRegionNodes));
+        debugger.addInfo("inc_regional_plan_expand_region_edges",
+                std::to_string(stats.planExpandRegionEdges));
+        debugger.addInfo("inc_regional_plan_expand_failed_boundaries",
+                std::to_string(stats.planExpandFailedBoundaries));
         debugger.addInfo("inc_regional_boundary_nodes", std::to_string(stats.boundaryNodeCount));
         debugger.addInfo("inc_regional_calibrated_nodes", std::to_string(stats.calibratedCount));
         debugger.addInfo("inc_regional_scc_expanded", stats.sccExpanded ? "1" : "0");
@@ -3551,13 +3632,17 @@ void buildFormulasIncRegionalCyclewise(
         debugger.addInfo("inc_regional_rebuild_edges_rebuilt", std::to_string(rt.edgesRebuilt));
         debugger.addInfo("inc_regional_rebuild_nodes_updated", std::to_string(rt.nodesUpdated));
         debugger.addInfo("inc_regional_rebuild_cycle_count", std::to_string(rt.regionCycleCount));
+        debugger.addInfo("inc_regional_fallback_ms", std::to_string(timing.fallbackMs));
+        debugger.addInfo("inc_regional_total_with_fallback_ms", std::to_string(timing.totalWithFallbackMs));
         debugger.logMessage(Level::INFO,
             "[inc-regional-profile] analyze_ms=" + std::to_string(timing.analyzeMs) +
             " scc_close_ms=" + std::to_string(timing.sccCloseMs) +
             " plan_ms=" + std::to_string(timing.planMs) +
             " rebuild_ms=" + std::to_string(timing.rebuildMs) +
             " calibrate_ms=" + std::to_string(timing.calibrateMs) +
-            " total_ms=" + std::to_string(timing.totalMs));
+            " total_ms=" + std::to_string(timing.totalMs) +
+            " fallback_ms=" + std::to_string(timing.fallbackMs) +
+            " total_with_fallback_ms=" + std::to_string(timing.totalWithFallbackMs));
         debugger.logMessage(Level::INFO,
             "[inc-regional-profile] rebuild snapshot_ms=" + std::to_string(rt.snapshotMs) +
             " init_nodes_ms=" + std::to_string(rt.initNodesMs) +
@@ -3575,10 +3660,36 @@ void buildFormulasIncRegionalCyclewise(
             debugger.logMessage(Level::INFO,
                 "[inc-regional-profile] fallback_reason=" + timing.fallbackReason);
         }
+        auto debugEnd = std::chrono::steady_clock::now();
+        const auto debugMs = std::chrono::duration_cast<std::chrono::milliseconds>(debugEnd - debugStart).count();
+        debugger.addInfo("inc_regional_debug_info_ms", std::to_string(debugMs));
     }
-    formulaManager.dumpProfilingStatistics();
-    for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
-        debugger.addInfo(key, value);
+    if (incRegionalProfileEnabled) {
+        auto dumpStart = std::chrono::steady_clock::now();
+        formulaManager.dumpProfilingStatistics();
+        auto dumpEnd = std::chrono::steady_clock::now();
+        const auto dumpMs = std::chrono::duration_cast<std::chrono::milliseconds>(dumpEnd - dumpStart).count();
+        debugger.addInfo("inc_regional_dump_profile_ms", std::to_string(dumpMs));
+    } else {
+        formulaManager.dumpProfilingStatistics();
+    }
+    if (incRegionalProfileEnabled) {
+        auto statStart = std::chrono::steady_clock::now();
+        for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
+            debugger.addInfo(key, value);
+        }
+        auto statEnd = std::chrono::steady_clock::now();
+        const auto statsMs = std::chrono::duration_cast<std::chrono::milliseconds>(statEnd - statStart).count();
+        debugger.addInfo("inc_regional_profile_collect_ms", std::to_string(statsMs));
+    } else {
+        for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
+            debugger.addInfo(key, value);
+        }
+    }
+    if (incRegionalProfileEnabled) {
+        auto insertEnd = std::chrono::steady_clock::now();
+        const auto insertMs = std::chrono::duration_cast<std::chrono::milliseconds>(insertEnd - insertStart).count();
+        debugger.addInfo("inc_regional_fc_insert_ms", std::to_string(insertMs));
     }
     debugger.logMessage(Level::INFO, "[inc-regional] pipeline finished; usedFallback="
         + std::string(orchestrator.getStats().usedFallback ? "true" : "false"));

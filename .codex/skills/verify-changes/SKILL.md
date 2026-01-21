@@ -9,7 +9,7 @@ Use this for any change that should include verification evidence.
 
 ## Steps
 1. Pick the smallest relevant checks:
-   - Style: `sh/run_test_format.sh`
+   - Style: `sh/run_test_format.sh` (run only if explicitly requested)
    - Build: `cmake -S . -B build`
    - Build: `cmake --build build -j${JOBS}` (set `JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)`)
    - Smoke run: `SOUFFLE_BIN=./build/src/souffle examples/running_example/run.sh`

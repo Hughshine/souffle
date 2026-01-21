@@ -39,6 +39,24 @@ static inline const std::unordered_set<std::string>& incRegionalTraceTargets() {
     return targets;
 }
 
+struct IncRegionalOutputProfile {
+    bool active = false;
+    size_t overrideCount = 0;
+    std::set<NodePtr> regionNodes;
+    std::set<NodePtr> boundaryNodes;
+    std::unordered_set<NodePtr> deltaReachableNodes;
+
+    void reset() {
+        active = false;
+        overrideCount = 0;
+        regionNodes.clear();
+        boundaryNodes.clear();
+        deltaReachableNodes.clear();
+    }
+};
+
+inline IncRegionalOutputProfile incRegionalOutputProfile;
+
 static inline bool incRegionalTraceEnabled() {
     return !incRegionalTraceTargets().empty();
 }
@@ -90,6 +108,13 @@ struct RegionSccClosure {
         }
         return changed;
     }
+};
+
+struct LocalDepGraph {
+    SubgraphView view;
+    CycleDependencyGraph depGraph;
+    LocalDepGraph(std::unordered_set<NodePtr> nodes, std::unordered_set<EdgePtr> edges)
+            : view(std::move(nodes), std::move(edges)), depGraph(view) {}
 };
 
 static bool regionTouchesCycle(
@@ -146,6 +171,16 @@ static bool regionTouchesCycle(
         }
     }
     return false;
+}
+
+static bool regionTouchesCycle(
+    IncrementalDerivationGraphViewInterface& view,
+    const std::set<NodePtr>& regionNodes) {
+    if (regionNodes.empty()) {
+        return false;
+    }
+    std::unordered_set<NodePtr> tmp(regionNodes.begin(), regionNodes.end());
+    return regionTouchesCycle(view, tmp);
 }
 
 // Analysis cache to hand downstream without recomputing.
@@ -206,6 +241,10 @@ public:
     struct Snapshot {
         std::map<NodePtr, FormulaNodeRef> boundarySnapshots;
     };
+    struct DagPlan {
+        std::vector<NodePtr> topoOrder;
+        std::unordered_map<NodePtr, std::vector<EdgePtr>> headEdges;
+    };
     struct Timing {
         double snapshotMs = 0.0;
         double initNodesMs = 0.0;
@@ -226,7 +265,82 @@ public:
         std::set<NodePtr> changedNodes;
         std::unordered_set<EdgePtr> rebuiltEdges;
         Timing timing;
+        bool fallbackToCycle = false;
+        size_t missingInsideRegion = 0;
     };
+
+    static bool buildDagPlan(
+        IncrementalDerivationGraphViewInterface& view,
+        const RegionalInsertPlan& plan,
+        DagPlan& dag,
+        double* buildMs = nullptr) {
+        auto nowMs = []{ return std::chrono::steady_clock::now(); };
+        auto toMs = [](auto dur){
+            return std::chrono::duration<double, std::milli>(dur).count();
+        };
+        auto t0 = nowMs();
+        dag.topoOrder.clear();
+        dag.headEdges.clear();
+
+        std::unordered_map<NodePtr, size_t> indeg;
+        indeg.reserve(plan.regionNodes.size());
+        std::unordered_map<NodePtr, std::unordered_set<NodePtr>> succs;
+        succs.reserve(plan.regionNodes.size());
+
+        for (const auto& n : plan.regionNodes) {
+            indeg[n] = 0;
+        }
+
+        const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
+        auto shouldRebuildEdge = [&](const EdgePtr& e) {
+            if (!e) return false;
+            auto head = view.getOutput(e);
+            if (!head || !plan.regionNodes.count(head)) return false;
+            if (deltaInsertedEdges.count(e)) return true;
+            for (auto& in : view.getInputs(e)) {
+                if (plan.regionNodes.count(in)) return true;
+            }
+            return false;
+        };
+
+        for (const auto& head : plan.regionNodes) {
+            for (const auto& e : view.getIncomingEdges(head)) {
+                if (!shouldRebuildEdge(e)) continue;
+                dag.headEdges[head].push_back(e);
+                for (const auto& in : view.getInputs(e)) {
+                    if (!plan.regionNodes.count(in)) continue;
+                    auto& succSet = succs[in];
+                    if (succSet.insert(head).second) {
+                        indeg[head] += 1;
+                    }
+                }
+            }
+        }
+
+        std::queue<NodePtr> ready;
+        for (const auto& kv : indeg) {
+            if (kv.second == 0) ready.push(kv.first);
+        }
+        while (!ready.empty()) {
+            NodePtr cur = ready.front();
+            ready.pop();
+            dag.topoOrder.push_back(cur);
+            auto sit = succs.find(cur);
+            if (sit == succs.end()) continue;
+            for (const auto& succ : sit->second) {
+                auto it = indeg.find(succ);
+                if (it == indeg.end()) continue;
+                if (--it->second == 0) {
+                    ready.push(succ);
+                }
+            }
+        }
+
+        if (buildMs) {
+            *buildMs = toMs(nowMs() - t0);
+        }
+        return dag.topoOrder.size() == plan.regionNodes.size();
+    }
 
     static Result rebuildInsertRegion(
         IncrementalDerivationGraphViewInterface& view,
@@ -234,7 +348,8 @@ public:
         std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
         std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
         const RegionalInsertPlan& plan,
-        const ConstAnalysisResult* constInfo = nullptr) {
+        const ConstAnalysisResult* constInfo = nullptr,
+        const CycleDependencyGraph* depGraphOverride = nullptr) {
         Result res;
         auto nowMs = []{ return std::chrono::steady_clock::now(); };
         auto toMs = [](auto dur){
@@ -289,7 +404,7 @@ public:
         auto tInitEdgesEnd = nowMs();
 
         auto tDepGraphStart = nowMs();
-        auto& depGraph = view.getCycleDependencyGraph();
+        const auto& depGraph = depGraphOverride ? *depGraphOverride : view.getCycleDependencyGraph();
         auto tDepGraphEnd = nowMs();
         std::unordered_set<size_t> regionCycles;
         auto tRegionCyclesStart = nowMs();
@@ -478,6 +593,173 @@ public:
         return res;
     }
 
+    static Result rebuildInsertRegionDag(
+        IncrementalDerivationGraphViewInterface& view,
+        FormulaManagerT& formulaManager,
+        std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
+        std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
+        const RegionalInsertPlan& plan,
+        const DagPlan& dag,
+        double dagBuildMs,
+        const ConstAnalysisResult* constInfo = nullptr) {
+        Result res;
+        auto nowMs = []{ return std::chrono::steady_clock::now(); };
+        auto toMs = [](auto dur){
+            return std::chrono::duration<double, std::milli>(dur).count();
+        };
+        auto t0 = nowMs();
+        double reorderStartSec = getReorderSeconds(formulaManager, 0);
+        ConstFormulaAccess<FormulaNodeRef> constAccess{constInfo, formulaManager};
+
+        // Snapshot old boundary formulas
+        auto tSnapshotStart = nowMs();
+        for (auto& v : plan.boundaryNodes) {
+            auto it = nodeFormulas.find(v);
+            if (it != nodeFormulas.end()) {
+                res.snapshot.boundarySnapshots[v] = it->second;
+            } else {
+                res.snapshot.boundarySnapshots[v] = formulaManager.getFalse();
+            }
+        }
+        auto tSnapshotEnd = nowMs();
+
+        const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
+        const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
+
+        // Initialize inserted nodes
+        auto tInitNodesStart = nowMs();
+        for (auto node : deltaInsertedNodes) {
+            if (node->isFact) {
+                int idx = formulaManager.getVarIndex(*node);
+                if (node->getProbability() == 1.0) {
+                    nodeFormulas[node] = formulaManager.getTrue();
+                } else {
+                    nodeFormulas[node] = formulaManager.createVar(idx, *node);
+                    formulaManager.setVariableWeight(idx, node->getProbability(), 1 - node->getProbability());
+                }
+            } else {
+                nodeFormulas[node] = formulaManager.getFalse();
+            }
+            res.changedNodes.insert(node);
+        }
+        auto tInitNodesEnd = nowMs();
+
+        // Initialize inserted edges
+        auto tInitEdgesStart = nowMs();
+        for (auto edge : deltaInsertedEdges) {
+            edgeFormulas[edge] = formulaManager.getFalse();
+            if (!edge->isDeterministic()) {
+                int idx = formulaManager.getVarIndex(*edge);
+                formulaManager.createVar(idx, *edge);
+                formulaManager.setVariableWeight(idx, edge->getProbability(), 1 - edge->getProbability());
+            }
+        }
+        auto tInitEdgesEnd = nowMs();
+
+        auto tRebuildStart = nowMs();
+        size_t nodesUpdated = 0;
+        bool abortDag = false;
+        for (const auto& head : dag.topoOrder) {
+            if (abortDag) break;
+            auto itEdges = dag.headEdges.find(head);
+            if (itEdges == dag.headEdges.end()) {
+                continue;
+            }
+            for (const auto& edge : itEdges->second) {
+                res.timing.edgesProcessed += 1;
+                const auto& ins = view.getInputs(edge);
+                const auto& negs = view.getBodyNegations(edge);
+                FormulaNodeRef newEdge;
+                bool edgeIsConst = constAccess.edgeFormula(edge, newEdge);
+                bool allAvail = true;
+                bool missingInsideRegion = false;
+                if (!edgeIsConst) {
+                    FormulaNodeRef base = edge->isDeterministic()
+                        ? formulaManager.getTrue()
+                        : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
+                    std::vector<FormulaNodeRef> inputs{base};
+                    for (size_t i = 0; i < ins.size(); ++i) {
+                        FormulaNodeRef lit;
+                        if (!constAccess.inputLiteral(nodeFormulas, ins[i], negs[i], lit)) {
+                            allAvail = false;
+                            if (plan.regionNodes.count(ins[i])) {
+                                missingInsideRegion = true;
+                            }
+                            break;
+                        }
+                        inputs.push_back(lit);
+                    }
+                    if (!allAvail) {
+                        if (missingInsideRegion) {
+                            res.missingInsideRegion += 1;
+                            abortDag = true;
+                            if (incRegionalProfileEnabled) {
+                                std::cout << "[inc-regional-dag] missing input for head="
+                                          << incra::node_id(view.getOutput(edge))
+                                          << " input=" << incra::node_id(ins.empty() ? nullptr : ins[0])
+                                          << " reason=missing_inside_region\n";
+                            }
+                            break;
+                        }
+                        continue;
+                    }
+                    newEdge = (inputs.size()==1) ? inputs[0] : formulaManager.makeAnd(inputs);
+                }
+                if (!edgeFormulas.count(edge) || !formulaManager.isSame(edgeFormulas[edge], newEdge)) {
+                    edgeFormulas[edge] = newEdge;
+                    res.rebuiltEdges.insert(edge);
+                }
+            }
+
+            if (!head || head->isFact) {
+                continue;
+            }
+            if (abortDag) break;
+            FormulaNodeRef newNode;
+            bool hasNewNode = constAccess.nodeFormula(head, newNode);
+            if (!hasNewNode) {
+                std::vector<FormulaNodeRef> incoming;
+                for (auto eIn : view.getIncomingEdges(head)) {
+                    auto itEF = edgeFormulas.find(eIn);
+                    if (itEF != edgeFormulas.end() && itEF->second.get()) incoming.push_back(itEF->second);
+                }
+                if (incoming.empty()) {
+                    continue;
+                }
+                newNode = (incoming.size()==1) ? incoming[0] : formulaManager.makeOr(incoming);
+                hasNewNode = true;
+            }
+            if (hasNewNode && (!nodeFormulas.count(head) || !formulaManager.isSame(nodeFormulas[head], newNode))) {
+                nodeFormulas[head] = newNode;
+                res.changedNodes.insert(head);
+                nodesUpdated += 1;
+            }
+        }
+        auto tRebuildEnd = nowMs();
+
+        double reorderEndSec = getReorderSeconds(formulaManager, 0);
+        auto tEnd = nowMs();
+        res.timing.snapshotMs = toMs(tSnapshotEnd - tSnapshotStart);
+        res.timing.initNodesMs = toMs(tInitNodesEnd - tInitNodesStart);
+        res.timing.initEdgesMs = toMs(tInitEdgesEnd - tInitEdgesStart);
+        res.timing.depGraphMs = 0.0;
+        res.timing.regionCyclesMs = 0.0;
+        res.timing.indegreeMs = dagBuildMs;
+        res.timing.rebuildLoopMs = toMs(tRebuildEnd - tRebuildStart);
+        res.timing.totalMs = toMs(tEnd - t0);
+        res.timing.reorderMs = (reorderEndSec > reorderStartSec)
+            ? (reorderEndSec - reorderStartSec) * 1000.0
+            : 0.0;
+        res.timing.regionCycleCount = dag.topoOrder.size();
+        res.timing.nodesUpdated = nodesUpdated;
+        res.timing.edgesRebuilt = res.rebuiltEdges.size();
+        if (abortDag) {
+            res.fallbackToCycle = true;
+        }
+
+        return res;
+    }
+
 private:
     template <typename T>
     static auto getReorderSeconds(T& fm, int) -> decltype(fm.getReorderingTimeSeconds(), double()) {
@@ -540,7 +822,19 @@ public:
             size_t tried = 0;
             size_t missingSnapshot = 0;
             size_t degenerate = 0;
+            size_t candidateIdx = 0;
             for (auto& anchor : anchorIt->second) {
+                const size_t idx = candidateIdx++;
+                const auto anchorLabel = incra::anchor_id(anchor, view);
+                auto logDecision = [&](const char* decision, const char* reason) {
+                    if (!incRegionalProfileEnabled) return;
+                    std::cout << "[inc-regional-calibrate-anchor] head=" << incra::node_id(v)
+                              << " idx=" << idx
+                              << " anchor=" << anchorLabel
+                              << " decision=" << decision
+                              << " reason=" << reason
+                              << "\n";
+                };
                 int varIdx = -1;
                 if (anchor.kind == incra::IncRegionAnalysis::AnchorKind::Node) {
                     if (!anchor.node) {
@@ -548,6 +842,7 @@ public:
                             std::cout << "[inc-regional] calibrate skip head=" << incra::node_id(v)
                                       << " anchor=node:<null> reason=node_null\n";
                         }
+                        logDecision("reject", "node_null");
                         continue;
                     }
                     if (!anchor.node->isFact) {
@@ -556,6 +851,7 @@ public:
                                       << " anchor=node:" << incra::node_id(anchor.node)
                                       << " reason=node_not_fact\n";
                         }
+                        logDecision("reject", "node_not_fact");
                         continue;
                     }
                     if (anchor.node->getProbability() >= 1.0) {
@@ -564,6 +860,7 @@ public:
                                       << " anchor=node:" << incra::node_id(anchor.node)
                                       << " reason=node_prob_one\n";
                         }
+                        logDecision("reject", "node_prob_one");
                         continue;
                     }
                     varIdx = formulaManager.getVarIndex(*anchor.node);
@@ -573,6 +870,7 @@ public:
                             std::cout << "[inc-regional] calibrate skip head=" << incra::node_id(v)
                                       << " anchor=edge:<null> reason=edge_null\n";
                         }
+                        logDecision("reject", "edge_null");
                         continue;
                     }
                     varIdx = formulaManager.getVarIndex(*anchor.edge);
@@ -587,6 +885,7 @@ public:
                                   << " anchor=" << incra::anchor_id(anchor, view)
                                   << " reason=missing_snapshot\n";
                     }
+                    logDecision("reject", "missing_snapshot");
                     continue;
                 }
                 double oldVal = formulaManager.computeWeightedModelCount(snapIt->second);
@@ -597,24 +896,49 @@ public:
                 formulaManager.setVariableWeight(varIdx, oldW.posWeight, oldW.negWeight);
                 if (std::fabs(beta - alpha) < eps) {
                     degenerate++;
+                    logDecision("reject", "degenerate");
                     continue;
                 }
                 double pStar = (target - alpha) / (beta - alpha);
-                if (!std::isfinite(pStar) || pStar < -eps || pStar > 1.0 + eps) {
+                if (!std::isfinite(pStar)) {
                     if (incRegionalProfileEnabled) {
                         std::cout << "[inc-regional] calibrate skip head=" << incra::node_id(v)
                                   << " anchor=" << incra::anchor_id(anchor, view)
-                                  << " reason=pstar_out_of_range"
+                                  << " reason=pstar_non_finite"
                                   << " target=" << target
                                   << " alpha=" << alpha
                                   << " beta=" << beta
                                   << " pStar=" << pStar
                                   << "\n";
                     }
+                    logDecision("reject", "pstar_non_finite");
                     continue;
                 }
-                if (pStar < 0.0) pStar = 0.0;
-                if (pStar > 1.0) pStar = 1.0;
+                if (pStar < -eps) {
+                    if (incRegionalProfileEnabled) {
+                        std::cout << "[inc-regional] calibrate skip head=" << incra::node_id(v)
+                                  << " anchor=" << incra::anchor_id(anchor, view)
+                                  << " reason=pstar_negative"
+                                  << " target=" << target
+                                  << " alpha=" << alpha
+                                  << " beta=" << beta
+                                  << " pStar=" << pStar
+                                  << "\n";
+                    }
+                    logDecision("reject", "pstar_negative");
+                    continue;
+                }
+                const bool pStarOutOfRange = (pStar > 1.0 + eps);
+                if (pStarOutOfRange && incRegionalProfileEnabled) {
+                    std::cout << "[inc-regional] calibrate note head=" << incra::node_id(v)
+                              << " anchor=" << incra::anchor_id(anchor, view)
+                              << " reason=pstar_out_of_range"
+                              << " target=" << target
+                              << " alpha=" << alpha
+                              << " beta=" << beta
+                              << " pStar=" << pStar
+                              << "\n";
+                }
                 CalibrationRecord rec;
                 rec.v = v;
                 rec.anchor = anchor;
@@ -627,6 +951,7 @@ public:
                 res.applied.push_back(rec);
                 res.weightOverrides[varIdx] = {pStar, 1 - pStar};
                 calibrated = true;
+                logDecision("accept", pStarOutOfRange ? "pstar_out_of_range" : "ok");
                 break;
             }
             if (!calibrated) {
@@ -661,11 +986,28 @@ public:
         double eps = 1e-12;
     };
     struct Stats {
+        size_t analyzeRegionNodes = 0;
+        size_t analyzeRegionEdges = 0;
+        size_t analyzeDrNodes = 0;
+        size_t analyzeDrEdges = 0;
         size_t regionNodeCount = 0;
+        size_t drNodeCount = 0;
+        size_t drEdgeCount = 0;
         size_t boundaryNodeCount = 0;
         size_t calibratedCount = 0;
         bool usedFallback = false;
         bool sccExpanded = false;
+        bool outputSliceExpanded = false;
+        size_t outputSliceMissingOutputs = 0;
+        size_t outputSliceRegionNodes = 0;
+        size_t outputSliceRegionEdges = 0;
+        bool boundaryEmptyExpanded = false;
+        size_t boundaryEmptyRegionNodes = 0;
+        size_t boundaryEmptyRegionEdges = 0;
+        int planExpandAttempts = 0;
+        size_t planExpandRegionNodes = 0;
+        size_t planExpandRegionEdges = 0;
+        size_t planExpandFailedBoundaries = 0;
     };
     struct Timing {
         double analyzeMs = 0.0;
@@ -674,6 +1016,8 @@ public:
         double rebuildMs = 0.0;
         double calibrateMs = 0.0;
         double totalMs = 0.0;
+        double fallbackMs = 0.0;
+        double totalWithFallbackMs = 0.0;
         std::string fallbackReason;
         typename RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::Timing rebuildDetail;
     };
@@ -729,15 +1073,85 @@ public:
         // Regional pipeline expects an existing baseline; enforce it.
         assert(!(nodeFormulas.empty() && edgeFormulas.empty()) &&
                "Regional incremental requires pre-existing formulas; build baseline first.");
-        analyzer.analyze(delta_inputs);
+        auto analysisStats = analyzer.analyze(delta_inputs);
         auto analysis = analyzer.getLastAnalysis();
+        stats_.analyzeRegionNodes = analysisStats.region_nodes;
+        stats_.analyzeRegionEdges = analysisStats.region_edges;
+        stats_.analyzeDrNodes = analysisStats.dr_nodes;
+        stats_.analyzeDrEdges = analysisStats.dr_edges;
         auto t1 = nowMs();
+
+        auto buildLocalDepGraph = [&](const incra::Region& reach) -> std::unique_ptr<LocalDepGraph> {
+            std::unordered_set<NodePtr> nodes = reach.nodes;
+            std::unordered_set<EdgePtr> edges;
+            edges.reserve(reach.edges.size());
+            size_t addedInputs = 0;
+            size_t addedOutputs = 0;
+            for (const auto& e : reach.edges) {
+                if (!e) continue;
+                NodePtr out = view.getOutput(e);
+                if (out) {
+                    if (nodes.insert(out).second) {
+                        addedOutputs++;
+                    }
+                }
+                for (const auto& in : view.getInputs(e)) {
+                    if (in) {
+                        if (nodes.insert(in).second) {
+                            addedInputs++;
+                        }
+                    }
+                }
+                edges.insert(e);
+            }
+            if (incRegionalProfileEnabled) {
+                std::cout << "[inc-regional] dep_graph scope=delta-reach"
+                          << " reach_nodes=" << reach.nodes.size()
+                          << " reach_edges=" << reach.edges.size()
+                          << " local_nodes=" << nodes.size()
+                          << " local_edges=" << edges.size()
+                          << " added_inputs=" << addedInputs
+                          << " added_outputs=" << addedOutputs
+                          << " full_nodes=" << view.getNodes().size()
+                          << " full_edges=" << view.getEdges().size()
+                          << "\n";
+            }
+            return std::make_unique<LocalDepGraph>(std::move(nodes), std::move(edges));
+        };
+
+        std::unique_ptr<LocalDepGraph> localDepGraph;
+        CycleDependencyGraph* depGraphPtr = nullptr;
+        auto depGraphForReachable = [&](const incra::Region& reach) -> CycleDependencyGraph& {
+            if (depGraphPtr) {
+                return *depGraphPtr;
+            }
+            if (reach.edges.empty()) {
+                if (incRegionalProfileEnabled) {
+                    std::cout << "[inc-regional] dep_graph scope=full reason=reach_edges_empty"
+                              << " reach_nodes=" << reach.nodes.size()
+                              << " reach_edges=" << reach.edges.size()
+                              << "\n";
+                }
+                depGraphPtr = &view.getCycleDependencyGraph();
+                return *depGraphPtr;
+            }
+            if (!localDepGraph) {
+                localDepGraph = buildLocalDepGraph(reach);
+            }
+            depGraphPtr = &localDepGraph->depGraph;
+            return *depGraphPtr;
+        };
 
         // === 2) Ensure SCC-closed ===
         bool expanded = false;
+        const bool analyzeTouchesCycle = regionTouchesCycle(view, analysis.region.nodes);
+        if (incRegionalProfileEnabled) {
+            std::cout << "[inc-regional] regionTouchesCycle analyze=" << (analyzeTouchesCycle ? 1 : 0)
+                      << "\n";
+        }
         // Avoid full SCC dependency construction when the region is acyclic.
-        if (regionTouchesCycle(view, analysis.region.nodes)) {
-            auto& depGraph = view.getCycleDependencyGraph();
+        if (analyzeTouchesCycle) {
+            auto& depGraph = depGraphForReachable(analyzer.lastDeltaReachable());
             expanded = RegionSccClosure::closeToScc(analysis.region, analyzer.lastDeltaReachable(), depGraph);
             if (expanded) {
                 analysis.boundaries = analyzer.recomputeBoundaries(analysis.region);
@@ -746,6 +1160,44 @@ public:
         }
         stats_.sccExpanded = expanded;
         auto t2 = nowMs();
+
+        // If any delta-reachable output node is outside the region, record it.
+        // We deliberately avoid expanding: outputs may stay outside the region,
+        // and will be handled via calibrated boundary weights.
+        {
+            const auto& dr = analyzer.lastDeltaReachable();
+            size_t missingOutputs = 0;
+            for (const auto& n : dr.nodes) {
+                if (!n || !n->needOutput) continue;
+                if (!analysis.region.nodes.count(n)) {
+                    missingOutputs++;
+                }
+            }
+            if (missingOutputs > 0) {
+                stats_.outputSliceMissingOutputs = missingOutputs;
+                if (incRegionalProfileEnabled) {
+                    std::cout << "[inc-regional] output nodes outside region (count="
+                              << missingOutputs << "); skip output-slice expansion"
+                              << " dr_nodes=" << dr.nodes.size()
+                              << " dr_edges=" << dr.edges.size()
+                              << "\n";
+                }
+            }
+        }
+
+        struct PlanProfile {
+            double buildMs = 0.0;
+            double snapshotMs = 0.0;
+            double anchorFilterMs = 0.0;
+            double expandMs = 0.0;
+            double recomputeBoundariesMs = 0.0;
+            double recomputeAnchorsMs = 0.0;
+            double sccExpandMs = 0.0;
+            size_t anchorsChecked = 0;
+            size_t anchorsFiltered = 0;
+            int expandAttempts = 0;
+            bool anchorFilterSkipped = false;
+        } planProfile;
 
         auto boundariesEmpty = [&](const incra::Boundaries& b) {
             return b.out_induced.empty() && b.scope_induced.empty() && b.residual.empty();
@@ -760,14 +1212,25 @@ public:
                 }
             }
             if (missing) {
+                stats_.boundaryEmptyExpanded = true;
                 if (incRegionalProfileEnabled) {
                     std::cout << "[inc-regional] boundary empty but region misses delta-reachable nodes; "
                               << "expanding region to delta-reachable\n";
                 }
                 analysis.region.nodes = dr.nodes;
                 analysis.region.edges = dr.edges;
-                analysis.boundaries = analyzer.recomputeBoundaries(analysis.region);
-                analysis.mergeableAnchorsByHead = analyzer.recomputeAnchors(analysis.region, analysis.boundaries);
+                stats_.boundaryEmptyRegionNodes = analysis.region.nodes.size();
+                stats_.boundaryEmptyRegionEdges = analysis.region.edges.size();
+                {
+                    auto tB = nowMs();
+                    analysis.boundaries = analyzer.recomputeBoundaries(analysis.region);
+                    planProfile.recomputeBoundariesMs += toMs(nowMs() - tB);
+                }
+                {
+                    auto tA = nowMs();
+                    analysis.mergeableAnchorsByHead = analyzer.recomputeAnchors(analysis.region, analysis.boundaries);
+                    planProfile.recomputeAnchorsMs += toMs(nowMs() - tA);
+                }
             }
         }
 
@@ -776,86 +1239,11 @@ public:
             cache.region = analysis.region;
             cache.boundaries = analysis.boundaries;
             cache.mergeableAnchorsByHead = analysis.mergeableAnchorsByHead;
+            auto tBuildStart = nowMs();
             RegionalInsertPlan plan = RegionalInsertPlanBuilder::build(cache);
+            planProfile.buildMs += toMs(nowMs() - tBuildStart);
 
-            // Filter out degenerate anchors (alpha ~= beta) using boundary snapshots.
-            if (!plan.boundaryNodes.empty()) {
-                std::unordered_map<NodePtr, FormulaNodeRef> boundarySnapshots;
-                boundarySnapshots.reserve(plan.boundaryNodes.size());
-                for (const auto& v : plan.boundaryNodes) {
-                    auto it = nodeFormulas.find(v);
-                    if (it != nodeFormulas.end()) {
-                        boundarySnapshots[v] = it->second;
-                    } else {
-                        boundarySnapshots[v] = formulaManager.getFalse();
-                    }
-                }
-                size_t degenerateRemoved = 0;
-                for (const auto& v : plan.boundaryNodes) {
-                    auto it = plan.anchorCandidates.find(v);
-                    if (it == plan.anchorCandidates.end() || it->second.empty()) {
-                        continue;
-                    }
-                    std::vector<incra::IncRegionAnalysis::AnchorCandidate> filtered;
-                    filtered.reserve(it->second.size());
-                    for (const auto& anchor : it->second) {
-                        int varIdx = -1;
-                        if (anchor.kind == incra::IncRegionAnalysis::AnchorKind::Node) {
-                            if (!anchor.node || !anchor.node->isFact || anchor.node->getProbability() >= 1.0) {
-                                continue;
-                            }
-                            varIdx = formulaManager.getVarIndex(*anchor.node);
-                        } else {
-                            if (!anchor.edge) continue;
-                            varIdx = formulaManager.getVarIndex(*anchor.edge);
-                        }
-                        auto oldW = formulaManager.getVariableWeight(varIdx);
-                        auto snapIt = boundarySnapshots.find(v);
-                        if (snapIt == boundarySnapshots.end()) {
-                            continue;
-                        }
-                        double alpha = 0.0;
-                        double beta = 0.0;
-                        formulaManager.setVariableWeight(varIdx, 0.0, 1.0);
-                        alpha = formulaManager.computeWeightedModelCount(snapIt->second);
-                        formulaManager.setVariableWeight(varIdx, 1.0, 0.0);
-                        beta = formulaManager.computeWeightedModelCount(snapIt->second);
-                        formulaManager.setVariableWeight(varIdx, oldW.posWeight, oldW.negWeight);
-                        if (std::fabs(beta - alpha) < opt_.eps) {
-                            degenerateRemoved++;
-                            if (incRegionalProfileEnabled) {
-                                std::cout << "[inc-regional] filtered degenerate anchor head="
-                                          << incra::node_id(v)
-                                          << " anchor=" << incra::anchor_id(anchor, view) << "\n";
-                            }
-                            continue;
-                        }
-                        filtered.push_back(anchor);
-                    }
-                    it->second.swap(filtered);
-                    if (incRegionalProfileEnabled && it->second.empty()) {
-                        std::cout << "[inc-regional] boundary head has no non-degenerate anchors: "
-                                  << incra::node_id(v) << "\n";
-                    }
-                }
-                if (degenerateRemoved > 0 && incRegionalProfileEnabled) {
-                    std::cout << "[inc-regional] degenerate anchors filtered=" << degenerateRemoved << "\n";
-                }
-                // Re-evaluate mergeReady with filtered anchors.
-                if (plan.boundaryNodes.empty()) {
-                    plan.mergeReady = true;
-                } else {
-                    bool ok = true;
-                    for (const auto& v : plan.boundaryNodes) {
-                        auto it = plan.anchorCandidates.find(v);
-                        if (it == plan.anchorCandidates.end() || it->second.empty()) {
-                            ok = false;
-                            break;
-                        }
-                    }
-                    plan.mergeReady = ok;
-                }
-            }
+            planProfile.anchorFilterSkipped = planProfile.anchorFilterSkipped || !plan.boundaryNodes.empty();
             return plan;
         };
 
@@ -878,18 +1266,36 @@ public:
                 }
             }
             if (failed.empty()) break;
+            stats_.planExpandFailedBoundaries += failed.size();
+            planProfile.expandAttempts++;
+            auto tExpand = nowMs();
             bool expanded = analyzer.expandRegionFromSources(analysis.region, failed, analyzer.lastDeltaReachable());
+            planProfile.expandMs += toMs(nowMs() - tExpand);
             if (!expanded) break;
-            analysis.boundaries = analyzer.recomputeBoundaries(analysis.region);
-            analysis.mergeableAnchorsByHead = analyzer.recomputeAnchors(analysis.region, analysis.boundaries);
+            {
+                auto tB = nowMs();
+                analysis.boundaries = analyzer.recomputeBoundaries(analysis.region);
+                planProfile.recomputeBoundariesMs += toMs(nowMs() - tB);
+            }
+            {
+                auto tA = nowMs();
+                analysis.mergeableAnchorsByHead = analyzer.recomputeAnchors(analysis.region, analysis.boundaries);
+                planProfile.recomputeAnchorsMs += toMs(nowMs() - tA);
+            }
             bool sccExpanded = false;
             if (regionTouchesCycle(view, analysis.region.nodes)) {
-                auto& depGraph = view.getCycleDependencyGraph();
+                auto& depGraph = depGraphForReachable(analyzer.lastDeltaReachable());
+                auto tScc = nowMs();
                 sccExpanded = RegionSccClosure::closeToScc(analysis.region, analyzer.lastDeltaReachable(), depGraph);
+                planProfile.sccExpandMs += toMs(nowMs() - tScc);
             }
             if (sccExpanded) {
+                auto tB = nowMs();
                 analysis.boundaries = analyzer.recomputeBoundaries(analysis.region);
+                planProfile.recomputeBoundariesMs += toMs(nowMs() - tB);
+                auto tA = nowMs();
                 analysis.mergeableAnchorsByHead = analyzer.recomputeAnchors(analysis.region, analysis.boundaries);
+                planProfile.recomputeAnchorsMs += toMs(nowMs() - tA);
             }
             if (incRegionalProfileEnabled) {
                 std::cout << "[inc-regional] expanded region after missing anchors: "
@@ -902,25 +1308,10 @@ public:
             expandAttempts++;
         }
 
-        // Safety: ensure region covers delta-reachable nodes to avoid stale outputs.
-        const auto& dr = analyzer.lastDeltaReachable();
-        bool missingDeltaReach = false;
-        for (const auto& n : dr.nodes) {
-            if (!plan.regionNodes.count(n)) {
-                missingDeltaReach = true;
-                break;
-            }
-        }
-        if (missingDeltaReach) {
-            if (incRegionalProfileEnabled) {
-                std::cout << "[inc-regional] plan region misses delta-reachable nodes; "
-                          << "expanding region to delta-reachable\n";
-            }
-            analysis.region.nodes = dr.nodes;
-            analysis.region.edges = dr.edges;
-            analysis.boundaries = analyzer.recomputeBoundaries(analysis.region);
-            analysis.mergeableAnchorsByHead = analyzer.recomputeAnchors(analysis.region, analysis.boundaries);
-            plan = buildPlan();
+        stats_.planExpandAttempts = planProfile.expandAttempts;
+        if (planProfile.expandAttempts > 0) {
+            stats_.planExpandRegionNodes = analysis.region.nodes.size();
+            stats_.planExpandRegionEdges = analysis.region.edges.size();
         }
 
         if (incRegionalProfileEnabled && std::getenv("SOUFFLE_INC_REGIONAL_TRACE_TUPLES")) {
@@ -950,11 +1341,80 @@ public:
         auto t3 = nowMs();
         lastTiming_.planMs = toMs(t3 - t2);
 
+        if (incRegionalProfileEnabled) {
+            std::cout << "[inc-regional-plan]"
+                      << " build_ms=" << planProfile.buildMs
+                      << " snapshot_ms=" << planProfile.snapshotMs
+                      << " anchor_filter_ms=" << planProfile.anchorFilterMs
+                      << " anchors_checked=" << planProfile.anchorsChecked
+                      << " anchors_filtered=" << planProfile.anchorsFiltered
+                      << " anchor_filter_skipped=" << (planProfile.anchorFilterSkipped ? 1 : 0)
+                      << " expand_ms=" << planProfile.expandMs
+                      << " expand_attempts=" << planProfile.expandAttempts
+                      << " recompute_boundaries_ms=" << planProfile.recomputeBoundariesMs
+                      << " recompute_anchors_ms=" << planProfile.recomputeAnchorsMs
+                      << " scc_expand_ms=" << planProfile.sccExpandMs
+                      << "\n";
+        }
+
         stats_.regionNodeCount = plan.regionNodes.size();
+        stats_.drNodeCount = analysisStats.dr_nodes;
+        stats_.drEdgeCount = analysisStats.dr_edges;
         stats_.boundaryNodeCount = plan.boundaryNodes.size();
 
+        struct FormulaSnapshot {
+            bool has = false;
+            FormulaNodeRef formula{};
+        };
+        std::unordered_map<NodePtr, FormulaSnapshot> preNodeSnapshot;
+        std::unordered_map<EdgePtr, FormulaSnapshot> preEdgeSnapshot;
+        bool snapshotTaken = false;
+        auto takeSnapshot = [&]() {
+            if (snapshotTaken) return;
+            snapshotTaken = true;
+            preNodeSnapshot.reserve(analysis.region.nodes.size());
+            preEdgeSnapshot.reserve(analysis.region.edges.size());
+            for (const auto& node : analysis.region.nodes) {
+                auto it = nodeFormulas.find(node);
+                if (it != nodeFormulas.end()) {
+                    preNodeSnapshot[node] = {true, it->second};
+                } else {
+                    preNodeSnapshot[node] = {false, formulaManager.getFalse()};
+                }
+            }
+            for (const auto& edge : analysis.region.edges) {
+                auto it = edgeFormulas.find(edge);
+                if (it != edgeFormulas.end()) {
+                    preEdgeSnapshot[edge] = {true, it->second};
+                } else {
+                    preEdgeSnapshot[edge] = {false, formulaManager.getFalse()};
+                }
+            }
+        };
+        auto restoreSnapshot = [&]() {
+            if (!snapshotTaken) return;
+            for (const auto& [node, snap] : preNodeSnapshot) {
+                if (snap.has) {
+                    nodeFormulas[node] = snap.formula;
+                } else {
+                    nodeFormulas.erase(node);
+                }
+            }
+            for (const auto& [edge, snap] : preEdgeSnapshot) {
+                if (snap.has) {
+                    edgeFormulas[edge] = snap.formula;
+                } else {
+                    edgeFormulas.erase(edge);
+                }
+            }
+        };
+
         auto fallbackClassic = [&]() {
+            auto tFallbackStart = nowMs();
+            restoreSnapshot();
             buildFormulasIncCyclewise(view, formulaManager, nodeFormulas, edgeFormulas, changedNodes);
+            lastTiming_.fallbackMs = toMs(nowMs() - tFallbackStart);
+            lastTiming_.totalWithFallbackMs = lastTiming_.totalMs + lastTiming_.fallbackMs;
             stats_.usedFallback = true;
         };
 
@@ -964,13 +1424,58 @@ public:
             }
             lastTiming_.fallbackReason = "mergeReady=false";
             lastTiming_.totalMs = toMs(nowMs() - t0);
+            lastTiming_.totalWithFallbackMs = lastTiming_.totalMs;
             fallbackClassic();
             return;
         }
 
+        if (opt_.enableFallbackToClassicInsertion) {
+            takeSnapshot();
+        }
+
         // === 4) Regional rebuild ===
-        auto rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegion(
-            view, formulaManager, nodeFormulas, edgeFormulas, plan, constInfo);
+        const bool rebuildTouchesCycle = regionTouchesCycle(view, plan.regionNodes);
+        if (incRegionalProfileEnabled) {
+            std::cout << "[inc-regional] regionTouchesCycle rebuild=" << (rebuildTouchesCycle ? 1 : 0)
+                      << "\n";
+        }
+        typename RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::DagPlan dagPlan;
+        double dagBuildMs = 0.0;
+        const bool dagFastPath = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::buildDagPlan(
+            view, plan, dagPlan, &dagBuildMs);
+        if (incRegionalProfileEnabled) {
+            std::cout << "[inc-regional] dag_fast_path=" << (dagFastPath ? 1 : 0)
+                      << " dag_build_ms=" << dagBuildMs << "\n";
+        }
+        typename RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::Result rebuildRes;
+        if (dagFastPath) {
+            rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegionDag(
+                view, formulaManager, nodeFormulas, edgeFormulas, plan, dagPlan, dagBuildMs, constInfo);
+            if (rebuildRes.fallbackToCycle) {
+                if (incRegionalProfileEnabled) {
+                    std::cout << "[inc-regional] dag_fast_path fallback reason=missing_inside_region"
+                              << " missing=" << rebuildRes.missingInsideRegion
+                              << "\n";
+                }
+                auto tDepGraphStart = nowMs();
+                const CycleDependencyGraph* depGraphPtr = &depGraphForReachable(analyzer.lastDeltaReachable());
+                auto tDepGraphEnd = nowMs();
+                const double depGraphMs = toMs(tDepGraphEnd - tDepGraphStart);
+                rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegion(
+                    view, formulaManager, nodeFormulas, edgeFormulas, plan, constInfo, depGraphPtr);
+                rebuildRes.timing.depGraphMs += depGraphMs;
+                rebuildRes.timing.totalMs += depGraphMs;
+            }
+        } else {
+            auto tDepGraphStart = nowMs();
+            const CycleDependencyGraph* depGraphPtr = &depGraphForReachable(analyzer.lastDeltaReachable());
+            auto tDepGraphEnd = nowMs();
+            const double depGraphMs = toMs(tDepGraphEnd - tDepGraphStart);
+            rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegion(
+                view, formulaManager, nodeFormulas, edgeFormulas, plan, constInfo, depGraphPtr);
+            rebuildRes.timing.depGraphMs += depGraphMs;
+            rebuildRes.timing.totalMs += depGraphMs;
+        }
         changedNodes.insert(rebuildRes.changedNodes.begin(), rebuildRes.changedNodes.end());
         const auto& rt = rebuildRes.timing;
         if (incRegionalProfileEnabled) {
@@ -1029,6 +1534,7 @@ public:
                           << " nodes, fallback to classic\n";
             }
             lastTiming_.fallbackReason = "calibration_failed";
+            lastTiming_.totalWithFallbackMs = lastTiming_.totalMs;
             fallbackClassic();
             return;
         }
@@ -1037,6 +1543,13 @@ public:
         // evaluate consistently under the new boundary targets.
         for (const auto& [varIdx, weights] : calibRes.weightOverrides) {
             formulaManager.setVariableWeight(varIdx, weights.first, weights.second);
+        }
+        if (!calibRes.weightOverrides.empty()) {
+            incRegionalOutputProfile.active = true;
+            incRegionalOutputProfile.overrideCount = calibRes.weightOverrides.size();
+            incRegionalOutputProfile.regionNodes = plan.regionNodes;
+            incRegionalOutputProfile.boundaryNodes = plan.boundaryNodes;
+            incRegionalOutputProfile.deltaReachableNodes = analyzer.lastDeltaReachable().nodes;
         }
         if (incRegionalProfileEnabled) {
             std::cout << "[inc-regional] applied_gate_overrides=" << calibRes.weightOverrides.size() << "\n";
@@ -1050,7 +1563,10 @@ public:
                       << " plan=" << lastTiming_.planMs
                       << " rebuild=" << lastTiming_.rebuildMs
                       << " calibrate=" << lastTiming_.calibrateMs
-                      << " total=" << lastTiming_.totalMs << "\n";
+                      << " total=" << lastTiming_.totalMs
+                      << " fallback=" << lastTiming_.fallbackMs
+                      << " total_with_fallback=" << lastTiming_.totalWithFallbackMs
+                      << "\n";
         }
     }
 

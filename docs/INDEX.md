@@ -18,6 +18,7 @@
 ## Research Notes and Design Logs
 - `README.rewrite.md`: current rewrite pipeline behavior and timing table.
 - `README.rewrite.opt.md`: rewrite optimization notes.
+- `README.souffle.opt.md`: AST/RAM transform inventory and optimization classification.
 - `README.split.md`: split design, current behavior, and historical observations.
 - `README.siso.md`: SISO detection algorithm details.
 - `README.evidence.md`: evidence flow and conditioning semantics.

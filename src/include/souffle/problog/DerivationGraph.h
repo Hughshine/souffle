@@ -3251,10 +3251,58 @@ struct CycleDependencyGraph {
     std::vector<std::vector<std::pair<NodePtr, bool>>> componentEvidences;
 
     explicit CycleDependencyGraph(const DerivationGraphViewInterface& g) : graph(g) {
-        computeSCCs();
-        computeDependencies();
-        computeComponents();
-        computeDepths();
+        if (depGraphProfileEnabled) {
+            DepGraphProfile profile;
+            profile.node_count = graph.getNodes().size();
+            profile.edge_count = graph.getEdges().size();
+
+            using Clock = std::chrono::steady_clock;
+            auto toMs = [](auto dur) { return std::chrono::duration<double, std::milli>(dur).count(); };
+            auto t0 = Clock::now();
+
+            computeSCCs(&profile);
+            auto t1 = Clock::now();
+            profile.scc_ms = toMs(t1 - t0);
+
+            computeDependencies(&profile);
+            auto t2 = Clock::now();
+            profile.dep_ms = toMs(t2 - t1);
+
+            computeComponents(&profile);
+            auto t3 = Clock::now();
+            profile.comp_ms = toMs(t3 - t2);
+
+            computeDepths(&profile);
+            auto t4 = Clock::now();
+            profile.depth_ms = toMs(t4 - t3);
+            profile.total_ms = toMs(t4 - t0);
+
+            profile.scc_count = nodeCycles.size();
+            profile.component_count = componentEvidences.size();
+
+            std::cout << "[dep-graph] timing(ms):"
+                      << " scc=" << profile.scc_ms
+                      << " scc_tarjan=" << profile.scc_tarjan_ms
+                      << " scc_edge_map=" << profile.scc_edge_map_ms
+                      << " dep=" << profile.dep_ms
+                      << " comp=" << profile.comp_ms
+                      << " depth=" << profile.depth_ms
+                      << " depth_entry=" << profile.depth_entry_ms
+                      << " depth_bfs=" << profile.depth_bfs_ms
+                      << " depth_edge=" << profile.depth_edge_ms
+                      << " total=" << profile.total_ms
+                      << " nodes=" << profile.node_count
+                      << " edges=" << profile.edge_count
+                      << " sccs=" << profile.scc_count
+                      << " deps=" << profile.dep_edges
+                      << " components=" << profile.component_count
+                      << "\n";
+        } else {
+            computeSCCs(nullptr);
+            computeDependencies(nullptr);
+            computeComponents(nullptr);
+            computeDepths(nullptr);
+        }
     }
 
     size_t getComponentId(const NodePtr& node) const {
@@ -3355,11 +3403,33 @@ struct CycleDependencyGraph {
     }
 
 private:
-    void computeSCCs() {
+    struct DepGraphProfile {
+        double scc_ms = 0.0;
+        double scc_tarjan_ms = 0.0;
+        double scc_edge_map_ms = 0.0;
+        double dep_ms = 0.0;
+        double comp_ms = 0.0;
+        double depth_ms = 0.0;
+        double depth_entry_ms = 0.0;
+        double depth_bfs_ms = 0.0;
+        double depth_edge_ms = 0.0;
+        double total_ms = 0.0;
+        size_t node_count = 0;
+        size_t edge_count = 0;
+        size_t scc_count = 0;
+        size_t dep_edges = 0;
+        size_t component_count = 0;
+    };
+
+    void computeSCCs(DepGraphProfile* profile) {
+        using Clock = std::chrono::steady_clock;
+        auto toMs = [](auto dur) { return std::chrono::duration<double, std::milli>(dur).count(); };
         size_t index = 0, currentSCC = 0;
         std::unordered_map<NodePtr, size_t> indices, lowlinks;
         std::stack<NodePtr> stack;
         std::unordered_set<NodePtr> onStack;
+        Clock::time_point t_tarjan_start;
+        if (profile) t_tarjan_start = Clock::now();
 
         std::function<void(NodePtr)> strongconnect = [&](NodePtr v) {
             indices[v] = lowlinks[v] = index++;
@@ -3396,7 +3466,12 @@ private:
                 strongconnect(node);
             }
         }
+        if (profile) {
+            profile->scc_tarjan_ms = toMs(Clock::now() - t_tarjan_start);
+        }
 
+        Clock::time_point t_edge_start;
+        if (profile) t_edge_start = Clock::now();
         for (auto& edge : graph.getEdges()) {
             NodePtr out = graph.getOutput(edge);
             if (nodeToCycleIndex.count(out)) {
@@ -3405,9 +3480,13 @@ private:
                 edgeCycles[cid].insert(edge);
             }
         }
+        if (profile) {
+            profile->scc_edge_map_ms = toMs(Clock::now() - t_edge_start);
+        }
     }
 
-    void computeDependencies() {
+    void computeDependencies(DepGraphProfile* profile) {
+        size_t dep_edges = 0;
         size_t n = nodeCycles.size();
         dependencies.resize(n);
         reverseDependencies.resize(n);
@@ -3421,11 +3500,15 @@ private:
                     dependencies[outCid].insert(inCid);             // out depends on in
                     reverseDependencies[inCid].insert(outCid);      // in is depended on by out
                     inDegrees[outCid]++;
+                    dep_edges++;
                 }
             }
         }
+        if (profile) {
+            profile->dep_edges = dep_edges;
+        }
     }
-    void computeComponents() {
+    void computeComponents(DepGraphProfile* /*profile*/) {
         const size_t n = nodeCycles.size();
         cycleToComponent.assign(n, std::numeric_limits<size_t>::max());
         std::vector<bool> visited(n, false);
@@ -3474,7 +3557,12 @@ private:
             componentEvidences.push_back(std::move(evidences));
         }
     }
-    void computeDepths() {
+    void computeDepths(DepGraphProfile* profile) {
+        using Clock = std::chrono::steady_clock;
+        auto toMs = [](auto dur) { return std::chrono::duration<double, std::milli>(dur).count(); };
+        double entry_ms = 0.0;
+        double bfs_ms = 0.0;
+        double edge_ms = 0.0;
         nodeDepthsGlobal.clear();
         edgeDepthsGlobal.clear();
 
@@ -3483,6 +3571,8 @@ private:
             const auto& edges = edgeCycles[cid];
 
             std::queue<NodePtr> q;
+            Clock::time_point t_entry_start;
+            if (profile) t_entry_start = Clock::now();
             for (NodePtr node : nodes) {
                 bool isEntry = false;
                 for (auto& inEdge : graph.getIncomingEdges(node)) {
@@ -3499,7 +3589,12 @@ private:
                     q.push(node);
                 }
             }
+            if (profile) {
+                entry_ms += toMs(Clock::now() - t_entry_start);
+            }
 
+            Clock::time_point t_bfs_start;
+            if (profile) t_bfs_start = Clock::now();
             while (!q.empty()) {
                 NodePtr curr = q.front(); q.pop();
                 size_t d = nodeDepthsGlobal[curr];
@@ -3513,7 +3608,12 @@ private:
                     }
                 }
             }
+            if (profile) {
+                bfs_ms += toMs(Clock::now() - t_bfs_start);
+            }
 
+            Clock::time_point t_edge_start;
+            if (profile) t_edge_start = Clock::now();
             for (auto edge : edges) {
                 size_t d = 0;
                 for (auto in : graph.getInputs(edge)) {
@@ -3523,6 +3623,14 @@ private:
                 }
                 edgeDepthsGlobal[edge] = d;
             }
+            if (profile) {
+                edge_ms += toMs(Clock::now() - t_edge_start);
+            }
+        }
+        if (profile) {
+            profile->depth_entry_ms = entry_ms;
+            profile->depth_bfs_ms = bfs_ms;
+            profile->depth_edge_ms = edge_ms;
         }
     }
 };

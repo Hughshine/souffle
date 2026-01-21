@@ -264,6 +264,7 @@ bool dredProfileEnabled = false;
 bool incProfileEnabled = false;
 bool fcProfileEnabled = false;
 bool incRegionalProfileEnabled = false;
+bool depGraphProfileEnabled = false;
 bool postDelEnabled = false;
 bool reuseVarIndexEnabled = true;
 

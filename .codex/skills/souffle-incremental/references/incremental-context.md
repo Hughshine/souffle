@@ -34,15 +34,17 @@
 
 ## Benchmark Script (problog-benchmark)
 
-- Script: `/home/hugh/research/datalog/problog-benchmark/side_channel_inc.py`
+- Script: `/home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py`
   - Subcommands: `generate`, `delta`, `compile`, `run`, `collect`, `clean`.
   - `compile` uses `souffle --online` to produce `./compute`.
+  - Always run `compile` with `PATH=/home/hugh/research/datalog/souffle/build/src:$PATH` to avoid picking up `/usr/local/bin/souffle`.
+  - `compile` supports `--jobs N` for parallel per-case builds.
   - `run` executes baseline `full` and `inc` runs, then feeds delta file commands to the CLI via stdin.
   - Delta file format: delete facts -> `commit` -> insert facts with probabilities -> `commit` -> `q`.
   - Logs: `--logfile` JSON per run; stage summaries parsed into the per-delta JSON output.
 
 ## Related Docs
 
-- `/home/hugh/research/datalog/problog-benchmark/README.side-channel-inc.md`
+- `/home/hugh/research/datalog/souffle/problog-benchmark/README.side-channel-inc.md`
 - `README.eval.inc.md`
 - `README.inc.region.md`
