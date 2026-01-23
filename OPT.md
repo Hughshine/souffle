@@ -1050,23 +1050,67 @@ P20	inc5	1	inc-regional	insert	1.399132	0.307464	0.167960	0.380552	0.541096
 
 ## Experiment: 2026-01-23 (P20, --profile-wmc, in-place probResult updates)
 
-### WMC breakdown (insert turn; last WMC entry per delta)
+### WMC breakdown (insert turn; latest run, per-delta log stage timings)
 
 ```
-Delta=inc1
-  inc-naive:   total_ms=7.4447  output_loop_ms=6.0064  classify=0.1980  lookup=1.6492  write=1.9640  node_wmc=0.1019  weight_apply_ms=0.0000 (calls=0)
-  inc-regional:total_ms=13.2870 output_loop_ms=12.0250 classify=0.6120  lookup=1.7680  write=1.5070  node_wmc=0.2210  weight_apply_ms=0.0030 (calls=11)
-  full:        total_ms=25.3612 node_wmc=9.1776 nodes=104104
-
-Delta=inc3
-  inc-naive:   total_ms=7.4397  output_loop_ms=6.2704  classify=0.2025  lookup=1.4527  write=2.3133  node_wmc=0.1817  weight_apply_ms=0.0000 (calls=0)
-  inc-regional:total_ms=13.7050 output_loop_ms=12.4020 classify=0.7970  lookup=1.6160  write=1.5120  node_wmc=0.3940  weight_apply_ms=0.0040 (calls=16)
-  full:        total_ms=21.2527 node_wmc=7.6325 nodes=104104
-
-Delta=inc5
-  inc-naive:   total_ms=8.3664  output_loop_ms=6.8355  classify=0.2367  lookup=1.8455  write=2.3023  node_wmc=0.1961  weight_apply_ms=0.0000 (calls=0)
-  inc-regional:total_ms=14.8320 output_loop_ms=13.5050 classify=0.9780  lookup=1.8010  write=1.5980  node_wmc=0.7720  weight_apply_ms=0.0100 (calls=26)
-  full:        total_ms=26.0190 node_wmc=8.8294 nodes=104104
+Case	DeltaLabel	inc-naive_WMC	inc-regional_WMC	full_WMC
+P1	inc1	0.000025	0.000026	0.000036
+P1	inc3	0.000026	0.000026	0.000031
+P1	inc5	0.000026	0.000025	0.000034
+P3	inc1	0.000026	0.000032	0.000036
+P3	inc3	0.000026	0.000025	0.000030
+P3	inc5	0.000026	0.000037	0.000033
+P4	inc1	0.000029	0.000028	0.000049
+P4	inc3	0.000028	0.000024	0.000023
+P4	inc5	0.000028	0.000029	0.000023
+P5	inc1	0.000029	0.000023	0.000031
+P5	inc3	0.000029	0.000035	0.000031
+P5	inc5	0.000033	0.000024	0.000038
+P6	inc1	0.000040	0.000044	0.000051
+P6	inc3	0.000059	0.000035	0.000057
+P6	inc5	0.000050	0.000044	0.000053
+P7	inc1	0.000037	0.000033	0.000088
+P7	inc3	0.000033	0.000034	0.000071
+P7	inc5	0.000031	0.000034	0.000083
+P8	inc1	0.000036	0.000036	0.000120
+P8	inc3	0.000043	0.000029	0.000091
+P8	inc5	0.000046	0.000059	0.000136
+P9	inc1	0.000039	0.000033	0.000143
+P9	inc3	0.000039	0.000039	0.000126
+P9	inc5	0.000033	0.000077	0.000127
+P10	inc1	0.000036	0.000030	0.000039
+P10	inc3	0.000034	0.000033	0.000047
+P10	inc5	0.000040	0.000035	0.000040
+P11	inc1	0.000027	0.000028	0.000031
+P11	inc3	0.000028	0.000030	0.000032
+P11	inc5	0.000054	0.000030	0.000034
+P12	inc1	0.000092	0.000107	0.001091
+P12	inc3	0.000120	0.000159	0.000979
+P12	inc5	0.000212	0.000166	0.001160
+P13	inc1	0.000169	0.000220	0.005225
+P13	inc3	0.000552	0.000697	0.005561
+P13	inc5	0.000991	0.001798	0.004509
+P14	inc1	0.002769	0.001591	0.063897
+P14	inc3	0.005031	0.004697	0.057422
+P14	inc5	0.012235	0.007248	0.049699
+P15	inc1	0.038717	0.026595	0.501252
+P15	inc3	0.061932	0.053415	0.300091
+P15	inc5	0.097371	0.110161	0.284579
+P16	inc1	0.028729	0.027679	0.681205
+P16	inc3	0.083835	0.112203	0.597968
+P16	inc5	0.150163	0.206443	0.553533
+P17	inc1	0.017483	0.026654	0.139331
+P17	inc3	0.032243	0.045463	0.156203
+P17	inc5	0.047675	0.059478	0.149055
+P18	inc1	0.043342	0.065194	0.842804
+P18	inc3	0.098197	0.141291	0.832053
+P18	inc5	0.141423	0.203319	0.773299
+P19	inc1	0.133217	0.135072	1.536583
+P19	inc3	0.262162	0.224845	1.187806
+P19	inc5	0.255701	0.361166	1.333119
+P20	inc1	0.004714	0.005666	0.025328
+P20	inc3	0.003839	0.005643	0.026774
+P20	inc5	0.004136	0.006995	0.024273
 ```
 
 ### Notes
@@ -1092,3 +1136,6 @@ Delta=inc5
   - `weight_toggle_calls` drops from ~10–27 to ~2.
   - `node_wmc_compute_ms` moves closer to inc-naive (e.g., inc1: 0.107ms vs 0.113ms; inc5: 0.33ms vs 0.42ms).
   - Remaining overhead comes mainly from `region_lookup_ms` (~0.45–0.69ms per insert) plus minor map lookups.
+- **Current summary:** WMC is now consistently faster than full in large cases. The inc-naive vs inc-regional gap is small and
+  likely due to regional bookkeeping and weight-mode toggling; it does not materially change overall speedup.
+  A more formal cache validation can be done later if needed.
