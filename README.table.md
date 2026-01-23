@@ -1,5 +1,12 @@
 # README.table.md
 
+## Source references
+- [problog-benchmark/side_channel_inc.py](problog-benchmark/side_channel_inc.py)
+- [problog-benchmark/side_channel_full.py](problog-benchmark/side_channel_full.py)
+- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+
+
 This file is a **table-generation guide** (and a set of ready-to-use prompts) for Codex.
 It explains **what to extract from the collected experiment data**, **how to compute the
 reported metrics**, and **how to translate the results into LaTeX tables** consistent with
@@ -401,3 +408,8 @@ P20 & 3.6\% & 3.5\% & 11.3\% & 10.2\% & 19.3\% & 16.1\% \\
 \end{table*}
 
 <!-- END GENERATED TABLES -->
+
+## Related commits
+- `b22a891b0` — fix(inc): sync det-opt deltas and artifact docs
+- `d2c0f368d` — perf(fc): reuse CUDD var indices and update plots
+- `80232d555` — docs(eval): refresh inc benchmark notes

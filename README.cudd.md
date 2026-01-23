@@ -1,12 +1,19 @@
 # CUDD (BDD Backend) Notes
 
+## Source references
+- [src/include/souffle/problog/formula/CuddManager.h](src/include/souffle/problog/formula/CuddManager.h)
+- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
+- [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
+- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
+
+
 ## Scope
 - This document describes how the CUDD-backed BDD knowledge backend is used in this
   fork for ProbLog-style inference (forward compilation + weighted model counting).
 - It is not a general CUDD tutorial.
 
 ## When You Are Using CUDD
-- Runtime flag: `-k bdd` / `--knowledge=bdd` (default).
+- Runtime flag: `-k bdd` / `--knowledge=bdd` (default in `CompiledOptions`).
 - `-k sdd` switches to the SDD backend (optional dependency).
 - CLI overview: `docs/USAGE.md`.
 - Dependency note and troubleshooting: `docs/RUNBOOK.md`.
@@ -30,6 +37,8 @@
 
 ## Reordering and Post-Delete Shuffle
 - Dynamic reordering is configured by `adaptiveReorder(...)` and CUDD autodyn.
+- `WeightedBDDManager::preConfig()` explicitly skips static ordering and enables
+  adaptive dynamic reordering on the first run.
 - Explicit (non-dynamic) reordering is done via `Cudd_ShuffleHeap` in
   `postprocessUselessVariables()` when `--post-del` is enabled.
 - Full details:
@@ -63,3 +72,5 @@
   - Cache is too small for the workload (high recomputation).
   - Reordering is too frequent or disabled too early (workload-dependent).
 
+## Related commits
+- `78890247d` — fix(inc): align delta handling and node metrics

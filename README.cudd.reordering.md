@@ -1,12 +1,18 @@
 # CUDD Reordering (ProbLog BDD Path)
 
+## Source references
+- [src/include/souffle/problog/formula/CuddManager.h](src/include/souffle/problog/formula/CuddManager.h)
+- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
+- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
+
+
 ## Scope
 - Covers how dynamic and explicit variable reordering is configured and used in the
   ProbLog BDD path.
 - Code references:
-  - `src/include/souffle/problog/formula/CuddManager.h`
-  - `src/include/souffle/problog/ForwardCompilation.h`
-  - `src/problog/Pipeline.cpp`
+  - [src/include/souffle/problog/formula/CuddManager.h](src/include/souffle/problog/formula/CuddManager.h)
+  - [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
+  - [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
 
 ## Manager Initialization (Cudd_Init)
 - The BDD manager is created in `WeightedBDDManager::initManager()` using:
@@ -67,8 +73,8 @@
   - `CUDD_CREATEVAR` and `CUDD_CREATEVAR_STATS`: per-var timing and deltas for
     GC/reorder/slots/keys.
   - `reordering_runtime` in FC stage info (delta of `Cudd_ReadReorderingTime`).
-- The `Variable ordering takes ...` / `Variable reordering takes ...` messages
-  measure `preConfig(...)` wall time, not dynamic reordering time alone.
+- The `preConfig (cache clear + var scan/create + dyn-reorder setup) took ...`
+  log message reports `preConfig(...)` wall time, not dynamic reordering time alone.
 
 ## Summary
 - Full and incremental pipelines share the same CUDD dynamic reordering path.
@@ -76,3 +82,7 @@
   trigger reorders, not from different configuration paths.
 - Explicit reordering (`Cudd_ShuffleHeap`) is only used by post-delete cleanup
   and is controlled by `--post-del`.
+
+## Related commits
+- `4bf38b2a1` — perf(problog): make inc preConfig delta-scoped
+- `188e75a43` — docs(readme): add CUDD reordering notes

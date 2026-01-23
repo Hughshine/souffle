@@ -1,5 +1,9 @@
 # Probabilistic eqrel-style pruning
 
+## Source references
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+
+
 ## Status
 - Design note only; not implemented in code.
 - Intended for pruning/graph simplification before forward compilation.
@@ -146,3 +150,7 @@ These extra guards ensure that merging deterministic equivalence classes does no
 - **Query path:** Whenever a formula/cache lookup happens (e.g. in forward compilation or probability query), resolve `n` via `findRep(n->getId())` before indexing formula maps.  This keeps existing maps keyed by node ID usable, as long as `findRep` is applied consistently on reads.
 - **Incremental updates:** If new nodes are added later, seed their parent to themselves; if an SCC merge occurs, union the sets and update `nodeIdToRep` accordingly.  Delta bookkeeping will still work if every API that consumes a node first canonicalizes it.
 - **Serialization / debug output:** When dumping DOT/JSON, it’s safer to render only representatives (or annotate each node with its rep id) so downstream tools aren’t confused by hidden aliases.
+
+## Related commits
+- `4c4bd26b2` — docs(readme): restructure online incremental docs
+- `337b2b398` — trivial

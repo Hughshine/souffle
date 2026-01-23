@@ -1,7 +1,14 @@
 # Final Incremental Evaluation Log (2026-01-21)
 
-This file records the **latest full P1–P20 incremental runs**, including
-generation seeds, strengthen defaults, delta defaults, and run outcomes.
+## Source references
+- [problog-benchmark/side_channel_inc.py](problog-benchmark/side_channel_inc.py)
+- [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
+- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+
+
+This file records the **latest full P1–P20 incremental runs** (external benchmark),
+including generation seeds, strengthen defaults, delta defaults, and run outcomes.
+Treat the results as historical snapshots and re-run after code changes.
 Use this as the canonical snapshot; older eval notes remain in
 `README.eval.inc.md` for history.
 
@@ -1686,3 +1693,8 @@ Data snapshots:
 - 对 P1-P18 重新收集 **profile breakdown**（analyze/plan/rebuild/calibrate）以定位 residual overhead。
 - 若稳定无 mismatch，再扩展到 P19-P20（确认旧 mismatch 是否仍存在）。
 - 在保证正确性的前提下，继续降低 analyze/plan 的固定开销（避免 region≈dr 时的“无收益分析”）。
+
+## Related commits
+- `739ee83cb` — refactor(inc-region): align regional insert with naive propagation
+- `668298ef8` — fix(inc-region): update regional WMC routing and profiling
+- `ce3dd2f5b` — docs(inc-region): add SCC-closure optimization notes

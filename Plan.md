@@ -1,5 +1,10 @@
 # Plan
 
+## Source references
+- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
+- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
+
+
 ## Current questions
 - Forward compilation still takes ~4s for tens of thousands of BDD nodes; find root cause.
 - Keep README updates in sync with recent experiments and results.
@@ -29,7 +34,7 @@
 - [ ] Data completion and cleanup.
 
 ## Evaluation plan (full compilation)
-- Use `--full-only` to keep reordering consistent (sift).
+- Use `--full-only` to disable incremental code paths; CUDD uses adaptive dynamic reordering.
 
 1) Show derivation-graph generation is faster than ProbLog; separate `--derv-only` / `--ground` stage.
    - Run on side-channel benchmark.
@@ -122,3 +127,8 @@ current behavior and are not actionable without revalidation.
 - When graphs are small, reduce BDD manager initialization memory.
 - Avoid final forward compilation by directly computing query node formulas.
 - Consider detect + rewrite on the fly.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `4dd403de4` — Translate Chinese comments and docs to English
+- `393df2827` — Handle negated entry on linear two-edge fast path and polarize parallels

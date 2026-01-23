@@ -1,5 +1,11 @@
 # Inc-Regional Optimization Notes (SCC Closure + DAG)
 
+## Source references
+- [src/include/souffle/problog/RegionalIncremental.h](src/include/souffle/problog/RegionalIncremental.h)
+- [src/include/souffle/problog/IncRegionAnalyzer.h](src/include/souffle/problog/IncRegionAnalyzer.h)
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+
+
 This note captures analysis and optimization ideas focused on the inc-regional
 insert path, specifically the SCC-closure step and its impact on DAG-heavy
 benchmarks. For the pipeline overview, see `README.inc.region.md`.
@@ -293,3 +299,8 @@ Implications for optimization focus:
 - **Analyze cost dominates**: cache/reuse boundary + anchor computations across
   expansion attempts, and avoid repeated full recompute when only a few nodes
   were added.
+
+## Related commits
+- `739ee83cb` — refactor(inc-region): align regional insert with naive propagation
+- `668298ef8` — fix(inc-region): update regional WMC routing and profiling
+- `379a36761` — perf(inc-region): skip SCC closure on acyclic regions

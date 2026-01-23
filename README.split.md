@@ -1,5 +1,10 @@
 # Derivation Graph Split (Design and Current Behavior)
 
+## Source references
+- [src/include/souffle/problog/GraphRewriter.h](src/include/souffle/problog/GraphRewriter.h)
+- [src/include/souffle/problog/GraphAnalyzer.h](src/include/souffle/problog/GraphAnalyzer.h)
+
+
 This document describes the split transform used to expose more SISO structure
 before rewrite and forward compilation. It combines current implementation
 status, design notes, and historical evaluation observations.
@@ -9,7 +14,7 @@ status, design notes, and historical evaluation observations.
 - Historical results are labeled and should be re-run after semantic changes.
 
 ## Scope
-- Split discovery, split transform, and incremental maintenance.
+- Split discovery and transform (no incremental maintenance yet).
 - Applies to full-mode rewrite only; incremental modes skip rewrite.
 - Split is an optional pre-pass inside the rewrite loop.
 
@@ -17,10 +22,13 @@ status, design notes, and historical evaluation observations.
 - CLI: `--split-mode={no-split|naive-split|complete-split}` (short `-P`),
   default `naive-split`.
 - Split currently only duplicates input fact nodes; incoming edges of internal
-  nodes are not cloned yet.
+  nodes are not cloned yet. Facts with evidence or `needOutput` are skipped, and
+  facts in evidence-affected components are excluded.
 - `complete-split` uses a multi-source union-find on downstream reachability;
   any downstream join merges branches (conservative, semantics-safe).
 - `hasRVReach` is recomputed globally each split pass (no incremental update yet).
+- `naive-split` uses bounded reachability (max 50 nodes per branch) and only
+  splits branches whose reachable node sets are pairwise disjoint.
 - Budget controls are active:
   `splitMaxNewNodesPerPass`, `splitMaxNewEdgesPerPass`,
   `splitMaxGroupsPerNode`, `splitMinGroupEdges`.
@@ -142,6 +150,11 @@ Event-driven candidate queue is preferable to scanning all nodes:
 - `worthSplitting`: `benefit >= 1 AND cost <= 1000`
 
 ## Related docs
-- `README.rewrite.md` for rewrite pipeline and evaluation tables.
+- `README.rewrite.impl.md` for rewrite pipeline and evaluation tables.
 - `README.siso.md` for SISO detection details.
 - `README.eval.md` for executable benchmark workflows.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `2fe1123db` — perf(problog): limit prob results to outputs
+- `e1e9f6c84` — perf(problog): add hybrid stage metrics for component FC

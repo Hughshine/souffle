@@ -1,5 +1,12 @@
 # Incremental Profiling Notes (Non-SEM Stages)
 
+## Source references
+- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+- [src/include/souffle/problog/formula/CuddManager.h](src/include/souffle/problog/formula/CuddManager.h)
+
+
 ## Scope
 - Focus: inc vs full slowdowns outside SEMINAIVE.
 - Data source: per-stage tables in `README.eval.inc.md`.
@@ -7,16 +14,21 @@
 
 ## Observations (data + code)
 - PRUNING_INC dominates inc slowdowns on larger cases/deltas; speedup < 1.0 is common.
-- PRUNING_INC is not incremental: it runs a full reachability BFS on the whole graph
-  and rebuilds impacted maps via BFS per delta node.
-- PRUNING_INC always dumps graph statistics in the prune path (even when not needed),
-  which adds overhead on large graphs.
-- Incremental prune disables bi-imp merging, so FC/WMC in inc often run on larger
-  graphs than full.
-- FORWARD_COMPILATION_INC rebuilds SCC/dependency graph and runs const analysis each
-  turn, plus full scans of formula maps to drop invalid entries.
-- WMC_INC still iterates all valid nodes; it only skips per-node recomputation using
-  changedNodes but retains full-node scans.
+- PRUNING_INC is not incremental: it runs a full reachability BFS on the whole graph.
+- Impacted-map rebuild in `prune-inc` is currently stubbed/empty; delta-reach falls back
+  to analyzer BFS (see `README.inc.region.md`).
+- PRUNING_INC only dumps graph statistics when `--dumpstat`/`set dumpstat` is enabled.
+- Incremental prune forces bi-imp merging off (merge is disabled in incremental CLI
+  and when full-only is not enabled), so FC/WMC in inc often run on larger graphs
+  than full.
+- FORWARD_COMPILATION_INC builds a cycle dependency graph from the current view each
+  turn. Insert-only updates may use a local dep-graph from delta-reachable edges;
+  otherwise it uses the view cache (rebuilt when invalidated).
+- Const analysis runs only when `--fold-const`/`--dumpconst` is enabled. Deletion prep
+  erases delta-deleted formulas and sweeps `nodeFormulas`/`edgeFormulas` to drop
+  invalid entries.
+- WMC_INC still iterates all valid nodes; it decides per-node reuse/recompute based
+  on `changedNodes` and evidence changes, so the node loop is still a full pass.
 - `--inc-profile` prints `[inc-profile]` lines with PRUNING/FC/WMC sub-step timings.
 - `--fc-profile` prints `[fc-profile]` lines with FC sub-phase counters/timings (see `docs/USAGE.md`).
 
@@ -55,16 +67,16 @@
 - Insert preConfig share in this run is ~0.69 (down from ~0.93 in the earlier spike
   run), so the slowdown is reduced but not eliminated.
 
-### Reordering runtime vs explicit variable reordering (2026-01-13, fc-profile v4)
+### Reordering runtime vs preConfig time (2026-01-13, fc-profile v4)
 - Source: `output_fc_profile_v4` (inc) and `output_fc_profile_full_v4` (full) logs for
   P18–P20, turn3 (insert).
 - `reordering_runtime` (CUDD dynamic reordering) is 0 in inc for these cases, so it
-  does not explain the inc slowdowns. The dominant reordering cost comes from the
-  explicit "Variable reordering takes" step in inc, which is ~2.4–3.1s vs ~0.6–1.3s
-  in full.
+  does not explain the inc slowdowns. The dominant cost comes from the preConfig
+  step (logged as `preConfig (cache clear + var scan/create + dyn-reorder setup) took ...`),
+  which is ~2.4–3.1s in inc vs ~0.6–1.3s in full.
 
 ```tsv
-Case	Delta	FullReorder_s	IncReorder_s	FullVarOrder_ms	IncVarReorder_ms
+Case	Delta	FullReorder_s	IncReorder_s	FullPreConfig_ms	IncPreConfig_ms
 P18	inc0p1	4.220	0.000	563.506	2904
 P18	inc0p3	4.250	0.000	606.597	2588
 P18	inc0p5	4.180	0.000	600.057	2667
@@ -166,14 +178,15 @@ Notes:
 - Insert turns are dominated by PRUNING_INC (impact-map rebuild + view build),
   then FC insert-prep/insert-loop; WMC remains small.
 - Delete turns are dominated by applyDeltaDeletes + prune; FC/WMC are secondary.
+  (Impact_map timings reflect older runs when prune-inc rebuilt impacted maps.)
 
 ## PRUNING_INC Issues (Current Evidence)
 - ApplyDeltaDeletes scales with deleted ruleapps; most time is spent in edge lookup,
   adjacency vector erase, and global edge-key cleanup.
 - Prune is effectively full-graph work: reachability BFS and mark/prune touch the
   entire live graph each turn.
-- Impact-map rebuild is BFS per delta node, and dominates insert turns for large
-  deltas (e.g., P17 inc5 impact_ms ~4.7s, build_view_ms ~2.3s).
+- Impacted maps are currently empty in prune-inc; analyzer uses BFS fallback,
+  so view build and reachability are the dominant prune costs.
 - View build involves materializing large delta/live sets, which is expensive when
   live graph size is large or delta is large.
 
@@ -182,8 +195,6 @@ Notes:
   matching edges; this is O(sum of degrees of affected nodes).
 - `prune()` always performs full reachability and re-labels every node/edge, even
   when deltas are small or localized.
-- Impacted map rebuild is O(|delta_nodes| * (|V|+|E|)) in the worst case, because it
-  does a BFS from each delta node.
 - Incremental prune disables bi-imp merge, so the graph is larger than full mode
   for later stages.
 
@@ -195,8 +206,8 @@ Notes:
 2. Make pruning incremental
    - Maintain reachability/ref-counts from outputs and update only affected regions.
    - Cache live/pruned state and avoid full relabeling when delta is small.
-3. Impact-map rebuild optimization
-   - Replace per-delta BFS with a multi-source BFS for delta nodes.
+3. Impact-map rebuild (if reintroduced)
+   - Prefer multi-source BFS for delta nodes.
    - Build impacted maps lazily (only for nodes used by FC) or cache and update.
 4. Graph size controls
    - Re-enable bi-imp merge in inc if it can be proven safe for delta correctness.
@@ -235,3 +246,8 @@ Notes:
 ## Open Questions
 - Can inc safely apply bi-imp merge after prune to shrink the graph without breaking
   delta correctness?
+
+## Related commits
+- `4bf38b2a1` — perf(problog): make inc preConfig delta-scoped
+- `9ea1b4b53` — perf(problog): add inc preConfig toggle
+- `c0378327d` — docs(readme): add FC reordering comparison

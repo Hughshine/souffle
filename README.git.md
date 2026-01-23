@@ -1,5 +1,10 @@
 # Git Commit Notes
 
+## Source references
+- [.gitignore](.gitignore)
+- [sh/run_test_format.sh](sh/run_test_format.sh)
+
+
 This repo mixes source, experiments, and generated artifacts. Keep commits small and avoid
 checking in outputs or logs unless explicitly asked.
 
@@ -43,3 +48,8 @@ Examples:
 - `perf(inc-region): cache delta-insert reachability`
 - `refactor(problog): switch impacted maps to unordered_set`
 - `docs(readme): add P12 profile5 results`
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `4c4bd26b2` — docs(readme): restructure online incremental docs
+- `9be703353` — perf(inc-region): add regional pipeline and profiling

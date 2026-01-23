@@ -1,8 +1,13 @@
 # Conjunctive Rewrite Notes (Historical Design)
 
+## Source references
+- [src/include/souffle/problog/GraphRewriter.h](src/include/souffle/problog/GraphRewriter.h)
+
+
 ## Status
 - Design/plan document; not the current implementation.
-- Current fast paths are summarized in `README.rewrite.md`.
+- Current fast paths are summarized in `README.rewrite.impl.md`.
+- Current SISO detection is fast-path only; dominance-based detection is disabled.
 
 ## Scope
 - Design/plan document; not the current implementation.
@@ -12,7 +17,7 @@
 - The actual fast paths live in component-wise forward compilation (not rewrite).
 - Implemented: single-randvar and conj-only components in `ForwardCompilation.h`.
 - Constraints for the conj-only fast path: no evidence, no negation, no cycles; otherwise fall back to DD.
-- For current behavior and timings, see `README.rewrite.md`.
+- For current behavior and timings, see `README.rewrite.impl.md`.
 
 Technical note: DD decomposition for SISO + Fact-Prefix + pure-conjunctive regions
 0. Background and goals
@@ -518,3 +523,8 @@ If the same VarId appears in both positive and negative, set Pr=0;
 Otherwise compute Pr(b) via ∏ p × ∏ (1-p), reuse existing fact-prefix rewrite to turn b into a fact.
 
 Everywhere, implement robust fallback: if any detection step fails, immediately return to the existing BDD-based logic, ensuring correctness first and optimization second.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `3e9b024ca` — docs(readme): refresh eval and pipeline notes
+- `4dd403de4` — Translate Chinese comments and docs to English

@@ -12,6 +12,7 @@
 ## Incremental CLI Summary
 
 - Modes: `FULL_HARD`, `FULL_SOFT`, `INC_NAIVE`, `INC_REGIONAL`, `ELASTIC` (string mapping via `--setmode`).
+- Note: `ELASTIC` is currently accepted by the CLI but **asserts at runtime** (unimplemented).
 - Commands: `insert`, `delete/remove`, `list`, `commit`, `setmode`, `set`/`unset` (dumpjson/dumpdot/dumpstat), `dump`, `exit/quit/q`.
 - Insert syntax: `[prob::]Rel(a,b,...) [prob]`. Delete ignores probability.
 - Delta relation naming: `$inc_delta_tuple_insert_<rel>` and `$inc_delta_tuple_delete_<rel>`.
@@ -29,22 +30,36 @@
 ## Output Naming Coupling
 
 - Incremental outputs: `fact-iter<N>-inc`, `fact-iter<N>-inc-naive`, or `fact-iter<N>-inc-regional`.
-- Full outputs: `fact-iter<N>-full`, `fact-iter<N>-full-hard`, or `fact-iter<N>-full-soft`.
+- Full outputs: `fact-iter<N>-full` (runner still accepts historical `-full-hard/-full-soft`).
 - `side_channel_inc.py` searches these patterns and renames them with a `delta-<label>-<sample>-<mode>-` prefix.
 
 ## Benchmark Script (problog-benchmark)
 
 - Script: `/home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py`
   - Subcommands: `generate`, `delta`, `compile`, `run`, `collect`, `clean`.
+  - Optional: `strengthen` (adds input facts to increase RAND disjunction).
   - `compile` uses `souffle --online` to produce `./compute`.
+    - Extra compile flags pass via `--souffle-arg` (repeatable); do **not** use `--full-only` for incremental runs.
+    - Parallel compile: `--jobs <N>`.
   - Always run `compile` with `PATH=/home/hugh/research/datalog/souffle/build/src:$PATH` to avoid picking up `/usr/local/bin/souffle`.
-  - `compile` supports `--jobs N` for parallel per-case builds.
   - `run` executes baseline `full` and `inc` runs, then feeds delta file commands to the CLI via stdin.
+    - `--compare-all` forces per-delta runs for `full`, `inc-naive`, and `inc-regional`.
+    - When `--compare-all` is set, any `--setmode` passed via `--run-arg` is ignored.
+    - Extra runtime flags pass via `--run-arg` (repeatable), e.g. `--det-opt`, `--profile-inc-regional`.
   - Delta file format: delete facts -> `commit` -> insert facts with probabilities -> `commit` -> `q`.
   - Logs: `--logfile` JSON per run; stage summaries parsed into the per-delta JSON output.
 
 ## Related Docs
 
+- `docs/USAGE.md`
 - `/home/hugh/research/datalog/souffle/problog-benchmark/README.side-channel-inc.md`
 - `README.eval.inc.md`
 - `README.inc.region.md`
+
+## Source references
+- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+- [problog-benchmark/side_channel_inc.py](problog-benchmark/side_channel_inc.py)
+
+## Related commits
+- `668298ef8` — fix(inc-region): update regional WMC routing and profiling
+- `619e52197` — fix(inc): track explicit deletes and log deltas

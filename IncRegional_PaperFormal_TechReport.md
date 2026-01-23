@@ -1,10 +1,18 @@
 # Inc-Regional (Insertion) – Paper-Formalization Implementation Notes (CAV'26 §6.1)
 
+## Source references
+- [src/include/souffle/problog/IncRegionAnalyzer.h](src/include/souffle/problog/IncRegionAnalyzer.h)
+- [src/include/souffle/problog/RegionalIncremental.h](src/include/souffle/problog/RegionalIncremental.h)
+- [IncRegionAnalyzer_PaperFormal.h](IncRegionAnalyzer_PaperFormal.h)
+
+
+Status: design/prototype notes only. `IncRegionAnalyzer_PaperFormal.h` is not wired into the build.
+
 This report documents a **drop-in replacement** for the existing `inc regional` insertion-update region analyzer (the one based on **least parents + scopes + outward growth**) and explains how the new implementation follows the **CAV 2026 Incremental Compilation** paper’s region-identification formalization (Section 6.1, incremental BDD construction).
 
 The code artifact accompanying this report is:
 
-- `IncRegionAnalyzer_PaperFormal.h`
+- [IncRegionAnalyzer_PaperFormal.h](IncRegionAnalyzer_PaperFormal.h)
 
 It preserves the external API (`Region`, `Boundaries`, `IncRegionAnalysis`, `RegionAnalyzer::analyze(...)`) so that downstream components (e.g., `RegionalIncrementalForwardCompilation`, `RegionSccClosure`, `BoundaryGateCalibrator`) can remain largely unchanged.
 
@@ -277,3 +285,5 @@ This avoids touching includes.
 3. Cache `Pred(t)` as SCC IDs rather than NodePtrs if you only need SCC-level checks.
 4. Extend the same framework to deletion (requires careful handling of cycle repair and negative facts).
 
+## Related commits
+- `78890247d` — fix(inc): align delta handling and node metrics

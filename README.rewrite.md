@@ -1,104 +1,121 @@
-# Rewrite Pipeline Notes
+# Rewrite Experiments (Historical Notebook)
 
-This file summarizes the SISO rewrite pipeline: design, current state (post revert), observed behavior, and near‑term plans.
+## Source references
+- [src/include/souffle/problog/GraphRewriter.h](src/include/souffle/problog/GraphRewriter.h)
+- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
+
 
 ## Status
-- Active pipeline summary; update with new runs and behavior changes.
+- Historical experiment notebook; not the current behavior.
+- Active implementation summary: `README.rewrite.impl.md`.
+- Many timings predate `--det-opt`, component-wise FC/WMC, and the hybrid timing stage.
+- Current code uses fast-path SISO detection only; the general dominance-based detector is disabled.
 
 ## Scope
-- Full-mode pipeline only; incremental modes (`inc`/`inc-regional`) skip rewrite.
-- Online compilation is default; `--online` is optional (kept in commands when shown).
+- Historical experiment log; not the current behavior.
+- Full-mode rewrite only; incremental modes skip rewrite.
 
-## Goal
-- Iteratively find SISO regions (single entry/exit) in the derivation graph, summarize each region into a single probabilistic edge, then run the usual forward compilation on the smaller view.
+Current issues with the graph rewrite pipeline.
 
-## Implementation (current state)
-- Detection: `GraphAnalyzer::detectAllSISOStrictFromExit(view)` on the working `IncSubgraphView`; cached incoming edges are cleared each iteration.
-- Non‑trivial filter: regions with `edgeCount >= 1` or `nodeCount > 2` and at most `kMaxEdges` (default 5) are considered; random variable count is **not** enforced after the revert.
-- Local inference: build BDD formulas for the region, compute `Pr(exit | entry)` via weighted model counting.
-- Rewrite action: add a new edge `entry -> exit` with that probability; remove internal edges and non‑boundary nodes from the **view** (underlying graph only gains the new edge). Simple SISO currently only updates edge probability; nodes are not folded.
-- Fixpoint: loop detection + rewrite until no region is rewritten. A split pass may run at fixpoint depending on `--split-mode` (default `naive-split`); if split rewires edges, rewrite continues until both rewrite and split reach fixpoint.
-- After rewrite, component-wise FC/WMC uses a single BDD manager reused across
-  slow components; initialization is delayed until slow components exist.
-- Single‑randvar and conjunctive fast paths evaluate eligible components without
-  DD managers.
-- Component‑wise FC + WMC are timed together under `FC_WMC_HYBRID`, which now
-  starts before rewrite so its wall time includes rewrite + split.
-- Probabilities are stored only for `needOutput` nodes (plus precomputed facts),
-  so `IO_DUMP` no longer sorts large internal node sets.
-- With `--dumpdot`, the pipeline prints `fc-component-info` lines listing each
-  component’s size, rand vars, fast/slow mode, and the slow‑path reason.
-- Logging: pipeline logs timings; rewrite stats include iterations, region counts, nodes/edges removed/added.
+1. SISO detection:
+  For general SISOs, we do not touch SI and SO and only simplify the middle part. Also reduce the search for large candidate SISOs to avoid excessive detection overhead.
+  But we still detect the "simplest SISO", i.e., si -> so (two nodes, one edge). For this SISO, we want to merge si and so into the same node during rewrite, while correctly updating probabilities. This SISO needs extra constraints because merging si/so requires si/so to satisfy constraints too (si has only a single outgoing edge / so has only a single incoming edge).
+2. SISO rewrite
+  For specific SISO patterns, avoid forward compilation and compute the new probability directly with formulas to avoid overhead.
+  Also support merging the simplest subgraph.
 
-## Latest evaluation (2026-01-05, full rule set)
-Settings:
-- `--det-opt` always on; `--rewrite` toggled.
-- Compile with `--full-only`.
-- Split mode: default `naive-split`.
-- Backend: BDD (CUDD); bucketed init for small/medium graphs and defaults for large graphs.
-- `rand_vars` counts probabilistic facts + probabilistic edges in the pruned view used for FC.
-- `rewrite_s` is derived from `rewrite_ms` recorded inside `FC_WMC_HYBRID`.
-- `hybrid_s` is `FC_WMC_HYBRID` wall time; it includes rewrite + component FC/WMC.
-- `fc_s`/`wmc_s` come from `fc_build_ms` and `wmc_ms` recorded in the hybrid stage.
-- `manager_init_ms` is `0` when no slow components exist.
-- `dd_live_nodes` for rewrite is the sum of per‑component live nodes; treat it as
-  approximate (not directly comparable to the no‑rewrite single‑manager count).
+===
 
-| case | variant | rand_vars | total_s | seminaive_s | create_s | prune_s | rewrite_s | hybrid_s | fc_s | wmc_s | manager_init_ms | reorder_s | dd_live_nodes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| P1 | norewrite | 2 | 0.027135 | 0.014387 | 0.000382 | 0.000447 |  |  | 0.010204 | 0.000055 | 9 |  | 3 |
-| P1 | rewrite | 2 | 0.016597 | 0.013901 | 0.000397 | 0.000363 | 0.000000 | 0.000862 | 0.000000 | 0.000000 | 0 |  | 0 |
-| P3 | norewrite | 2 | 0.024102 | 0.017207 | 0.000364 | 0.000365 |  |  | 0.004686 | 0.000044 | 4 |  | 3 |
-| P3 | rewrite | 2 | 0.017603 | 0.014799 | 0.000329 | 0.000468 | 0.000000 | 0.000972 | 0.000000 | 0.000000 | 0 |  | 0 |
-| P4 | norewrite | 1 | 0.010230 | 0.002478 | 0.000308 | 0.000249 |  |  | 0.005823 | 0.000038 | 5 |  | 2 |
-| P4 | rewrite | 0 | 0.003259 | 0.001687 | 0.000235 | 0.000120 | 0.000000 | 0.000140 | 0.000000 | 0.000000 | 0 |  | 0 |
-| P5 | norewrite | 12 | 0.010050 | 0.002981 | 0.000297 | 0.000336 |  |  | 0.004732 | 0.000065 | 4 |  | 35 |
-| P5 | rewrite | 0 | 0.004404 | 0.002201 | 0.000236 | 0.000267 | 0.000000 | 0.000573 | 0.000000 | 0.000000 | 0 |  | 0 |
-| P6 | norewrite | 39 | 0.017001 | 0.007366 | 0.000583 | 0.000798 |  |  | 0.006356 | 0.000058 | 5 |  | 117 |
-| P6 | rewrite | 6 | 0.009012 | 0.004329 | 0.000460 | 0.000632 | 0.001000 | 0.002142 | 0.000000 | 0.000000 | 0 |  | 0 |
-| P7 | norewrite | 56 | 0.017641 | 0.006540 | 0.001445 | 0.000918 |  |  | 0.007017 | 0.000093 | 5 |  | 196 |
-| P7 | rewrite | 18 | 0.021883 | 0.004536 | 0.001278 | 0.001889 | 0.003000 | 0.012404 | 0.000000 | 0.000000 | 8 |  | 18 |
-| P8 | norewrite | 53 | 0.020783 | 0.009727 | 0.001683 | 0.001290 |  |  | 0.005608 | 0.000093 | 4 |  | 188 |
-| P8 | rewrite | 18 | 0.027677 | 0.012210 | 0.001701 | 0.001570 | 0.004000 | 0.010268 | 0.000000 | 0.000000 | 5 |  | 17 |
-| P9 | norewrite | 113 | 0.021801 | 0.010571 | 0.001167 | 0.001619 |  |  | 0.006001 | 0.000134 | 4 |  | 432 |
-| P9 | rewrite | 31 | 0.025470 | 0.008693 | 0.001375 | 0.001926 | 0.004000 | 0.011391 | 0.000000 | 0.000000 | 5 |  | 18 |
-| P10 | norewrite | 32 | 0.056855 | 0.027486 | 0.016697 | 0.001642 |  |  | 0.005771 | 0.000061 | 5 |  | 49 |
-| P10 | rewrite | 0 | 0.049272 | 0.025122 | 0.015693 | 0.001507 | 0.000000 | 0.000785 | 0.000000 | 0.000000 | 0 |  | 0 |
-| P11 | norewrite | 16 | 0.055691 | 0.025361 | 0.016603 | 0.002846 |  |  | 0.005606 | 0.000111 | 4 |  | 17 |
-| P11 | rewrite | 0 | 0.070663 | 0.040482 | 0.020363 | 0.004089 | 0.000000 | 0.000375 | 0.000000 | 0.000000 | 0 |  | 0 |
-| P12 | norewrite | 466 | 0.154763 | 0.071156 | 0.017927 | 0.012741 |  |  | 0.045361 | 0.000774 | 31 |  | 1693 |
-| P12 | rewrite | 0 | 0.129627 | 0.066559 | 0.014860 | 0.014257 | 0.027000 | 0.027580 | 0.000000 | 0.000000 | 0 |  | 0 |
-| P13 | norewrite | 1143 | 0.566284 | 0.125265 | 0.032700 | 0.030995 |  |  | 0.359206 | 0.004237 | 80 |  | 4056 |
-| P13 | rewrite | 0 | 0.271306 | 0.123768 | 0.034156 | 0.035865 | 0.065000 | 0.065386 | 0.000000 | 0.000000 | 0 |  | 0 |
-| P14 | norewrite | 1643 | 1.057596 | 0.186317 | 0.064414 | 0.069485 |  |  | 0.710356 | 0.005460 | 33 |  | 7112 |
-| P14 | rewrite | 449 | 0.414165 | 0.181824 | 0.049822 | 0.057444 | 0.097000 | 0.108727 | 0.000000 | 0.005000 | 0 |  | 0 |
-| P15 | norewrite | 3262 | 3.587351 | 0.426634 | 0.131338 | 0.168988 |  |  | 2.805829 | 0.013068 | 49 |  | 28063 |
-| P15 | rewrite | 1225 | 0.953004 | 0.400168 | 0.109871 | 0.169324 | 0.200000 | 0.237010 | 0.000000 | 0.021000 | 0 |  | 0 |
-| P16 | norewrite | 5635 | 6.571363 | 0.642035 | 0.250246 | 0.397444 |  |  | 5.191910 | 0.025387 | 413 |  | 73472 |
-| P16 | rewrite | 2210 | 1.896653 | 0.652436 | 0.229598 | 0.443999 | 0.430000 | 0.507301 | 0.000000 | 0.040000 | 0 |  | 0 |
-| P17 | norewrite | 7635 | 8.543895 | 0.910980 | 0.292407 | 0.725272 |  |  | 6.472285 | 0.042987 | 426 |  | 136403 |
-| P17 | rewrite | 3010 | 2.800648 | 0.905866 | 0.322921 | 0.668448 | 0.689000 | 0.811796 | 0.000000 | 0.061000 | 0 |  | 0 |
-| P18 | norewrite | 9641 | 8.511692 | 1.182473 | 0.503956 | 1.037593 |  |  | 5.590781 | 0.056403 | 396 |  | 236625 |
-| P18 | rewrite | 3806 | 3.823239 | 1.150737 | 0.467236 | 0.996635 | 0.906000 | 1.091150 | 0.000000 | 0.096000 | 0 |  | 0 |
-| P19 | norewrite | 12143 | 12.326357 | 1.530985 | 0.607021 | 1.453568 |  |  | 8.480337 | 0.078253 | 374 |  | 380558 |
-| P19 | rewrite | 4810 | 5.252128 | 1.487400 | 0.572956 | 1.511006 | 1.273000 | 1.538884 | 0.000000 | 0.147000 | 0 |  | 0 |
-| P20 | norewrite | 17852 | 8.326195 | 1.143798 | 0.624185 | 0.995282 |  |  | 5.290098 | 0.080939 | 370 |  | 75932 |
-| P20 | rewrite | 3632 | 4.892494 | 1.147562 | 0.639239 | 0.972134 | 1.848000 | 1.974036 | 0.001000 | 0.005000 | 1 |  | 319 |
 
-## Observed issues
-- Rewrite can be slower on larger graphs (e.g., P12) because detection + per‑region forward comp dominate; global BDD build may not shrink enough to offset that cost.
-- Simple SISO rewrite does not fold nodes; potential size reduction is limited.
-- Region count can be large (1000+), and most regions have ≤1 random variable, so summarization benefit is small while cost accumulates.
+Implementation Notes: SISO Rewrite Pipeline
+===========================================
 
-## Near‑term ideas
-1) Reduce useless work:
-   - Heuristics to skip regions with tiny payoff (e.g., RV count ≤1 and already single edge), or cap regions per iteration.
-   - Increase `kMaxEdges` only when payoff is expected; otherwise keep regions small to bound local DD cost.
-2) Cheaper handling for “simple” patterns:
-   - For linear or single‑edge SISO (including fact inputs), compute probability analytically and fold nodes when safe (unique in/out edges), to actually shrink the view.
-3) Better accounting:
-   - Per‑region profiling (detect/build/WMC/apply) to pinpoint hotspots; report BDD live nodes per region to catch blow‑ups early.
-4) Safeguards:
-   - Optional limit on total rewrite time or total regions processed; early exit to avoid regressions.
+Summary of recent experiments and profiling for the SISO-based rewrite pipeline across side_channel_full benchmarks.
 
-Use this as a reference before making further optimizations. Keep changes small and measure on both small (P5) and larger (P12/P1x) cases, comparing total time and BDD sizes with and without rewrite.
+Environment
+-----------
+- Souffle command: `souffle --online --full-only -F ./input -D ./output compute.souffle.dl -o compute_new`
+- Rewrite run: `SOUFFLE_REWRITE_DEBUG=1 ./compute_new --rewrite -F ./input -D ./output_rewrite`
+- No-rewrite run: `./compute_new -F ./input -D ./output_no_rewrite`
+- All times are wall-clock as printed by the pipeline/logs (ms unless noted).
+
+Key Instrumentation
+-------------------
+- `GraphRewriter` now logs per-region steps: mgrInit (only first region), build, WMC, apply, forward-comp rounds, BDD live nodes and mem.
+- `Pipeline` prints BDD manager init time for both rewrite on/off to align phases.
+- Local manager for SISO rewrite is reused across regions; manager init is only charged to the first region.
+
+P9 (baseline, small)
+--------------------
+- Rewrite on (`run_rewrite_debug6.log`): create 1, prune 3, SISO detect 59, SISO rewrite 533 (10 iters, 164 regions), BDD manager init 70, BDD build 10, rest 0.
+  - Per-region build ~0.3–1.5 ms, WMC ~0.0007 ms; first region mgrInit ~154 ms; final BDD live nodes ~349, mem ~0.8 GB.
+- Rewrite off (`run_no_rewrite_timed4.log`): create 1, prune 3, SISO detect 54, BDD manager init 318, BDD build 18, per-node WMC 2, dump 1.
+- Outputs match.
+
+P10–P14 (copied from problog-benchmark)
+---------------------------------------
+- P10:
+  - Rewrite: create 14, prune 1, detect 3, rewrite 357, BDD init 71, build 2.
+  - No-rewrite: create 17, prune 1, detect 3, BDD init 117, build 4.
+  - Rewrite faster overall.
+- P11:
+  - Rewrite: create 14, prune 1, detect 1, rewrite 82, BDD init 68, build 2.
+  - No-rewrite: create 15, prune 2, detect 2, BDD init 72, build 3.
+  - Rewrite faster overall.
+- P12:
+  - Rewrite: create 15, prune 32, detect 1787, rewrite 6001 (5 iters, 1190 regions), BDD init 66, build 440, per-node WMC 18.
+  - No-rewrite: create 15, prune 28, detect 1685, BDD init 92, build 861, per-node WMC 165.
+  - Rewrite faster in build/WMC despite rewrite overhead.
+- P13:
+  - Rewrite: create 26, prune 64, detect 8608, rewrite 31493 (5 iters, 2810 regions), BDD init 26, build 2473, per-node WMC 124.
+  - No-rewrite: create 34, prune 78, detect 8397, BDD init 31, build 1853, per-node WMC 1521.
+  - Rewrite slower overall due to large rewrite cost, but WMC stage is much smaller after rewrite.
+- P14:
+  - Rewrite: create 46, prune 115, detect 19856, rewrite 71379 (5 iters, 4148 regions), BDD init 33, build 2127, per-node WMC 400.
+  - No-rewrite: create 65, prune 116, detect 20150, BDD init 30, build 4622, per-node WMC 3621.
+  - Rewrite slower overall; still cuts build/WMC roughly in half.
+
+P15 (very large)
+----------------
+- No-rewrite (`run_no_rewrite.log`): create 129 ms, prune 288 ms, SISO detect 297003 ms, BDD init 719 ms, BDD build 25773 ms, per-node WMC 15997 ms (total ~343 s).
+- Rewrite attempts:
+  - Debug-on runs hit timeout (>600 s).
+  - Non-debug rewrite run (600 s limit) stalled; log only shows create 135 ms, prune 324 ms before timeout.
+- Takeaway: rewrite currently too slow on P15; SISO detection alone is very heavy. Needs algorithmic improvement for large instances.
+
+P16–P19
+-------
+- Builds done; no-rewrite/rewrite not fully executed in batch due to time/memory.
+  - Rewrite runs for P16–P19 were killed (Signal 9), likely OOM/time.
+  - No-rewrite for P16–P19 not run yet (expected to be heavy, given P15).
+
+Open Items / Ideas
+------------------
+- Optional GC after each SISO (call `tryGarbageCollection()` in rewrite loop) if we want to keep manager footprint smaller; not yet implemented.
+- Reuse manager from rewrite for global build would require unified variable mapping/order; currently global build creates a fresh manager.
+- Investigate faster SISO detection or region filtering for large instances (P15+).
+
+Hypotheses on Slowness (brainstorm)
+-----------------------------------
+- SISO detection cost dominates on large inputs (e.g., P15 detect ~297 s even without rewrite; P14 detect ~20 s). GraphAnalyzer likely O(E*V) with heavy traversals; region counts grow fast.
+- Rewrite iterations explode: many small regions (P14: 4148 regions, 5 iters; P13: 2810) → overhead of building subviews and per-region forward comp, even if each region is tiny.
+- BDD manager init for the global build is still costly when graph is large (no-rewrite P15: 719 ms; build 25.7 s). Rewrite reduces build/WMC but not enough to offset detect+rewrite overhead.
+- Variable ordering heuristic in `WeightedBDDManager::preConfig` recomputes and reorders for each manager; for big graphs this adds to init time (though for rewrite the manager is smaller).
+- CUDD GC/autodyn may kick in mid-run; we don’t profile cache/GC hits per region, so hidden costs may exist.
+- Region construction may be copying sets/vectors (SubgraphView from unordered_sets) → allocator churn; could switch to views on indices.
+- For P15+ the number of regions/iterations might cause quadratic behavior if we rescan the whole graph each round.
+- Evidence/WMC stages are negligible; bottlenecks are SISO detection and rewrite bookkeeping, not BDD WMC.
+
+Profiling Insights (current)
+----------------------------
+- For small/medium (P10–P12) rewrite reduces global BDD build/WMC and wins overall.
+- For larger (P13–P14) rewrite cuts BDD build/WMC but total time dominated by detection+rewrite; net slower.
+- Per-region forward comp is very fast (sub-ms build, ~0.0007 ms WMC); first region pays manager init (~150 ms on P9).
+- BDD live nodes after all P9 regions: ~349 nodes, ~0.8 GB reported by CUDD (likely including manager overhead).
+- Global BDD manager init grows with graph size: 70 ms (P9 rewrite) vs 318 ms (P9 no-rewrite); 719 ms on P15 no-rewrite.
+- Global BDD build/WMC: rewrite helps (P14 build 2.1 s vs 4.6 s; per-node WMC 0.4 s vs 3.6 s), but SISO detect/rewrite dwarfs savings.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `2fe1123db` — perf(problog): limit prob results to outputs
+- `e1e9f6c84` — perf(problog): add hybrid stage metrics for component FC

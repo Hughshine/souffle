@@ -1,5 +1,10 @@
 # Rewrite Optimization Notes
 
+## Source references
+- [src/include/souffle/problog/GraphRewriter.h](src/include/souffle/problog/GraphRewriter.h)
+- [src/include/souffle/problog/GraphAnalyzer.h](src/include/souffle/problog/GraphAnalyzer.h)
+
+
 This file summarizes analysis of GraphRewriter / GraphAnalyzer rewrite costs,
 adjacency queries, cache invalidation, and optimization ideas. It is a design
 note only; no code changes are included.
@@ -10,6 +15,8 @@ note only; no code changes are included.
 ## Current behavior (rewrite loop)
 
 - The rewrite loop detects SISO regions, then rewrites them one by one.
+  The detector currently returns **fast-path** regions only; the dominance-based
+  detector is disabled (see `README.siso.md`).
 - Each region rewrite mutates the working view immediately:
   - new edges/nodes are inserted
   - old edges/nodes are removed
@@ -95,3 +102,7 @@ logic, but that repeated view mutations combined with full-graph passes and
 degree scans on base-graph adjacency can dominate runtime. The lowest-risk
 optimizations are conditional full-graph passes and cautious batching with
 strict avoidance of cached entrypoints during mutation.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `44da3400e` — docs(readme): update trimmed results and rewrite notes

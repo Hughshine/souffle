@@ -1,5 +1,13 @@
 # Contributing
 
+## Source references
+- [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)
+- [sh/setup/install_macos_deps.sh](sh/setup/install_macos_deps.sh)
+- [sh/setup/install_macos_arm_deps.sh](sh/setup/install_macos_arm_deps.sh)
+- [sh/run_test_format.sh](sh/run_test_format.sh)
+- [cmake/CTestDisabled.cmake](cmake/CTestDisabled.cmake)
+
+
 Thanks for helping improve this fork. Please keep changes small and focused,
 and align documentation with behavior changes.
 
@@ -29,7 +37,7 @@ and align documentation with behavior changes.
   - `README.md` for user entry points.
   - `CONTRIBUTING.md` for contributor workflow.
   - `AGENTS.md` for Codex constraints.
-  - `docs/*` for detailed guidance.
+  - `docs/*` and `README*.md` for detailed guidance.
 - Keep `docs/INDEX.md` in sync with doc additions or deprecations.
 
 ## Review Checklist
@@ -37,3 +45,6 @@ and align documentation with behavior changes.
 - Style check passes (`sh/run_test_format.sh`).
 - Documentation updated for behavior changes.
 - No generated artifacts or experiment outputs are committed.
+
+## Related commits
+- `aaa18c137` — docs(repo): add core docs

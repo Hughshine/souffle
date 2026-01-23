@@ -1,5 +1,9 @@
 # SDD Manager (ProbLog SDD Path)
 
+## Source references
+- [src/include/souffle/problog/formula/SddManager.h](src/include/souffle/problog/formula/SddManager.h)
+
+
 ## Scope
 - Documents the current state of the ProbLog SDD backend (`SddFormulaManager`) and
   what it still lacks compared to the CUDD BDD backend (`WeightedBDDManager`).
@@ -55,6 +59,9 @@ The public header `sdd/sdd.h` (this repo includes it via `<sdd/sdd.h>`) provides
   - Literals are cached in `variableRegistry[internalIndex]`.
 - Weights are stored in `weight_map_[internalIndex]` and materialized into a dense
   `2*varCount` array in `buildWeightArray()` for each WMC call.
+- `setVariableWeight(rawIndex, ...)` only updates weights for already-mapped raw
+  indices; it does **not** allocate variables or store pending weights for
+  unmapped raw indices.
 
 ### Weighted Model Counting (WMC)
 - `computeWeightedModelCount(node)`:
@@ -63,8 +70,9 @@ The public header `sdd/sdd.h` (this repo includes it via `<sdd/sdd.h>`) provides
   - Does not cache WMC results across calls.
 
 ### Observability
-- `dumpProfilingStatistics()` prints vtree/live/dead node info from the SDD manager,
-  but there is no structured `getProfilingStatistics()` map like the CUDD backend.
+- `dumpProfilingStatistics()` prints vtree/live/dead node info from the SDD manager.
+- `getProfilingStatistics()` now returns `{live_nodes, dead_nodes, total_nodes}` but still
+  lacks CUDD-style cache/memory/reordering fields.
 
 ## Gaps vs CUDD (Missing Support / Parity Checklist)
 
@@ -138,9 +146,9 @@ Why it matters:
 **CUDD**
 - Implements `getLiveNodeCount()` and structured `getProfilingStatistics()` for FC/CLI.
 
-**SDD (Missing / Partial)**
-- No `getLiveNodeCount()` override and no `getProfilingStatistics()` map.
-- Only prints stats via `dumpProfilingStatistics()`.
+**SDD (Partial)**
+- Implements `getLiveNodeCount()` and `getProfilingStatistics()` with live/dead/total node counts.
+- Missing CUDD-style stats: cache hit rate, memory usage, reordering runtime.
 
 ### 7) WMC Performance Parity
 **CUDD**
@@ -157,22 +165,23 @@ Why it matters:
 - Setting weights does not force creation/expansion of variables; deterministic facts
   can map to `True` without growing the manager.
 
-**SDD (Missing Optimization)**
-- `setVariableWeight(rawIndex, ...)` can allocate/expand internal variables even if
-  the corresponding formula was `True` (e.g., deterministic facts).
-- This can inflate `sdd_manager_var_count()` without any formula using those vars.
+**SDD (Current Behavior)**
+- `setVariableWeight(rawIndex, ...)` only applies if `rawIndex` already maps to an
+  internal variable; it will **not** allocate or grow `var_count` on its own.
+- Deterministic facts typically stay as constants (no variable creation), which
+  avoids manager growth but also means weights for unmapped raw indices are ignored
+  until a formula forces `createVar`.
 
 ## Status / Known Issues
 - See `README.rewrite.120825.md` (“SDD status”) for current correctness concerns and
   why the default recommendation is still BDD.
 
 ## Suggested Next Steps (Implementation Checklist)
-- Add `releaseVarIndex(Node/Hyperedge)` + free-list reuse keyed by tuple/ruleApp to
-  match CUDD incremental behavior.
-- Implement `reset()` and `resetHard()` to match CLI expectations.
-- Add proper RAII for `manager_` (free manager in destructor; consider ownership in refs).
 - Add `preConfig(view)` to pre-size var_count (full + delta-insert paths) and to clear
   per-turn caches if any are added.
-- Add structured stats (`getLiveNodeCount`, `getProfilingStatistics`) similar to CUDD.
+- Expand stats parity with CUDD (cache hit rate, memory usage, reorder runtime).
 - Avoid allocating variables for deterministic facts/edges (and/or treat global weights
   without expanding var_count).
+
+## Related commits
+- `78890247d` — fix(inc): align delta handling and node metrics

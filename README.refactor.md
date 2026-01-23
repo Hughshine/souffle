@@ -1,5 +1,10 @@
 # Refactor Notes (Online-Only Fork)
 
+## Source references
+- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+
+
 This file captures refactor opportunities after re-reading the core online pipeline and problog code. It is not a plan or a commitment; it is a prioritized list of likely improvements.
 
 ## Status
@@ -237,3 +242,8 @@ Suggested mapping (examples):
 - `src/include/souffle/Derivation.h` -> `src/Derivation.cpp`
 
 If you want a clearer boundary, create a `src/runtime/` subtree and mirror the include layout there instead (e.g., `src/runtime/cli/Cli.cpp`, `src/runtime/problog/DerivationGraph.cpp`). The key is consistency: a predictable mapping helps CMake lists and future maintenance.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `86b6c2379` — docs(readme): update precompile and quickstart notes
+- `efb25a3a4` — Add refactor guidance for runtime library split

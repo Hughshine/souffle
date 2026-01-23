@@ -1,5 +1,11 @@
 # Souffle (Local Research Fork)
 
+## Source references
+- [src/MainDriver.cpp](src/MainDriver.cpp)
+- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
+- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+
+
 This repo extends upstream Souffle with a probabilistic pipeline and online
 incremental evaluation. It focuses on the online compiler path and adds
 DRed-like incremental updates, derivation-graph-based inference, and rewrite
@@ -16,8 +22,8 @@ prototypes.
 - Online compilation is the default; `--online` is optional.
 - The legacy `--inc` backend is removed.
 - No interpreter path; `souffle file.dl` defaults to compile-only `-o <basename>`.
-- Rewrite runs in full mode only; incremental modes skip rewrite.
-- Full mode defaults to `full-hard`; `full-soft` is optional.
+- Rewrite runs only in full-mode runs; if `--rewrite` is enabled, the incremental CLI is disabled after the full run.
+- `--setmode full` maps to `full-hard`; `full-soft` is optional.
 
 ## Quickstart
 
@@ -64,3 +70,8 @@ See `docs/TESTING.md` for test status and alternative verification paths.
 - ctest fails: this fork intentionally disables `ctest`; see `docs/TESTING.md`.
 - Need rewrite or incremental details: start at `docs/INDEX.md`.
 - Commit hygiene: see `README.git.md` for what to include and exclude.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `3e9b024ca` — docs(readme): refresh eval and pipeline notes
+- `e1e9f6c84` — perf(problog): add hybrid stage metrics for component FC

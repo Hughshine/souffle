@@ -1,3 +1,12 @@
+# Elastic Mode Notes (Design)
+
+## Status
+- Design note only; `--setmode elastic` is accepted but asserts at runtime (not implemented).
+
+## Source references
+- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+
 下面我先把 **graph generation（完整 derivation graph 维护）阶段**里“全量 vs 增量”的切换思路整理成一套可直接落地的 elastic 方案，并把它和 Zhao 等 PPDP’21 的 **Bootstrap–Update** 框架一一对齐。你的直觉是对的：从确定性 Datalog 到概率版（Problog/ProbLog 风格）本质上只是把“计算状态”从 *IDB 元组/计数* 扩展成 *完整 provenance/derivation graph*；切换逻辑仍然是同一类问题。
 
 ---
@@ -277,3 +286,6 @@ commit(ELASTIC):
 - 目标不是“永远选对”，而是：
   - delete-heavy case 不再出现 “INC 比 FULL 慢一个数量级”；
   - 其余 case 仍尽量吃到增量收益。
+
+## Related commits
+- `619e52197` — fix(inc): track explicit deletes and log deltas

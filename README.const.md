@@ -1,5 +1,13 @@
 # Deterministic-First Constant Strategy (Const v2)
 
+## Source references
+- [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
+- [src/synthesiser/Synthesiser.cpp](src/synthesiser/Synthesiser.cpp)
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+- [src/include/souffle/Derivation.h](src/include/souffle/Derivation.h)
+- [src/Derivation.cpp](src/Derivation.cpp)
+
+
 This document rethinks "const" handling for the probabilistic pipeline. The current
 const pre-analysis (Const-FC) only short-circuits formula construction after the
 derivation graph exists. That is too late for workloads dominated by deterministic
@@ -205,10 +213,15 @@ for each facts line:
   (plus precomputed facts) so `IO_DUMP` is comparable. `dd_live_nodes` for
   rewrite is a summed, approximate count.
 - Full per-case timing table (including `rand_vars`) is recorded in
-  `README.eval.md` and `README.rewrite.md`.
+  `README.eval.md` and `README.rewrite.impl.md`.
 
 ## Relation to current Const-FC
 - The existing const pre-analysis in `ForwardCompilation.h` is a late-stage
   micro-optimization that does not address graph size.
 - Deterministic-first recording is the primary strategy; Const-FC remains as a
   safe fallback for any remaining constants.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `2fe1123db` — perf(problog): limit prob results to outputs
+- `e1e9f6c84` — perf(problog): add hybrid stage metrics for component FC

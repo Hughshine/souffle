@@ -1,35 +1,53 @@
-# MST Notes
+# Magic Set Transformation (MST) Notes
 
-This note describes MST-specific changes in the translator and how they affect
-ProbLog emitRules and the derivation graph.
+## Source references
+- [src/MainDriver.cpp](src/MainDriver.cpp)
+- [src/ast/transform/MagicSet.h](src/ast/transform/MagicSet.h)
+- [src/ast/transform/MagicSet.cpp](src/ast/transform/MagicSet.cpp)
+- [src/ast2ram/online/ClauseTranslator.cpp](src/ast2ram/online/ClauseTranslator.cpp)
+- [src/ast2ram/online/IncClauseTranslator.cpp](src/ast2ram/online/IncClauseTranslator.cpp)
+- [src/parser/parser.yy](src/parser/parser.yy)
+- [src/synthesiser/Synthesiser.cpp](src/synthesiser/Synthesiser.cpp)
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
 
-## Translator changes (ClauseTranslator)
-- We adjust ClauseTranslator (and IncClauseTranslator) to recognize simple
-  constant bindings from binary constraints of the form:
+This note describes MST-specific behavior in the AST pipeline and how it affects
+the online translator and Synthesiser rule emission used by ProbLog features.
+
+## When MST runs
+- The MagicSetTransformer runs only when `--magic-transform` is set or when a
+  relation uses the `magic` qualifier.
+- `--magic-transform-exclude` and the `no_magic` qualifier add relations to the
+  ignored set (they override inclusion for those relations).
+- `--magic-transform='*'` means all relations are candidates for MST, except
+  those in the ignored set.
+
+## Translator bindings for MST normalization
+- The online ClauseTranslator/IncClauseTranslator recognize simple constant
+  bindings from equality constraints of the form:
   - `<var> = <const>`
   - `<const> = <var>`
-- These bindings are used to populate varExprMap so emitRules can still
-  materialize a full varValues vector for RuleApplication, even when constants
-  are represented via normalization constraints.
+- These bindings populate `varExprMap` so rule emission can still build a full
+  variable vector even when constants are represented via normalization
+  constraints.
 
-## ProbLog emitRules impact
-- MST normalization may introduce additional variables via equality constraints.
-- emitRules still skips constraints in the rule body, so the translator-side
-  varExprMap binding is required to avoid "variable not grounded" issues.
-- This preserves the original seminaive semantics while keeping ProbLog rule
-  applications well-formed.
+## Synthesiser rule emission impact
+- MST normalization can introduce additional variables via equality constraints.
+- `Synthesiser::emitRules` skips `ast::Constraint` body literals, so the
+  translator-side `varExprMap` binding is required to avoid "variable not
+  grounded" cases in emitted rules.
 
-## New edges in derivation graph
-- MST emitRules can introduce intermediate relations:
+## Intermediate relations and derivation graph
+- MagicSet normalization can introduce intermediate relations with prefixes:
   - `@split_in`
   - `@interm_in`
   - `@interm_out`
-- These create additional edges in the derivation graph. A later graph fuse can merge them to reduce overhead.
+- These appear as additional nodes/edges in the derivation graph. A dedicated
+  MST graph-fuse step is still TODO.
 
 ## Build / Run
-- Compile command: 
-- --magic-transform='Relations' enable mst changes on the given relations.
-- --magic-transform='*' enable mst changes for all relations.
+- Use the standard build steps from [docs/USAGE.md](docs/USAGE.md), then invoke:
+  - `./build/src/souffle --magic-transform='RelA,RelB' program.dl`
+  - `./build/src/souffle --magic-transform='*' --magic-transform-exclude='RelC' program.dl`
 
 ## Example
 ```souffle
@@ -52,3 +70,7 @@ res(Y) :- a(1, Y).
 // res(X) :- a(X, Y).
 // query(res(1)).
 ```
+
+## Related commits
+- `e64f37aba` — docs(repo): add MST docs
+- `c16d5349b` — added ConstantNormalizationTranslator, modified ClauseTranslators, added README

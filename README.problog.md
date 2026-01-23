@@ -1,5 +1,9 @@
 # ProbLog Baseline Runs
 
+## Source references
+- [problog-benchmark/side_channel_full.py](problog-benchmark/side_channel_full.py)
+
+
 This document records ProbLog full-inference timing runs for the
 side-channel benchmark programs. It captures stdout stage timings
 whenever ProbLog prints them and notes timeouts explicitly.
@@ -89,3 +93,8 @@ whenever ProbLog prints them and notes timeouts explicitly.
 | P18 | timeout |  |  |  |  |  |
 | P19 | timeout |  |  |  |  |  |
 | P20 | timeout |  |  |  |  |  |
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `77d699f46` — docs(problog): refresh timing tables and notes
+- `11d930a11` — docs(problog): record baseline timing runs

@@ -1,5 +1,10 @@
 # Prune Stage Notes (Full + Incremental)
 
+## Source references
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+- [src/include/souffle/problog/RegionalIncremental.h](src/include/souffle/problog/RegionalIncremental.h)
+
+
 ## Status
 - Active note. Summarizes prune behavior and known performance drivers.
 
@@ -9,13 +14,13 @@
 
 ## Related docs
 - `README.profile.inc.md` (timings and profiling data).
-- `README.inc.region.md` (impacted-map rebuild and delta-reach cache usage).
+- `README.inc.region.md` (delta-reach fallback chain and inc-regional expectations).
 - `README.eval.inc.md` (benchmark tables and stage breakdowns).
 - `README.dred.md` (SEM stage context).
 
 ## Code map
 - `src/include/souffle/problog/DerivationGraph.h`: full/inc `prune()` implementations.
-- `src/include/souffle/problog/DerivationGraph.h`: impacted-map rebuild and delta-reach cache.
+- `src/include/souffle/problog/DerivationGraph.h`: impacted-map and delta-reach plumbing (currently empty in prune-inc).
 - `src/include/souffle/problog/RegionalIncremental.h`: inc-regional consumes impacted maps.
 
 ## What prune computes
@@ -30,26 +35,23 @@
 ## Why prune is expensive today
 - It is full-graph work per turn: reachability, mark/prune, and outputless pruning touch
   most of the graph even when deltas are tiny.
-- Impacted-map rebuild is heavy: current logic does BFS per delta node/fact, so worst-case
-  cost is O(|delta_nodes| * (|V|+|E|)). This dominates insert turns on large cases.
 - Building the view materializes large sets/maps (live/delta/impacted), which is costly
   when the graph is large or delta sets are large.
 - Incremental mode disables bi-imp merge (see below), so graphs are typically larger
   than the full-mode view, amplifying prune and downstream costs.
 - Optional `dumpStatisticsInc` and other debug output adds overhead if enabled.
 
-## Impacted-map inefficiency (current root cause)
-- The impacted-map rebuild walks the graph from each delta node to identify affected
-  nodes/edges. This repeats work across overlapping BFS frontiers.
-- The maps are built unconditionally in inc mode, even if inc-regional is not used.
-- See `README.inc.region.md` for the exact cache usage and data flow.
+## Impacted-map status (current code)
+- `prune-inc` currently initializes impacted maps and delta-reach caches as empty;
+  the analyzer therefore falls back to BFS over the live subgraph (see `README.inc.region.md`).
+- If impacted-map rebuild is reintroduced, prefer multi-source BFS or a union cache to
+  avoid O(|delta_nodes| * (|V|+|E|)) behavior.
 
-## Recent changes (2026-01-11)
-- Delete impact BFS now only sources from explicit deleted facts (not all delta-deleted nodes).
-- Insert impact maps (and delta-reach cache) are skipped in inc-naive; they are only
-  built when inc-regional is enabled.
+## Historical notes (2026-01-11)
+- These notes refer to an earlier branch where prune-inc rebuilt impacted maps.
+  The current code leaves impacted maps empty and uses analyzer BFS fallback.
 
-## Update log (2026-01-12, trimmed ruleset, det-opt, P17-P20, inc1/inc3/inc5)
+## Historical update log (2026-01-12, trimmed ruleset, det-opt, P17-P20, inc1/inc3/inc5)
 - Correctness: all deltas OK (max|Δ|=0).
 - PRUNING_INC insert turns dropped sharply after skipping insert impact maps:
   avg PRN across P17-P20 moved from ~6.4/9.5/9.7s to ~1.06/1.07/1.25s for inc1/inc3/inc5
@@ -58,7 +60,7 @@
   avg PRN across P17-P20 moved from ~0.58/0.50/0.54s to ~0.63/0.67/0.68s.
 - Remaining bottleneck: insert FC dominates (e.g., P20 inc3/inc5 insert FC still ~65–68s).
 
-## Update log (2026-01-12, delete impact union BFS, trimmed ruleset, det-opt, P17-P20, inc1/inc3/inc5)
+## Historical update log (2026-01-12, delete impact union BFS, trimmed ruleset, det-opt, P17-P20, inc1/inc3/inc5)
 - Change: delete impact maps are now computed as **union BFS** for deterministic and non-deterministic deleted facts
   (per-fact BFS removed); non-deterministic conditioning is applied once per impacted node/edge using the full
   deleted-var list.
@@ -86,3 +88,7 @@
 
 ## Data references
 - Timing breakdowns and examples are in `README.profile.inc.md`.
+
+## Related commits
+- `80232d555` — docs(eval): refresh inc benchmark notes
+- `dc4024f87` — perf(prune): skip insert impacts in inc-naive

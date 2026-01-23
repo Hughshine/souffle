@@ -1,5 +1,10 @@
 # Souffle AST and RAM Transformation Notes
 
+## Source references
+- [src/MainDriver.cpp](src/MainDriver.cpp)
+- [src/ast2ram](src/ast2ram)
+
+
 This document inventories the AST (rule-level) and RAM (execution-level)
 transformation pipelines wired in `src/MainDriver.cpp`, and explains every
 transformation in those pipelines. For each pass, it states whether the pass
@@ -363,3 +368,6 @@ Evidence-aware slicing (query/output/evidence semantics):
 Magic set:
 - Disable MagicSetTransformer when evidence is present, until evidence
   relations are included in the magic-set slice and renaming logic.
+
+## Related commits
+- `668298ef8` — fix(inc-region): update regional WMC routing and profiling

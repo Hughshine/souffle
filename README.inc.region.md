@@ -1,5 +1,13 @@
 # Inc-Regional Incremental Pipeline (Current Design)
 
+## Source references
+- [src/include/souffle/problog/RegionalIncremental.h](src/include/souffle/problog/RegionalIncremental.h)
+- [src/include/souffle/problog/IncRegionAnalyzer.h](src/include/souffle/problog/IncRegionAnalyzer.h)
+- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+
+
 This file describes the current inc-regional incremental pipeline implementation. It follows the code and is not a planning document.
 
 ## Status
@@ -7,15 +15,18 @@ This file describes the current inc-regional incremental pipeline implementation
 
 ## Scope / Context
 - Applies only to online incremental binaries (default; `--online` optional); the old `--inc` backend is removed.
-- inc-regional only replaces insertion forward compilation; deletion still reuses the inc-naive DRed-like logic.
-- rewrite is not executed in inc/inc-regional mode.
+- inc-regional uses a dedicated deletion/update pass inside `buildFormulasIncRegionalCyclewise`;
+  derivation-graph deltas still use DRed-style `applyDelta` before pruning.
+- If rewrite runs in the full pass, the incremental CLI is disabled; inc/inc-regional runs themselves do not
+  execute rewrite.
 
 ## Related docs
 - `README.eval.inc.md` (benchmark procedures + logs)
 - `README.dred.md` (online DRed internals and deletion bottlenecks)
 
 ## Assumptions
-- Deletion runs the classic incremental delete logic first, then enters regional insertion.
+- Commit runs DRed-style incremental evaluation (`program->runAllInc`) and `graph->applyDelta(...)` before prune;
+  the inc-regional forward-compilation pass performs deletion updates first, then regional insertion.
 - Incremental mode does not run rewrite.
 - Baseline formulas must exist (`nodeFormulas`/`edgeFormulas` non-empty), otherwise an `assert` fails.
 - Incremental mode disables bi-imp merge (after full merge you cannot switch to inc/inc-regional).
@@ -37,13 +48,13 @@ This file describes the current inc-regional incremental pipeline implementation
 - `src/include/souffle/problog/formula/*`: weight read/write and reordering time stats.
 
 ## Pipeline Overview (Per Turn)
-1) `applyDeltaDeletes` (old logic)  
-2) `applyDeltaInserts` (old logic)  
-3) `prune-inc` (build subgraph + impacted maps + deltaReach cache)  
-4) Forward compilation: run deletion (inc-naive logic) first, then inc-regional insertion  
-5) WMC + emit iter results
-
-inc-regional only replaces insertion forward compilation; deletion reuses inc-naive deletion.
+1) Run incremental RAM (`program->runAllInc`) to populate delta relations and derivation deltas.  
+2) `graph->applyDelta(...)` updates the derivation graph (DRed-style).  
+3) `prune-inc` builds the incremental subgraph view; inc-regional enables insert-impact tracking.  
+4) Forward compilation (`buildFormulasIncRegionalCyclewise`):  
+   - Deletion phase: overdelete/condition formulas + rederive along the dependency graph.  
+   - Insertion phase: analyzer → plan → rebuild → calibrate (regional path).  
+5) WMC + emit iter results (`fact-iter<N>-{inc-naive|inc-regional|full}.prob`).
 
 ---
 
@@ -82,9 +93,9 @@ Mergeable anchor criteria (`mergeableEdgeAtHead_`):
 Anchor candidates:
 - Anchors can be **edges** (non-det incoming edges), or **nodes** (non-det fact nodes).
 - Anchors inside the region are rejected (avoid calibrating on rebuilt formulas).
-- Anchor paths avoid output/evidence nodes for safety.
+- Anchor candidates exclude ProbQuery/evidence nodes (`isQueryNode`/`hasEvidence`).
 - If a boundary head is fed by a deterministic edge and the path from head to anchor
-  contains no output/evidence nodes, we allow anchors from that deterministic edge’s inputs:
+  contains no query/evidence nodes, we allow anchors from that deterministic edge’s inputs:
   - non-det fact inputs become **node anchors**
   - otherwise, any incoming **non-det edge** to those inputs becomes an edge anchor
   This supports cases where all direct incoming edges are deterministic.
@@ -94,19 +105,15 @@ Note: region uses `unordered_set`, iteration order is unstable.
 ---
 
 ## Impacted Maps & Delta Reach Cache (DerivationGraph)
-`prune-inc` rebuilds impacted maps (insert/delete) on the subgraph:
-- Run BFS from each delta insert fact (along outgoing edges) to collect impacted nodes/edges.
-- Store in `insertedFactImpactedNodes/Edges` (`unordered_set`).
-- Also build **delta-insert reachable union cache**:
-  - `deltaInsertReachableNodes`
-  - `deltaInsertReachableEdges`
-  This cache is exposed to the analyzer via `getDeltaInsertReachableNodes/Edges()`.
+`prune-inc` currently clears impacted maps and leaves insert-impact caches empty; the analyzer
+therefore falls back to a live-graph BFS from delta insert nodes/edges when caches are missing.
 
 `deltaReachable_()` priority:
-1) Use union cache (fastest)  
-2) If empty, fall back to impacted maps  
+1) Use delta-insert reachable cache (if populated)  
+2) Else use impacted maps (if populated)  
+3) Else BFS from delta insert nodes/edges over live edges  
 
-`reach_filter_` directly uses delta-reachable cache (no extra patching).
+`reach_filter_` uses the same delta-reach fallback chain as `deltaReachable_()`.
 
 ---
 
@@ -217,8 +224,14 @@ Output location notes:
 ## Quick Run (Example)
 ```
 ./compute -F input -D output_run_inc_regional --setmode inc-regional < delta/inc10_1.txt
+./compute -F input -D output_run_full --setmode full < delta/inc10_1.txt
 ```
 Confirm consistency:
 ```
-diff output_run_inc_regional/facts.prob output_run_full/facts.prob
+diff output_run_inc_regional/fact-iter1-inc-regional.prob output_run_full/fact-iter1-full.prob
 ```
+
+## Related commits
+- `739ee83cb` — refactor(inc-region): align regional insert with naive propagation
+- `668298ef8` — fix(inc-region): update regional WMC routing and profiling
+- `986d6bf48` — fix(inc-region): apply gate overrides and tighten anchors

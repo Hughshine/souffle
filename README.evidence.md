@@ -1,5 +1,17 @@
 # Evidence: End-to-End Flow and Semantics
 
+## Source references
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
+- [src/parser/parser.yy](src/parser/parser.yy)
+- [src/parser/ParserDriver.cpp](src/parser/ParserDriver.cpp)
+- [src/ast/transform/EvidenceChecker.cpp](src/ast/transform/EvidenceChecker.cpp)
+- [src/ast2ram/online/UnitTranslator.cpp](src/ast2ram/online/UnitTranslator.cpp)
+- [src/synthesiser/Synthesiser.cpp](src/synthesiser/Synthesiser.cpp)
+- [src/include/souffle/problog/GraphAnalyzer.h](src/include/souffle/problog/GraphAnalyzer.h)
+- [src/include/souffle/problog/GraphRewriter.h](src/include/souffle/problog/GraphRewriter.h)
+
+
 This document summarizes how `evidence(...)` is parsed, validated, compiled, and applied
 in the probabilistic pipeline.
 
@@ -49,8 +61,8 @@ Incremental prune includes evidence nodes as anchors:
 - Evidence nodes are inserted into `reachableNodes` and used to seed the backward
   BFS in `prune-inc` so they are retained even if not on a query path
   (`src/include/souffle/problog/DerivationGraph.h`).
-- After pruning, outputless components are dropped so isolated evidence-only
-  subgraphs do not survive into later stages.
+- When `--prune-extra` is enabled, outputless components are dropped so isolated
+  evidence-only subgraphs may be pruned.
 
 ## 6. Equivalence merging (eqrel/SCC)
 
@@ -95,8 +107,9 @@ full run:
   preserved: evidence literals are rebuilt from the current formulas, and
   conditional probabilities are computed against the evidence list stored on the
   graph.
-- In **full modes** inside the CLI, the graph is rebuilt and the previous graph's
-  evidence list is carried over, so conditioning is preserved.
+- In **full modes** inside the CLI, formulas are rebuilt from scratch after
+  `graph->applyDelta(...)`; the graph's evidence list is reused, so conditioning
+  is preserved.
 
 Implication: evidence is **fixed at program load**, but **conditioning remains
 active** across incremental/full updates in the CLI.
@@ -121,3 +134,7 @@ Implementation notes:
 
 Expected effect: smaller evidence formulas and less redundant conditioning in
 large benchmarks with multiple disconnected subgraphs.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `21a083b93` — perf(problog): scope evidence conditioning by component

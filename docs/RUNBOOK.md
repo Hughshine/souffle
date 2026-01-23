@@ -1,5 +1,11 @@
 # Runbook
 
+## Source references
+- [examples/running_example/run.sh](examples/running_example/run.sh)
+- [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)
+- [src/MainDriver.cpp](src/MainDriver.cpp)
+
+
 ## Start / Build
 - Follow the Quickstart in `README.md` for dependency install and build steps.
 - The bundled example uses `examples/running_example/run.sh` (set `SOUFFLE_BIN`
@@ -32,3 +38,6 @@
 ## Common Checks
 - Compare `facts.prob` outputs across runs for consistency.
 - Inspect stdout timing lines and JSON logs for hot stages before tuning.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives

@@ -1,5 +1,14 @@
 # Incremental Side-Channel Benchmark Guide
 
+## Source references
+- [problog-benchmark/side_channel_inc.py](problog-benchmark/side_channel_inc.py)
+- [problog-benchmark/side_channel_common.py](problog-benchmark/side_channel_common.py)
+- [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
+- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+
+
 Incremental side-channel benchmark notes (context + procedures). Experiments live
 under `experiments/side_channel_inc_eval/` (legacy),
 `experiments/side_channel_inc_trimmed_eval/` (trimmed ruleset, no equal_assign),
@@ -9,7 +18,8 @@ using the Souffle binary built from this repo. Do not git-add anything under
 `experiments/` or other generated artifacts.
 
 ## Status
-- Active evaluation workflow.
+- Evaluation log for an external benchmark repo; results below are historical snapshots.
+- Active evaluation workflow (update with new runs after code changes).
 - 2026-01-12 (full ruleset, det-opt, apply_delta_graph): P1,P3,P4-P20, inc0p1/inc0p3/inc0p5, sample=1, all OK.
 - 2026-01-11 (trimmed ruleset, det-opt, apply_delta_graph): P1,P3,P4-P20, inc0p1/inc0p3/inc0p5, sample=1, all OK.
 - 2026-01-11 (full ruleset, det-opt, apply_delta_graph): P1,P3,P4-P20, inc1/inc3/inc5, sample=1, all OK.
@@ -21,12 +31,10 @@ using the Souffle binary built from this repo. Do not git-add anything under
 - 2025-12-21 (inc10 sample=1): P4-P13 snapshot + notes preserved below.
 
 ## Scope
-- Online incremental CLI path only (online is default; `--online` optional;
-  inc-naive/inc-regional). The legacy `--inc` backend is removed.
-- Incremental modes do not run rewrite; they reuse the online DRed-like deletion
-  and rederive paths.
-- Full baseline uses `full-hard` by default (`--setmode full`); `full-soft` is
-  available for reuse of the DD manager state.
+- Uses the compiled-program CLI with `--setmode` (default `inc-naive` in CmdOptions).
+  Compiler `--online` flags do not affect the runtime CLI behavior here.
+- Incremental modes do not run rewrite; they reuse the online DRed-like delete/insert paths.
+- Full baseline runs use `--setmode full` (alias `full-hard`); `full-soft` reuses DD state.
 
 ## Prerequisites
 - Build release Souffle:
@@ -5917,3 +5925,8 @@ Artifacts per case:
 - Prob outputs: `output/facts.{inc,full}.prob`,
   `output/fact-iterN-{inc-naive,inc-regional,full}.prob`, plus runner-prefixed
   `output/delta-<label>-1-{inc-naive,inc-regional,full}-fact-iterN-<mode>.prob`.
+
+## Related commits
+- `739ee83cb` — refactor(inc-region): align regional insert with naive propagation
+- `668298ef8` — fix(inc-region): update regional WMC routing and profiling
+- `b22a891b0` — fix(inc): sync det-opt deltas and artifact docs

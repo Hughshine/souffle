@@ -1,5 +1,12 @@
 # Incremental Artifact (Side-Channel)
 
+## Source references
+- [problog-benchmark/side_channel_inc.py](problog-benchmark/side_channel_inc.py)
+- [sh/run_artifact_inc.sh](sh/run_artifact_inc.sh)
+- [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
+- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+
+
 This document provides a minimal, reproducible path to run the incremental
 artifact experiments for the side-channel benchmark:
 
@@ -7,7 +14,7 @@ artifact experiments for the side-channel benchmark:
 - INC_NAIVE delete/insert performance (setmode `inc`)
 
 For full script details, see:
-`/home/hugh/research/datalog/problog-benchmark/README.side-channel-inc.md`.
+`problog-benchmark/README.side-channel-inc.md`.
 
 ## Prereqs
 
@@ -72,5 +79,9 @@ between `inc` and `full`.
 ## Notes
 
 - `setmode inc` maps to `INC_NAIVE` in the CLI.
-- Incremental runs keep a persistent BDD manager; full runs rebuild it each turn.
+- Incremental runs keep a persistent DD manager across turns.
+- Full runs reset the manager each turn in `full-hard`; `full-soft` reuses the manager state.
 - `--full-only` must remain disabled for incremental runs (the script does not use it).
+
+## Related commits
+- `b22a891b0` — fix(inc): sync det-opt deltas and artifact docs

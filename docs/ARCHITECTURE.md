@@ -1,5 +1,12 @@
 # Architecture
 
+## Source references
+- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
+- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+
+
 ## Overview
 This fork extends upstream Souffle with a probabilistic pipeline and online incremental
 execution. Online compilation is the default; there is no interpreter path.
@@ -21,7 +28,10 @@ execution. Online compilation is the default; there is no interpreter path.
 
 ## Data and Artifacts
 - Input facts: `-F <dir>` with `<rel>.facts` and optional `<rel>.prob`.
-- Output facts: `-D <dir>` with generated facts/probabilities.
+- Output probabilities:
+  - Full runs write `facts.prob` to the output directory.
+  - Incremental CLI runs write `fact-iter<N>-full.prob` and
+    `fact-iter<N>-inc-{naive|regional}.prob`.
 - Debug dumps: `--dumpjson`, `--dumpdot`, `--dumpstat` (written to output dir).
 - Logs: `--logfile <name>` writes JSON reports into the output dir.
 
@@ -32,3 +42,6 @@ execution. Online compilation is the default; there is no interpreter path.
 
 ## Further Reading
 See `docs/INDEX.md` for the complete doc map, including rewrite and evaluation notes.
+
+## Related commits
+- `aaa18c137` — docs(repo): add core docs

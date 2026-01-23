@@ -1,8 +1,13 @@
 # Rewrite Notes (Historical, 2025-12-07)
 
+## Source references
+- [src/include/souffle/problog/GraphRewriter.h](src/include/souffle/problog/GraphRewriter.h)
+- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
+
+
 ## Status
 - Historical record from 2025-12-07; not the current implementation.
-- Use `README.rewrite.md` for current behavior and `README.eval.md` for runs.
+- Use `README.rewrite.impl.md` for current behavior and `README.eval.md` for runs.
 
 ## Scope
 - Historical record (2025-12-07); not an authoritative description of the current implementation.
@@ -91,3 +96,8 @@ Breakdown: rewrite-side BDD build/per-node time drops sharply; rewrite itself is
 - Run no-rewrite baseline (output to `run_no_rewrite_prof_new.*`, run `mkdir -p output_no_rewrite_prof` first):  
   `./compute_new -p run_no_rewrite_prof_new.log -F ./input -D ./output_no_rewrite_prof > run_no_rewrite_prof_new.stdout 2>&1`
 - Applicable directories: `experiments/side_channel_full/P14`-`P17` (run the commands in each directory).
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `4dd403de4` — Translate Chinese comments and docs to English
+- `4c4bd26b2` — docs(readme): restructure online incremental docs

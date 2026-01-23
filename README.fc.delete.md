@@ -1,5 +1,10 @@
 # FC Deletion Notes (Incremental)
 
+## Source references
+- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+
+
 ## Scope
 - Focus: forward compilation (formula update) during incremental deletion.
 - Main entry point: `buildFormulasIncCyclewise` in `src/include/souffle/problog/ForwardCompilation.h`.
@@ -11,7 +16,7 @@
    - Remove formulas for `deltaDeletedNodes` and `deltaDeletedEdges`.
    - Drop formulas for nodes/edges not in `view.getValidNodes()` / `view.getValidEdges()`.
 2) Build deleted-fact sets and partition deterministic vs non-deterministic.
-   - `view.getDeletedFacts()` uses explicit deleted facts plus impacted-map keys.
+   - `view.getDeletedFacts()` currently reflects explicit deleted facts only (impacted maps are not merged).
 3) Impact analysis with deleted-edge traversal.
    - BFS from deleted facts across live edges plus a temporary adjacency for `deltaDeletedEdges`.
    - Produces `detImpact{Nodes,Edges}` and `nonDetImpact{Nodes,Edges}`.
@@ -53,3 +58,6 @@
 
 ## TODO direction
 - Align the non-cyclewise incremental path (`buildFormulasInc`) with the cyclewise/regional logic.
+
+## Related commits
+- `80232d555` — docs(eval): refresh inc benchmark notes

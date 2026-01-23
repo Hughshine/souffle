@@ -1,5 +1,10 @@
 # Security
 
+## Source references
+- [.env.example](.env.example)
+- [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)
+
+
 ## Scope
 This is a research fork intended for local experiments. There is no production
 security policy defined in this repo yet.
@@ -24,3 +29,6 @@ TODO: define a security contact and disclosure process for this fork.
 - Verify dependency sources and versions.
 - Ensure no secrets or datasets are present in the working tree.
 - Update docs and run the recommended verification steps.
+
+## Related commits
+- `aaa18c137` — docs(repo): add core docs

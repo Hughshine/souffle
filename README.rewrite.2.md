@@ -1,8 +1,14 @@
 # Rewrite Alternative Plan (Historical)
 
+## Source references
+- [src/include/souffle/problog/GraphRewriter.h](src/include/souffle/problog/GraphRewriter.h)
+
+
 ## Status
 - Historical experimental plan (fact-prefix folding and node merges).
-- Current behavior is the conservative rewriter in `README.rewrite.md`.
+- Current behavior is the conservative rewriter in `README.rewrite.impl.md`.
+- Current SISO detection is fast-path only; sections that assume the full detector
+  are historical.
 
 ## Scope
 - Historical rewrite plan; not current behavior.
@@ -1314,3 +1320,8 @@ the cone contains a non-fact node with in-degree 0;
 cone internal nodes have escape edges to outside;
 
 By design, these are rejected in buildFactPrefixRegion (debug mode has detailed reasons), and safely fall back to the original BDD pipeline without affecting correctness.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `4dd403de4` — Translate Chinese comments and docs to English
+- `4c4bd26b2` — docs(readme): restructure online incremental docs

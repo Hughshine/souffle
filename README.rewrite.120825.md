@@ -1,8 +1,13 @@
 # Rewrite Notes (Historical, 2025-12-08)
 
+## Source references
+- [src/include/souffle/problog/GraphRewriter.h](src/include/souffle/problog/GraphRewriter.h)
+- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
+
+
 ## Status
 - Historical record from 2025-12-08; not the current implementation.
-- Use `README.rewrite.md` for current behavior and `README.eval.md` for runs.
+- Use `README.rewrite.impl.md` for current behavior and `README.eval.md` for runs.
 
 ## Scope
 - Historical record (2025-12-08); not an authoritative description of the current implementation.
@@ -91,3 +96,8 @@
 - SingleHyperedge SI currently requires non-fact (relaxing it previously caused probability differences).
 - SDD results are currently unreliable (P13 overflow); default to BDD.
 - Clean old artifacts (outputs, dot) before running to avoid mixing results.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `44778971e` — perf(rewrite): precompute output facts in pipeline
+- `4dd403de4` — Translate Chinese comments and docs to English

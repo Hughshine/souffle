@@ -1,5 +1,11 @@
 # Disjunction / Strengthening Log
 
+## Source references
+- [problog-benchmark/side_channel_inc.py](problog-benchmark/side_channel_inc.py)
+- [src/include/souffle/problog/formula/CuddManager.h](src/include/souffle/problog/formula/CuddManager.h)
+- [src/synthesiser/Synthesiser.cpp](src/synthesiser/Synthesiser.cpp)
+
+
 This file captures the strengthened side-channel dataset work and the
 incremental correctness/segfault investigations for disjunction-heavy runs.
 
@@ -189,3 +195,6 @@ Mismatch sources are split:
 - `reachable-vs-mismatch-all-missing-heads.txt`
 - `reachable-vs-mismatch.txt`
 - `mismatch-backward-missing-heads.txt`
+
+## Related commits
+- `b22a891b0` — fix(inc): sync det-opt deltas and artifact docs

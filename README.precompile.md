@@ -1,5 +1,13 @@
 # Precompile Refactor Log
 
+## Source references
+- [src/CMakeLists.txt](src/CMakeLists.txt)
+- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
+- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+- [src/souffle-compile.template.py](src/souffle-compile.template.py)
+- [src/synthesiser/Synthesiser.cpp](src/synthesiser/Synthesiser.cpp)
+
+
 ## Status
 - Completed refactor as of 2025-02-14; keep as historical reference.
 - Current build flow links the precompiled runtime library `compiled`.
@@ -60,3 +68,8 @@ Status: completed; remaining work is optional (e.g., further header splits/expli
 - 2025-02-14: Verified linked binary runs and prints usage (`precompile_tmp/compute_bin --help`).
 - 2025-02-14: Moved `DerivationGraph::setMergeBiImpEnabled` into `souffle::problog::runPipeline` and removed `DerivationGraph.h` include from generated `main`.
 - 2025-02-14: Moved `souffle/problog/Atom.h` free-function definitions into `src/problog/Atom.cpp` to avoid duplicate symbols when linking with `libcompiled.a`.
+
+## Related commits
+- `812ea4081` — docs(repo): refine README narratives
+- `86b6c2379` — docs(readme): update precompile and quickstart notes
+- `92e435c72` — refactor(precompile): move runtime code into compiled lib

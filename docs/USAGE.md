@@ -1,5 +1,11 @@
 # Usage
 
+## Source references
+- [../src/MainDriver.cpp](../src/MainDriver.cpp) (compiler defaults, `--online`)
+- [../src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h) (compiled-program flags + defaults)
+- [../src/include/souffle/cli/Cli.h](../src/include/souffle/cli/Cli.h) (incremental CLI modes/output naming)
+- [../src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp) (rewrite vs incremental CLI gating)
+
 ## Program Syntax (souffle.dl example)
 ```souffle
 .decl edge(u:number, v:number)
@@ -15,8 +21,8 @@ Notes:
 - Facts are read from `-F` input directory as `<rel>.facts`.
 - Probabilities are read from `<rel>.prob` with line-for-line alignment; if
   missing, probabilities default to `1.0`.
-- Some generators also accept Problog-style facts in `.problog.dl` such as
-  `0.3::edge(1,2).` and translate them into `.facts`/`.prob`.
+- External scripts (for example in `problog-benchmark/`) may translate ProbLog
+  inputs into `.facts`/`.prob`; the compiler itself does not auto-convert files.
 - This fork also accepts Problog-style probability prefixes on rules, e.g.:
   ```
   0.7::path(x,y) :- edge(x,y).
@@ -24,7 +30,7 @@ Notes:
   which attaches a probabilistic coin to the rule application.
 
 ## Compile Programs (Generated C++)
-Online compilation is the default; `--online` remains accepted:
+Online compilation is the default; `--online` remains accepted (but is redundant in this fork):
 ```
 souffle -F ./input -D ./output compute.souffle.dl -o compute
 ```
@@ -34,9 +40,8 @@ Compiler notes:
   into the binary.
 - If you omit all compile/generate flags, the compiler defaults to `-o <basename>`
   (compile only) and prints a notice.
-- Online CLI support and `_inc` strata are always enabled; `--online` is optional.
-- `--full-only` disables incremental code generation but still uses the online
-  compiler path.
+- Online compilation is always used; `--full-only` disables incremental code
+  generation and the incremental CLI but still uses the online compiler path.
 - `--dred-profile` (compile-time) adds detailed DRed sub-phase timers and per-SCC attribution; requires
   compile-time `--profile` and runtime `--dred-profile -p <file>` to emit JSON.
 - `-o` controls the output binary name.
@@ -58,21 +63,30 @@ listed below; use `-h` for the authoritative values.
   - aliases: `inc`, `incr`, `incremental` map to `inc-naive`
   - `full` maps to `full-hard` (hard reset each turn); `full-soft` reuses the
     DD manager state
-- `-e, --merge-bi-imp`: default `false`
+  - `elastic` is accepted but currently **not implemented** (will assert in the CLI)
+- `-e, --merge-bi-imp`: always enabled in full-only binaries (`--full-only` at
+  compile time); it is forced off in online/incremental binaries.
 - `--prune-extra`: default `false` (enable outputless-component pruning in prune)
 - `-r, --rewrite`: default `false`
-- `--det-opt`: default `false` (enable deterministic-first derivation gating)
+- `--det-opt`: default `false` (enable deterministic-relation analysis + derivation gating)
 - `--det-force`: default `false` (force deterministic evaluation; skip derivation graph and emit 1.0 probs)
 - `--split-mode=<no-split|naive-split|complete-split>`: default `naive-split`
   (rewrite only)
 - `--dumpjson`: default `false`
 - `--dumpdot`: default `false`
 - `--dumpstat`: default `false`
+- `--dumpconst`: default `false` (write const-prepass details; see `README.const.md`)
 - `--dred-profile`: default `false` (requires compile-time `--profile --dred-profile` to emit DRed sub-phase timers;
   per-SCC workload counters also need `--dumpstat`)
 - `--inc-profile`: default `false` (print per-stage incremental timings to stdout)
 - `--fc-profile`: default `false` (print detailed forward-compilation sub-phase counters/timings to stdout)
+- `--profile-inc-regional`: default `false` (inc-regional diagnostics + timing summary)
+- `--profile-inc-regional-heavy`: default `false` (extra inc-regional tracing; large output)
+- `--inc-regional-trace-tuples=<LIST>`: default empty (comma-separated tuples to trace)
+- `--profile-dep-graph`: default `false` (dependency-graph profiling)
 - `--post-del`: default `false` (enable post-delete variable postprocess in FC)
+- `--no-reuse-var-index`: default `false` (disable reuse of freed DD variable indices)
+- `--no-single-rand-fast`: default `false` (disable single-randvar FC fast path)
 - `-h`: help
 
 ## Online Incremental CLI (Interactive or Batch)
@@ -83,7 +97,7 @@ Commands:
 - `commit`: apply pending operations and run incremental computation
 - `setmode inc-naive|inc-regional|full-hard|full-soft|full|elastic`: switch mode
 - `set dumpjson|dumpdot|dumpstat` / `unset ...`: toggle dump outputs
-- `dump`: print current relations (or PreDG in ground mode)
+- `dump`: print current relations (or write `preDG_dump.dot` in ground mode)
 - `help`, `q`: help/quit
 
 Example (interactive):
@@ -138,3 +152,8 @@ Example (batch from delta file):
 - inc-naive vs inc-regional insertion paths; deletion uses DRed-like
   overdelete/rederive.
 - Turn-based CLI with insert/delete/commit, and per-iteration probability outputs.
+
+## Related commits
+- `4bf38b2a1` — perf(problog): make inc preConfig delta-scoped
+- `9ea1b4b53` — perf(problog): add inc preConfig toggle
+- `211b03b71` — chore(problog): add det-force runtime flag

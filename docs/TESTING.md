@@ -1,5 +1,10 @@
 # Testing
 
+## Source references
+- [cmake/CTestDisabled.cmake](cmake/CTestDisabled.cmake)
+- [sh/run_test_format.sh](sh/run_test_format.sh)
+
+
 ## Status in This Fork
 `ctest` is intentionally disabled via `cmake/CTestDisabled.cmake` because the test
 suite is out of date. Any `ctest` invocation will fail with a clear error message.
@@ -30,3 +35,6 @@ Pick the smallest set of checks that match your change:
   they use `--inc`) and expect specific build paths. Treat them as legacy.
 
 TODO: define a supported, up-to-date test suite for this fork and update CI accordingly.
+
+## Related commits
+- `aaa18c137` — docs(repo): add core docs

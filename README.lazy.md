@@ -1,5 +1,10 @@
 # Lazy decision-diagram plan
 
+## Source references
+- [src/include/souffle/problog/formula/FormulaManager.h](src/include/souffle/problog/formula/FormulaManager.h)
+- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
+
+
 ## Status
 - Design/roadmap only; not implemented in code.
 - Independent of online incremental DRed (applies to formula managers).
@@ -104,3 +109,8 @@
 - **Ordering sensitivity**: Without DD reordering, `isSame` relies on canonical operand ordering; enforce sorting and constant-folding.  
 - **Weight drift**: Ensure weights are frozen before materialisation or guard `setVariableWeight` to invalidate compiled caches.  
 - **Heuristic reuse**: If heuristics depend on live DD stats, they may differ in lazy mode; start with static ordering and only enable dynamic reordering after materialisation.
+
+## Related commits
+- `4dd403de4` — Translate Chinese comments and docs to English
+- `4c4bd26b2` — docs(readme): restructure online incremental docs
+- `fab2b08cf` — upd rewriter basic

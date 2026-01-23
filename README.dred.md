@@ -1,5 +1,17 @@
 # README: Online DRed (Derivation Graph Incremental) Implementation and Performance Notes
 
+## Source references
+- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
+- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
+- [src/ast2ram/online/UnitTranslator.cpp](src/ast2ram/online/UnitTranslator.cpp)
+- [src/ast2ram/online/IncClauseTranslator.cpp](src/ast2ram/online/IncClauseTranslator.cpp)
+- [src/ast2ram/utility/Utils.cpp](src/ast2ram/utility/Utils.cpp)
+- [src/ast2ram/utility/TranslatorContext.cpp](src/ast2ram/utility/TranslatorContext.cpp)
+- [src/synthesiser/Synthesiser.cpp](src/synthesiser/Synthesiser.cpp)
+- [src/synthesiser/Relation.cpp](src/synthesiser/Relation.cpp)
+- [src/include/souffle/SouffleInterface.h](src/include/souffle/SouffleInterface.h)
+
+
 - Covers only the online incremental path (default; `--online` optional), which is the only enabled implementation.
 - The old `--inc` incremental backend is removed; this file does not discuss it.
 - Focuses on semi-naive + DRed-like deletion/rederive/insertion; rewrite/forward compilation are covered in other docs.
@@ -353,3 +365,8 @@ To fully diagnose S2/S4, also inspect:
 - Performance: for the same workload, T_del is no longer an order of magnitude slower than T_full
 - Memory: LSan reports no obvious leaks; RSS does not grow abnormally across iterations
 - Documentation: analysis_report + bench_results are complete and reproducible
+
+## Related commits
+- `a1df809b7` — fix(cli): allow --derv-only without value
+- `a5a618096` — fix(inc): handle det rederive and add inc profiling
+- `7a3109820` — perf(dred): add profiling and rederive join ordering
