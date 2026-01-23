@@ -4507,6 +4507,8 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "dredProfileEnabled = opt.isDredProfileEnabled();\n";
     hook << "incProfileEnabled = opt.isIncProfileEnabled();\n";
     hook << "incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();\n";
+    hook << "incRegionalProfileHeavyEnabled = opt.isIncRegionalProfileHeavyEnabled();\n";
+    hook << "incRegionalTraceTuples = opt.getIncRegionalTraceTuples();\n";
     hook << "depGraphProfileEnabled = opt.isDepGraphProfileEnabled();\n";
     hook << "reuseVarIndexEnabled = opt.isReuseVarIndexEnabled();\n";
 

@@ -104,6 +104,8 @@ python /home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py
 - If derivation graphs match but probabilities differ, focus on delete/insert FC:
   - Inspect CLI stdout for `[applyDelta]` and `[inc-iter N]` counters, and
     per-stage timers (`--profile-inc-regional`, `--profile-dep-graph`).
+  - For region-closure diagnostics, add `--profile-inc-regional-heavy` plus
+    `--inc-regional-trace-tuples=<Tuple>` to print backward-closure stats.
   - Add targeted prints around the suspected phase (delete vs insert, regional
     analyze/plan/rebuild) and rebuild; re-run the same delta until the first
     divergence is localized.

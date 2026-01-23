@@ -1584,6 +1584,85 @@ void buildFormulasIncCyclewise(
     double insertInitEdgeEnqueueMs = 0.0;
     const std::size_t viewNodeCount = view.getNodes().size();
     const std::size_t viewEdgeCount = view.getEdges().size();
+    struct LocalDepGraph {
+        SubgraphView view;
+        CycleDependencyGraph depGraph;
+        LocalDepGraph(std::unordered_set<NodePtr> nodes, std::unordered_set<EdgePtr> edges)
+                : view(std::move(nodes), std::move(edges)), depGraph(view) {}
+    };
+    struct DeltaReachRegion {
+        std::unordered_set<NodePtr> nodes;
+        std::unordered_set<EdgePtr> edges;
+    };
+    auto deltaReachableInsert = [&](const std::set<NodePtr>& deltaInsertedNodes,
+                                    const std::set<EdgePtr>& deltaInsertedEdges) -> DeltaReachRegion {
+        DeltaReachRegion dr;
+        const auto& reachNodes = view.getDeltaInsertReachableNodes();
+        const auto& reachEdges = view.getDeltaInsertReachableEdges();
+        if (!reachNodes.empty() || !reachEdges.empty()) {
+            dr.nodes.insert(reachNodes.begin(), reachNodes.end());
+            dr.edges.insert(reachEdges.begin(), reachEdges.end());
+        } else {
+            const auto& nodeImpacted = view.getNodeImpactedByDeltaInsert();
+            const auto& edgeImpacted = view.getEdgeImpactedByDeltaInsert();
+            if (!nodeImpacted.empty() || !edgeImpacted.empty()) {
+                for (const auto& kv : nodeImpacted) {
+                    dr.nodes.insert(kv.first);
+                    dr.nodes.insert(kv.second.begin(), kv.second.end());
+                }
+                for (const auto& kv : edgeImpacted) {
+                    dr.edges.insert(kv.second.begin(), kv.second.end());
+                }
+            } else {
+                const auto& liveNodes = view.getNodes();
+                const auto& liveEdges = view.getEdges();
+                std::queue<NodePtr> q;
+                auto seed = [&](const NodePtr& src) {
+                    if (!src || !liveNodes.count(src)) {
+                        return;
+                    }
+                    if (dr.nodes.insert(src).second) {
+                        q.push(src);
+                    }
+                };
+                for (const auto& n : deltaInsertedNodes) {
+                    seed(n);
+                }
+                for (const auto& e : deltaInsertedEdges) {
+                    if (auto h = view.getOutput(e)) {
+                        seed(h);
+                    }
+                }
+                while (!q.empty()) {
+                    NodePtr cur = q.front();
+                    q.pop();
+                    for (const auto& e : cur->getOutgoingEdges()) {
+                        if (!liveEdges.count(e)) {
+                            continue;
+                        }
+                        dr.edges.insert(e);
+                        NodePtr nxt = e->getOutput();
+                        if (nxt && liveNodes.count(nxt) && dr.nodes.insert(nxt).second) {
+                            q.push(nxt);
+                        }
+                    }
+                }
+            }
+        }
+        for (const auto& n : deltaInsertedNodes) {
+            if (n) {
+                dr.nodes.insert(n);
+            }
+        }
+        for (const auto& e : deltaInsertedEdges) {
+            if (!e) continue;
+            dr.edges.insert(e);
+            if (auto h = view.getOutput(e)) {
+                dr.nodes.insert(h);
+            }
+        }
+        return dr;
+    };
     auto markChangedNode = [&](const NodePtr& node,
                                std::unordered_set<NodePtr>& phaseSet,
                                std::size_t& phaseCount) {
@@ -1633,19 +1712,55 @@ void buildFormulasIncCyclewise(
     double rederiveMs = 0.0;
     double insertPrepMs = 0.0;
     double insertLoopMs = 0.0;
+    std::string depGraphScope = "full";
+    size_t depGraphReachNodes = 0;
+    size_t depGraphReachEdges = 0;
     auto start = high_resolution_clock::now();
     auto depStart = Clock::now();
-    auto& depGraph = view.getCycleDependencyGraph();  // Includes computeSCCs, computeDependencies, computeDepths
-    depGraph.dumpDot("scc" + std::to_string(turn++) + ".dot");
-    if (incProfile) {
-        depGraphMs = toMs(depStart, Clock::now());
-    }
-
-
     const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
     const auto& deltaDeletedEdges = view.getDeltaDeleteEdges();
     const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
     const auto& deltaDeletedNodes = view.getDeltaDeleteNodes();
+    const bool insertOnly = deltaDeletedEdges.empty() && deltaDeletedNodes.empty();
+    std::unique_ptr<LocalDepGraph> localDepGraph;
+    CycleDependencyGraph* depGraphPtr = nullptr;
+    if (insertOnly) {
+        DeltaReachRegion dr = deltaReachableInsert(deltaInsertedNodes, deltaInsertedEdges);
+        depGraphReachNodes = dr.nodes.size();
+        depGraphReachEdges = dr.edges.size();
+        if (!dr.edges.empty()) {
+            std::unordered_set<NodePtr> nodes = dr.nodes;
+            std::unordered_set<EdgePtr> edges;
+            edges.reserve(dr.edges.size());
+            for (const auto& e : dr.edges) {
+                if (!e) continue;
+                NodePtr out = view.getOutput(e);
+                if (out) {
+                    nodes.insert(out);
+                }
+                for (const auto& in : view.getInputs(e)) {
+                    if (in) {
+                        nodes.insert(in);
+                    }
+                }
+                edges.insert(e);
+            }
+            localDepGraph = std::make_unique<LocalDepGraph>(std::move(nodes), std::move(edges));
+            depGraphPtr = &localDepGraph->depGraph;
+            depGraphScope = "delta-reach";
+        } else {
+            depGraphPtr = &view.getCycleDependencyGraph();
+            depGraphScope = "full";
+        }
+    } else {
+        depGraphPtr = &view.getCycleDependencyGraph();
+        depGraphScope = "full";
+    }
+    auto& depGraph = *depGraphPtr;  // Includes computeSCCs, computeDependencies, computeDepths
+    depGraph.dumpDot("scc" + std::to_string(turn++) + ".dot");
+    if (incProfile) {
+        depGraphMs = toMs(depStart, Clock::now());
+    }
     debugger.logMessage(Level::INFO, "[inc-naive] delta counts: insNodes=" +
         std::to_string(deltaInsertedNodes.size()) + " insEdges=" +
         std::to_string(deltaInsertedEdges.size()) + " delNodes=" +
@@ -2314,7 +2429,7 @@ void buildFormulasIncCyclewise(
         debugger.logMessage(Level::INFO,
                 "preConfig (cache clear + var scan/create + dyn-reorder setup) took " +
                         std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-        if (fcProfile) {
+        if (incProfile || fcProfile) {
             insertPreConfigMs = toMs(insertPreConfigStart, Clock::now());
         }
         start = high_resolution_clock::now();
@@ -2375,7 +2490,7 @@ void buildFormulasIncCyclewise(
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Initialize inserted node formulas. Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-        if (fcProfile) {
+        if (incProfile || fcProfile) {
             insertInitNodesMs = toMs(initNodesStart, Clock::now());
         }
 
@@ -2426,7 +2541,7 @@ void buildFormulasIncCyclewise(
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Initialize inserted edge formulas and worklists. Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-        if (fcProfile) {
+        if (incProfile || fcProfile) {
             insertInitEdgesMs = toMs(initEdgesStart, Clock::now());
         }
         inDegree = depGraph.inDegrees;
@@ -2673,6 +2788,19 @@ void buildFormulasIncCyclewise(
                   << " ins_nodes=" << deltaInsertedNodes.size()
                   << " ins_edges=" << deltaInsertedEdges.size()
                   << " changed_nodes=" << changedNodes.size()
+                  << std::endl;
+        std::cout << "[inc-naive-profile]"
+                  << " dep_graph_ms=" << depGraphMs
+                  << " dep_graph_scope=" << depGraphScope
+                  << " reach_nodes=" << depGraphReachNodes
+                  << " reach_edges=" << depGraphReachEdges
+                  << " rederive_ms=" << rederiveMs
+                  << " preconfig_ms=" << insertPreConfigMs
+                  << " init_nodes_ms=" << insertInitNodesMs
+                  << " init_edges_ms=" << insertInitEdgesMs
+                  << " prep_insert_ms=" << insertPrepMs
+                  << " insert_ms=" << insertLoopMs
+                  << " total_ms=" << totalMs
                   << std::endl;
     }
     if (fcProfile) {
@@ -3607,6 +3735,11 @@ void buildFormulasIncRegionalCyclewise(
                 std::to_string(stats.boundaryEmptyRegionNodes));
         debugger.addInfo("inc_regional_boundary_empty_region_edges",
                 std::to_string(stats.boundaryEmptyRegionEdges));
+        debugger.addInfo("inc_regional_near_full_expanded", stats.nearFullExpanded ? "1" : "0");
+        debugger.addInfo("inc_regional_near_full_region_nodes",
+                std::to_string(stats.nearFullRegionNodes));
+        debugger.addInfo("inc_regional_near_full_region_edges",
+                std::to_string(stats.nearFullRegionEdges));
         debugger.addInfo("inc_regional_plan_expand_attempts",
                 std::to_string(stats.planExpandAttempts));
         debugger.addInfo("inc_regional_plan_expand_region_nodes",

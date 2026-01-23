@@ -1523,6 +1523,8 @@ void runPipeline(
     Debugger& debugger = Debugger::getInstance();
     fcProfileEnabled = opt.isFcProfileEnabled();
     incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();
+    incRegionalProfileHeavyEnabled = opt.isIncRegionalProfileHeavyEnabled();
+    incRegionalTraceTuples = opt.getIncRegionalTraceTuples();
     depGraphProfileEnabled = opt.isDepGraphProfileEnabled();
     postDelEnabled = opt.isPostDelEnabled();
     DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());

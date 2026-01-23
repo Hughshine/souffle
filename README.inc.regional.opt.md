@@ -88,9 +88,10 @@ Top analyze components (ms; most expensive per case):
 Data source: `problog-benchmark/side_channel_inc_strengthen_fresh/P15/
 stdout_inc_regional_region_trace12.txt` (mtime 2026-01-20 01:41:26 local).
 The trace is produced by `--profile-inc-regional`, which logs boundary-head
-anchor checks plus per-head anchor lists. This is a *single-case* snapshot to
-understand what boundary heads and anchors look like in practice; it is not a
-full benchmark summary.
+anchor checks plus per-head anchor lists. Use `--profile-inc-regional-heavy`
+to add backward-closure trace details for `--inc-regional-trace-tuples`.
+This is a *single-case* snapshot to understand what boundary heads and anchors
+look like in practice; it is not a full benchmark summary.
 
 Summary (unique heads):
 - Boundary heads (unique): 769
@@ -130,6 +131,41 @@ Interpretation:
   value if outside delta‑reach with unchanged evidence.
 - **Fallback safety**: snapshot/restore region formulas before falling back to
   classic cyclewise rebuild so partial regional changes do not leak.
+
+## Boundary overlap closure (WIP, 2026-01-22)
+Motivation: inc‑regional mismatches appear when a delta‑reachable node outside
+the region can reach **multiple boundary heads** that are *not independent*.
+In that case, per‑boundary calibration treats correlated updates as independent.
+
+Current conservative overlap rule (no owners):
+- **Any** overlap between boundary backward‑reach sets is treated as dependent.
+- This is conservative but avoids missing dependencies when the owners heuristic
+  is incomplete (e.g., merge‑only regions without a branching source).
+
+Implementation notes (current):
+- Run a **multi‑source backward BFS** on DR (allow traversal through region
+  nodes) starting from boundary heads.
+- For each node, record the first boundary that reaches it; if another boundary
+  reaches the same node, mark it as **multi‑boundary** (overlap).
+- Add overlap nodes to the region, then **forward‑expand** from all multi‑boundary
+  nodes within DR (pulls in downstream effects so region formulas are consistent).
+- After expansion, rerun input‑closure + SCC‑closure, recompute boundaries/anchors,
+  and retry plan building.
+
+Forward‑expand definition:
+- For each multi‑boundary node, follow outgoing edges within DR and include all
+  reachable nodes/edges in the region. This is intentionally conservative and can
+  push region close to full DR.
+
+Loop structure (single monotone fixpoint):
+1) (If region changed) input‑closure + SCC‑closure; recompute boundaries/anchors.
+2) Dependent overlap closure (as above); if changes, loop.
+3) Build plan; if missing anchors, expand from failed boundaries and loop.
+
+Fallback refinement:
+when expand attempts exceed the cap, **only add the DR connected component(s)**
+containing the failed boundaries (undirected connectivity over DR edges),
+instead of expanding to the full delta‑reachable region.
 
 ## DAG-focused optimization ideas
 
@@ -232,3 +268,28 @@ Feasibility outlook:
 - If we pursue option (3), store cyclic-node membership in
   `IncrementalDerivationGraphViewInterface` and invalidate it alongside the
   depGraph cache.
+
+## 2026-01-22 benchmark findings (det-opt, side_channel_inc_strengthen_fresh)
+Summary from `README.eval.final.md` (no-profile timing + profile breakdown):
+- **Insert FC slowdown vs inc-naive.** Average insert-turn speedup
+  (inc-naive / inc-regional) ≈ **0.89×** → inc-regional is typically slower.
+- **Region growth is large.** Average `R/DR` after analyze ≈ **0.588**, final
+  `R/DR` ≈ **0.771** (≈ **1.38×** growth). Large cases (P15–P20) expand to
+  **~0.99–1.00** of delta-reachable.
+- **Expansion drivers.** Overlap-closure + forward-expand + close-inputs fired
+  in nearly all runs; missing-anchor expansion appeared in larger cases
+  (P15–P20) and contributes major node growth.
+- **Insert timing breakdown (profile).** Average inc-regional insert time is
+  dominated by **analyze (~75%)**, then **rebuild (~18%)**, with plan/calibrate
+  low single digits. Inside rebuild, **rebuildLoop ~82%** of rebuild time;
+  depGraph cost is ~0 (delta-reach subgraph).
+
+Implications for optimization focus:
+- **Reduce region growth**: overlap closure / forward-expand + close-inputs are
+  the largest drivers of “near-full” regions → dial back or make dependency
+  checks more precise so regions don’t collapse into DR.
+- **Anchor scarcity drives expansion** in big cases → expand anchor candidate
+  set or relax constraints so we avoid `expand_missing_anchor` fallback.
+- **Analyze cost dominates**: cache/reuse boundary + anchor computations across
+  expansion attempts, and avoid repeated full recompute when only a few nodes
+  were added.

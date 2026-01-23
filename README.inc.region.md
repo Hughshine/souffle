@@ -185,6 +185,7 @@ Common output:
 Debug output is off by default; enable as needed:
 - `--dumpjson` / CLI `set dumpjson`: output JSON (after prune).
 - `--profile-inc-regional`: emits inc-regional analysis/boundary/anchor diagnostics and timing.
+- `--profile-inc-regional-heavy`: enables heavy inc-regional diagnostics (backward-closure trace for `--inc-regional-trace-tuples`).
 
 ---
 

@@ -85,6 +85,8 @@ protected:
     bool inc_profile = false;  // enable incremental stage profiling
     bool fc_profile = false;  // enable detailed forward-compilation profiling
     bool inc_regional_profile = false;  // enable inc-regional profiling/diagnostics
+    bool inc_regional_profile_heavy = false;  // enable heavy inc-regional profiling
+    std::string inc_regional_trace_tuples;  // comma-separated tuples for inc-regional trace
     bool dep_graph_profile = false;  // enable dependency-graph profiling
     bool post_del = false;  // enable postprocessUselessVariables after deletion
     bool det_opt = false;  // enable deterministic-relation analysis and det gating
@@ -102,13 +104,17 @@ public:
             bool incProfile = false,
             bool fcProfile = false,
             bool incRegionalProfile = false,
+            bool incRegionalProfileHeavy = false,
+            std::string incRegionalTraceTuples = "",
             bool depGraphProfile = false,
             bool postDel = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
     , incMode(mode), merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
       dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
       dred_profile(dredProfile), inc_profile(incProfile), fc_profile(fcProfile),
-      inc_regional_profile(incRegionalProfile), dep_graph_profile(depGraphProfile), post_del(postDel),
+      inc_regional_profile(incRegionalProfile), inc_regional_profile_heavy(incRegionalProfileHeavy),
+      inc_regional_trace_tuples(std::move(incRegionalTraceTuples)),
+      dep_graph_profile(depGraphProfile), post_del(postDel),
       split_mode(splitmode) {}
 
     CmdOptions() {}
@@ -199,6 +205,12 @@ public:
     bool isIncRegionalProfileEnabled() const {
         return inc_regional_profile;
     }
+    bool isIncRegionalProfileHeavyEnabled() const {
+        return inc_regional_profile_heavy;
+    }
+    const std::string& getIncRegionalTraceTuples() const {
+        return inc_regional_trace_tuples;
+    }
     bool isDepGraphProfileEnabled() const {
         return dep_graph_profile;
     }
@@ -266,6 +278,8 @@ public:
                 {"inc-profile", false, nullptr, 1003},
                 {"fc-profile", false, nullptr, 1005},
                 {"profile-inc-regional", false, nullptr, 1009},
+                {"profile-inc-regional-heavy", false, nullptr, 1011},
+                {"inc-regional-trace-tuples", true, nullptr, 1012},
                 {"profile-dep-graph", false, nullptr, 1010},
                 {"post-del", false, nullptr, 1006},
                 {"det-opt", false, nullptr, 'Z'},
@@ -420,6 +434,13 @@ public:
                 case 1009:
                     inc_regional_profile = true;
                     break;
+                case 1011:
+                    inc_regional_profile = true;
+                    inc_regional_profile_heavy = true;
+                    break;
+                case 1012:
+                    inc_regional_trace_tuples = optarg ? optarg : "";
+                    break;
                 case 1010:
                     dep_graph_profile = true;
                     break;
@@ -483,6 +504,8 @@ private:
         std::cerr << "    --inc-profile                -- Enable incremental stage profiling\n";
         std::cerr << "    --fc-profile                 -- Enable detailed forward-compilation profiling\n";
         std::cerr << "    --profile-inc-regional       -- Enable inc-regional diagnostics/profiling\n";
+        std::cerr << "    --profile-inc-regional-heavy -- Enable heavy inc-regional diagnostics (closure trace)\n";
+        std::cerr << "    --inc-regional-trace-tuples=<LIST> -- Comma-separated tuples to trace\n";
         std::cerr << "    --profile-dep-graph          -- Enable dependency-graph profiling\n";
         std::cerr << "    --post-del                   -- Enable post-delete variable postprocess (FC)\n";
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
