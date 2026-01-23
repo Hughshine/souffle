@@ -147,6 +147,7 @@ extern bool dredProfileEnabled;
 extern bool incProfileEnabled;
 extern bool fcProfileEnabled;
 extern bool incDeleteProfileEnabled;
+extern bool wmcProfileEnabled;
 extern bool incRegionalProfileEnabled;
 extern bool incRegionalProfileHeavyEnabled;
 extern std::string incRegionalTraceTuples;

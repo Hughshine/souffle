@@ -403,6 +403,40 @@ static void runBddPipeline(
             long long perNodeWmcMs = 0;
             long long fastPathMs = 0;
             long long liveNodesSum = 0;
+            const bool wmcProfile = opt.isWmcProfileEnabled();
+            using Clock = std::chrono::steady_clock;
+            auto toMs = [](Clock::time_point start) {
+                return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+            };
+            double evidenceMakeAndMs = 0.0;
+            double evidenceWmcComputeMs = 0.0;
+            double nodeMakeAndMs = 0.0;
+            double nodeWmcComputeMs = 0.0;
+            std::size_t evidenceWmcCalls = 0;
+            std::size_t nodeWmcCalls = 0;
+            std::size_t evidenceMakeAndCalls = 0;
+            std::size_t nodeMakeAndCalls = 0;
+            auto makeAndProfile = [&](const BddNodeRef& lhs, const BddNodeRef& rhs,
+                                      double& ms, std::size_t& calls) {
+                if (!wmcProfile) {
+                    return bddManager->makeAnd(lhs, rhs);
+                }
+                auto andStart = Clock::now();
+                auto res = bddManager->makeAnd(lhs, rhs);
+                ms += toMs(andStart);
+                calls++;
+                return res;
+            };
+            auto computeWmcProfile = [&](const BddNodeRef& node, double& ms, std::size_t& calls) {
+                calls++;
+                if (!wmcProfile) {
+                    return bddManager->computeWeightedModelCount(node);
+                }
+                auto wmcStart = Clock::now();
+                double res = bddManager->computeWeightedModelCount(node);
+                ms += toMs(wmcStart);
+                return res;
+            };
 
             FastComponentStats fastStats;
             ConjFastStats conjStats;
@@ -770,7 +804,7 @@ static void runBddPipeline(
                     if (!val) {
                         lit = bddManager->makeNot(lit);
                     }
-                    evidenceBdd = bddManager->makeAnd(evidenceBdd, lit);
+                    evidenceBdd = makeAndProfile(evidenceBdd, lit, evidenceMakeAndMs, evidenceMakeAndCalls);
                 }
                 auto evidenceBuildMsComp = std::chrono::duration_cast<std::chrono::milliseconds>(
                                                    std::chrono::steady_clock::now() - evidenceBuildStart)
@@ -780,7 +814,7 @@ static void runBddPipeline(
                 auto wmcStart = std::chrono::steady_clock::now();
                 double evidenceWeight = 1.0;
                 if (!componentEvs.empty()) {
-                    evidenceWeight = bddManager->computeWeightedModelCount(evidenceBdd);
+                    evidenceWeight = computeWmcProfile(evidenceBdd, evidenceWmcComputeMs, evidenceWmcCalls);
                 }
                 auto evidenceWmcMsComp = std::chrono::duration_cast<std::chrono::milliseconds>(
                                                  std::chrono::steady_clock::now() - wmcStart)
@@ -799,12 +833,12 @@ static void runBddPipeline(
                     const auto& bdd = it->second;
                     double prob = 0.0;
                     if (componentEvs.empty()) {
-                        prob = bddManager->computeWeightedModelCount(bdd);
+                        prob = computeWmcProfile(bdd, nodeWmcComputeMs, nodeWmcCalls);
                     } else if (evidenceWeight == 0.0) {
                         prob = 0.0;
                     } else {
-                        auto joint = bddManager->makeAnd(bdd, evidenceBdd);
-                        double jointW = bddManager->computeWeightedModelCount(joint);
+                        auto joint = makeAndProfile(bdd, evidenceBdd, nodeMakeAndMs, nodeMakeAndCalls);
+                        double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
                         prob = jointW / evidenceWeight;
                     }
                     probResult[node] = prob;
@@ -849,6 +883,25 @@ static void runBddPipeline(
             std::cout << "[pipeline] per-node conditional WMC took " << perNodeWmcMs << " ms\n";
             if (fastStats.used > 0 || conjStats.used > 0) {
                 std::cout << "[pipeline] fastpath WMC took " << fastPathMs << " ms\n";
+            }
+            if (wmcProfile) {
+                std::cout << "[wmc-profile] stage=FULL"
+                          << " mode=full-rewrite"
+                          << " total_ms=" << (evidenceBuildMs + evidenceWmcMs + perNodeWmcMs + fastPathMs)
+                          << " components=" << analyses.size()
+                          << " nodes=" << view.getNodes().size()
+                          << " evidence_build_ms=" << evidenceBuildMs
+                          << " evidence_make_and_calls=" << evidenceMakeAndCalls
+                          << " evidence_make_and_ms=" << evidenceMakeAndMs
+                          << " evidence_wmc_calls=" << evidenceWmcCalls
+                          << " evidence_wmc_compute_ms=" << evidenceWmcComputeMs
+                          << " node_make_and_calls=" << nodeMakeAndCalls
+                          << " node_make_and_ms=" << nodeMakeAndMs
+                          << " node_wmc_calls=" << nodeWmcCalls
+                          << " node_wmc_compute_ms=" << nodeWmcComputeMs
+                          << " fastpath_ms=" << fastPathMs
+                          << " live_nodes=" << liveNodesSum
+                          << std::endl;
             }
 
             debugger.endStage();
@@ -909,6 +962,40 @@ static void runBddPipeline(
             long long evidenceBuildMs = 0;
             long long evidenceWmcMs = 0;
             long long perNodeWmcMs = 0;
+            const bool wmcProfile = opt.isWmcProfileEnabled();
+            using Clock = std::chrono::steady_clock;
+            auto toMs = [](Clock::time_point start) {
+                return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+            };
+            double evidenceMakeAndMs = 0.0;
+            double evidenceWmcComputeMs = 0.0;
+            double nodeMakeAndMs = 0.0;
+            double nodeWmcComputeMs = 0.0;
+            std::size_t evidenceWmcCalls = 0;
+            std::size_t nodeWmcCalls = 0;
+            std::size_t evidenceMakeAndCalls = 0;
+            std::size_t nodeMakeAndCalls = 0;
+            auto makeAndProfile = [&](const BddNodeRef& lhs, const BddNodeRef& rhs,
+                                      double& ms, std::size_t& calls) {
+                if (!wmcProfile) {
+                    return bddManager->makeAnd(lhs, rhs);
+                }
+                auto andStart = Clock::now();
+                auto res = bddManager->makeAnd(lhs, rhs);
+                ms += toMs(andStart);
+                calls++;
+                return res;
+            };
+            auto computeWmcProfile = [&](const BddNodeRef& node, double& ms, std::size_t& calls) {
+                calls++;
+                if (!wmcProfile) {
+                    return bddManager->computeWeightedModelCount(node);
+                }
+                auto wmcStart = Clock::now();
+                double res = bddManager->computeWeightedModelCount(node);
+                ms += toMs(wmcStart);
+                return res;
+            };
 
             probResult.clear();
             for (const auto& comp : components) {
@@ -925,7 +1012,7 @@ static void runBddPipeline(
                     if (!val) {
                         lit = bddManager->makeNot(lit);
                     }
-                    evidenceBdd = bddManager->makeAnd(evidenceBdd, lit);
+                    evidenceBdd = makeAndProfile(evidenceBdd, lit, evidenceMakeAndMs, evidenceMakeAndCalls);
                 }
                 evidenceBuildMs += std::chrono::duration_cast<std::chrono::milliseconds>(
                                            std::chrono::steady_clock::now() - evidenceBuildStart)
@@ -934,7 +1021,7 @@ static void runBddPipeline(
                 auto wmcStart = std::chrono::steady_clock::now();
                 double evidenceWeight = 1.0;
                 if (!componentEvs.empty()) {
-                    evidenceWeight = bddManager->computeWeightedModelCount(evidenceBdd);
+                    evidenceWeight = computeWmcProfile(evidenceBdd, evidenceWmcComputeMs, evidenceWmcCalls);
                 }
                 evidenceWmcMs += std::chrono::duration_cast<std::chrono::milliseconds>(
                                          std::chrono::steady_clock::now() - wmcStart)
@@ -952,12 +1039,12 @@ static void runBddPipeline(
                     const auto& bdd = it->second;
                     double prob = 0.0;
                     if (componentEvs.empty()) {
-                        prob = bddManager->computeWeightedModelCount(bdd);
+                        prob = computeWmcProfile(bdd, nodeWmcComputeMs, nodeWmcCalls);
                     } else if (evidenceWeight == 0.0) {
                         prob = 0.0;
                     } else {
-                        auto joint = bddManager->makeAnd(bdd, evidenceBdd);
-                        double jointW = bddManager->computeWeightedModelCount(joint);
+                        auto joint = makeAndProfile(bdd, evidenceBdd, nodeMakeAndMs, nodeMakeAndCalls);
+                        double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
                         prob = jointW / evidenceWeight;
                     }
                     probResult[node] = prob;
@@ -977,6 +1064,24 @@ static void runBddPipeline(
             std::cout << "[pipeline] component evidence WMC took " << evidenceWmcMs << " ms\n";
             std::cout << "[pipeline] per-node conditional WMC took "
                       << perNodeWmcMs << " ms\n";
+            if (wmcProfile) {
+                std::cout << "[wmc-profile] stage=FULL"
+                          << " mode=full"
+                          << " total_ms=" << (evidenceBuildMs + evidenceWmcMs + perNodeWmcMs)
+                          << " components=" << components.size()
+                          << " nodes=" << view.getNodes().size()
+                          << " evidence_build_ms=" << evidenceBuildMs
+                          << " evidence_make_and_calls=" << evidenceMakeAndCalls
+                          << " evidence_make_and_ms=" << evidenceMakeAndMs
+                          << " evidence_wmc_calls=" << evidenceWmcCalls
+                          << " evidence_wmc_compute_ms=" << evidenceWmcComputeMs
+                          << " node_make_and_calls=" << nodeMakeAndCalls
+                          << " node_make_and_ms=" << nodeMakeAndMs
+                          << " node_wmc_calls=" << nodeWmcCalls
+                          << " node_wmc_compute_ms=" << nodeWmcComputeMs
+                          << " live_nodes=" << bddManager->getLiveNodeCount()
+                          << std::endl;
+            }
 
             debugger.endStage();
             debugger.startStage(StageKind::IO_DUMP_FULL);
@@ -1523,6 +1628,7 @@ void runPipeline(
     Debugger& debugger = Debugger::getInstance();
     fcProfileEnabled = opt.isFcProfileEnabled();
     incDeleteProfileEnabled = opt.isIncDeleteProfileEnabled();
+    wmcProfileEnabled = opt.isWmcProfileEnabled();
     incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();
     incRegionalProfileHeavyEnabled = opt.isIncRegionalProfileHeavyEnabled();
     incRegionalTraceTuples = opt.getIncRegionalTraceTuples();

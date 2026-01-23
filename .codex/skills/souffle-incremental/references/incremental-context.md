@@ -36,8 +36,17 @@
 ## Benchmark Script (problog-benchmark)
 
 - Script: `/home/hugh/research/datalog/souffle/problog-benchmark/side_channel_inc.py`
-  - Subcommands: `generate`, `delta`, `compile`, `run`, `collect`, `clean`.
-  - Optional: `strengthen` (adds input facts to increase RAND disjunction).
+  - Subcommands: `generate`, `strengthen`, `delta`, `compile`, `run`, `collect`, `clean`.
+  - Global flags: `--base-dir`, `--source-dir`, `--log-file`, `--quiet`.
+  - `generate`: `--cases`, `--seed`, `--cleanup`, `--force-smt`, `--rule-set {trimmed,trimmed_plus,full}`.
+  - `strengthen`: `--augment-derivations` (fixed count) or `--augment-ratio` (scaled), plus
+    `--augment-rel` and `--augment-seed`.
+  - `delta`: size via `--change-spec`/`--change-cap`/`--change-cap-tol`, selection via
+    `--delta-cluster {assign,id,random}`, sampling via `--sets` and `--seed`, `--cleanup` to reset delta/.
+  - `compile`: `--souffle-arg` (repeatable) + `--jobs` + `--timeout`.
+  - `run`: `--delta-labels`, `--delta-samples`, `--delta-root`, `--delta-shuffle`, `--delta-seed`,
+    `--run-arg` (repeatable), `--compare-all`.
+  - `collect`: aggregates per-delta JSON to TSV.
   - `compile` uses `souffle --online` to produce `./compute`.
     - Extra compile flags pass via `--souffle-arg` (repeatable); do **not** use `--full-only` for incremental runs.
     - Parallel compile: `--jobs <N>`.
@@ -61,5 +70,6 @@
 - [problog-benchmark/side_channel_inc.py](problog-benchmark/side_channel_inc.py)
 
 ## Related commits
+- `e214cd028` — docs(repo): refresh incremental docs and index
 - `668298ef8` — fix(inc-region): update regional WMC routing and profiling
 - `619e52197` — fix(inc): track explicit deletes and log deltas

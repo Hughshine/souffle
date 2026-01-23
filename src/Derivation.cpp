@@ -264,6 +264,7 @@ bool dredProfileEnabled = false;
 bool incProfileEnabled = false;
 bool fcProfileEnabled = false;
 bool incDeleteProfileEnabled = false;
+bool wmcProfileEnabled = false;
 bool incRegionalProfileEnabled = false;
 bool incRegionalProfileHeavyEnabled = false;
 std::string incRegionalTraceTuples;

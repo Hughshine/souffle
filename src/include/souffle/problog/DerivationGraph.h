@@ -790,7 +790,10 @@ public:
             const std::unordered_set<EdgePtr>& deleteImpactDetEdges = {},
             const std::unordered_set<NodePtr>& deleteImpactNonDetNodes = {},
             const std::unordered_set<EdgePtr>& deleteImpactNonDetEdges = {},
-            const std::set<NodePtr>& explicitDeletedFacts = {})
+            const std::set<NodePtr>& explicitDeletedFacts = {},
+            std::vector<NodePtr> deletedOutputNodes = {},
+            std::vector<NodePtr> outputNodes = {},
+            std::vector<NodePtr> evidenceNodes = {})
             : SubgraphView(nodes, edges),
               deltaInsertNodes_(deltaInsertNodes),
               deltaInsertEdges_(deltaInsertEdges),
@@ -805,7 +808,10 @@ public:
             deleteImpactDetNodes_(deleteImpactDetNodes),
             deleteImpactDetEdges_(deleteImpactDetEdges),
             deleteImpactNonDetNodes_(deleteImpactNonDetNodes),
-            deleteImpactNonDetEdges_(deleteImpactNonDetEdges) {
+            deleteImpactNonDetEdges_(deleteImpactNonDetEdges),
+            deletedOutputNodes_(std::move(deletedOutputNodes)),
+            outputNodes_(std::move(outputNodes)),
+            evidenceNodes_(std::move(evidenceNodes)) {
             explicitDeletedFacts_ = explicitDeletedFacts;
         }
 
@@ -849,6 +855,15 @@ public:
     const std::unordered_set<EdgePtr>& getDeleteImpactNonDetEdges() const override {
         return deleteImpactNonDetEdges_;
     }
+    const std::vector<NodePtr>& getOutputNodes() const {
+        return outputNodes_;
+    }
+    const std::vector<NodePtr>& getDeletedOutputNodes() const {
+        return deletedOutputNodes_;
+    }
+    const std::vector<NodePtr>& getEvidenceNodes() const {
+        return evidenceNodes_;
+    }
 
 
     // Optional: dumpDot for incremental view
@@ -868,6 +883,9 @@ protected:
     std::unordered_set<EdgePtr> deleteImpactDetEdges_;
     std::unordered_set<NodePtr> deleteImpactNonDetNodes_;
     std::unordered_set<EdgePtr> deleteImpactNonDetEdges_;
+    std::vector<NodePtr> deletedOutputNodes_;
+    std::vector<NodePtr> outputNodes_;
+    std::vector<NodePtr> evidenceNodes_;
 };
 
 class DerivationGraph: virtual public DerivationGraphViewInterface {
@@ -2276,6 +2294,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     reachableNodes.reserve(nodes.size());
     reachableEdges.reserve(edges.size());
     std::queue<NodePtr> workQueue;
+    std::vector<NodePtr> outputNodes;
     std::vector<NodePtr> evidenceNodes;
 
     {
@@ -2288,6 +2307,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                 reachableNodes.insert(node);
                 workQueue.push(node);
                 node->setQuery();
+                outputNodes.push_back(node);
             }
             if (node->hasEvidence()) {
                 evidenceNodes.push_back(node);
@@ -2400,6 +2420,13 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     }
     std::cout << "[prune-inc] delta-delete counts (filtered): nodes=" << newDeltaDeletedNodes.size()
               << " edges=" << newDeltaDeletedEdges.size() << std::endl;
+    std::vector<NodePtr> deletedOutputNodes;
+    deletedOutputNodes.reserve(newDeltaDeletedNodes.size());
+    for (const auto& node : newDeltaDeletedNodes) {
+        if (outputRelationNames.count(node->getTuple().relation_name) > 0 || node->isQueryNode()) {
+            deletedOutputNodes.push_back(node);
+        }
+    }
 
     std::set<NodePtr> newDeltaInsertedNodes;
     std::set<EdgePtr> newDeltaInsertedEdges;
@@ -2514,7 +2541,10 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                                std::move(newDeletedFactImpactDetEdges),
                                std::move(newDeletedFactImpactNonDetNodes),
                                std::move(newDeletedFactImpactNonDetEdges),
-                               explicitDeletedFacts_);
+                               explicitDeletedFacts_,
+                               std::move(deletedOutputNodes),
+                               std::move(outputNodes),
+                               std::move(evidenceNodes));
         if (incProfile) {
             buildViewMs = toMs(t0);
         }

@@ -367,6 +367,7 @@ public:
         incProfileEnabled = options.isIncProfileEnabled();
         fcProfileEnabled = options.isFcProfileEnabled();
         incDeleteProfileEnabled = options.isIncDeleteProfileEnabled();
+        wmcProfileEnabled = options.isWmcProfileEnabled();
         incRegionalProfileEnabled = options.isIncRegionalProfileEnabled();
         incRegionalProfileHeavyEnabled = options.isIncRegionalProfileHeavyEnabled();
         incRegionalTraceTuples = options.getIncRegionalTraceTuples();
@@ -893,6 +894,7 @@ public:
                     debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
                     FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(changedNodes.size()));
                     const bool incProfile = incProfileEnabled;
+                    const bool wmcProfile = wmcProfileEnabled;
                     using Clock = std::chrono::steady_clock;
                     auto toMs = [](Clock::time_point start) {
                         return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
@@ -901,14 +903,38 @@ public:
                     double evidenceBuildMs = 0.0;
                     double evidenceWmcMs = 0.0;
                     double nodeLoopMs = 0.0;
+                    double evidenceMakeAndMs = 0.0;
+                    double evidenceWmcComputeMs = 0.0;
+                    double nodeMakeAndMs = 0.0;
+                    double nodeWmcComputeMs = 0.0;
+                    double weightApplyMs = 0.0;
                     std::size_t evidenceWmcCalls = 0;
                     std::size_t nodeWmcCalls = 0;
+                    std::size_t evidenceMakeAndCalls = 0;
+                    std::size_t nodeMakeAndCalls = 0;
+                    std::size_t weightApplyCalls = 0;
+                    std::size_t weightApplyVars = 0;
+                    std::size_t weightToggleCalls = 0;
                     std::size_t nodeReuse = 0;
                     std::size_t nodeRecompute = 0;
                     std::size_t nodeZero = 0;
-                    std::unordered_map<NodePtr, double> newProbResult;
-                    auto& depGraph = view.getCycleDependencyGraph();
-                    size_t componentCount = depGraph.getComponentCount();
+                    const auto& outputNodes = view.getOutputNodes();
+                    const auto& evidenceNodes = view.getEvidenceNodes();
+                    const auto& deletedOutputNodes = view.getDeletedOutputNodes();
+                    CycleDependencyGraph* depGraphPtr = nullptr;
+                    double depGraphMs = 0.0;
+                    double outputClassifyMs = 0.0;
+                    double probLookupMs = 0.0;
+                    double probWriteMs = 0.0;
+                    double outputLoopMs = 0.0;
+                    if (!evidenceNodes.empty()) {
+                        auto depStart = Clock::now();
+                        depGraphPtr = &view.getCycleDependencyGraph();
+                        if (wmcProfile) {
+                            depGraphMs = toMs(depStart);
+                        }
+                    }
+                    size_t componentCount = depGraphPtr ? depGraphPtr->getComponentCount() : 0;
                     std::vector<NodeRef> componentEvidence(componentCount, ddManager->getTrue());
                     std::vector<double> componentEvidenceWeight(componentCount, 1.0);
                     std::vector<double> componentEvidenceWeightOriginal;
@@ -921,70 +947,106 @@ public:
                         debugger.addInfo("inc_regional_profile_active", regionalOutputProfile ? "1" : "0");
                     }
                     auto applyWeights = [&](const std::unordered_map<int, std::pair<double, double>>& weights) {
+                        if (!wmcProfile) {
+                            for (const auto& [varIdx, w] : weights) {
+                                ddManager->setVariableWeight(varIdx, w.first, w.second);
+                            }
+                            return;
+                        }
+                        auto applyStart = Clock::now();
                         for (const auto& [varIdx, w] : weights) {
                             ddManager->setVariableWeight(varIdx, w.first, w.second);
                         }
+                        weightApplyMs += toMs(applyStart);
+                        weightApplyCalls++;
+                        weightApplyVars += weights.size();
+                    };
+                    auto makeAndProfile = [&](const NodeRef& lhs, const NodeRef& rhs,
+                                              double& ms, std::size_t& calls) {
+                        if (!wmcProfile) {
+                            return ddManager->makeAnd(lhs, rhs);
+                        }
+                        auto andStart = Clock::now();
+                        auto res = ddManager->makeAnd(lhs, rhs);
+                        ms += toMs(andStart);
+                        calls++;
+                        return res;
+                    };
+                    auto computeWmcProfile = [&](const NodeRef& node, double& ms, std::size_t& calls) {
+                        calls++;
+                        if (!wmcProfile) {
+                            return ddManager->computeWeightedModelCount(node);
+                        }
+                        auto wmcStart = Clock::now();
+                        double res = ddManager->computeWeightedModelCount(node);
+                        ms += toMs(wmcStart);
+                        return res;
                     };
 
-                    auto evidenceBuildStart = Clock::now();
-                    for (size_t cid = 0; cid < componentCount; ++cid) {
-                        const auto& evidences = depGraph.getComponentEvidences(cid);
-                        if (evidences.empty()) {
-                            continue;
-                        }
-                        componentHasEvidence[cid] = true;
-                        NodeRef evidenceNode = ddManager->getTrue();
-                        for (const auto& [node, val] : evidences) {
-                            if (changedNodes.find(node) != changedNodes.end() ||
-                                    (regionalOutputProfile &&
-                                     incRegionalOutputProfile.deltaReachableNodes.count(node) > 0)) {
-                                componentEvidenceChanged[cid] = true;
-                            }
-                            auto it = nodeFormulas->find(node);
-                            if (it == nodeFormulas->end()) {
-                                throw std::runtime_error("Evidence node has no formula: " + node->getTuple().toString());
-                            }
-                            NodeRef lit = it->second;
-                            if (!val) {
-                                lit = ddManager->makeNot(lit);
-                            }
-                            evidenceNode = ddManager->makeAnd(evidenceNode, lit);
-                        }
-                        componentEvidence[cid] = evidenceNode;
-                    }
-                    if (incProfile) {
-                        evidenceBuildMs = toMs(evidenceBuildStart);
-                    }
-                    auto evidenceWmcStart = Clock::now();
-                    if (hasOverrideWeights) {
+                    if (depGraphPtr) {
+                        auto evidenceBuildStart = Clock::now();
                         for (size_t cid = 0; cid < componentCount; ++cid) {
-                            if (componentHasEvidence[cid]) {
-                                componentEvidenceWeight[cid] =
-                                        ddManager->computeWeightedModelCount(componentEvidence[cid]);
-                                evidenceWmcCalls++;
+                            const auto& evidences = depGraphPtr->getComponentEvidences(cid);
+                            if (evidences.empty()) {
+                                continue;
+                            }
+                            componentHasEvidence[cid] = true;
+                            NodeRef evidenceNode = ddManager->getTrue();
+                            for (const auto& [node, val] : evidences) {
+                                if (changedNodes.find(node) != changedNodes.end() ||
+                                        (regionalOutputProfile &&
+                                         incRegionalOutputProfile.deltaReachableNodes.count(node) > 0)) {
+                                    componentEvidenceChanged[cid] = true;
+                                }
+                                auto it = nodeFormulas->find(node);
+                                if (it == nodeFormulas->end()) {
+                                    throw std::runtime_error("Evidence node has no formula: " + node->getTuple().toString());
+                                }
+                                NodeRef lit = it->second;
+                                if (!val) {
+                                    lit = ddManager->makeNot(lit);
+                                }
+                                evidenceNode = makeAndProfile(evidenceNode, lit, evidenceMakeAndMs, evidenceMakeAndCalls);
+                            }
+                            componentEvidence[cid] = evidenceNode;
+                        }
+                        if (incProfile) {
+                            evidenceBuildMs = toMs(evidenceBuildStart);
+                        }
+                        auto evidenceWmcStart = Clock::now();
+                        if (hasOverrideWeights) {
+                            for (size_t cid = 0; cid < componentCount; ++cid) {
+                                if (componentHasEvidence[cid]) {
+                                    componentEvidenceWeight[cid] = computeWmcProfile(
+                                            componentEvidence[cid], evidenceWmcComputeMs, evidenceWmcCalls);
+                                }
+                            }
+                            if (wmcProfile) {
+                                weightToggleCalls++;
+                            }
+                            applyWeights(incRegionalOutputProfile.originalWeights);
+                            componentEvidenceWeightOriginal.assign(componentCount, 1.0);
+                            for (size_t cid = 0; cid < componentCount; ++cid) {
+                                if (componentHasEvidence[cid]) {
+                                    componentEvidenceWeightOriginal[cid] = computeWmcProfile(
+                                            componentEvidence[cid], evidenceWmcComputeMs, evidenceWmcCalls);
+                                }
+                            }
+                            if (wmcProfile) {
+                                weightToggleCalls++;
+                            }
+                            applyWeights(incRegionalOutputProfile.overrideWeights);
+                        } else {
+                            for (size_t cid = 0; cid < componentCount; ++cid) {
+                                if (componentHasEvidence[cid]) {
+                                    componentEvidenceWeight[cid] = computeWmcProfile(
+                                            componentEvidence[cid], evidenceWmcComputeMs, evidenceWmcCalls);
+                                }
                             }
                         }
-                        applyWeights(incRegionalOutputProfile.originalWeights);
-                        componentEvidenceWeightOriginal.assign(componentCount, 1.0);
-                        for (size_t cid = 0; cid < componentCount; ++cid) {
-                            if (componentHasEvidence[cid]) {
-                                componentEvidenceWeightOriginal[cid] =
-                                        ddManager->computeWeightedModelCount(componentEvidence[cid]);
-                                evidenceWmcCalls++;
-                            }
+                        if (incProfile) {
+                            evidenceWmcMs = toMs(evidenceWmcStart);
                         }
-                        applyWeights(incRegionalOutputProfile.overrideWeights);
-                    } else {
-                        for (size_t cid = 0; cid < componentCount; ++cid) {
-                            if (componentHasEvidence[cid]) {
-                                componentEvidenceWeight[cid] =
-                                        ddManager->computeWeightedModelCount(componentEvidence[cid]);
-                                evidenceWmcCalls++;
-                            }
-                        }
-                    }
-                    if (incProfile) {
-                        evidenceWmcMs = toMs(evidenceWmcStart);
                     }
 
                     auto nodeLoopStart = Clock::now();
@@ -1020,96 +1082,206 @@ public:
                         if (wantCalibrated == weightsCalibrated) {
                             return;
                         }
+                        if (wmcProfile) {
+                            weightToggleCalls++;
+                        }
                         applyWeights(wantCalibrated ? incRegionalOutputProfile.overrideWeights
                                                     : incRegionalOutputProfile.originalWeights);
                         weightsCalibrated = wantCalibrated;
                     };
-                    for (const auto& node : view.getValidNodes()) {
-                        if (!node->needOutput) {
-                            continue;
+                    if (!deletedOutputNodes.empty()) {
+                        for (const auto& node : deletedOutputNodes) {
+                            probResult.erase(node);
                         }
-                        size_t cid = depGraph.getComponentId(node);
-                        const bool inDeltaReach = regionalOutputProfile &&
-                                (incRegionalOutputProfile.deltaReachableNodes.count(node) > 0);
-                        const bool inRegion = regionalOutputProfile &&
-                                (incRegionalOutputProfile.regionNodes.count(node) > 0);
-                        const bool regionalTouched = regionalOutputProfile && (inRegion || inDeltaReach);
-                        const bool useOriginalWeights = hasOverrideWeights && inRegion;
-                        auto evidenceWeightFor = [&](size_t compId) {
-                            if (useOriginalWeights && !componentEvidenceWeightOriginal.empty()) {
-                                return componentEvidenceWeightOriginal[compId];
+                    }
+                    if (!depGraphPtr) {
+                        for (const auto& node : outputNodes) {
+                            if (!node->needOutput) {
+                                continue;
                             }
-                            return componentEvidenceWeight[compId];
-                        };
+                            auto classifyStart = Clock::now();
+                            const bool inDeltaReach = regionalOutputProfile &&
+                                    (incRegionalOutputProfile.deltaReachableNodes.count(node) > 0);
+                            const bool inRegion = regionalOutputProfile &&
+                                    (incRegionalOutputProfile.regionNodes.count(node) > 0);
+                            const bool regionalTouched = regionalOutputProfile && (inRegion || inDeltaReach);
+                            const bool useOriginalWeights = hasOverrideWeights && inRegion;
+                            if (wmcProfile) {
+                                outputClassifyMs += toMs(classifyStart);
+                            }
 
-                        if (!componentHasEvidence[cid]) {
                             if (regionalTouched || changedNodes.find(node) != changedNodes.end()) {
                                 ensureWeights(!useOriginalWeights);
-                                newProbResult[node] = ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
-                                nodeWmcCalls++;
+                                auto value = computeWmcProfile((*nodeFormulas)[node],
+                                                               nodeWmcComputeMs, nodeWmcCalls);
+                                auto writeStart = Clock::now();
+                                probResult[node] = value;
+                                if (wmcProfile) {
+                                    probWriteMs += toMs(writeStart);
+                                }
                                 nodeRecompute++;
                                 logOutputDecision(node, "recompute_wmc",
                                                   regionalTouched ? "regional_no_evidence" : "no_evidence_changed",
                                                   useOriginalWeights);
                             } else {
+                                auto lookupStart = Clock::now();
                                 auto it = probResult.find(node);
+                                if (wmcProfile) {
+                                    probLookupMs += toMs(lookupStart);
+                                }
                                 if (it != probResult.end()) {
-                                    newProbResult[node] = it->second;
+                                    auto writeStart = Clock::now();
+                                    probResult[node] = it->second;
+                                    if (wmcProfile) {
+                                        probWriteMs += toMs(writeStart);
+                                    }
                                     nodeReuse++;
                                     logOutputDecision(node, "reuse_old_prob", "no_evidence_no_change",
                                                       useOriginalWeights);
                                 } else {
-                                    newProbResult[node] =
-                                            ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
-                                    nodeWmcCalls++;
+                                    auto value = computeWmcProfile((*nodeFormulas)[node],
+                                                                   nodeWmcComputeMs, nodeWmcCalls);
+                                    auto writeStart = Clock::now();
+                                    probResult[node] = value;
+                                    if (wmcProfile) {
+                                        probWriteMs += toMs(writeStart);
+                                    }
                                     nodeRecompute++;
                                     logOutputDecision(node, "recompute_wmc", "no_evidence_missing_prob",
                                                       useOriginalWeights);
                                 }
                             }
-                            continue;
                         }
-                        if (evidenceWeightFor(cid) == 0.0) {
-                            newProbResult[node] = 0.0;
-                            nodeZero++;
-                            logOutputDecision(node, "assign_zero", "evidence_weight_zero", useOriginalWeights);
-                            continue;
-                        }
-                        const bool evidenceChanged = componentEvidenceChanged[cid];
-                        if (regionalTouched || changedNodes.find(node) != changedNodes.end() || evidenceChanged) {
-                            ensureWeights(!useOriginalWeights);
-                            auto joint = ddManager->makeAnd((*nodeFormulas)[node], componentEvidence[cid]);
-                            double jointW = ddManager->computeWeightedModelCount(joint);
-                            newProbResult[node] = jointW / evidenceWeightFor(cid);
-                            nodeWmcCalls++;
-                            nodeRecompute++;
-                            logOutputDecision(node, "recompute_wmc",
-                                              regionalTouched ? "regional_evidence" : "evidence_changed_or_node_changed",
-                                              useOriginalWeights);
-                            continue;
-                        }
-                        auto it = probResult.find(node);
-                        if (it != probResult.end()) {
-                            newProbResult[node] = it->second;
-                            nodeReuse++;
-                            logOutputDecision(node, "reuse_old_prob", "evidence_unchanged_no_change",
-                                              useOriginalWeights);
-                        } else {
-                            auto joint =
-                                    ddManager->makeAnd((*nodeFormulas)[node], componentEvidence[cid]);
-                            double jointW = ddManager->computeWeightedModelCount(joint);
-                            newProbResult[node] = jointW / componentEvidenceWeight[cid];
-                            nodeWmcCalls++;
-                            nodeRecompute++;
-                            logOutputDecision(node, "recompute_wmc", "evidence_unchanged_missing_prob",
-                                              useOriginalWeights);
+                    } else {
+                        for (const auto& node : outputNodes) {
+                            if (!node->needOutput) {
+                                continue;
+                            }
+                            size_t cid = depGraphPtr->getComponentId(node);
+                            auto classifyStart = Clock::now();
+                            const bool inDeltaReach = regionalOutputProfile &&
+                                    (incRegionalOutputProfile.deltaReachableNodes.count(node) > 0);
+                            const bool inRegion = regionalOutputProfile &&
+                                    (incRegionalOutputProfile.regionNodes.count(node) > 0);
+                            const bool regionalTouched = regionalOutputProfile && (inRegion || inDeltaReach);
+                            const bool useOriginalWeights = hasOverrideWeights && inRegion;
+                            if (wmcProfile) {
+                                outputClassifyMs += toMs(classifyStart);
+                            }
+                            auto evidenceWeightFor = [&](size_t compId) {
+                                if (useOriginalWeights && !componentEvidenceWeightOriginal.empty()) {
+                                    return componentEvidenceWeightOriginal[compId];
+                                }
+                                return componentEvidenceWeight[compId];
+                            };
+
+                            if (!componentHasEvidence[cid]) {
+                                if (regionalTouched || changedNodes.find(node) != changedNodes.end()) {
+                                    ensureWeights(!useOriginalWeights);
+                                    auto value = computeWmcProfile((*nodeFormulas)[node],
+                                                                   nodeWmcComputeMs, nodeWmcCalls);
+                                    auto writeStart = Clock::now();
+                                    probResult[node] = value;
+                                    if (wmcProfile) {
+                                        probWriteMs += toMs(writeStart);
+                                    }
+                                    nodeRecompute++;
+                                    logOutputDecision(node, "recompute_wmc",
+                                                      regionalTouched ? "regional_no_evidence" : "no_evidence_changed",
+                                                      useOriginalWeights);
+                                } else {
+                                    auto lookupStart = Clock::now();
+                                    auto it = probResult.find(node);
+                                    if (wmcProfile) {
+                                        probLookupMs += toMs(lookupStart);
+                                    }
+                                    if (it != probResult.end()) {
+                                        auto writeStart = Clock::now();
+                                        probResult[node] = it->second;
+                                        if (wmcProfile) {
+                                            probWriteMs += toMs(writeStart);
+                                        }
+                                        nodeReuse++;
+                                        logOutputDecision(node, "reuse_old_prob", "no_evidence_no_change",
+                                                          useOriginalWeights);
+                                    } else {
+                                        auto value =
+                                                computeWmcProfile((*nodeFormulas)[node],
+                                                                  nodeWmcComputeMs, nodeWmcCalls);
+                                        auto writeStart = Clock::now();
+                                        probResult[node] = value;
+                                        if (wmcProfile) {
+                                            probWriteMs += toMs(writeStart);
+                                        }
+                                        nodeRecompute++;
+                                        logOutputDecision(node, "recompute_wmc", "no_evidence_missing_prob",
+                                                          useOriginalWeights);
+                                    }
+                                }
+                                continue;
+                            }
+                            if (evidenceWeightFor(cid) == 0.0) {
+                                auto writeStart = Clock::now();
+                                probResult[node] = 0.0;
+                                if (wmcProfile) {
+                                    probWriteMs += toMs(writeStart);
+                                }
+                                nodeZero++;
+                                logOutputDecision(node, "assign_zero", "evidence_weight_zero", useOriginalWeights);
+                                continue;
+                            }
+                            const bool evidenceChanged = componentEvidenceChanged[cid];
+                            if (regionalTouched || changedNodes.find(node) != changedNodes.end() || evidenceChanged) {
+                                ensureWeights(!useOriginalWeights);
+                                auto joint = makeAndProfile((*nodeFormulas)[node], componentEvidence[cid],
+                                                            nodeMakeAndMs, nodeMakeAndCalls);
+                                double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
+                                auto writeStart = Clock::now();
+                                probResult[node] = jointW / evidenceWeightFor(cid);
+                                if (wmcProfile) {
+                                    probWriteMs += toMs(writeStart);
+                                }
+                                nodeRecompute++;
+                                logOutputDecision(node, "recompute_wmc",
+                                                  regionalTouched ? "regional_evidence" : "evidence_changed_or_node_changed",
+                                                  useOriginalWeights);
+                                continue;
+                            }
+                            auto lookupStart = Clock::now();
+                            auto it = probResult.find(node);
+                            if (wmcProfile) {
+                                probLookupMs += toMs(lookupStart);
+                            }
+                            if (it != probResult.end()) {
+                                auto writeStart = Clock::now();
+                                probResult[node] = it->second;
+                                if (wmcProfile) {
+                                    probWriteMs += toMs(writeStart);
+                                }
+                                nodeReuse++;
+                                logOutputDecision(node, "reuse_old_prob", "evidence_unchanged_no_change",
+                                                  useOriginalWeights);
+                            } else {
+                                auto joint = makeAndProfile((*nodeFormulas)[node], componentEvidence[cid],
+                                                            nodeMakeAndMs, nodeMakeAndCalls);
+                                double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
+                                auto writeStart = Clock::now();
+                                probResult[node] = jointW / componentEvidenceWeight[cid];
+                                if (wmcProfile) {
+                                    probWriteMs += toMs(writeStart);
+                                }
+                                nodeRecompute++;
+                                logOutputDecision(node, "recompute_wmc", "evidence_unchanged_missing_prob",
+                                                  useOriginalWeights);
+                            }
                         }
                     }
                     if (incProfile) {
                         nodeLoopMs = toMs(nodeLoopStart);
                     }
-                    probResult.clear();
-                    probResult = newProbResult;
+                    if (wmcProfile) {
+                        outputLoopMs = toMs(nodeLoopStart);
+                    }
                     for (const auto& [node, prob] : precomputedProbResult) {
                         probResult.emplace(node, prob);
                     }
@@ -1131,13 +1303,51 @@ public:
                                   << " node_ms=" << nodeLoopMs
                                   << " components=" << componentCount
                                   << " components_ev=" << componentWithEvidence
-                                  << " nodes=" << view.getValidNodes().size()
+                                  << " nodes=" << outputNodes.size()
                                   << " changed_nodes=" << changedNodes.size()
                                   << " node_reuse=" << nodeReuse
                                   << " node_recompute=" << nodeRecompute
                                   << " node_zero=" << nodeZero
                                   << " evidence_wmc_calls=" << evidenceWmcCalls
                                   << " node_wmc_calls=" << nodeWmcCalls
+                                  << std::endl;
+                    }
+                    if (wmcProfile) {
+                        const double totalMs = toMs(stageStart);
+                        std::size_t componentWithEvidence = 0;
+                        for (bool hasEv : componentHasEvidence) {
+                            if (hasEv) {
+                                componentWithEvidence++;
+                            }
+                        }
+                        std::cout << "[wmc-profile] stage=INC"
+                                  << " mode=" << (useRegional ? "inc-regional" : "inc-naive")
+                                  << " total_ms=" << totalMs
+                                  << " components=" << componentCount
+                                  << " components_ev=" << componentWithEvidence
+                                  << " nodes=" << outputNodes.size()
+                                  << " changed_nodes=" << changedNodes.size()
+                                  << " node_reuse=" << nodeReuse
+                                  << " node_recompute=" << nodeRecompute
+                                  << " evidence_build_ms=" << evidenceBuildMs
+                                  << " evidence_make_and_calls=" << evidenceMakeAndCalls
+                                  << " evidence_make_and_ms=" << evidenceMakeAndMs
+                                  << " evidence_wmc_calls=" << evidenceWmcCalls
+                                  << " evidence_wmc_compute_ms=" << evidenceWmcComputeMs
+                                  << " node_make_and_calls=" << nodeMakeAndCalls
+                                  << " node_make_and_ms=" << nodeMakeAndMs
+                                  << " node_wmc_calls=" << nodeWmcCalls
+                                  << " node_wmc_compute_ms=" << nodeWmcComputeMs
+                                  << " dep_graph_ms=" << depGraphMs
+                                  << " output_loop_ms=" << outputLoopMs
+                                  << " output_classify_ms=" << outputClassifyMs
+                                  << " prob_lookup_ms=" << probLookupMs
+                                  << " prob_write_ms=" << probWriteMs
+                                  << " weight_apply_calls=" << weightApplyCalls
+                                  << " weight_apply_vars=" << weightApplyVars
+                                  << " weight_apply_ms=" << weightApplyMs
+                                  << " weight_toggle_calls=" << weightToggleCalls
+                                  << " live_nodes=" << ddManager->getLiveNodeCount()
                                   << std::endl;
                     }
                     debugger.endStage();
@@ -1205,12 +1415,50 @@ public:
                 debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
                 probResult.clear();
                 {
+                    const bool wmcProfile = wmcProfileEnabled;
+                    using Clock = std::chrono::steady_clock;
+                    auto toMs = [](Clock::time_point start) {
+                        return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+                    };
+                    auto stageStart = Clock::now();
+                    double evidenceBuildMs = 0.0;
+                    double evidenceMakeAndMs = 0.0;
+                    double evidenceWmcComputeMs = 0.0;
+                    double nodeMakeAndMs = 0.0;
+                    double nodeWmcComputeMs = 0.0;
+                    std::size_t evidenceWmcCalls = 0;
+                    std::size_t nodeWmcCalls = 0;
+                    std::size_t evidenceMakeAndCalls = 0;
+                    std::size_t nodeMakeAndCalls = 0;
+                    auto makeAndProfile = [&](const NodeRef& lhs, const NodeRef& rhs,
+                                              double& ms, std::size_t& calls) {
+                        if (!wmcProfile) {
+                            return ddManager->makeAnd(lhs, rhs);
+                        }
+                        auto andStart = Clock::now();
+                        auto res = ddManager->makeAnd(lhs, rhs);
+                        ms += toMs(andStart);
+                        calls++;
+                        return res;
+                    };
+                    auto computeWmcProfile = [&](const NodeRef& node, double& ms, std::size_t& calls) {
+                        calls++;
+                        if (!wmcProfile) {
+                            return ddManager->computeWeightedModelCount(node);
+                        }
+                        auto wmcStart = Clock::now();
+                        double res = ddManager->computeWeightedModelCount(node);
+                        ms += toMs(wmcStart);
+                        return res;
+                    };
+
                     auto& depGraph = view.getCycleDependencyGraph();
                     size_t componentCount = depGraph.getComponentCount();
                     std::vector<NodeRef> componentEvidence(componentCount, ddManager->getTrue());
                     std::vector<double> componentEvidenceWeight(componentCount, 1.0);
                     std::vector<bool> componentHasEvidence(componentCount, false);
 
+                    auto evidenceBuildStart = Clock::now();
                     for (size_t cid = 0; cid < componentCount; ++cid) {
                         const auto& evidences = depGraph.getComponentEvidences(cid);
                         if (evidences.empty()) {
@@ -1227,15 +1475,16 @@ public:
                             if (!val) {
                                 lit = ddManager->makeNot(lit);
                             }
-                            evidenceNode = ddManager->makeAnd(evidenceNode, lit);
+                            evidenceNode = makeAndProfile(evidenceNode, lit, evidenceMakeAndMs, evidenceMakeAndCalls);
                         }
                         componentEvidence[cid] = evidenceNode;
                     }
+                    evidenceBuildMs = toMs(evidenceBuildStart);
 
                     for (size_t cid = 0; cid < componentCount; ++cid) {
                         if (componentHasEvidence[cid]) {
-                            componentEvidenceWeight[cid] =
-                                    ddManager->computeWeightedModelCount(componentEvidence[cid]);
+                            componentEvidenceWeight[cid] = computeWmcProfile(
+                                    componentEvidence[cid], evidenceWmcComputeMs, evidenceWmcCalls);
                         }
                     }
 
@@ -1245,19 +1494,45 @@ public:
                         }
                         size_t cid = depGraph.getComponentId(node);
                         if (!componentHasEvidence[cid]) {
-                            probResult[node] = ddManager->computeWeightedModelCount(formula);
+                            probResult[node] = computeWmcProfile(formula, nodeWmcComputeMs, nodeWmcCalls);
                             continue;
                         }
                         if (componentEvidenceWeight[cid] == 0.0) {
                             probResult[node] = 0.0;
                             continue;
                         }
-                        auto joint = ddManager->makeAnd(formula, componentEvidence[cid]);
-                        double jointW = ddManager->computeWeightedModelCount(joint);
+                        auto joint = makeAndProfile(formula, componentEvidence[cid],
+                                                    nodeMakeAndMs, nodeMakeAndCalls);
+                        double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
                         probResult[node] = jointW / componentEvidenceWeight[cid];
                     }
                     for (const auto& [node, prob] : precomputedProbResult) {
                         probResult.emplace(node, prob);
+                    }
+                    if (wmcProfile) {
+                        std::size_t componentWithEvidence = 0;
+                        for (bool hasEv : componentHasEvidence) {
+                            if (hasEv) {
+                                componentWithEvidence++;
+                            }
+                        }
+                        std::cout << "[wmc-profile] stage=FULL"
+                                  << " mode=cli-full"
+                                  << " total_ms=" << toMs(stageStart)
+                                  << " components=" << componentCount
+                                  << " components_ev=" << componentWithEvidence
+                                  << " nodes=" << view.getValidNodes().size()
+                                  << " evidence_build_ms=" << evidenceBuildMs
+                                  << " evidence_make_and_calls=" << evidenceMakeAndCalls
+                                  << " evidence_make_and_ms=" << evidenceMakeAndMs
+                                  << " evidence_wmc_calls=" << evidenceWmcCalls
+                                  << " evidence_wmc_compute_ms=" << evidenceWmcComputeMs
+                                  << " node_make_and_calls=" << nodeMakeAndCalls
+                                  << " node_make_and_ms=" << nodeMakeAndMs
+                                  << " node_wmc_calls=" << nodeWmcCalls
+                                  << " node_wmc_compute_ms=" << nodeWmcComputeMs
+                                  << " live_nodes=" << ddManager->getLiveNodeCount()
+                                  << std::endl;
                     }
                 }
                 debugger.endStage();
@@ -1506,6 +1781,7 @@ public:
                     debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_INC);
                     FunctionTimer timer("incrementally compute probabilities, size " + std::to_string(changedNodes.size()));
                     const bool incProfile = incProfileEnabled;
+                    const bool wmcProfile = wmcProfileEnabled;
                     using Clock = std::chrono::steady_clock;
                     auto toMs = [](Clock::time_point start) {
                         return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
@@ -1514,14 +1790,38 @@ public:
                     double evidenceBuildMs = 0.0;
                     double evidenceWmcMs = 0.0;
                     double nodeLoopMs = 0.0;
+                    double evidenceMakeAndMs = 0.0;
+                    double evidenceWmcComputeMs = 0.0;
+                    double nodeMakeAndMs = 0.0;
+                    double nodeWmcComputeMs = 0.0;
+                    double weightApplyMs = 0.0;
                     std::size_t evidenceWmcCalls = 0;
                     std::size_t nodeWmcCalls = 0;
+                    std::size_t evidenceMakeAndCalls = 0;
+                    std::size_t nodeMakeAndCalls = 0;
+                    std::size_t weightApplyCalls = 0;
+                    std::size_t weightApplyVars = 0;
+                    std::size_t weightToggleCalls = 0;
                     std::size_t nodeReuse = 0;
                     std::size_t nodeRecompute = 0;
                     std::size_t nodeZero = 0;
-                    std::unordered_map<NodePtr, double> newProbResult;
-                    auto& depGraph = view.getCycleDependencyGraph();
-                    size_t componentCount = depGraph.getComponentCount();
+                    const auto& outputNodes = view.getOutputNodes();
+                    const auto& evidenceNodes = view.getEvidenceNodes();
+                    const auto& deletedOutputNodes = view.getDeletedOutputNodes();
+                    CycleDependencyGraph* depGraphPtr = nullptr;
+                    double depGraphMs = 0.0;
+                    double outputClassifyMs = 0.0;
+                    double probLookupMs = 0.0;
+                    double probWriteMs = 0.0;
+                    double outputLoopMs = 0.0;
+                    if (!evidenceNodes.empty()) {
+                        auto depStart = Clock::now();
+                        depGraphPtr = &view.getCycleDependencyGraph();
+                        if (wmcProfile) {
+                            depGraphMs = toMs(depStart);
+                        }
+                    }
+                    size_t componentCount = depGraphPtr ? depGraphPtr->getComponentCount() : 0;
                     std::vector<NodeRef> componentEvidence(componentCount, ddManager->getTrue());
                     std::vector<double> componentEvidenceWeight(componentCount, 1.0);
                     std::vector<double> componentEvidenceWeightOriginal;
@@ -1534,71 +1834,107 @@ public:
                         debugger.addInfo("inc_regional_profile_active", regionalOutputProfile ? "1" : "0");
                     }
                     auto applyWeights = [&](const std::unordered_map<int, std::pair<double, double>>& weights) {
+                        if (!wmcProfile) {
+                            for (const auto& [varIdx, w] : weights) {
+                                ddManager->setVariableWeight(varIdx, w.first, w.second);
+                            }
+                            return;
+                        }
+                        auto applyStart = Clock::now();
                         for (const auto& [varIdx, w] : weights) {
                             ddManager->setVariableWeight(varIdx, w.first, w.second);
                         }
+                        weightApplyMs += toMs(applyStart);
+                        weightApplyCalls++;
+                        weightApplyVars += weights.size();
+                    };
+                    auto makeAndProfile = [&](const NodeRef& lhs, const NodeRef& rhs,
+                                              double& ms, std::size_t& calls) {
+                        if (!wmcProfile) {
+                            return ddManager->makeAnd(lhs, rhs);
+                        }
+                        auto andStart = Clock::now();
+                        auto res = ddManager->makeAnd(lhs, rhs);
+                        ms += toMs(andStart);
+                        calls++;
+                        return res;
+                    };
+                    auto computeWmcProfile = [&](const NodeRef& node, double& ms, std::size_t& calls) {
+                        calls++;
+                        if (!wmcProfile) {
+                            return ddManager->computeWeightedModelCount(node);
+                        }
+                        auto wmcStart = Clock::now();
+                        double res = ddManager->computeWeightedModelCount(node);
+                        ms += toMs(wmcStart);
+                        return res;
                     };
 
-                    auto evidenceBuildStart = Clock::now();
-                    for (size_t cid = 0; cid < componentCount; ++cid) {
-                        const auto& evidences = depGraph.getComponentEvidences(cid);
-                        if (evidences.empty()) {
-                            continue;
+                    if (depGraphPtr) {
+                        auto evidenceBuildStart = Clock::now();
+                        for (size_t cid = 0; cid < componentCount; ++cid) {
+                            const auto& evidences = depGraphPtr->getComponentEvidences(cid);
+                            if (evidences.empty()) {
+                                continue;
+                            }
+                            componentHasEvidence[cid] = true;
+                            NodeRef evidenceNode = ddManager->getTrue();
+                            for (const auto& [node, val] : evidences) {
+                                if (changedNodes.find(node) != changedNodes.end() ||
+                                        (regionalOutputProfile &&
+                                         incRegionalOutputProfile.deltaReachableNodes.count(node) > 0)) {
+                                    componentEvidenceChanged[cid] = true;
+                                }
+                                auto it = nodeFormulas->find(node);
+                                if (it == nodeFormulas->end()) {
+                                    throw std::runtime_error("Evidence node has no formula: " + node->getTuple().toString());
+                                }
+                                NodeRef lit = it->second;
+                                if (!val) {
+                                    lit = ddManager->makeNot(lit);
+                                }
+                                evidenceNode = makeAndProfile(evidenceNode, lit, evidenceMakeAndMs, evidenceMakeAndCalls);
+                            }
+                            componentEvidence[cid] = evidenceNode;
                         }
-                        componentHasEvidence[cid] = true;
-                        NodeRef evidenceNode = ddManager->getTrue();
-                        for (const auto& [node, val] : evidences) {
-                            if (changedNodes.find(node) != changedNodes.end() ||
-                                    (regionalOutputProfile &&
-                                     incRegionalOutputProfile.deltaReachableNodes.count(node) > 0)) {
-                                componentEvidenceChanged[cid] = true;
-                            }
-                            auto it = nodeFormulas->find(node);
-                            if (it == nodeFormulas->end()) {
-                                throw std::runtime_error("Evidence node has no formula: " + node->getTuple().toString());
-                            }
-                            NodeRef lit = it->second;
-                            if (!val) {
-                                lit = ddManager->makeNot(lit);
-                            }
-                            evidenceNode = ddManager->makeAnd(evidenceNode, lit);
+                        if (incProfile) {
+                            evidenceBuildMs = toMs(evidenceBuildStart);
                         }
-                        componentEvidence[cid] = evidenceNode;
-                    }
-                    if (incProfile) {
-                        evidenceBuildMs = toMs(evidenceBuildStart);
-                    }
 
-                    auto evidenceWmcStart = Clock::now();
-                    if (hasOverrideWeights) {
-                        for (size_t cid = 0; cid < componentCount; ++cid) {
-                            if (componentHasEvidence[cid]) {
-                                componentEvidenceWeight[cid] =
-                                        ddManager->computeWeightedModelCount(componentEvidence[cid]);
-                                evidenceWmcCalls++;
+                        auto evidenceWmcStart = Clock::now();
+                        if (hasOverrideWeights) {
+                            for (size_t cid = 0; cid < componentCount; ++cid) {
+                                if (componentHasEvidence[cid]) {
+                                    componentEvidenceWeight[cid] = computeWmcProfile(
+                                            componentEvidence[cid], evidenceWmcComputeMs, evidenceWmcCalls);
+                                }
+                            }
+                            if (wmcProfile) {
+                                weightToggleCalls++;
+                            }
+                            applyWeights(incRegionalOutputProfile.originalWeights);
+                            componentEvidenceWeightOriginal.assign(componentCount, 1.0);
+                            for (size_t cid = 0; cid < componentCount; ++cid) {
+                                if (componentHasEvidence[cid]) {
+                                    componentEvidenceWeightOriginal[cid] = computeWmcProfile(
+                                            componentEvidence[cid], evidenceWmcComputeMs, evidenceWmcCalls);
+                                }
+                            }
+                            if (wmcProfile) {
+                                weightToggleCalls++;
+                            }
+                            applyWeights(incRegionalOutputProfile.overrideWeights);
+                        } else {
+                            for (size_t cid = 0; cid < componentCount; ++cid) {
+                                if (componentHasEvidence[cid]) {
+                                    componentEvidenceWeight[cid] = computeWmcProfile(
+                                            componentEvidence[cid], evidenceWmcComputeMs, evidenceWmcCalls);
+                                }
                             }
                         }
-                        applyWeights(incRegionalOutputProfile.originalWeights);
-                        componentEvidenceWeightOriginal.assign(componentCount, 1.0);
-                        for (size_t cid = 0; cid < componentCount; ++cid) {
-                            if (componentHasEvidence[cid]) {
-                                componentEvidenceWeightOriginal[cid] =
-                                        ddManager->computeWeightedModelCount(componentEvidence[cid]);
-                                evidenceWmcCalls++;
-                            }
+                        if (incProfile) {
+                            evidenceWmcMs = toMs(evidenceWmcStart);
                         }
-                        applyWeights(incRegionalOutputProfile.overrideWeights);
-                    } else {
-                        for (size_t cid = 0; cid < componentCount; ++cid) {
-                            if (componentHasEvidence[cid]) {
-                                componentEvidenceWeight[cid] =
-                                        ddManager->computeWeightedModelCount(componentEvidence[cid]);
-                                evidenceWmcCalls++;
-                            }
-                        }
-                    }
-                    if (incProfile) {
-                        evidenceWmcMs = toMs(evidenceWmcStart);
                     }
 
                     auto nodeLoopStart = Clock::now();
@@ -1634,96 +1970,206 @@ public:
                         if (wantCalibrated == weightsCalibrated) {
                             return;
                         }
+                        if (wmcProfile) {
+                            weightToggleCalls++;
+                        }
                         applyWeights(wantCalibrated ? incRegionalOutputProfile.overrideWeights
                                                     : incRegionalOutputProfile.originalWeights);
                         weightsCalibrated = wantCalibrated;
                     };
-                    for (const auto& node : view.getValidNodes()) {
-                        if (!node->needOutput) {
-                            continue;
+                    if (!deletedOutputNodes.empty()) {
+                        for (const auto& node : deletedOutputNodes) {
+                            probResult.erase(node);
                         }
-                        size_t cid = depGraph.getComponentId(node);
-                        const bool inDeltaReach = regionalOutputProfile &&
-                                (incRegionalOutputProfile.deltaReachableNodes.count(node) > 0);
-                        const bool inRegion = regionalOutputProfile &&
-                                (incRegionalOutputProfile.regionNodes.count(node) > 0);
-                        const bool regionalTouched = regionalOutputProfile && (inRegion || inDeltaReach);
-                        const bool useOriginalWeights = hasOverrideWeights && inRegion;
-                        auto evidenceWeightFor = [&](size_t compId) {
-                            if (useOriginalWeights && !componentEvidenceWeightOriginal.empty()) {
-                                return componentEvidenceWeightOriginal[compId];
+                    }
+                    if (!depGraphPtr) {
+                        for (const auto& node : outputNodes) {
+                            if (!node->needOutput) {
+                                continue;
                             }
-                            return componentEvidenceWeight[compId];
-                        };
+                            auto classifyStart = Clock::now();
+                            const bool inDeltaReach = regionalOutputProfile &&
+                                    (incRegionalOutputProfile.deltaReachableNodes.count(node) > 0);
+                            const bool inRegion = regionalOutputProfile &&
+                                    (incRegionalOutputProfile.regionNodes.count(node) > 0);
+                            const bool regionalTouched = regionalOutputProfile && (inRegion || inDeltaReach);
+                            const bool useOriginalWeights = hasOverrideWeights && inRegion;
+                            if (wmcProfile) {
+                                outputClassifyMs += toMs(classifyStart);
+                            }
 
-                        if (!componentHasEvidence[cid]) {
                             if (regionalTouched || changedNodes.find(node) != changedNodes.end()) {
                                 ensureWeights(!useOriginalWeights);
-                                newProbResult[node] = ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
-                                nodeWmcCalls++;
+                                auto value = computeWmcProfile((*nodeFormulas)[node],
+                                                               nodeWmcComputeMs, nodeWmcCalls);
+                                auto writeStart = Clock::now();
+                                probResult[node] = value;
+                                if (wmcProfile) {
+                                    probWriteMs += toMs(writeStart);
+                                }
                                 nodeRecompute++;
                                 logOutputDecision(node, "recompute_wmc",
                                                   regionalTouched ? "regional_no_evidence" : "no_evidence_changed",
                                                   useOriginalWeights);
                             } else {
+                                auto lookupStart = Clock::now();
                                 auto it = probResult.find(node);
+                                if (wmcProfile) {
+                                    probLookupMs += toMs(lookupStart);
+                                }
                                 if (it != probResult.end()) {
-                                    newProbResult[node] = it->second;
+                                    auto writeStart = Clock::now();
+                                    probResult[node] = it->second;
+                                    if (wmcProfile) {
+                                        probWriteMs += toMs(writeStart);
+                                    }
                                     nodeReuse++;
                                     logOutputDecision(node, "reuse_old_prob", "no_evidence_no_change",
                                                       useOriginalWeights);
                                 } else {
-                                    newProbResult[node] =
-                                            ddManager->computeWeightedModelCount((*nodeFormulas)[node]);
-                                    nodeWmcCalls++;
+                                    auto value = computeWmcProfile((*nodeFormulas)[node],
+                                                                   nodeWmcComputeMs, nodeWmcCalls);
+                                    auto writeStart = Clock::now();
+                                    probResult[node] = value;
+                                    if (wmcProfile) {
+                                        probWriteMs += toMs(writeStart);
+                                    }
                                     nodeRecompute++;
                                     logOutputDecision(node, "recompute_wmc", "no_evidence_missing_prob",
                                                       useOriginalWeights);
                                 }
                             }
-                            continue;
                         }
-                        if (evidenceWeightFor(cid) == 0.0) {
-                            newProbResult[node] = 0.0;
-                            nodeZero++;
-                            logOutputDecision(node, "assign_zero", "evidence_weight_zero", useOriginalWeights);
-                            continue;
-                        }
-                        const bool evidenceChanged = componentEvidenceChanged[cid];
-                        if (regionalTouched || changedNodes.find(node) != changedNodes.end() || evidenceChanged) {
-                            ensureWeights(!useOriginalWeights);
-                            auto joint = ddManager->makeAnd((*nodeFormulas)[node], componentEvidence[cid]);
-                            double jointW = ddManager->computeWeightedModelCount(joint);
-                            newProbResult[node] = jointW / evidenceWeightFor(cid);
-                            nodeWmcCalls++;
-                            nodeRecompute++;
-                            logOutputDecision(node, "recompute_wmc",
-                                              regionalTouched ? "regional_evidence" : "evidence_changed_or_node_changed",
-                                              useOriginalWeights);
-                            continue;
-                        }
-                        auto it = probResult.find(node);
-                        if (it != probResult.end()) {
-                            newProbResult[node] = it->second;
-                            nodeReuse++;
-                            logOutputDecision(node, "reuse_old_prob", "evidence_unchanged_no_change",
-                                              useOriginalWeights);
-                        } else {
-                            auto joint =
-                                    ddManager->makeAnd((*nodeFormulas)[node], componentEvidence[cid]);
-                            double jointW = ddManager->computeWeightedModelCount(joint);
-                            newProbResult[node] = jointW / evidenceWeightFor(cid);
-                            nodeWmcCalls++;
-                            nodeRecompute++;
-                            logOutputDecision(node, "recompute_wmc", "evidence_unchanged_missing_prob",
-                                              useOriginalWeights);
+                    } else {
+                        for (const auto& node : outputNodes) {
+                            if (!node->needOutput) {
+                                continue;
+                            }
+                            size_t cid = depGraphPtr->getComponentId(node);
+                            auto classifyStart = Clock::now();
+                            const bool inDeltaReach = regionalOutputProfile &&
+                                    (incRegionalOutputProfile.deltaReachableNodes.count(node) > 0);
+                            const bool inRegion = regionalOutputProfile &&
+                                    (incRegionalOutputProfile.regionNodes.count(node) > 0);
+                            const bool regionalTouched = regionalOutputProfile && (inRegion || inDeltaReach);
+                            const bool useOriginalWeights = hasOverrideWeights && inRegion;
+                            if (wmcProfile) {
+                                outputClassifyMs += toMs(classifyStart);
+                            }
+                            auto evidenceWeightFor = [&](size_t compId) {
+                                if (useOriginalWeights && !componentEvidenceWeightOriginal.empty()) {
+                                    return componentEvidenceWeightOriginal[compId];
+                                }
+                                return componentEvidenceWeight[compId];
+                            };
+
+                            if (!componentHasEvidence[cid]) {
+                                if (regionalTouched || changedNodes.find(node) != changedNodes.end()) {
+                                    ensureWeights(!useOriginalWeights);
+                                    auto value = computeWmcProfile((*nodeFormulas)[node],
+                                                                   nodeWmcComputeMs, nodeWmcCalls);
+                                    auto writeStart = Clock::now();
+                                    probResult[node] = value;
+                                    if (wmcProfile) {
+                                        probWriteMs += toMs(writeStart);
+                                    }
+                                    nodeRecompute++;
+                                    logOutputDecision(node, "recompute_wmc",
+                                                      regionalTouched ? "regional_no_evidence" : "no_evidence_changed",
+                                                      useOriginalWeights);
+                                } else {
+                                    auto lookupStart = Clock::now();
+                                    auto it = probResult.find(node);
+                                    if (wmcProfile) {
+                                        probLookupMs += toMs(lookupStart);
+                                    }
+                                    if (it != probResult.end()) {
+                                        auto writeStart = Clock::now();
+                                        probResult[node] = it->second;
+                                        if (wmcProfile) {
+                                            probWriteMs += toMs(writeStart);
+                                        }
+                                        nodeReuse++;
+                                        logOutputDecision(node, "reuse_old_prob", "no_evidence_no_change",
+                                                          useOriginalWeights);
+                                    } else {
+                                        auto value =
+                                                computeWmcProfile((*nodeFormulas)[node],
+                                                                  nodeWmcComputeMs, nodeWmcCalls);
+                                        auto writeStart = Clock::now();
+                                        probResult[node] = value;
+                                        if (wmcProfile) {
+                                            probWriteMs += toMs(writeStart);
+                                        }
+                                        nodeRecompute++;
+                                        logOutputDecision(node, "recompute_wmc", "no_evidence_missing_prob",
+                                                          useOriginalWeights);
+                                    }
+                                }
+                                continue;
+                            }
+                            if (evidenceWeightFor(cid) == 0.0) {
+                                auto writeStart = Clock::now();
+                                probResult[node] = 0.0;
+                                if (wmcProfile) {
+                                    probWriteMs += toMs(writeStart);
+                                }
+                                nodeZero++;
+                                logOutputDecision(node, "assign_zero", "evidence_weight_zero", useOriginalWeights);
+                                continue;
+                            }
+                            const bool evidenceChanged = componentEvidenceChanged[cid];
+                            if (regionalTouched || changedNodes.find(node) != changedNodes.end() || evidenceChanged) {
+                                ensureWeights(!useOriginalWeights);
+                                auto joint = makeAndProfile((*nodeFormulas)[node], componentEvidence[cid],
+                                                            nodeMakeAndMs, nodeMakeAndCalls);
+                                double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
+                                auto writeStart = Clock::now();
+                                probResult[node] = jointW / evidenceWeightFor(cid);
+                                if (wmcProfile) {
+                                    probWriteMs += toMs(writeStart);
+                                }
+                                nodeRecompute++;
+                                logOutputDecision(node, "recompute_wmc",
+                                                  regionalTouched ? "regional_evidence" : "evidence_changed_or_node_changed",
+                                                  useOriginalWeights);
+                                continue;
+                            }
+                            auto lookupStart = Clock::now();
+                            auto it = probResult.find(node);
+                            if (wmcProfile) {
+                                probLookupMs += toMs(lookupStart);
+                            }
+                            if (it != probResult.end()) {
+                                auto writeStart = Clock::now();
+                                probResult[node] = it->second;
+                                if (wmcProfile) {
+                                    probWriteMs += toMs(writeStart);
+                                }
+                                nodeReuse++;
+                                logOutputDecision(node, "reuse_old_prob", "evidence_unchanged_no_change",
+                                                  useOriginalWeights);
+                            } else {
+                                auto joint = makeAndProfile((*nodeFormulas)[node], componentEvidence[cid],
+                                                            nodeMakeAndMs, nodeMakeAndCalls);
+                                double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
+                                auto writeStart = Clock::now();
+                                probResult[node] = jointW / componentEvidenceWeight[cid];
+                                if (wmcProfile) {
+                                    probWriteMs += toMs(writeStart);
+                                }
+                                nodeRecompute++;
+                                logOutputDecision(node, "recompute_wmc", "evidence_unchanged_missing_prob",
+                                                  useOriginalWeights);
+                            }
                         }
                     }
                     if (incProfile) {
                         nodeLoopMs = toMs(nodeLoopStart);
                     }
-                    probResult.clear();
-                    probResult = newProbResult;
+                    if (wmcProfile) {
+                        outputLoopMs = toMs(nodeLoopStart);
+                    }
                     if (hasOverrideWeights) {
                         applyWeights(incRegionalOutputProfile.originalWeights);
                         incRegionalOutputProfile.reset();
@@ -1742,13 +2188,51 @@ public:
                                   << " node_ms=" << nodeLoopMs
                                   << " components=" << componentCount
                                   << " components_ev=" << componentWithEvidence
-                                  << " nodes=" << view.getValidNodes().size()
+                                  << " nodes=" << outputNodes.size()
                                   << " changed_nodes=" << changedNodes.size()
                                   << " node_reuse=" << nodeReuse
                                   << " node_recompute=" << nodeRecompute
                                   << " node_zero=" << nodeZero
                                   << " evidence_wmc_calls=" << evidenceWmcCalls
                                   << " node_wmc_calls=" << nodeWmcCalls
+                                  << std::endl;
+                    }
+                    if (wmcProfile) {
+                        const double totalMs = toMs(stageStart);
+                        std::size_t componentWithEvidence = 0;
+                        for (bool hasEv : componentHasEvidence) {
+                            if (hasEv) {
+                                componentWithEvidence++;
+                            }
+                        }
+                        std::cout << "[wmc-profile] stage=INC"
+                                  << " mode=" << (useRegional ? "inc-regional" : "inc-naive")
+                                  << " total_ms=" << totalMs
+                                  << " components=" << componentCount
+                                  << " components_ev=" << componentWithEvidence
+                                  << " nodes=" << outputNodes.size()
+                                  << " changed_nodes=" << changedNodes.size()
+                                  << " node_reuse=" << nodeReuse
+                                  << " node_recompute=" << nodeRecompute
+                                  << " evidence_build_ms=" << evidenceBuildMs
+                                  << " evidence_make_and_calls=" << evidenceMakeAndCalls
+                                  << " evidence_make_and_ms=" << evidenceMakeAndMs
+                                  << " evidence_wmc_calls=" << evidenceWmcCalls
+                                  << " evidence_wmc_compute_ms=" << evidenceWmcComputeMs
+                                  << " node_make_and_calls=" << nodeMakeAndCalls
+                                  << " node_make_and_ms=" << nodeMakeAndMs
+                                  << " node_wmc_calls=" << nodeWmcCalls
+                                  << " node_wmc_compute_ms=" << nodeWmcComputeMs
+                                  << " dep_graph_ms=" << depGraphMs
+                                  << " output_loop_ms=" << outputLoopMs
+                                  << " output_classify_ms=" << outputClassifyMs
+                                  << " prob_lookup_ms=" << probLookupMs
+                                  << " prob_write_ms=" << probWriteMs
+                                  << " weight_apply_calls=" << weightApplyCalls
+                                  << " weight_apply_vars=" << weightApplyVars
+                                  << " weight_apply_ms=" << weightApplyMs
+                                  << " weight_toggle_calls=" << weightToggleCalls
+                                  << " live_nodes=" << ddManager->getLiveNodeCount()
                                   << std::endl;
                     }
                     debugger.endStage();
@@ -1834,12 +2318,50 @@ public:
                 debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
                 probResult.clear();
                 {
+                    const bool wmcProfile = wmcProfileEnabled;
+                    using Clock = std::chrono::steady_clock;
+                    auto toMs = [](Clock::time_point start) {
+                        return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+                    };
+                    auto stageStart = Clock::now();
+                    double evidenceBuildMs = 0.0;
+                    double evidenceMakeAndMs = 0.0;
+                    double evidenceWmcComputeMs = 0.0;
+                    double nodeMakeAndMs = 0.0;
+                    double nodeWmcComputeMs = 0.0;
+                    std::size_t evidenceWmcCalls = 0;
+                    std::size_t nodeWmcCalls = 0;
+                    std::size_t evidenceMakeAndCalls = 0;
+                    std::size_t nodeMakeAndCalls = 0;
+                    auto makeAndProfile = [&](const NodeRef& lhs, const NodeRef& rhs,
+                                              double& ms, std::size_t& calls) {
+                        if (!wmcProfile) {
+                            return ddManager->makeAnd(lhs, rhs);
+                        }
+                        auto andStart = Clock::now();
+                        auto res = ddManager->makeAnd(lhs, rhs);
+                        ms += toMs(andStart);
+                        calls++;
+                        return res;
+                    };
+                    auto computeWmcProfile = [&](const NodeRef& node, double& ms, std::size_t& calls) {
+                        calls++;
+                        if (!wmcProfile) {
+                            return ddManager->computeWeightedModelCount(node);
+                        }
+                        auto wmcStart = Clock::now();
+                        double res = ddManager->computeWeightedModelCount(node);
+                        ms += toMs(wmcStart);
+                        return res;
+                    };
+
                     auto& depGraph = view.getCycleDependencyGraph();
                     size_t componentCount = depGraph.getComponentCount();
                     std::vector<NodeRef> componentEvidence(componentCount, ddManager->getTrue());
                     std::vector<double> componentEvidenceWeight(componentCount, 1.0);
                     std::vector<bool> componentHasEvidence(componentCount, false);
 
+                    auto evidenceBuildStart = Clock::now();
                     for (size_t cid = 0; cid < componentCount; ++cid) {
                         const auto& evidences = depGraph.getComponentEvidences(cid);
                         if (evidences.empty()) {
@@ -1856,15 +2378,16 @@ public:
                             if (!val) {
                                 lit = ddManager->makeNot(lit);
                             }
-                            evidenceNode = ddManager->makeAnd(evidenceNode, lit);
+                            evidenceNode = makeAndProfile(evidenceNode, lit, evidenceMakeAndMs, evidenceMakeAndCalls);
                         }
                         componentEvidence[cid] = evidenceNode;
                     }
+                    evidenceBuildMs = toMs(evidenceBuildStart);
 
                     for (size_t cid = 0; cid < componentCount; ++cid) {
                         if (componentHasEvidence[cid]) {
-                            componentEvidenceWeight[cid] =
-                                    ddManager->computeWeightedModelCount(componentEvidence[cid]);
+                            componentEvidenceWeight[cid] = computeWmcProfile(
+                                    componentEvidence[cid], evidenceWmcComputeMs, evidenceWmcCalls);
                         }
                     }
 
@@ -1874,19 +2397,45 @@ public:
                         }
                         size_t cid = depGraph.getComponentId(node);
                         if (!componentHasEvidence[cid]) {
-                            probResult[node] = ddManager->computeWeightedModelCount(formula);
+                            probResult[node] = computeWmcProfile(formula, nodeWmcComputeMs, nodeWmcCalls);
                             continue;
                         }
                         if (componentEvidenceWeight[cid] == 0.0) {
                             probResult[node] = 0.0;
                             continue;
                         }
-                        auto joint = ddManager->makeAnd(formula, componentEvidence[cid]);
-                        double jointW = ddManager->computeWeightedModelCount(joint);
+                        auto joint = makeAndProfile(formula, componentEvidence[cid],
+                                                    nodeMakeAndMs, nodeMakeAndCalls);
+                        double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
                         probResult[node] = jointW / componentEvidenceWeight[cid];
                     }
                     for (const auto& [node, prob] : precomputedProbResult) {
                         probResult.emplace(node, prob);
+                    }
+                    if (wmcProfile) {
+                        std::size_t componentWithEvidence = 0;
+                        for (bool hasEv : componentHasEvidence) {
+                            if (hasEv) {
+                                componentWithEvidence++;
+                            }
+                        }
+                        std::cout << "[wmc-profile] stage=FULL"
+                                  << " mode=cli-full"
+                                  << " total_ms=" << toMs(stageStart)
+                                  << " components=" << componentCount
+                                  << " components_ev=" << componentWithEvidence
+                                  << " nodes=" << view.getValidNodes().size()
+                                  << " evidence_build_ms=" << evidenceBuildMs
+                                  << " evidence_make_and_calls=" << evidenceMakeAndCalls
+                                  << " evidence_make_and_ms=" << evidenceMakeAndMs
+                                  << " evidence_wmc_calls=" << evidenceWmcCalls
+                                  << " evidence_wmc_compute_ms=" << evidenceWmcComputeMs
+                                  << " node_make_and_calls=" << nodeMakeAndCalls
+                                  << " node_make_and_ms=" << nodeMakeAndMs
+                                  << " node_wmc_calls=" << nodeWmcCalls
+                                  << " node_wmc_compute_ms=" << nodeWmcComputeMs
+                                  << " live_nodes=" << ddManager->getLiveNodeCount()
+                                  << std::endl;
                     }
                 }
                 debugger.endStage();

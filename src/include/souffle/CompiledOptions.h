@@ -85,6 +85,7 @@ protected:
     bool inc_profile = false;  // enable incremental stage profiling
     bool fc_profile = false;  // enable detailed forward-compilation profiling
     bool inc_delete_profile = false;  // enable delete-phase profiling for incremental FC
+    bool wmc_profile = false;  // enable weighted model counting profiling
     bool inc_regional_profile = false;  // enable inc-regional profiling/diagnostics
     bool inc_regional_profile_heavy = false;  // enable heavy inc-regional profiling
     std::string inc_regional_trace_tuples;  // comma-separated tuples for inc-regional trace
@@ -105,6 +106,7 @@ public:
             bool incProfile = false,
             bool fcProfile = false,
             bool incDeleteProfile = false,
+            bool wmcProfile = false,
             bool incRegionalProfile = false,
             bool incRegionalProfileHeavy = false,
             std::string incRegionalTraceTuples = "",
@@ -115,6 +117,7 @@ public:
       dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
       dred_profile(dredProfile), inc_profile(incProfile), fc_profile(fcProfile),
       inc_delete_profile(incDeleteProfile),
+      wmc_profile(wmcProfile),
       inc_regional_profile(incRegionalProfile), inc_regional_profile_heavy(incRegionalProfileHeavy),
       inc_regional_trace_tuples(std::move(incRegionalTraceTuples)),
       dep_graph_profile(depGraphProfile), post_del(postDel),
@@ -208,6 +211,9 @@ public:
     bool isIncDeleteProfileEnabled() const {
         return inc_delete_profile;
     }
+    bool isWmcProfileEnabled() const {
+        return wmc_profile;
+    }
     bool isIncRegionalProfileEnabled() const {
         return inc_regional_profile;
     }
@@ -284,6 +290,7 @@ public:
                 {"inc-profile", false, nullptr, 1003},
                 {"fc-profile", false, nullptr, 1005},
                 {"profile-inc-delete", false, nullptr, 1013},
+                {"profile-wmc", false, nullptr, 1014},
                 {"profile-inc-regional", false, nullptr, 1009},
                 {"profile-inc-regional-heavy", false, nullptr, 1011},
                 {"inc-regional-trace-tuples", true, nullptr, 1012},
@@ -441,6 +448,9 @@ public:
                 case 1013:
                     inc_delete_profile = true;
                     break;
+                case 1014:
+                    wmc_profile = true;
+                    break;
                 case 1009:
                     inc_regional_profile = true;
                     break;
@@ -514,6 +524,7 @@ private:
         std::cerr << "    --inc-profile                -- Enable incremental stage profiling\n";
         std::cerr << "    --fc-profile                 -- Enable detailed forward-compilation profiling\n";
         std::cerr << "    --profile-inc-delete         -- Enable incremental delete-phase profiling\n";
+        std::cerr << "    --profile-wmc                -- Enable weighted model counting profiling\n";
         std::cerr << "    --profile-inc-regional       -- Enable inc-regional diagnostics/profiling\n";
         std::cerr << "    --profile-inc-regional-heavy -- Enable heavy inc-regional diagnostics (closure trace)\n";
         std::cerr << "    --inc-regional-trace-tuples=<LIST> -- Comma-separated tuples to trace\n";

@@ -1046,3 +1046,39 @@ P20	inc5	1	inc-regional	insert	1.399132	0.307464	0.167960	0.380552	0.541096
 
 ## Related commits
 - (no git history yet; uncommitted/new file)
+
+
+## Experiment: 2026-01-23 (P20, --profile-wmc, in-place probResult updates)
+
+### WMC breakdown (insert turn; last WMC entry per delta)
+
+```
+Delta=inc1
+  inc-naive:   total_ms=7.4447  output_loop_ms=6.0064  classify=0.1980  lookup=1.6492  write=1.9640  node_wmc=0.1019  weight_apply_ms=0.0000 (calls=0)
+  inc-regional:total_ms=13.2870 output_loop_ms=12.0250 classify=0.6120  lookup=1.7680  write=1.5070  node_wmc=0.2210  weight_apply_ms=0.0030 (calls=11)
+  full:        total_ms=25.3612 node_wmc=9.1776 nodes=104104
+
+Delta=inc3
+  inc-naive:   total_ms=7.4397  output_loop_ms=6.2704  classify=0.2025  lookup=1.4527  write=2.3133  node_wmc=0.1817  weight_apply_ms=0.0000 (calls=0)
+  inc-regional:total_ms=13.7050 output_loop_ms=12.4020 classify=0.7970  lookup=1.6160  write=1.5120  node_wmc=0.3940  weight_apply_ms=0.0040 (calls=16)
+  full:        total_ms=21.2527 node_wmc=7.6325 nodes=104104
+
+Delta=inc5
+  inc-naive:   total_ms=8.3664  output_loop_ms=6.8355  classify=0.2367  lookup=1.8455  write=2.3023  node_wmc=0.1961  weight_apply_ms=0.0000 (calls=0)
+  inc-regional:total_ms=14.8320 output_loop_ms=13.5050 classify=0.9780  lookup=1.8010  write=1.5980  node_wmc=0.7720  weight_apply_ms=0.0100 (calls=26)
+  full:        total_ms=26.0190 node_wmc=8.8294 nodes=104104
+```
+
+### Notes
+- These deltas had no evidence; `dep_graph_ms`, `evidence_build_ms`, and `node_make_and_ms` are all zero.
+- `output_loop_ms` is inclusive of all per-output work; the sub-timers (classify/lookup/write/node_wmc/weight_apply) are
+  point measurements and **do not sum to output_loop_ms**.
+- **Why inc-regional slower than inc-naive (WMC stage):**
+  - extra per-output bookkeeping to decide region/delta scope (higher `classify`),
+  - repeated calibrated/original weight toggles (`weight_apply_calls` > 0),
+  - larger output_loop overall despite similar recompute counts.
+- **Why full slower than both incrementals (WMC stage):**
+  - full iterates over ~104k outputs vs ~11k in incremental view;
+  - `node_wmc_compute_ms` is only part of the total; the rest is overhead not currently broken out
+    (e.g., per-output bookkeeping, map IO, and other loop-level work).
+- Unknown: the remaining full WMC overhead beyond `node_wmc_compute_ms` is not yet attributed to a single substage.

@@ -80,6 +80,7 @@ listed below; use `-h` for the authoritative values.
   per-SCC workload counters also need `--dumpstat`)
 - `--inc-profile`: default `false` (print per-stage incremental timings to stdout)
 - `--fc-profile`: default `false` (print detailed forward-compilation sub-phase counters/timings to stdout)
+- `--profile-wmc`: default `false` (print weighted model counting timing/call breakdowns to stdout)
 - `--profile-inc-regional`: default `false` (inc-regional diagnostics + timing summary)
 - `--profile-inc-regional-heavy`: default `false` (extra inc-regional tracing; large output)
 - `--inc-regional-trace-tuples=<LIST>`: default empty (comma-separated tuples to trace)

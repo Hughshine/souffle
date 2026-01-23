@@ -31,10 +31,17 @@ Provide a focused workflow for incremental CLI changes and the side-channel incr
     - Run: `... run --cases 1-20 --delta-labels inc0p1,inc0p3,inc0p5 --delta-samples 1 --compare-all --run-arg=--det-opt`
       (with `--compare-all`, any `--setmode` passed via `--run-arg` is ignored)
     - Collect: `... collect --cases 1-20` → `results-souffle-inc.tsv` + per-delta JSON.
-11. Output naming expectations (script coupling):
+11. Script CLI behaviors to remember:
+    - `generate` honors `--rule-set` (trimmed/trimmed_plus/full) and `--force-smt`.
+    - `delta` controls size via `--change-spec`/`--change-cap` and sampling via `--delta-cluster` + `--sets` + `--seed`.
+    - `run` supports `--delta-root`, `--delta-shuffle`, and `--delta-seed` for delta selection.
+    - `compile` passes extra flags via `--souffle-arg` (repeatable); `run` uses `--run-arg`.
+    See `references/incremental-context.md` for the full CLI map.
+12. Output naming expectations (script coupling):
     - Baseline: `output/facts.full.prob`, `output/facts.inc.prob`
     - Per-delta: `output/delta-<label>-<sample>-<mode>-fact-iterN-*.prob`
 
 ## Related commits
+- `e214cd028` — docs(repo): refresh incremental docs and index
 - `668298ef8` — fix(inc-region): update regional WMC routing and profiling
 - `619e52197` — fix(inc): track explicit deletes and log deltas
