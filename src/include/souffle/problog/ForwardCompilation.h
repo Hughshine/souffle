@@ -1531,6 +1531,7 @@ void buildFormulasIncCyclewise(
     static int turn = 1;
     const bool incProfile = incProfileEnabled;
     const bool fcProfile = fcProfileEnabled;
+    const bool deleteProfile = incDeleteProfileEnabled || fcProfileEnabled;
     using Clock = std::chrono::steady_clock;
     auto toMs = [](Clock::time_point t0, Clock::time_point t1) {
         return std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -1544,6 +1545,7 @@ void buildFormulasIncCyclewise(
     double deleteVarCollectMs = 0.0;
     double deleteVarPostprocessMs = 0.0;
     double deleteVarDumpMs = 0.0;
+    double deleteTotalMs = 0.0;
     double rederiveLoopMsProfile = 0.0;
     double insertPreConfigMs = 0.0;
     double insertInitNodesMs = 0.0;
@@ -1665,14 +1667,17 @@ void buildFormulasIncCyclewise(
     };
     auto markChangedNode = [&](const NodePtr& node,
                                std::unordered_set<NodePtr>& phaseSet,
-                               std::size_t& phaseCount) {
+                               std::size_t& phaseCount,
+                               bool profilePhase) {
         changedNodes.insert(node);
-        if (phaseSet.insert(node).second && fcProfile) {
+        if (phaseSet.insert(node).second && profilePhase) {
             ++phaseCount;
         }
     };
-    auto makeAndProfile = [&](const std::vector<FormulaNodeRef>& inputs, FcProfileStats& stats) {
-        if (!fcProfile) {
+    auto makeAndProfile = [&](const std::vector<FormulaNodeRef>& inputs,
+                              FcProfileStats& stats,
+                              bool profilePhase) {
+        if (!profilePhase) {
             return formulaManager.makeAnd(inputs);
         }
         auto andStart = Clock::now();
@@ -1681,8 +1686,10 @@ void buildFormulasIncCyclewise(
         stats.make_and_ms += toMs(andStart, Clock::now());
         return res;
     };
-    auto makeOrProfile = [&](const std::vector<FormulaNodeRef>& inputs, FcProfileStats& stats) {
-        if (!fcProfile) {
+    auto makeOrProfile = [&](const std::vector<FormulaNodeRef>& inputs,
+                             FcProfileStats& stats,
+                             bool profilePhase) {
+        if (!profilePhase) {
             return formulaManager.makeOr(inputs);
         }
         auto orStart = Clock::now();
@@ -1694,8 +1701,9 @@ void buildFormulasIncCyclewise(
     auto makeConditionProfile = [&](const FormulaNodeRef& formula,
                                     const std::vector<int>& trueIdx,
                                     const std::vector<int>& falseIdx,
-                                    FcProfileStats& stats) {
-        if (!fcProfile) {
+                                    FcProfileStats& stats,
+                                    bool profilePhase) {
+        if (!profilePhase) {
             return formulaManager.makeCondition(formula, trueIdx, falseIdx);
         }
         auto condStart = Clock::now();
@@ -1803,8 +1811,9 @@ void buildFormulasIncCyclewise(
     }
     ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager};
     auto inputLiteralProfile = [&](const NodePtr& node, bool neg, FormulaNodeRef& lit,
-                                   FcProfileStats& stats) {
-        if (!fcProfile) {
+                                   FcProfileStats& stats,
+                                   bool profilePhase) {
+        if (!profilePhase) {
             return constAccess.inputLiteral(nodeFormulas, node, neg, lit);
         }
         auto litStart = Clock::now();
@@ -2058,11 +2067,11 @@ void buildFormulasIncCyclewise(
                 if (fcTraceMatch(node)) {
                     std::cout << "[fc-trace] nonDet-only conditioning node=" << node->getTuple().toString() << std::endl;
                 }
-                auto newNodeFormula = makeConditionProfile(nodeFormulas[node], {}, deletedNonDetVars, deleteCondStats);
+                auto newNodeFormula = makeConditionProfile(nodeFormulas[node], {}, deletedNonDetVars, deleteCondStats, deleteProfile);
                 if (!formulaManager.isSame(nodeFormulas[node], newNodeFormula)) {
                     nodeFormulas[node] = newNodeFormula;
-                    markChangedNode(node, deleteCondChangedSet, deleteCondChangedNodes);
-                    if (fcProfile) {
+                    markChangedNode(node, deleteCondChangedSet, deleteCondChangedNodes, deleteProfile);
+                    if (deleteProfile) {
                         deleteCondStats.node_updated++;
                     }
                     for (EdgePtr outEdge : view.getOutgoingEdges(node)) {
@@ -2083,11 +2092,11 @@ void buildFormulasIncCyclewise(
                     std::cout << "[fc-trace] nonDet-only conditioning edge head="
                               << out->getTuple().toString() << std::endl;
                 }
-                auto newEdgeFormula = makeConditionProfile(it->second, {}, deletedNonDetVars, deleteCondStats);
+                auto newEdgeFormula = makeConditionProfile(it->second, {}, deletedNonDetVars, deleteCondStats, deleteProfile);
                 if (!formulaManager.isSame(it->second, newEdgeFormula)) {
                     edgeFormulas[edge] = newEdgeFormula;
                     enqueueEdge(edge);
-                    if (fcProfile) {
+                    if (deleteProfile) {
                         deleteCondStats.edge_updated++;
                     }
                 }
@@ -2095,11 +2104,11 @@ void buildFormulasIncCyclewise(
             end = high_resolution_clock::now();
             debugger.logMessage(Level::INFO, "Finished conditioning on deleted non-deterministic facts (non-det only). Time: " +
                 std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-            if (fcProfile) {
+            if (deleteProfile) {
                 deleteCondMs = toMs(condStart, Clock::now());
             }
         }
-        if (fcProfile) {
+        if (deleteProfile) {
             deleteCondLiveNodes = formulaManager.getLiveNodeCount();
         }
 
@@ -2124,7 +2133,7 @@ void buildFormulasIncCyclewise(
                     std::cout << "[fc-trace] overdelete node=" << node->getTuple().toString() << std::endl;
                 }
                 nodeFormulas[node] = formulaManager.getFalse();
-                markChangedNode(node, deleteOverdeleteChangedSet, deleteOverdeleteChangedNodes);
+                markChangedNode(node, deleteOverdeleteChangedSet, deleteOverdeleteChangedNodes, deleteProfile);
                 for (EdgePtr inEdge : view.getIncomingEdges(node)) {
                     enqueueEdge(inEdge);
                 }
@@ -2141,7 +2150,7 @@ void buildFormulasIncCyclewise(
                 enqueueEdge(edge);
             }
         }
-        if (fcProfile) {
+        if (deleteProfile) {
             deleteOverdeleteMs = toMs(overdeleteStart, Clock::now());
         }
         end = high_resolution_clock::now();
@@ -2163,13 +2172,13 @@ void buildFormulasIncCyclewise(
             deletedVarsIndex.insert(index);
         }
         deletedVarsIndexCount = deletedVarsIndex.size();
-        if (fcProfile) {
+        if (deleteProfile) {
             deleteVarCollectMs = toMs(delVarCollectStart, Clock::now());
         }
         debugger.logMessage(Level::INFO, "Deletion deletedVarsIndex size: " +
             std::to_string(deletedVarsIndex.size()));
 
-        if (fcProfile) {
+        if (deleteProfile) {
             auto dumpStart = Clock::now();
             formulaManager.dumpProfilingStatistics();
             deleteVarDumpMs += toMs(dumpStart, Clock::now());
@@ -2180,7 +2189,7 @@ void buildFormulasIncCyclewise(
         if (!deletedVarsIndex.empty() && postDelEnabled) {
             auto postStart = Clock::now();
             formulaManager.postprocessUselessVariables(deletedVarsIndex);
-            if (fcProfile) {
+            if (deleteProfile) {
                 deleteVarPostprocessMs = toMs(postStart, Clock::now());
                 auto dumpStart = Clock::now();
                 formulaManager.dumpProfilingStatistics();
@@ -2211,13 +2220,13 @@ void buildFormulasIncCyclewise(
                           << std::endl;
             }
         }
-        if (fcProfile) {
+        if (deleteProfile) {
             deleteVarOrderMs = toMs(delVarOrderStart, Clock::now());
         }
 
 
 
-        if (incProfile) {
+        if (incProfile || deleteProfile) {
             deletePrepMs = toMs(deletePrepStart, Clock::now());
         }
         start = high_resolution_clock::now();
@@ -2240,12 +2249,12 @@ void buildFormulasIncCyclewise(
                 EdgePtr edge = worklist.top().edge; worklist.pop();
                 cycleInWorklists[cid].erase(edge);
                 round++;
-                if (fcProfile) {
+                if (deleteProfile) {
                     rederiveStats.edge_processed++;
                 }
                 FormulaNodeRef newEdge;
                 bool edgeIsConst = constAccess.edgeFormula(edge, newEdge);
-                if (fcProfile) {
+                if (deleteProfile) {
                     if (edgeIsConst) {
                         rederiveStats.edge_const++;
                     } else {
@@ -2263,7 +2272,7 @@ void buildFormulasIncCyclewise(
                     bool allAvailable = true;
                     for (size_t i = 0; i < inputs.size(); ++i) {
                         FormulaNodeRef lit;
-                        if (!inputLiteralProfile(inputs[i], negs[i], lit, rederiveStats)) {
+                        if (!inputLiteralProfile(inputs[i], negs[i], lit, rederiveStats, deleteProfile)) {
     //                    std::cout << "    [WAIT] Missing input: " << inputs[i]->toString() << std::endl;
                             allAvailable = false;
                             if (fcTraceEnabled()) {
@@ -2283,7 +2292,7 @@ void buildFormulasIncCyclewise(
                     if (!allAvailable) {
                         worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
                         cycleInWorklists[cid].insert(edge);
-                        if (fcProfile) {
+                        if (deleteProfile) {
                             rederiveStats.edge_requeued++;
                         }
                         debugger.endIteration();
@@ -2293,11 +2302,8 @@ void buildFormulasIncCyclewise(
                     if (inputFormulas.size() == 1) {
                         newEdge = inputFormulas[0];
                     } else {
-                        newEdge = makeAndProfile(inputFormulas, rederiveStats);
+                        newEdge = makeAndProfile(inputFormulas, rederiveStats, deleteProfile);
                     }
-                }
-                if (!deletedNonDetVars.empty() && nonDetImpactEdges.count(edge)) {
-                    newEdge = makeConditionProfile(newEdge, {}, deletedNonDetVars, rederiveStats);
                 }
                 NodePtr output = view.getOutput(edge);
                 const bool edgeSame = formulaManager.isSame(edgeFormulas[edge], newEdge);
@@ -2317,7 +2323,7 @@ void buildFormulasIncCyclewise(
 //                std::cout << "    [CHANGE] Edge formula changed\n";
                 if (!edgeSame) {
                     edgeFormulas[edge] = newEdge;
-                    if (fcProfile) {
+                    if (deleteProfile) {
                         rederiveStats.edge_updated++;
                     }
                 } else if (fcTraceEnabled()) {
@@ -2339,7 +2345,7 @@ void buildFormulasIncCyclewise(
 
                 FormulaNodeRef newNode;
                 bool hasNewNode = constAccess.nodeFormula(output, newNode);
-                if (fcProfile && hasNewNode) {
+                if (deleteProfile && hasNewNode) {
                     rederiveStats.node_const++;
                 }
                 if (!hasNewNode) {
@@ -2349,29 +2355,26 @@ void buildFormulasIncCyclewise(
                             incoming.push_back(edgeFormulas[e]);
                         }
                     }
-                    if (fcProfile) {
+                    if (deleteProfile) {
                         rederiveStats.node_recomputed++;
                     }
                     if (incoming.size() == 1) {
                         newNode = incoming[0];
                     } else {
-                        newNode = makeOrProfile(incoming, rederiveStats);
+                        newNode = makeOrProfile(incoming, rederiveStats, deleteProfile);
                     }
-                }
-                if (!deletedNonDetVars.empty() && nonDetImpactNodes.count(output)) {
-                    newNode = makeConditionProfile(newNode, {}, deletedNonDetVars, rederiveStats);
                 }
                 if (!formulaManager.isSame(nodeFormulas[output], newNode)) {
                     std::cout << "    [UPDATE] Node formula changed: " << output->toString() << std::endl;
                     nodeFormulas[output] = newNode;
-                    if (fcProfile) {
+                    if (deleteProfile) {
                         rederiveStats.node_updated++;
                     }
                     if (fcTraceMatch(output)) {
                         std::cout << "[fc-trace] rederive node updated="
                                   << output->getTuple().toString() << std::endl;
                     }
-                    markChangedNode(output, deleteOverdeleteChangedSet, deleteOverdeleteChangedNodes);
+                    markChangedNode(output, deleteOverdeleteChangedSet, deleteOverdeleteChangedNodes, deleteProfile);
                     for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
                         assert (depGraph.edgeToCycleIndex.count(outEdge));
                         auto it = depGraph.edgeToCycleIndex.find(outEdge);
@@ -2396,11 +2399,11 @@ void buildFormulasIncCyclewise(
     if (incProfile) {
         rederiveMs = static_cast<double>(duration_cast<milliseconds>(end - start).count());
     }
-    if (fcProfile) {
+    if (deleteProfile) {
         rederiveLoopMsProfile = toMs(rederiveStart, Clock::now());
     }
     debugger.logMessage(Level::INFO, "rederive time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-    if (fcProfile) {
+    if (deleteProfile) {
         deleteOverdeleteLiveNodes = formulaManager.getLiveNodeCount();
     }
     if (reuseVarIndexEnabled) {
@@ -2410,6 +2413,53 @@ void buildFormulasIncCyclewise(
         for (const auto& edge : deltaDeletedEdges) {
             formulaManager.releaseVarIndex(*edge);
         }
+    }
+    if (deleteProfile) {
+        deleteTotalMs = toMs(deletePrepStart, Clock::now());
+    }
+
+    if (incDeleteProfileEnabled && (!deltaDeletedEdges.empty() || !deltaDeletedNodes.empty())) {
+        std::cout << "[inc-delete-profile] section=timing"
+                  << " total_ms=" << deleteTotalMs
+                  << " prep_ms=" << deletePrepMs
+                  << " cond_ms=" << deleteCondMs
+                  << " overdelete_ms=" << deleteOverdeleteMs
+                  << " varorder_ms=" << deleteVarOrderMs
+                  << " rederive_ms=" << rederiveLoopMsProfile
+                  << std::endl;
+        std::cout << "[inc-delete-profile] section=cond"
+                  << " make_condition_calls=" << deleteCondStats.make_condition_calls
+                  << " make_condition_ms=" << deleteCondStats.make_condition_ms
+                  << " node_updated=" << deleteCondStats.node_updated
+                  << " edge_updated=" << deleteCondStats.edge_updated
+                  << " delta_live_nodes=" << deleteCondChangedNodes
+                  << " live_nodes=" << deleteCondLiveNodes
+                  << std::endl;
+        std::cout << "[inc-delete-profile] section=overdelete"
+                  << " det_imp_nodes=" << detImpactNodesCount
+                  << " det_imp_edges=" << detImpactEdgesCount
+                  << " delta_live_nodes=" << deleteOverdeleteChangedNodes
+                  << " live_nodes=" << deleteOverdeleteLiveNodes
+                  << std::endl;
+        std::cout << "[inc-delete-profile] section=rederive"
+                  << " edge_processed=" << rederiveStats.edge_processed
+                  << " edge_requeued=" << rederiveStats.edge_requeued
+                  << " edge_updated=" << rederiveStats.edge_updated
+                  << " edge_const=" << rederiveStats.edge_const
+                  << " edge_nonconst=" << rederiveStats.edge_nonconst
+                  << " node_recomputed=" << rederiveStats.node_recomputed
+                  << " node_updated=" << rederiveStats.node_updated
+                  << " node_const=" << rederiveStats.node_const
+                  << " make_and_calls=" << rederiveStats.make_and_calls
+                  << " make_and_ms=" << rederiveStats.make_and_ms
+                  << " make_or_calls=" << rederiveStats.make_or_calls
+                  << " make_or_ms=" << rederiveStats.make_or_ms
+                  << " make_condition_calls=" << rederiveStats.make_condition_calls
+                  << " make_condition_ms=" << rederiveStats.make_condition_ms
+                  << " input_literal_calls=" << rederiveStats.input_literal_calls
+                  << " input_literal_missing=" << rederiveStats.input_literal_missing
+                  << " input_literal_ms=" << rederiveStats.input_literal_ms
+                  << std::endl;
     }
     // should reset variable ordering like information after deletion
     // should change to a light weight version?
@@ -2484,7 +2534,7 @@ void buildFormulasIncCyclewise(
                 }
                 ++insertNonFactCount;
             }
-            markChangedNode(node, insertChangedSet, insertChangedNodes);
+            markChangedNode(node, insertChangedSet, insertChangedNodes, fcProfile);
         }
         // TODO
         end = high_resolution_clock::now();
@@ -2600,7 +2650,7 @@ void buildFormulasIncCyclewise(
                     std::vector<FormulaNodeRef> inputFormulas{baseFormula};
                     for (size_t i = 0; i < inputs.size(); ++i) {
                         FormulaNodeRef lit;
-                        if (!inputLiteralProfile(inputs[i], negs[i], lit, insertStats)) {
+                        if (!inputLiteralProfile(inputs[i], negs[i], lit, insertStats, fcProfile)) {
     //                    std::cout << "    [WAIT] Missing input: " << inputs[i]->toString() << std::endl;
                             allAvailable = false;
                             break;
@@ -2624,7 +2674,7 @@ void buildFormulasIncCyclewise(
                     if (inputFormulas.size() == 1) {
                         newEdge = inputFormulas[0];
                     } else {
-                        newEdge = makeAndProfile(inputFormulas, insertStats);
+                        newEdge = makeAndProfile(inputFormulas, insertStats, fcProfile);
                     }
                 }
                 if (!edgeFormulas[edge].get()) {
@@ -2687,7 +2737,7 @@ void buildFormulasIncCyclewise(
                     if (incoming.size() == 1) {
                         newNode = incoming[0];
                     } else {
-                        newNode = makeOrProfile(incoming, insertStats);
+                        newNode = makeOrProfile(incoming, insertStats, fcProfile);
                     }
                 }
                 if (!nodeFormulas[output].get()) {
@@ -2709,7 +2759,7 @@ void buildFormulasIncCyclewise(
                     } else if (formulaManager.isSame(newNode, formulaManager.getTrue())) {
                         std::cout << "    [NODE-TRUE] " << output->toString() << " became True\n";
                     }
-                    markChangedNode(output, insertChangedSet, insertChangedNodes);
+                    markChangedNode(output, insertChangedSet, insertChangedNodes, fcProfile);
                     for (EdgePtr outEdge : view.getOutgoingEdges(output)) {
                         auto it = depGraph.edgeToCycleIndex.find(outEdge);
                         assert (depGraph.edgeToCycleIndex.count(outEdge));
@@ -3133,6 +3183,11 @@ void buildFormulasIncRegionalCyclewise(
     std::set<NodePtr>& changedNodes
 ) {
     debugger.logMessage(Level::INFO, "[inc-regional] start pipeline");
+    if (incRegionalOutputProfile.active && !incRegionalOutputProfile.overrideWeights.empty()) {
+        for (const auto& [varIdx, weights] : incRegionalOutputProfile.originalWeights) {
+            formulaManager.setVariableWeight(varIdx, weights.first, weights.second);
+        }
+    }
     incRegionalOutputProfile.reset();
     using namespace std::chrono;
     const bool fcProfile = fcProfileEnabled;
@@ -3536,9 +3591,6 @@ void buildFormulasIncRegionalCyclewise(
 
                     newEdge = formulaManager.makeAnd(inputFormulas);
                 }
-                if (!deletedNonDetVars.empty() && nonDetImpactEdges.count(edge)) {
-                    newEdge = formulaManager.makeCondition(newEdge, {}, deletedNonDetVars);
-                }
                 NodePtr output = view.getOutput(edge);
                 const bool edgeSame = formulaManager.isSame(edgeFormulas[edge], newEdge);
                 const bool forceNodeUpdate = output && regionalOverdeleteChangedSet.count(output);
@@ -3569,9 +3621,6 @@ void buildFormulasIncRegionalCyclewise(
                         newNode = formulaManager.makeOr(incoming);
                         hasNewNode = true;
                     }
-                }
-                if (hasNewNode && !deletedNonDetVars.empty() && nonDetImpactNodes.count(output)) {
-                    newNode = formulaManager.makeCondition(newNode, {}, deletedNonDetVars);
                 }
                 if (hasNewNode && !formulaManager.isSame(nodeFormulas[output], newNode)) {
                     nodeFormulas[output] = newNode;

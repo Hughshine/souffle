@@ -1522,6 +1522,7 @@ void runPipeline(
     std::cout << std::fixed << std::setprecision(8);
     Debugger& debugger = Debugger::getInstance();
     fcProfileEnabled = opt.isFcProfileEnabled();
+    incDeleteProfileEnabled = opt.isIncDeleteProfileEnabled();
     incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();
     incRegionalProfileHeavyEnabled = opt.isIncRegionalProfileHeavyEnabled();
     incRegionalTraceTuples = opt.getIncRegionalTraceTuples();

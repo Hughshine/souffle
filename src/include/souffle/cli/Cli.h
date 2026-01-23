@@ -366,6 +366,7 @@ public:
         DerivationManager::setSemStatsEnabled(options.isDumpStatEnabled());
         incProfileEnabled = options.isIncProfileEnabled();
         fcProfileEnabled = options.isFcProfileEnabled();
+        incDeleteProfileEnabled = options.isIncDeleteProfileEnabled();
         incRegionalProfileEnabled = options.isIncRegionalProfileEnabled();
         incRegionalProfileHeavyEnabled = options.isIncRegionalProfileHeavyEnabled();
         incRegionalTraceTuples = options.getIncRegionalTraceTuples();
@@ -1112,6 +1113,10 @@ public:
                     for (const auto& [node, prob] : precomputedProbResult) {
                         probResult.emplace(node, prob);
                     }
+                    if (hasOverrideWeights) {
+                        applyWeights(incRegionalOutputProfile.originalWeights);
+                        incRegionalOutputProfile.reset();
+                    }
                     if (incProfile) {
                         const double totalMs = toMs(stageStart);
                         std::size_t componentWithEvidence = 0;
@@ -1719,6 +1724,10 @@ public:
                     }
                     probResult.clear();
                     probResult = newProbResult;
+                    if (hasOverrideWeights) {
+                        applyWeights(incRegionalOutputProfile.originalWeights);
+                        incRegionalOutputProfile.reset();
+                    }
                     if (incProfile) {
                         const double totalMs = toMs(stageStart);
                         std::size_t componentWithEvidence = 0;

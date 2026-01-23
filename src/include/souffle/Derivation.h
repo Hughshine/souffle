@@ -146,6 +146,7 @@ extern std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> te
 extern bool dredProfileEnabled;
 extern bool incProfileEnabled;
 extern bool fcProfileEnabled;
+extern bool incDeleteProfileEnabled;
 extern bool incRegionalProfileEnabled;
 extern bool incRegionalProfileHeavyEnabled;
 extern std::string incRegionalTraceTuples;

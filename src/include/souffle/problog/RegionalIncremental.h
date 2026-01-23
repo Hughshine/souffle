@@ -1859,7 +1859,7 @@ public:
             }
         }
 
-        if (incRegionalProfileEnabled) {
+        {
             const auto& dr = analyzer.lastDeltaReachable();
             const size_t regionNodes = plan.regionNodes.size();
             const size_t drNodes = dr.nodes.size();
