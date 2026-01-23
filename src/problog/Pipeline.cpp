@@ -1,5 +1,6 @@
 #include "souffle/problog/Pipeline.h"
 
+#include "souffle/Derivation.h"
 #include "souffle/cli/Cli.h"
 #include "souffle/problog/DerivationGraph.h"
 #include "souffle/problog/ForwardCompilation.h"
@@ -28,6 +29,10 @@ namespace souffle::problog {
 
 namespace {
 bool fullOnlyMode = false;
+
+static std::size_t countInitialInputFacts() {
+    return inputFactSet.size();
+}
 
 static std::size_t estimateBddVarCount(const SubgraphView& view) {
     std::size_t count = 0;
@@ -1657,6 +1662,7 @@ void runPipeline(
     }
 
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);
+    debugger.addInfo("input_fact_size", std::to_string(countInitialInputFacts()));
     auto t0 = std::chrono::steady_clock::now();
     auto graph = IncrementalDerivationGraph::createFrom(
             DerivationManager::untypedTuple2RuleApplications, ruleManager, queryManager, factProb, evidences);
