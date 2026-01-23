@@ -924,6 +924,9 @@ public:
                     CycleDependencyGraph* depGraphPtr = nullptr;
                     double depGraphMs = 0.0;
                     double outputClassifyMs = 0.0;
+                    double regionLookupMs = 0.0;
+                    double changedLookupMs = 0.0;
+                    double componentIdMs = 0.0;
                     double probLookupMs = 0.0;
                     double probWriteMs = 0.0;
                     double outputLoopMs = 0.0;
@@ -1052,7 +1055,7 @@ public:
                     auto nodeLoopStart = Clock::now();
                     auto logOutputDecision = [&](const NodePtr& node, const char* action, const char* reason,
                                                  bool useOriginalWeights) {
-                        if (!regionalOutputProfile || !node) {
+                        if (!regionalOutputProfile || (!incRegionalProfileEnabled && !incRegionalProfileHeavyEnabled) || !node) {
                             return;
                         }
                         const bool inRegion = incRegionalOutputProfile.regionNodes.count(node) > 0;
@@ -1094,23 +1097,78 @@ public:
                             probResult.erase(node);
                         }
                     }
-                    if (!depGraphPtr) {
+                    struct OutputInfo {
+                        NodePtr node;
+                        bool inRegion;
+                        bool inDeltaReach;
+                    };
+                    std::vector<OutputInfo> orderedOutputs;
+                    const std::vector<OutputInfo>* outputInfoPtr = nullptr;
+                    if (hasOverrideWeights && regionalOutputProfile) {
+                        orderedOutputs.reserve(outputNodes.size());
+                        std::vector<OutputInfo> nonRegionOutputs;
+                        nonRegionOutputs.reserve(outputNodes.size());
                         for (const auto& node : outputNodes) {
+                            auto regionStart = Clock::now();
+                            bool inDeltaReach = incRegionalOutputProfile.deltaReachableNodes.count(node) > 0;
+                            bool inRegion = incRegionalOutputProfile.regionNodes.count(node) > 0;
+                            if (wmcProfile) {
+                                regionLookupMs += toMs(regionStart);
+                            }
+                            OutputInfo info{node, inRegion, inDeltaReach};
+                            if (inRegion) {
+                                orderedOutputs.push_back(info);
+                            } else {
+                                nonRegionOutputs.push_back(info);
+                            }
+                        }
+                        orderedOutputs.insert(orderedOutputs.end(),
+                                              nonRegionOutputs.begin(),
+                                              nonRegionOutputs.end());
+                        outputInfoPtr = &orderedOutputs;
+                    }
+                    auto forEachOutput = [&](auto&& fn) {
+                        if (outputInfoPtr) {
+                            for (const auto& info : *outputInfoPtr) {
+                                fn(info.node, info.inRegion, info.inDeltaReach);
+                            }
+                            return;
+                        }
+                        for (const auto& node : outputNodes) {
+                            bool inRegion = false;
+                            bool inDeltaReach = false;
+                            if (regionalOutputProfile) {
+                                auto regionStart = Clock::now();
+                                inDeltaReach = incRegionalOutputProfile.deltaReachableNodes.count(node) > 0;
+                                inRegion = incRegionalOutputProfile.regionNodes.count(node) > 0;
+                                if (wmcProfile) {
+                                    regionLookupMs += toMs(regionStart);
+                                }
+                            }
+                            fn(node, inRegion, inDeltaReach);
+                        }
+                    };
+                    if (!depGraphPtr) {
+                        forEachOutput([&](const NodePtr& node, bool inRegion, bool inDeltaReach) {
                             if (!node->needOutput) {
-                                continue;
+                                return;
                             }
                             auto classifyStart = Clock::now();
-                            const bool inDeltaReach = regionalOutputProfile &&
-                                    (incRegionalOutputProfile.deltaReachableNodes.count(node) > 0);
-                            const bool inRegion = regionalOutputProfile &&
-                                    (incRegionalOutputProfile.regionNodes.count(node) > 0);
                             const bool regionalTouched = regionalOutputProfile && (inRegion || inDeltaReach);
                             const bool useOriginalWeights = hasOverrideWeights && inRegion;
                             if (wmcProfile) {
                                 outputClassifyMs += toMs(classifyStart);
                             }
 
-                            if (regionalTouched || changedNodes.find(node) != changedNodes.end()) {
+                            bool isChanged = false;
+                            auto changedStart = Clock::now();
+                            if (changedNodes.find(node) != changedNodes.end()) {
+                                isChanged = true;
+                            }
+                            if (wmcProfile) {
+                                changedLookupMs += toMs(changedStart);
+                            }
+                            if (regionalTouched || isChanged) {
                                 ensureWeights(!useOriginalWeights);
                                 auto value = computeWmcProfile((*nodeFormulas)[node],
                                                                nodeWmcComputeMs, nodeWmcCalls);
@@ -1151,18 +1209,19 @@ public:
                                                       useOriginalWeights);
                                 }
                             }
-                        }
+                        });
                     } else {
-                        for (const auto& node : outputNodes) {
+                        forEachOutput([&](const NodePtr& node, bool inRegion, bool inDeltaReach) {
                             if (!node->needOutput) {
-                                continue;
+                                return;
                             }
-                            size_t cid = depGraphPtr->getComponentId(node);
+                            size_t cid = 0;
+                            auto compStart = Clock::now();
+                            cid = depGraphPtr->getComponentId(node);
+                            if (wmcProfile) {
+                                componentIdMs += toMs(compStart);
+                            }
                             auto classifyStart = Clock::now();
-                            const bool inDeltaReach = regionalOutputProfile &&
-                                    (incRegionalOutputProfile.deltaReachableNodes.count(node) > 0);
-                            const bool inRegion = regionalOutputProfile &&
-                                    (incRegionalOutputProfile.regionNodes.count(node) > 0);
                             const bool regionalTouched = regionalOutputProfile && (inRegion || inDeltaReach);
                             const bool useOriginalWeights = hasOverrideWeights && inRegion;
                             if (wmcProfile) {
@@ -1176,7 +1235,15 @@ public:
                             };
 
                             if (!componentHasEvidence[cid]) {
-                                if (regionalTouched || changedNodes.find(node) != changedNodes.end()) {
+                                bool isChanged = false;
+                                auto changedStart = Clock::now();
+                                if (changedNodes.find(node) != changedNodes.end()) {
+                                    isChanged = true;
+                                }
+                                if (wmcProfile) {
+                                    changedLookupMs += toMs(changedStart);
+                                }
+                                if (regionalTouched || isChanged) {
                                     ensureWeights(!useOriginalWeights);
                                     auto value = computeWmcProfile((*nodeFormulas)[node],
                                                                    nodeWmcComputeMs, nodeWmcCalls);
@@ -1218,7 +1285,7 @@ public:
                                                           useOriginalWeights);
                                     }
                                 }
-                                continue;
+                                return;
                             }
                             if (evidenceWeightFor(cid) == 0.0) {
                                 auto writeStart = Clock::now();
@@ -1228,10 +1295,18 @@ public:
                                 }
                                 nodeZero++;
                                 logOutputDecision(node, "assign_zero", "evidence_weight_zero", useOriginalWeights);
-                                continue;
+                                return;
                             }
                             const bool evidenceChanged = componentEvidenceChanged[cid];
-                            if (regionalTouched || changedNodes.find(node) != changedNodes.end() || evidenceChanged) {
+                            bool isChanged = false;
+                            auto changedStart = Clock::now();
+                            if (changedNodes.find(node) != changedNodes.end()) {
+                                isChanged = true;
+                            }
+                            if (wmcProfile) {
+                                changedLookupMs += toMs(changedStart);
+                            }
+                            if (regionalTouched || isChanged || evidenceChanged) {
                                 ensureWeights(!useOriginalWeights);
                                 auto joint = makeAndProfile((*nodeFormulas)[node], componentEvidence[cid],
                                                             nodeMakeAndMs, nodeMakeAndCalls);
@@ -1245,7 +1320,7 @@ public:
                                 logOutputDecision(node, "recompute_wmc",
                                                   regionalTouched ? "regional_evidence" : "evidence_changed_or_node_changed",
                                                   useOriginalWeights);
-                                continue;
+                                return;
                             }
                             auto lookupStart = Clock::now();
                             auto it = probResult.find(node);
@@ -1274,7 +1349,7 @@ public:
                                 logOutputDecision(node, "recompute_wmc", "evidence_unchanged_missing_prob",
                                                   useOriginalWeights);
                             }
-                        }
+                        });
                     }
                     if (incProfile) {
                         nodeLoopMs = toMs(nodeLoopStart);
@@ -1341,6 +1416,9 @@ public:
                                   << " dep_graph_ms=" << depGraphMs
                                   << " output_loop_ms=" << outputLoopMs
                                   << " output_classify_ms=" << outputClassifyMs
+                                  << " region_lookup_ms=" << regionLookupMs
+                                  << " changed_lookup_ms=" << changedLookupMs
+                                  << " component_id_ms=" << componentIdMs
                                   << " prob_lookup_ms=" << probLookupMs
                                   << " prob_write_ms=" << probWriteMs
                                   << " weight_apply_calls=" << weightApplyCalls
@@ -1811,6 +1889,9 @@ public:
                     CycleDependencyGraph* depGraphPtr = nullptr;
                     double depGraphMs = 0.0;
                     double outputClassifyMs = 0.0;
+                    double regionLookupMs = 0.0;
+                    double changedLookupMs = 0.0;
+                    double componentIdMs = 0.0;
                     double probLookupMs = 0.0;
                     double probWriteMs = 0.0;
                     double outputLoopMs = 0.0;
@@ -1940,7 +2021,7 @@ public:
                     auto nodeLoopStart = Clock::now();
                     auto logOutputDecision = [&](const NodePtr& node, const char* action, const char* reason,
                                                  bool useOriginalWeights) {
-                        if (!regionalOutputProfile || !node) {
+                        if (!regionalOutputProfile || (!incRegionalProfileEnabled && !incRegionalProfileHeavyEnabled) || !node) {
                             return;
                         }
                         const bool inRegion = incRegionalOutputProfile.regionNodes.count(node) > 0;
@@ -1982,23 +2063,78 @@ public:
                             probResult.erase(node);
                         }
                     }
-                    if (!depGraphPtr) {
+                    struct OutputInfo {
+                        NodePtr node;
+                        bool inRegion;
+                        bool inDeltaReach;
+                    };
+                    std::vector<OutputInfo> orderedOutputs;
+                    const std::vector<OutputInfo>* outputInfoPtr = nullptr;
+                    if (hasOverrideWeights && regionalOutputProfile) {
+                        orderedOutputs.reserve(outputNodes.size());
+                        std::vector<OutputInfo> nonRegionOutputs;
+                        nonRegionOutputs.reserve(outputNodes.size());
                         for (const auto& node : outputNodes) {
+                            auto regionStart = Clock::now();
+                            bool inDeltaReach = incRegionalOutputProfile.deltaReachableNodes.count(node) > 0;
+                            bool inRegion = incRegionalOutputProfile.regionNodes.count(node) > 0;
+                            if (wmcProfile) {
+                                regionLookupMs += toMs(regionStart);
+                            }
+                            OutputInfo info{node, inRegion, inDeltaReach};
+                            if (inRegion) {
+                                orderedOutputs.push_back(info);
+                            } else {
+                                nonRegionOutputs.push_back(info);
+                            }
+                        }
+                        orderedOutputs.insert(orderedOutputs.end(),
+                                              nonRegionOutputs.begin(),
+                                              nonRegionOutputs.end());
+                        outputInfoPtr = &orderedOutputs;
+                    }
+                    auto forEachOutput = [&](auto&& fn) {
+                        if (outputInfoPtr) {
+                            for (const auto& info : *outputInfoPtr) {
+                                fn(info.node, info.inRegion, info.inDeltaReach);
+                            }
+                            return;
+                        }
+                        for (const auto& node : outputNodes) {
+                            bool inRegion = false;
+                            bool inDeltaReach = false;
+                            if (regionalOutputProfile) {
+                                auto regionStart = Clock::now();
+                                inDeltaReach = incRegionalOutputProfile.deltaReachableNodes.count(node) > 0;
+                                inRegion = incRegionalOutputProfile.regionNodes.count(node) > 0;
+                                if (wmcProfile) {
+                                    regionLookupMs += toMs(regionStart);
+                                }
+                            }
+                            fn(node, inRegion, inDeltaReach);
+                        }
+                    };
+                    if (!depGraphPtr) {
+                        forEachOutput([&](const NodePtr& node, bool inRegion, bool inDeltaReach) {
                             if (!node->needOutput) {
-                                continue;
+                                return;
                             }
                             auto classifyStart = Clock::now();
-                            const bool inDeltaReach = regionalOutputProfile &&
-                                    (incRegionalOutputProfile.deltaReachableNodes.count(node) > 0);
-                            const bool inRegion = regionalOutputProfile &&
-                                    (incRegionalOutputProfile.regionNodes.count(node) > 0);
                             const bool regionalTouched = regionalOutputProfile && (inRegion || inDeltaReach);
                             const bool useOriginalWeights = hasOverrideWeights && inRegion;
                             if (wmcProfile) {
                                 outputClassifyMs += toMs(classifyStart);
                             }
 
-                            if (regionalTouched || changedNodes.find(node) != changedNodes.end()) {
+                            bool isChanged = false;
+                            auto changedStart = Clock::now();
+                            if (changedNodes.find(node) != changedNodes.end()) {
+                                isChanged = true;
+                            }
+                            if (wmcProfile) {
+                                changedLookupMs += toMs(changedStart);
+                            }
+                            if (regionalTouched || isChanged) {
                                 ensureWeights(!useOriginalWeights);
                                 auto value = computeWmcProfile((*nodeFormulas)[node],
                                                                nodeWmcComputeMs, nodeWmcCalls);
@@ -2039,18 +2175,19 @@ public:
                                                       useOriginalWeights);
                                 }
                             }
-                        }
+                        });
                     } else {
-                        for (const auto& node : outputNodes) {
+                        forEachOutput([&](const NodePtr& node, bool inRegion, bool inDeltaReach) {
                             if (!node->needOutput) {
-                                continue;
+                                return;
                             }
-                            size_t cid = depGraphPtr->getComponentId(node);
+                            size_t cid = 0;
+                            auto compStart = Clock::now();
+                            cid = depGraphPtr->getComponentId(node);
+                            if (wmcProfile) {
+                                componentIdMs += toMs(compStart);
+                            }
                             auto classifyStart = Clock::now();
-                            const bool inDeltaReach = regionalOutputProfile &&
-                                    (incRegionalOutputProfile.deltaReachableNodes.count(node) > 0);
-                            const bool inRegion = regionalOutputProfile &&
-                                    (incRegionalOutputProfile.regionNodes.count(node) > 0);
                             const bool regionalTouched = regionalOutputProfile && (inRegion || inDeltaReach);
                             const bool useOriginalWeights = hasOverrideWeights && inRegion;
                             if (wmcProfile) {
@@ -2064,7 +2201,15 @@ public:
                             };
 
                             if (!componentHasEvidence[cid]) {
-                                if (regionalTouched || changedNodes.find(node) != changedNodes.end()) {
+                                bool isChanged = false;
+                                auto changedStart = Clock::now();
+                                if (changedNodes.find(node) != changedNodes.end()) {
+                                    isChanged = true;
+                                }
+                                if (wmcProfile) {
+                                    changedLookupMs += toMs(changedStart);
+                                }
+                                if (regionalTouched || isChanged) {
                                     ensureWeights(!useOriginalWeights);
                                     auto value = computeWmcProfile((*nodeFormulas)[node],
                                                                    nodeWmcComputeMs, nodeWmcCalls);
@@ -2106,7 +2251,7 @@ public:
                                                           useOriginalWeights);
                                     }
                                 }
-                                continue;
+                                return;
                             }
                             if (evidenceWeightFor(cid) == 0.0) {
                                 auto writeStart = Clock::now();
@@ -2116,10 +2261,18 @@ public:
                                 }
                                 nodeZero++;
                                 logOutputDecision(node, "assign_zero", "evidence_weight_zero", useOriginalWeights);
-                                continue;
+                                return;
                             }
                             const bool evidenceChanged = componentEvidenceChanged[cid];
-                            if (regionalTouched || changedNodes.find(node) != changedNodes.end() || evidenceChanged) {
+                            bool isChanged = false;
+                            auto changedStart = Clock::now();
+                            if (changedNodes.find(node) != changedNodes.end()) {
+                                isChanged = true;
+                            }
+                            if (wmcProfile) {
+                                changedLookupMs += toMs(changedStart);
+                            }
+                            if (regionalTouched || isChanged || evidenceChanged) {
                                 ensureWeights(!useOriginalWeights);
                                 auto joint = makeAndProfile((*nodeFormulas)[node], componentEvidence[cid],
                                                             nodeMakeAndMs, nodeMakeAndCalls);
@@ -2133,7 +2286,7 @@ public:
                                 logOutputDecision(node, "recompute_wmc",
                                                   regionalTouched ? "regional_evidence" : "evidence_changed_or_node_changed",
                                                   useOriginalWeights);
-                                continue;
+                                return;
                             }
                             auto lookupStart = Clock::now();
                             auto it = probResult.find(node);
@@ -2162,7 +2315,7 @@ public:
                                 logOutputDecision(node, "recompute_wmc", "evidence_unchanged_missing_prob",
                                                   useOriginalWeights);
                             }
-                        }
+                        });
                     }
                     if (incProfile) {
                         nodeLoopMs = toMs(nodeLoopStart);
@@ -2226,6 +2379,9 @@ public:
                                   << " dep_graph_ms=" << depGraphMs
                                   << " output_loop_ms=" << outputLoopMs
                                   << " output_classify_ms=" << outputClassifyMs
+                                  << " region_lookup_ms=" << regionLookupMs
+                                  << " changed_lookup_ms=" << changedLookupMs
+                                  << " component_id_ms=" << componentIdMs
                                   << " prob_lookup_ms=" << probLookupMs
                                   << " prob_write_ms=" << probWriteMs
                                   << " weight_apply_calls=" << weightApplyCalls

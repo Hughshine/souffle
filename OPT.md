@@ -1082,3 +1082,13 @@ Delta=inc5
   - `node_wmc_compute_ms` is only part of the total; the rest is overhead not currently broken out
     (e.g., per-output bookkeeping, map IO, and other loop-level work).
 - Unknown: the remaining full WMC overhead beyond `node_wmc_compute_ms` is not yet attributed to a single substage.
+
+### WMC follow-up: root cause and mitigation
+- Root cause identified: `WeightedBDDManager::setVariableWeight` increments `weightsEpoch_`, so **any weight toggle clears the WMC cache**.
+  In inc-regional, frequent calibrated/original toggles in the output loop were forcing cache clears and inflating `node_wmc_compute_ms`.
+- Mitigation applied: **order outputs by region membership** and precompute region/delta flags once, reducing weight toggles to ~2 per turn.
+  This also avoids re-checking region membership inside the loop.
+- After reordering (P20, `--profile-wmc`):
+  - `weight_toggle_calls` drops from ~10–27 to ~2.
+  - `node_wmc_compute_ms` moves closer to inc-naive (e.g., inc1: 0.107ms vs 0.113ms; inc5: 0.33ms vs 0.42ms).
+  - Remaining overhead comes mainly from `region_lookup_ms` (~0.45–0.69ms per insert) plus minor map lookups.
