@@ -262,12 +262,16 @@ public:
         double reorderMs = 0.0;
         size_t regionCycleCount = 0;
         size_t edgesProcessed = 0;
+        size_t edgeRequeued = 0;
         size_t edgesRebuilt = 0;
         size_t nodesUpdated = 0;
         size_t makeAndCalls = 0;
         double makeAndMs = 0.0;
         size_t makeOrCalls = 0;
         double makeOrMs = 0.0;
+        size_t inputLiteralCalls = 0;
+        size_t inputLiteralMissing = 0;
+        double inputLiteralMs = 0.0;
     };
     struct Result {
         Snapshot snapshot;
@@ -389,6 +393,19 @@ public:
             res.timing.makeOrMs += toMs(nowMs() - t);
             return formula;
         };
+        auto inputLiteralProfile = [&](const NodePtr& node, bool neg, FormulaNodeRef& lit) {
+            if (!profile) {
+                return constAccess.inputLiteral(nodeFormulas, node, neg, lit);
+            }
+            auto t = nowMs();
+            bool ok = constAccess.inputLiteral(nodeFormulas, node, neg, lit);
+            res.timing.inputLiteralCalls += 1;
+            res.timing.inputLiteralMs += toMs(nowMs() - t);
+            if (!ok) {
+                res.timing.inputLiteralMissing += 1;
+            }
+            return ok;
+        };
 
         // Snapshot old boundary formulas
         auto tSnapshotStart = nowMs();
@@ -507,7 +524,7 @@ public:
                     std::vector<FormulaNodeRef> inputs{base};
                     for (size_t i = 0; i < ins.size(); ++i) {
                         FormulaNodeRef lit;
-                        if (!constAccess.inputLiteral(nodeFormulas, ins[i], negs[i], lit)) {
+                        if (!inputLiteralProfile(ins[i], negs[i], lit)) {
                             allAvail = false;
                             break;
                         }
@@ -517,6 +534,7 @@ public:
                         if (!inWorklist.count(edge)) {
                             worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), seq++});
                             inWorklist.insert(edge);
+                            res.timing.edgeRequeued += 1;
                         }
                         continue;
                     }
@@ -625,6 +643,19 @@ public:
             res.timing.makeOrMs += toMs(nowMs() - t);
             return formula;
         };
+        auto inputLiteralProfile = [&](const NodePtr& node, bool neg, FormulaNodeRef& lit) {
+            if (!profile) {
+                return constAccess.inputLiteral(nodeFormulas, node, neg, lit);
+            }
+            auto t = nowMs();
+            bool ok = constAccess.inputLiteral(nodeFormulas, node, neg, lit);
+            res.timing.inputLiteralCalls += 1;
+            res.timing.inputLiteralMs += toMs(nowMs() - t);
+            if (!ok) {
+                res.timing.inputLiteralMissing += 1;
+            }
+            return ok;
+        };
 
         // Snapshot old boundary formulas
         auto tSnapshotStart = nowMs();
@@ -704,7 +735,7 @@ public:
                     std::vector<FormulaNodeRef> inputs{base};
                     for (size_t i = 0; i < ins.size(); ++i) {
                         FormulaNodeRef lit;
-                        if (!constAccess.inputLiteral(nodeFormulas, ins[i], negs[i], lit)) {
+                        if (!inputLiteralProfile(ins[i], negs[i], lit)) {
                             allAvail = false;
                             if (plan.regionNodes.count(ins[i])) {
                                 missingInsideRegion = true;
@@ -2061,6 +2092,7 @@ public:
                       << " total=" << rt.totalMs
                       << " reorder=" << rt.reorderMs
                       << " edgesProcessed=" << rt.edgesProcessed
+                      << " edgeRequeued=" << rt.edgeRequeued
                       << " edgesRebuilt=" << rt.edgesRebuilt
                       << " nodesUpdated=" << rt.nodesUpdated
                       << " cycleCount=" << rt.regionCycleCount
@@ -2068,6 +2100,9 @@ public:
                       << " make_and_ms=" << rt.makeAndMs
                       << " make_or_calls=" << rt.makeOrCalls
                       << " make_or_ms=" << rt.makeOrMs
+                      << " input_literal_calls=" << rt.inputLiteralCalls
+                      << " input_literal_missing=" << rt.inputLiteralMissing
+                      << " input_literal_ms=" << rt.inputLiteralMs
                       << "\n";
         }
         auto t4 = nowMs();
@@ -2148,6 +2183,8 @@ public:
                       << " total_with_fallback=" << lastTiming_.totalWithFallbackMs
                       << "\n";
             const double prepInsertMs = rt.regionCyclesMs + rt.indegreeMs;
+            const double prepTotalMs = rt.preConfigMs + rt.initNodesMs + rt.initEdgesMs
+                    + rt.regionCyclesMs + rt.indegreeMs;
             std::cout << "[inc-regional-insert-profile]"
                       << " dep_graph_ms=" << rt.depGraphMs
                       << " dep_graph_scope=" << (depGraphScope ? depGraphScope : "unknown")
@@ -2158,6 +2195,7 @@ public:
                       << " init_nodes_ms=" << rt.initNodesMs
                       << " init_edges_ms=" << rt.initEdgesMs
                       << " prep_insert_ms=" << prepInsertMs
+                      << " prep_total_ms=" << prepTotalMs
                       << " insert_ms=" << rt.rebuildLoopMs
                       << " total_ms=" << lastTiming_.totalMs
                       << " rebuild_total_ms=" << rt.totalMs
@@ -2165,6 +2203,10 @@ public:
                       << " make_and_ms=" << rt.makeAndMs
                       << " make_or_calls=" << rt.makeOrCalls
                       << " make_or_ms=" << rt.makeOrMs
+                      << " edge_requeued=" << rt.edgeRequeued
+                      << " input_literal_calls=" << rt.inputLiteralCalls
+                      << " input_literal_missing=" << rt.inputLiteralMissing
+                      << " input_literal_ms=" << rt.inputLiteralMs
                       << "\n";
         }
     }

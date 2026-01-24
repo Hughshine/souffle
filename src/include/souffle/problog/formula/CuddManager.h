@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <cstdint>
 #include "souffle/problog/formula/FormulaManager.h"
+#include "souffle/Derivation.h"
 #include "souffle/problog/DerivationGraph.h"
 #include "souffle/problog/formula/GraphHeuristics.h"
 #include "souffle/problog/debug/Debugger.h"
@@ -336,6 +337,29 @@ public:
         double factCreateMs = 0.0;
         double edgeCreateMs = 0.0;
         double reorderMs = 0.0;
+        double factCreateMaxMs = 0.0;
+        double edgeCreateMaxMs = 0.0;
+        std::size_t factCreateCount = 0;
+        std::size_t edgeCreateCount = 0;
+        std::size_t factCreateSlow = 0;
+        std::size_t edgeCreateSlow = 0;
+        std::size_t factVarHits = 0;
+        std::size_t factVarMisses = 0;
+        std::size_t edgeVarHits = 0;
+        std::size_t edgeVarMisses = 0;
+        constexpr double slowCreateThresholdMs = 1.0;
+        const bool profileCreate = fcProfile || incProfileEnabled;
+
+        auto recordCreate = [&](double ms, double& total, double& maxMs, std::size_t& count, std::size_t& slowCount) {
+            total += ms;
+            count += 1;
+            if (ms > maxMs) {
+                maxMs = ms;
+            }
+            if (ms >= slowCreateThresholdMs) {
+                slowCount += 1;
+            }
+        };
 
         if (fcProfile) {
             auto cacheStart = steady_clock::now();
@@ -360,12 +384,19 @@ public:
             for (const auto& node : incView->getDeltaInsertNodes()) {
                 if (node->isFact && node->getProbability() < 1.0) {
                     int idx = getVarIndex(*node);
-                    if (fcProfile) {
+                    if (variableRegistry.find(idx) != variableRegistry.end()) {
+                        ++factVarHits;
+                    } else {
+                        ++factVarMisses;
+                    }
+                    if (profileCreate) {
                         auto cvStart = steady_clock::now();
                         createVar(idx, *node);
-                        factCreateMs += toMs(steady_clock::now() - cvStart);
+                        recordCreate(toMs(steady_clock::now() - cvStart),
+                                factCreateMs, factCreateMaxMs, factCreateCount, factCreateSlow);
                     } else {
                         createVar(idx, *node);
+                        factCreateCount += 1;
                     }
                     ++factVars;
                 }
@@ -374,12 +405,19 @@ public:
             for (const auto& node : view.getNodes()) {
                 if (node->isFact && node->getProbability() < 1.0) {
                     int idx = getVarIndex(*node);
-                    if (fcProfile) {
+                    if (variableRegistry.find(idx) != variableRegistry.end()) {
+                        ++factVarHits;
+                    } else {
+                        ++factVarMisses;
+                    }
+                    if (profileCreate) {
                         auto cvStart = steady_clock::now();
                         createVar(idx, *node);
-                        factCreateMs += toMs(steady_clock::now() - cvStart);
+                        recordCreate(toMs(steady_clock::now() - cvStart),
+                                factCreateMs, factCreateMaxMs, factCreateCount, factCreateSlow);
                     } else {
                         createVar(idx, *node);
+                        factCreateCount += 1;
                     }
                     // std::cout << "[CUDD] createVar(fact " << node->getId()
                     //           << " -> idx " << idx << ") took "
@@ -395,12 +433,19 @@ public:
             for (const auto& edge : incView->getDeltaInsertEdges()) {
                 if (!edge->isDeterministic()) {
                     int idx = getVarIndex(*edge);
-                    if (fcProfile) {
+                    if (variableRegistry.find(idx) != variableRegistry.end()) {
+                        ++edgeVarHits;
+                    } else {
+                        ++edgeVarMisses;
+                    }
+                    if (profileCreate) {
                         auto cvStart = steady_clock::now();
                         createVar(idx, *edge);
-                        edgeCreateMs += toMs(steady_clock::now() - cvStart);
+                        recordCreate(toMs(steady_clock::now() - cvStart),
+                                edgeCreateMs, edgeCreateMaxMs, edgeCreateCount, edgeCreateSlow);
                     } else {
                         createVar(idx, *edge);
+                        edgeCreateCount += 1;
                     }
                     ++edgeVars;
                 }
@@ -409,12 +454,19 @@ public:
             for (const auto& edge : view.getEdges()) {
                 if (!edge->isDeterministic()) {
                     int idx = getVarIndex(*edge);
-                    if (fcProfile) {
+                    if (variableRegistry.find(idx) != variableRegistry.end()) {
+                        ++edgeVarHits;
+                    } else {
+                        ++edgeVarMisses;
+                    }
+                    if (profileCreate) {
                         auto cvStart = steady_clock::now();
                         createVar(idx, *edge);
-                        edgeCreateMs += toMs(steady_clock::now() - cvStart);
+                        recordCreate(toMs(steady_clock::now() - cvStart),
+                                edgeCreateMs, edgeCreateMaxMs, edgeCreateCount, edgeCreateSlow);
                     } else {
                         createVar(idx, *edge);
+                        edgeCreateCount += 1;
                     }
                     // std::cout << "[CUDD] createVar(edge " << edge->getId()
                     //           << " -> idx " << idx << ") took "
@@ -461,6 +513,45 @@ public:
                       << " new_var_size=" << newCuddVarSize
                       << " fact_vars=" << factVars
                       << " edge_vars=" << edgeVars
+                      << " fact_create_count=" << factCreateCount
+                      << " edge_create_count=" << edgeCreateCount
+                      << " fact_create_max_ms=" << factCreateMaxMs
+                      << " edge_create_max_ms=" << edgeCreateMaxMs
+                      << " create_slow_threshold_ms=" << slowCreateThresholdMs
+                      << " fact_create_slow=" << factCreateSlow
+                      << " edge_create_slow=" << edgeCreateSlow
+                      << " fact_hit=" << factVarHits
+                      << " fact_miss=" << factVarMisses
+                      << " edge_hit=" << edgeVarHits
+                      << " edge_miss=" << edgeVarMisses
+                      << std::endl;
+        } else if (incProfileEnabled) {
+            const auto totalMs = toMs(steady_clock::now() - totalStart);
+            const std::string& rawTag = getCuddPreConfigTag();
+            const std::string tag = rawTag.empty() ? "unknown" : rawTag;
+            std::cout << "[inc-profile] stage=CUDD_PRECONFIG tag=" << tag
+                      << " total_ms=" << totalMs
+                      << " cache_ms=" << cacheMs
+                      << " fact_loop_ms=" << factMs
+                      << " fact_create_ms=" << factCreateMs
+                      << " edge_loop_ms=" << edgeMs
+                      << " edge_create_ms=" << edgeCreateMs
+                      << " reorder_ms=" << reorderMs
+                      << " old_var_size=" << oldCuddVarSize
+                      << " new_var_size=" << newCuddVarSize
+                      << " fact_vars=" << factVars
+                      << " edge_vars=" << edgeVars
+                      << " fact_create_count=" << factCreateCount
+                      << " edge_create_count=" << edgeCreateCount
+                      << " fact_create_max_ms=" << factCreateMaxMs
+                      << " edge_create_max_ms=" << edgeCreateMaxMs
+                      << " create_slow_threshold_ms=" << slowCreateThresholdMs
+                      << " fact_create_slow=" << factCreateSlow
+                      << " edge_create_slow=" << edgeCreateSlow
+                      << " fact_hit=" << factVarHits
+                      << " fact_miss=" << factVarMisses
+                      << " edge_hit=" << edgeVarHits
+                      << " edge_miss=" << edgeVarMisses
                       << std::endl;
         }
     }

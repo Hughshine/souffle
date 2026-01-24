@@ -12,6 +12,8 @@ Legend:
 ## Entry Points
 - [PRIMARY] `README.md` — project overview + quickstart
 - [PRIMARY] `docs/USAGE.md` — CLI/runtime options (authoritative)
+- [SECONDARY] `README.flag.md` — consolidated compiler/runtime flag reference
+- [SECONDARY] `README.dump.md` — dump/debug outputs (compiler + runtime)
 - [PRIMARY] `docs/TESTING.md` — verification status + test commands
 - [PRIMARY] `docs/RUNBOOK.md` — build/run/rollback/troubleshooting
 - [PRIMARY] `docs/ARCHITECTURE.md` — system architecture map
@@ -85,6 +87,6 @@ Legend:
 - [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
 
 ## Related commits
+- `e214cd028` — docs(repo): refresh incremental docs and index
 - `668298ef8` — fix(inc-region): update regional WMC routing and profiling
 - `ce3dd2f5b` — docs(inc-region): add SCC-closure optimization notes
-- `78890247d` — fix(inc): align delta handling and node metrics

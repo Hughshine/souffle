@@ -70,6 +70,29 @@ python3 problog-benchmark/side_channel_inc.py \
 - If `deltaReachable` is empty (reachNodes=0), no `inc_regional_final` line is
   emitted; treat ratio as 0 for those cases.
 
+## FC (insert profiling alignment, 2026-01-24)
+
+Recent updates:
+- Removed the duplicate `preConfig` call in inc-regional insert (now only one
+  CUDD preconfig per insert phase, aligned with inc-naive).
+- Added inc CUDD preconfig profiling in `CUDD_PRECONFIG` (hit/miss counts,
+  createVar count/slow/max timing) so insert preconfig cost is visible under
+  `--inc-profile` even without `--fc-profile`.
+- Expanded inc-regional insert profiling with a `prep_total_ms` (preConfig +
+  initNodes + initEdges + regionCycles + indegree) and input_literal stats.
+
+Current state:
+- Preconfig often dominates insert FC (P15 sample: ~40–70% of insert FC time
+  depending on delta). The variance tracks `createVar` misses.
+- With the duplicate preConfig removed, inc-naive and inc-regional see the same
+  preconfig hit/miss behavior for a given delta.
+
+Future work:
+- Reduce createVar misses and long-tail createVar latency (e.g., tighter reuse of
+  var indices, avoiding repeated createVar on the same facts/edges, or
+  preallocating hot variables). This is the most direct lever to shrink
+  preConfig cost.
+
 Helper snippet (dump final ratios to TSV):
 ```
 python3 - <<'PY'

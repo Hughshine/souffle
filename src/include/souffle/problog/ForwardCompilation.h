@@ -3685,21 +3685,7 @@ void buildFormulasIncRegionalCyclewise(
 
     auto insertStart = std::chrono::steady_clock::now();
 
-    {
-        auto start = std::chrono::steady_clock::now();
-        setCuddPreConfigTag("inc_regional_insert");
-        formulaManager.preConfig(view);
-        setCuddPreConfigTag("");
-        auto end = std::chrono::steady_clock::now();
-        const auto preConfigMs = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-        debugger.logMessage(Level::INFO,
-                "preConfig (cache clear + var scan/create + dyn-reorder setup) took " +
-                        std::to_string(preConfigMs) +
-                        " milliseconds");
-        if (incRegionalProfileEnabled) {
-            debugger.addInfo("inc_regional_preconfig_ms", std::to_string(preConfigMs));
-        }
-    }
+    // preConfig is handled inside RegionalIncrementalForwardCompilation::applyUpdate
 
     using FMType = std::remove_reference_t<decltype(formulaManager)>;
     RegionalIncrementalForwardCompilation<FMType, FormulaNodeRef> orchestrator;

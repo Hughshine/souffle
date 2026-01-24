@@ -70,6 +70,6 @@
 - [problog-benchmark/side_channel_inc.py](problog-benchmark/side_channel_inc.py)
 
 ## Related commits
+- `2a9472712` — perf(problog): streamline incremental WMC updates
 - `e214cd028` — docs(repo): refresh incremental docs and index
 - `668298ef8` — fix(inc-region): update regional WMC routing and profiling
-- `619e52197` — fix(inc): track explicit deletes and log deltas

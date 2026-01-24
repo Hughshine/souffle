@@ -33,4 +33,4 @@
 - [README.rewrite.impl.md](README.rewrite.impl.md)
 
 ## Related commits
-- (no git history yet; uncommitted/new file)
+- `2a9472712` — perf(problog): streamline incremental WMC updates

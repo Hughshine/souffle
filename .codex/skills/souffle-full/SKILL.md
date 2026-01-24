@@ -39,4 +39,4 @@ description: Full-only Soufflé/ProbLog benchmark workflow for side_channel_full
 - [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
 
 ## Related commits
-- (no git history yet; uncommitted/new file)
+- `2a9472712` — perf(problog): streamline incremental WMC updates

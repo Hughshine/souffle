@@ -30,6 +30,8 @@ Provide a focused workflow for incremental CLI changes and the side-channel incr
       (script always passes `souffle --online`; do **not** add `--full-only` for incremental runs)
     - Run: `... run --cases 1-20 --delta-labels inc0p1,inc0p3,inc0p5 --delta-samples 1 --compare-all --run-arg=--det-opt`
       (with `--compare-all`, any `--setmode` passed via `--run-arg` is ignored)
+    - Profiling add-ons (repeatable `--run-arg`): `--inc-profile`, `--profile-inc-regional`, `--profile-inc-delete`,
+      `--profile-wmc`, `--fc-profile`, `--profile-inc-regional-heavy` (use sparingly), `--profile-dep-graph`.
     - Collect: `... collect --cases 1-20` → `results-souffle-inc.tsv` + per-delta JSON.
 11. Script CLI behaviors to remember:
     - `generate` honors `--rule-set` (trimmed/trimmed_plus/full) and `--force-smt`.
@@ -42,6 +44,6 @@ Provide a focused workflow for incremental CLI changes and the side-channel incr
     - Per-delta: `output/delta-<label>-<sample>-<mode>-fact-iterN-*.prob`
 
 ## Related commits
+- `2a9472712` — perf(problog): streamline incremental WMC updates
 - `e214cd028` — docs(repo): refresh incremental docs and index
 - `668298ef8` — fix(inc-region): update regional WMC routing and profiling
-- `619e52197` — fix(inc): track explicit deletes and log deltas
