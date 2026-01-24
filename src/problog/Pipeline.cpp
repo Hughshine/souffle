@@ -1323,10 +1323,15 @@ static void runSddPipeline(
                     buildMs = totalMs;
                 }
             }
+            long long liveNodesSum = 0;
+            for (const auto& bundle : bundles) {
+                liveNodesSum += static_cast<long long>(bundle.manager->getLiveNodeCount());
+            }
 
             debugger.addInfo("manager_init_ms", std::to_string(initMsTotal));
             debugger.addInfo("manager_init_ms_max", std::to_string(initMsMax));
             debugger.addInfo("manager_init_components", std::to_string(bundles.size()));
+            debugger.addInfo("live_nodes", std::to_string(liveNodesSum));
             debugger.addInfo("fastpath_components", std::to_string(fastStats.used));
             debugger.addInfo("fastpath_candidates", std::to_string(fastStats.candidates));
             debugger.addInfo("fastpath_skipped", std::to_string(fastStats.skipped));
@@ -1340,6 +1345,7 @@ static void runSddPipeline(
                 hybridStage->logMessage(Level::INFO, "manager_init_ms_max=" + std::to_string(initMsMax));
                 hybridStage->logMessage(Level::INFO, "manager_init_components=" +
                         std::to_string(bundles.size()));
+                hybridStage->logMessage(Level::INFO, "live_nodes=" + std::to_string(liveNodesSum));
                 hybridStage->logMessage(Level::INFO, "fastpath_components=" + std::to_string(fastStats.used));
                 hybridStage->logMessage(Level::INFO, "fastpath_candidates=" + std::to_string(fastStats.candidates));
                 hybridStage->logMessage(Level::INFO, "fastpath_skipped=" + std::to_string(fastStats.skipped));
