@@ -349,6 +349,7 @@ public:
         std::size_t edgeVarMisses = 0;
         constexpr double slowCreateThresholdMs = 1.0;
         const bool profileCreate = fcProfile || incProfileEnabled;
+        const bool profileTime = profileCreate;
 
         auto recordCreate = [&](double ms, double& total, double& maxMs, std::size_t& count, std::size_t& slowCount) {
             total += ms;
@@ -361,7 +362,7 @@ public:
             }
         };
 
-        if (fcProfile) {
+        if (profileTime) {
             auto cacheStart = steady_clock::now();
             wmcCache_.clear();
             wmcCacheEpoch_ = weightsEpoch_;
@@ -382,33 +383,36 @@ public:
         auto factStart = steady_clock::now();
         if (incView != nullptr && hasDelta) {
             for (const auto& node : incView->getDeltaInsertNodes()) {
-                if (node->isFact && node->getProbability() < 1.0) {
-                    int idx = getVarIndex(*node);
-                    if (variableRegistry.find(idx) != variableRegistry.end()) {
-                        ++factVarHits;
-                    } else {
-                        ++factVarMisses;
+                    if (node->isFact && node->getProbability() < 1.0) {
+                        int idx = getVarIndex(*node);
+                        if (profileCreate) {
+                            if (variableRegistry.find(idx) != variableRegistry.end()) {
+                                ++factVarHits;
+                            } else {
+                                ++factVarMisses;
+                            }
+                        }
+                        if (profileCreate) {
+                            auto cvStart = steady_clock::now();
+                            createVar(idx, *node);
+                            recordCreate(toMs(steady_clock::now() - cvStart),
+                                    factCreateMs, factCreateMaxMs, factCreateCount, factCreateSlow);
+                        } else {
+                            createVar(idx, *node);
+                        }
+                        ++factVars;
                     }
-                    if (profileCreate) {
-                        auto cvStart = steady_clock::now();
-                        createVar(idx, *node);
-                        recordCreate(toMs(steady_clock::now() - cvStart),
-                                factCreateMs, factCreateMaxMs, factCreateCount, factCreateSlow);
-                    } else {
-                        createVar(idx, *node);
-                        factCreateCount += 1;
-                    }
-                    ++factVars;
-                }
             }
         } else {
             for (const auto& node : view.getNodes()) {
                 if (node->isFact && node->getProbability() < 1.0) {
                     int idx = getVarIndex(*node);
-                    if (variableRegistry.find(idx) != variableRegistry.end()) {
-                        ++factVarHits;
-                    } else {
-                        ++factVarMisses;
+                    if (profileCreate) {
+                        if (variableRegistry.find(idx) != variableRegistry.end()) {
+                            ++factVarHits;
+                        } else {
+                            ++factVarMisses;
+                        }
                     }
                     if (profileCreate) {
                         auto cvStart = steady_clock::now();
@@ -417,7 +421,6 @@ public:
                                 factCreateMs, factCreateMaxMs, factCreateCount, factCreateSlow);
                     } else {
                         createVar(idx, *node);
-                        factCreateCount += 1;
                     }
                     // std::cout << "[CUDD] createVar(fact " << node->getId()
                     //           << " -> idx " << idx << ") took "
@@ -433,10 +436,12 @@ public:
             for (const auto& edge : incView->getDeltaInsertEdges()) {
                 if (!edge->isDeterministic()) {
                     int idx = getVarIndex(*edge);
-                    if (variableRegistry.find(idx) != variableRegistry.end()) {
-                        ++edgeVarHits;
-                    } else {
-                        ++edgeVarMisses;
+                    if (profileCreate) {
+                        if (variableRegistry.find(idx) != variableRegistry.end()) {
+                            ++edgeVarHits;
+                        } else {
+                            ++edgeVarMisses;
+                        }
                     }
                     if (profileCreate) {
                         auto cvStart = steady_clock::now();
@@ -445,7 +450,6 @@ public:
                                 edgeCreateMs, edgeCreateMaxMs, edgeCreateCount, edgeCreateSlow);
                     } else {
                         createVar(idx, *edge);
-                        edgeCreateCount += 1;
                     }
                     ++edgeVars;
                 }
@@ -454,10 +458,12 @@ public:
             for (const auto& edge : view.getEdges()) {
                 if (!edge->isDeterministic()) {
                     int idx = getVarIndex(*edge);
-                    if (variableRegistry.find(idx) != variableRegistry.end()) {
-                        ++edgeVarHits;
-                    } else {
-                        ++edgeVarMisses;
+                    if (profileCreate) {
+                        if (variableRegistry.find(idx) != variableRegistry.end()) {
+                            ++edgeVarHits;
+                        } else {
+                            ++edgeVarMisses;
+                        }
                     }
                     if (profileCreate) {
                         auto cvStart = steady_clock::now();
@@ -466,7 +472,6 @@ public:
                                 edgeCreateMs, edgeCreateMaxMs, edgeCreateCount, edgeCreateSlow);
                     } else {
                         createVar(idx, *edge);
-                        edgeCreateCount += 1;
                     }
                     // std::cout << "[CUDD] createVar(edge " << edge->getId()
                     //           << " -> idx " << idx << ") took "
@@ -487,7 +492,7 @@ public:
         if (!reorderConfigured_) {
             // Rely on CUDD adaptive dynamic reordering; skip heavy static heuristic ordering.
             std::cout << "[CUDD] Enabling adaptive dynamic reordering (skip static ordering)" << std::endl;
-            if (fcProfile) {
+            if (profileTime) {
                 auto reorderStart = steady_clock::now();
                 adaptiveReorder(manager.get());
                 reorderMs = toMs(steady_clock::now() - reorderStart);

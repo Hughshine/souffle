@@ -107,14 +107,24 @@
 
 ### Profiling toggles
 - `--dred-profile`: detailed DRed profiling (requires compile-time profiling).
-- `--inc-profile`: incremental stage profiling.
-- `--fc-profile`: forward compilation profiling.
-- `--profile-inc-delete`: incremental delete profiling.
-- `--profile-wmc`: weighted model counting profiling.
-- `--profile-inc-regional`: inc-regional diagnostics.
-- `--profile-inc-regional-heavy`: heavy inc-regional diagnostics.
+- `--inc-profile`: incremental stage totals (SEM/PRN/FC/WMC and per-turn totals).
+- `--fc-profile`: forward compilation sub-phase profiling (preConfig, loops, reorders, etc).
+- `--profile-inc-delete`: delete-phase breakdown (inc only).
+- `--profile-wmc`: weighted model counting sub-phase profiling.
+- `--profile-inc-regional`: inc-regional diagnostics (analyze/plan/rebuild/calibrate + region stats).
+- `--profile-inc-regional-heavy`: heavy inc-regional diagnostics (very large output).
 - `--inc-regional-trace-tuples=<LIST>`: comma-separated tuples to trace.
 - `--profile-dep-graph`: dependency-graph profiling.
+
+### Profiling organization (recommended)
+- **Layered flags**: use `--inc-profile` for stage totals, then add `--fc-profile`
+  and/or `--profile-wmc` for deep breakdowns.
+- **Same flags for full + inc**: FC/WMC profiling applies to both modes; identify
+  full vs inc by the CLI log context and stage labels (no separate full-only flags).
+- **Incremental-specific add-ons**: `--profile-inc-delete` and `--profile-inc-regional`
+  are optional extras; avoid `--profile-inc-regional-heavy` unless debugging.
+- **Performance overhead**: hit/miss counters and fine-grained timing are guarded
+  by profiling flags to avoid extra cost when profiling is off.
 
 ### Benchmarking quick set (side_channel_inc.py)
 - Always include `--det-opt` for incremental benchmarks (required for current analyses).
