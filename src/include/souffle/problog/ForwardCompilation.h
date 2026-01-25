@@ -1723,12 +1723,32 @@ void buildFormulasIncCyclewise(
     std::string depGraphScope = "full";
     size_t depGraphReachNodes = 0;
     size_t depGraphReachEdges = 0;
-    auto start = high_resolution_clock::now();
-    auto depStart = Clock::now();
     const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
     const auto& deltaDeletedEdges = view.getDeltaDeleteEdges();
     const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
     const auto& deltaDeletedNodes = view.getDeltaDeleteNodes();
+    debugger.logMessage(Level::INFO, "[inc-naive] delta counts: insNodes=" +
+        std::to_string(deltaInsertedNodes.size()) + " insEdges=" +
+        std::to_string(deltaInsertedEdges.size()) + " delNodes=" +
+        std::to_string(deltaDeletedNodes.size()) + " delEdges=" +
+        std::to_string(deltaDeletedEdges.size()));
+    if (deltaInsertedEdges.empty() && deltaInsertedNodes.empty() &&
+            deltaDeletedEdges.empty() && deltaDeletedNodes.empty()) {
+        debugger.logMessage(Level::INFO, "No changes to apply, skipping incremental update");
+        formulaManager.dumpProfilingStatistics();
+        for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
+            debugger.addInfo(key, value);
+        }
+        if (incProfile) {
+            const double totalMs = toMs(totalStart, Clock::now());
+            std::cout << "[inc-profile] stage=FORWARD_COMPILATION_INC total_ms=" << totalMs
+                      << " note=no_delta"
+                      << std::endl;
+        }
+        return;
+    }
+    auto start = high_resolution_clock::now();
+    auto depStart = Clock::now();
     const bool insertOnly = deltaDeletedEdges.empty() && deltaDeletedNodes.empty();
     std::unique_ptr<LocalDepGraph> localDepGraph;
     CycleDependencyGraph* depGraphPtr = nullptr;
@@ -1769,28 +1789,9 @@ void buildFormulasIncCyclewise(
     if (incProfile) {
         depGraphMs = toMs(depStart, Clock::now());
     }
-    debugger.logMessage(Level::INFO, "[inc-naive] delta counts: insNodes=" +
-        std::to_string(deltaInsertedNodes.size()) + " insEdges=" +
-        std::to_string(deltaInsertedEdges.size()) + " delNodes=" +
-        std::to_string(deltaDeletedNodes.size()) + " delEdges=" +
-        std::to_string(deltaDeletedEdges.size()));
     auto end = high_resolution_clock::now();
     debugger.logMessage(Level::INFO, "Finished building dependency graph and preparation. Time: " +
         std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-    if (deltaInsertedEdges.empty() && deltaDeletedEdges.empty()) {
-        debugger.logMessage(Level::INFO, "No changes to apply, skipping incremental update");
-        formulaManager.dumpProfilingStatistics();
-        for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
-            debugger.addInfo(key, value);
-        }
-        if (incProfile) {
-            const double totalMs = toMs(totalStart, Clock::now());
-            std::cout << "[inc-profile] stage=FORWARD_COMPILATION_INC total_ms=" << totalMs
-                      << " note=no_delta"
-                      << std::endl;
-        }
-        return;
-    }
     const bool useConst = DerivationGraph::isConstFoldEnabled();
     const bool dumpConst = DerivationGraph::isConstDumpEnabled();
     ConstAnalysisResult constInfo;

@@ -90,6 +90,51 @@ Top analyze components (ms; most expensive per case):
 - P19: reexpand 473–752, prepare 85–136, expand 10–272
 - P20: prepare 114–128 dominates inc1; reexpand 168–179 dominates inc3/inc5
 
+## Inc-analyzer profiling + optimizations (2026-01-24)
+Dataset: `problog-benchmark/side_channel_inc_strengthen_fresh`.
+Runs used: `side_channel_inc.py run --cases 15/18 --delta-labels inc3 --compare-all`
+with `--det-opt --inc-profile --profile-inc-regional`.
+
+### Changes applied (analyzer-only)
+- Build `incoming_edges_map_`/`outgoing_edges_map_` from **delta‑reachable edges**
+  when the DR edge cache is present, instead of scanning the full graph.
+- **Lazy preds/succs**: stop precomputing `preds_`/`succs_`; compute from the edge
+  maps on demand.
+- **Boundary classification**: derive boundary heads via outgoing edges of the
+  current region (avoid full‑edge scans).
+- **Cache delta‑edge outputs + delta LP union** across reclassifications.
+- Skip scope work for delta nodes **outside reachability** or with `<2` outgoing
+  edges (cannot be least‑parent sources).
+- **Anchor candidate cache** for non‑profile runs to avoid re‑scanning incoming
+  edges across expand iterations (profile path keeps detailed logging).
+
+### Findings (inc3)
+P15:
+- `inc_analyze total` ≈ **35 ms** (prepare ≈ 20.7 ms, reexpand ≈ 9.5 ms).
+- `inc_regional_timing.analyze` ≈ **67 ms**.
+- Final `region/dr` ≈ **0.711** (region 695 / dr 978).
+
+P18:
+- `inc_analyze total` ≈ **192 ms** (prepare ≈ 60.8 ms, reexpand ≈ 110 ms, 7 iters).
+- `inc_regional_timing.analyze` ≈ **359 ms**.
+- Final `region/dr` ≈ **0.996** (region 3002 / dr 3013).
+
+### Interpretation
+- For large cases (P18), **reexpand dominates** analyzer time and coincides with
+  region≈DR, so analyzer improvements alone are unlikely to make inc‑regional
+  much faster than inc‑naive unless region growth is controlled.
+- For medium cases (P15), analyzer time dropped modestly; the remaining hot
+  spot is still **prepare** (graph structure setup).
+
+### Next candidates (not implemented)
+- **Incremental boundary maintenance**: update boundaries only for newly added
+  region nodes during expansion rather than recomputing from scratch.
+- **Cheaper reexpand stop**: early exit if blocking set is stable and no scope
+  adds any new DR nodes in two consecutive iterations.
+- **Heuristic scope gating**: cap scope expansion depth for nodes with small
+  scope or no disj‑merge in the reachable subgraph (side‑channel graphs appear
+  DAG‑heavy with sparse true merge points).
+
 ## Boundary / Anchor observations (stdout trace)
 Data source: `problog-benchmark/side_channel_inc_strengthen_fresh/P15/
 stdout_inc_regional_region_trace12.txt` (mtime 2026-01-20 01:41:26 local).
@@ -153,15 +198,23 @@ Implementation notes (current):
   nodes) starting from boundary heads.
 - For each node, record the first boundary that reaches it; if another boundary
   reaches the same node, mark it as **multi‑boundary** (overlap).
-- Add overlap nodes to the region, then **forward‑expand** from all multi‑boundary
-  nodes within DR (pulls in downstream effects so region formulas are consistent).
-- After expansion, rerun input‑closure + SCC‑closure, recompute boundaries/anchors,
-  and retry plan building.
+- For each multi‑boundary node, add its **least‑parent scope** (nodes + edges)
+  to the region (filtered by delta‑reachable). **No forward‑expand**.
+- Multi‑boundary nodes with **empty scope** are treated as trivial (ignored);
+  they are counted separately in logs (`multi_nodes_trivial`).
+- After overlap closure, rerun input‑closure + SCC‑closure, recompute
+  boundaries/anchors, and retry plan building.
 
-Forward‑expand definition:
-- For each multi‑boundary node, follow outgoing edges within DR and include all
-  reachable nodes/edges in the region. This is intentionally conservative and can
-  push region close to full DR.
+Forward‑expand status:
+- Forward‑expand from multi‑boundary nodes has been removed in favor of the
+  **scope‑only** overlap closure (smaller regions, avoids over‑conservative
+  expansion).
+
+Diagnostics:
+- Overlap diagnostics now log `multi_nodes`, `multi_nodes_trivial`,
+  `multi_nodes_total`.
+- Dot dumps (`--dumpdot`) mark non‑trivial multi‑boundary nodes with 3
+  peripheries + bold style.
 
 Loop structure (single monotone fixpoint):
 1) (If region changed) input‑closure + SCC‑closure; recompute boundaries/anchors.

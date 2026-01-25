@@ -39,6 +39,8 @@ doc
 
 # local problog benchmark clone
 /problog-benchmark/
+# local side-channel experiment workspace
+/side_channel_inc/
 
 # local plotting cache
 **/.mplconfig/

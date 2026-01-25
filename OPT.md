@@ -70,6 +70,14 @@ python3 problog-benchmark/side_channel_inc.py \
 - If `deltaReachable` is empty (reachNodes=0), no `inc_regional_final` line is
   emitted; treat ratio as 0 for those cases.
 
+### inc-regional overlap multi-node counts (default output)
+- `[inc-regional] overlap multi_nodes=...` is printed during overlap preplan.
+- Parsed into each delta JSON at:
+  - field: `inc_regional.stdout_stats.inc_regional_overlap`
+  - keys: `multi_nodes` (non-empty scope), `multi_nodes_trivial` (scope empty),
+    `multi_nodes_total`.
+- Dot dumps (`--dumpdot`) mark `multi_nodes` with 3 peripheries + bold style.
+
 ## FC (insert profiling alignment, 2026-01-24)
 
 Recent updates:
@@ -121,6 +129,25 @@ for r in rows:
     print(f"{r[0]}\t{r[1]}\t{r[2]}\t{r[3]}\t{r[4]}\t{r[5]}")
 PY
 ```
+
+## Inc-analyzer notes (2026-01-24)
+
+Quick read of inc-analyzer timings after recent analyzer optimizations
+(delta-reachable adjacency, lazy preds/succs, cached delta-LP union):
+
+- **P15 inc3** (with `--det-opt --inc-profile --profile-inc-regional`)
+  - `inc_analyze total` ≈ **35 ms** (was ~40 ms earlier in the session).
+  - `prepare` ≈ **20.7 ms** (was ~24–25 ms).
+  - `inc_regional_timing.analyze` ≈ **67 ms** (was ~72 ms).
+  - Interpretation: analyzer improved modestly; prepare is still the dominant
+    subcost. Overall analyze time still non-trivial vs rebuild.
+
+- **P18 inc3**
+  - `inc_analyze total` ≈ **192 ms**.
+  - Dominant cost: **reexpand ~110 ms** across 7 iterations (last iter ~57 ms).
+  - Final `region/dr` ≈ **0.996** (region 3002 / dr 3013) → region ~ DR.
+  - Interpretation: analyzer cost is dominated by repeated reexpand; when region
+    ~ DR, the analyzer overhead cannot shrink much without reducing region size.
 
 ## Experiment: 2026-01-23 (fresh dataset, compare-all, --det-opt)
 
@@ -1162,3 +1189,17 @@ P20	inc5	0.004136	0.006995	0.024273
 - **Current summary:** WMC is now consistently faster than full in large cases. The inc-naive vs inc-regional gap is small and
   likely due to regional bookkeeping and weight-mode toggling; it does not materially change overall speedup.
   A more formal cache validation can be done later if needed.
+
+## Experiment: 2026-01-24 (P16–P20, no-profile, --det-opt)
+
+Data source: local `delta-*.json.noprofile` (not committed).
+
+Highlights:
+- **Correctness:** all deltas OK except **P17 inc5-1 mismatch** (15 mismatches, max|Δ|=1.12e-03, iter2).
+- **Region ratios (final)** are high for larger cases:
+  - P16 inc5: 2849/3015 (0.945)
+  - P18 inc3: 2928/3013 (0.972)
+  - P19 inc5: 7107/7225 (0.984)
+  - P20 inc3: 672/697 (0.964)
+- **Insert FC times (no-profile)** are usually close between inc-naive and inc-regional when ratio≈1,
+  and show larger speedups only when ratio is much smaller (e.g., P16 inc3: 0.608 ratio).
