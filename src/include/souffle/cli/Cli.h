@@ -3,6 +3,7 @@
 #include <chrono>
 #include <ctime>
 #include <array>
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -12,6 +13,7 @@
 #include <fstream>
 #include <unordered_map>
 #include <unordered_set>
+#include <queue>
 #include <stdexcept>
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -212,16 +214,18 @@ private:
                   << " delNodes=" << formatRatio(delNodes, totalNodes)
                   << " delEdges=" << formatRatio(delEdges, totalEdges)
                   << std::endl;
-        if (modeLabel == "INC_REGIONAL") {
-            const size_t reachNodes = view.getDeltaInsertReachableNodes().size();
-            const size_t reachEdges = view.getDeltaInsertReachableEdges().size();
-            std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel
-                      << " deltaReach_ratio: insNodes=" << formatRatio(insNodes, reachNodes)
-                      << " insEdges=" << formatRatio(insEdges, reachEdges)
-                      << " reachNodes=" << reachNodes
-                      << " reachEdges=" << reachEdges
-                      << std::endl;
-        }
+        // NOTE: Temporarily disabled because deltaInsertReachableNodes/Edges are not populated yet.
+        // Re-enable once reachability is computed during pruning or elsewhere.
+        // if (modeLabel == "INC_REGIONAL") {
+        //     const size_t reachNodes = view.getDeltaInsertReachableNodes().size();
+        //     const size_t reachEdges = view.getDeltaInsertReachableEdges().size();
+        //     std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel
+        //               << " deltaReach_ratio: insNodes=" << formatRatio(insNodes, reachNodes)
+        //               << " insEdges=" << formatRatio(insEdges, reachEdges)
+        //               << " reachNodes=" << reachNodes
+        //               << " reachEdges=" << reachEdges
+        //               << std::endl;
+        // }
     }
 
     // Parse a tuple with potential probability
@@ -805,6 +809,59 @@ public:
         DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();
         DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();
         static size_t commitCount = 0;
+        struct WeightRestore {
+            DDManager<NodeRef>* mgr = nullptr;
+            const std::unordered_map<int, std::pair<double, double>>* base = nullptr;
+            struct SavedWeight {
+                int varIdx = -1;
+                double pos = 0.0;
+                double neg = 0.0;
+            };
+            std::vector<SavedWeight> saved;
+            WeightRestore(DDManager<NodeRef>* manager,
+                          const std::unordered_map<int, std::pair<double, double>>* baseWeights)
+                    : mgr(manager), base(baseWeights) {}
+            void apply(const std::vector<int>& vars) {
+                if (!mgr || !base) {
+                    return;
+                }
+                for (int varIdx : vars) {
+                    auto it = base->find(varIdx);
+                    if (it == base->end()) {
+                        continue;
+                    }
+                    auto cur = mgr->getVariableWeight(varIdx);
+                    if (cur.posWeight == it->second.first && cur.negWeight == it->second.second) {
+                        continue;
+                    }
+                    saved.push_back(SavedWeight{varIdx, cur.posWeight, cur.negWeight});
+                    mgr->setVariableWeight(varIdx, it->second.first, it->second.second);
+                }
+            }
+            ~WeightRestore() {
+                if (!mgr) {
+                    return;
+                }
+                for (const auto& entry : saved) {
+                    mgr->setVariableWeight(entry.varIdx, entry.pos, entry.neg);
+                }
+            }
+        };
+        auto upstreamKey = [](const std::vector<int>& vars) -> std::string {
+            if (vars.empty()) {
+                return {};
+            }
+            std::ostringstream oss;
+            for (size_t i = 0; i < vars.size(); ++i) {
+                if (i) {
+                    oss << ",";
+                }
+                oss << vars[i];
+            }
+            return oss.str();
+        };
+        std::unordered_map<size_t, std::unordered_map<std::string, double>> evidenceWeightOverrideCache;
+        evidenceWeightOverrideCache.clear();
         // TODO: should clean all delta relations after each commit
         if (isGround) {
             if ((incMode == IncMode::INC_NAIVE || incMode == IncMode::INC_REGIONAL) &&
@@ -985,7 +1042,6 @@ public:
                         ms += toMs(wmcStart);
                         return res;
                     };
-
                     if (depGraphPtr) {
                         auto evidenceBuildStart = Clock::now();
                         for (size_t cid = 0; cid < componentCount; ++cid) {
@@ -1077,6 +1133,37 @@ public:
                                 " weight_mode=" + weightMode +
                                 " override_count=" + std::to_string(incRegionalOutputProfile.overrideCount));
                     };
+                    auto logUpstreamRestore = [&](const NodePtr& node, const std::vector<int>& vars,
+                                                  const char* reason) {
+                        if (!regionalOutputProfile || (!incRegionalProfileEnabled && !incRegionalProfileHeavyEnabled) ||
+                                !node || vars.empty()) {
+                            return;
+                        }
+                        debugger.logMessage(
+                            Level::INFO,
+                            std::string("[inc-regional-upstream-restore] node=") +
+                                node->getTuple().toString() +
+                                " vars=" + std::to_string(vars.size()) +
+                                " reason=" + reason);
+                    };
+                    auto applyBoundaryTarget = [&](const NodePtr& node, bool useOriginalWeights,
+                                                   bool hasEvidence) -> bool {
+                        if (!regionalOutputProfile || !useOriginalWeights || hasEvidence || !node) {
+                            return false;
+                        }
+                        auto it = incRegionalOutputProfile.boundaryOutputTargets.find(node);
+                        if (it == incRegionalOutputProfile.boundaryOutputTargets.end()) {
+                            return false;
+                        }
+                        auto writeStart = Clock::now();
+                        probResult[node] = it->second;
+                        if (wmcProfile) {
+                            probWriteMs += toMs(writeStart);
+                        }
+                        nodeReuse++;
+                        logOutputDecision(node, "reuse_precomputed", "boundary_target", useOriginalWeights);
+                        return true;
+                    };
                     bool weightsCalibrated = true;
                     auto ensureWeights = [&](bool wantCalibrated) {
                         if (!hasOverrideWeights) {
@@ -1091,6 +1178,72 @@ public:
                         applyWeights(wantCalibrated ? incRegionalOutputProfile.overrideWeights
                                                     : incRegionalOutputProfile.originalWeights);
                         weightsCalibrated = wantCalibrated;
+                    };
+                    const bool hasUpstreamRestore =
+                            hasOverrideWeights && regionalOutputProfile &&
+                            !incRegionalOutputProfile.boundaryUpstreamAnchorVars.empty();
+                    std::unordered_map<NodePtr, std::vector<int>> upstreamCache;
+                    auto inDrNode = [&](const NodePtr& n) {
+                        return incRegionalOutputProfile.deltaReachableNodes.empty() ||
+                               incRegionalOutputProfile.deltaReachableNodes.count(n);
+                    };
+                    auto inDrEdge = [&](const EdgePtr& e) {
+                        return incRegionalOutputProfile.deltaReachableEdges.empty() ||
+                               incRegionalOutputProfile.deltaReachableEdges.count(e);
+                    };
+                    auto collectUpstreamVars = [&](const NodePtr& node) -> const std::vector<int>& {
+                        static const std::vector<int> empty;
+                        if (!hasUpstreamRestore || !node) {
+                            return empty;
+                        }
+                        auto it = upstreamCache.find(node);
+                        if (it != upstreamCache.end()) {
+                            return it->second;
+                        }
+                        if (!inDrNode(node)) {
+                            upstreamCache.emplace(node, std::vector<int>{});
+                            return upstreamCache[node];
+                        }
+                        std::unordered_set<NodePtr> visited;
+                        std::unordered_set<NodePtr> boundaryHits;
+                        std::queue<NodePtr> q;
+                        visited.insert(node);
+                        q.push(node);
+                        while (!q.empty()) {
+                            NodePtr cur = q.front();
+                            q.pop();
+                            if (incRegionalOutputProfile.boundaryNodes.count(cur)) {
+                                boundaryHits.insert(cur);
+                            }
+                            for (const auto& e : view.getIncomingEdges(cur)) {
+                                if (!inDrEdge(e)) {
+                                    continue;
+                                }
+                                const auto& ins = view.getInputs(e);
+                                for (const auto& in : ins) {
+                                    if (!inDrNode(in)) {
+                                        continue;
+                                    }
+                                    if (visited.insert(in).second) {
+                                        q.push(in);
+                                    }
+                                }
+                            }
+                        }
+                        std::unordered_set<int> vars;
+                        for (const auto& b : boundaryHits) {
+                            auto itB = incRegionalOutputProfile.boundaryUpstreamAnchorVars.find(b);
+                            if (itB == incRegionalOutputProfile.boundaryUpstreamAnchorVars.end()) {
+                                continue;
+                            }
+                            for (int varIdx : itB->second) {
+                                vars.insert(varIdx);
+                            }
+                        }
+                        std::vector<int> varList(vars.begin(), vars.end());
+                        std::sort(varList.begin(), varList.end());
+                        upstreamCache.emplace(node, std::move(varList));
+                        return upstreamCache[node];
                     };
                     if (!deletedOutputNodes.empty()) {
                         for (const auto& node : deletedOutputNodes) {
@@ -1159,6 +1312,12 @@ public:
                             if (wmcProfile) {
                                 outputClassifyMs += toMs(classifyStart);
                             }
+                            if (applyBoundaryTarget(node, useOriginalWeights, !evidenceNodes.empty())) {
+                                return;
+                            }
+                            if (applyBoundaryTarget(node, useOriginalWeights, !evidenceNodes.empty())) {
+                                return;
+                            }
 
                             bool isChanged = false;
                             auto changedStart = Clock::now();
@@ -1170,6 +1329,12 @@ public:
                             }
                             if (regionalTouched || isChanged) {
                                 ensureWeights(!useOriginalWeights);
+                                WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                const auto& upstreamVars = collectUpstreamVars(node);
+                                if (!useOriginalWeights && !upstreamVars.empty()) {
+                                    logUpstreamRestore(node, upstreamVars, "node_wmc");
+                                    restore.apply(upstreamVars);
+                                }
                                 auto value = computeWmcProfile((*nodeFormulas)[node],
                                                                nodeWmcComputeMs, nodeWmcCalls);
                                 auto writeStart = Clock::now();
@@ -1227,11 +1392,33 @@ public:
                             if (wmcProfile) {
                                 outputClassifyMs += toMs(classifyStart);
                             }
+                            if (applyBoundaryTarget(node, useOriginalWeights, componentHasEvidence[cid])) {
+                                return;
+                            }
+                            if (applyBoundaryTarget(node, useOriginalWeights, componentHasEvidence[cid])) {
+                                return;
+                            }
+                            const auto& upstreamVars = collectUpstreamVars(node);
                             auto evidenceWeightFor = [&](size_t compId) {
                                 if (useOriginalWeights && !componentEvidenceWeightOriginal.empty()) {
                                     return componentEvidenceWeightOriginal[compId];
                                 }
-                                return componentEvidenceWeight[compId];
+                                if (upstreamVars.empty()) {
+                                    return componentEvidenceWeight[compId];
+                                }
+                                auto key = upstreamKey(upstreamVars);
+                                auto& cache = evidenceWeightOverrideCache[compId];
+                                auto it = cache.find(key);
+                                if (it != cache.end()) {
+                                    return it->second;
+                                }
+                                WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                logUpstreamRestore(node, upstreamVars, "evidence_wmc");
+                                restore.apply(upstreamVars);
+                                double w = computeWmcProfile(componentEvidence[compId],
+                                                             evidenceWmcComputeMs, evidenceWmcCalls);
+                                cache.emplace(std::move(key), w);
+                                return w;
                             };
 
                             if (!componentHasEvidence[cid]) {
@@ -1245,6 +1432,12 @@ public:
                                 }
                                 if (regionalTouched || isChanged) {
                                     ensureWeights(!useOriginalWeights);
+                                    WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                    const auto& upstreamVars = collectUpstreamVars(node);
+                                    if (!useOriginalWeights && !upstreamVars.empty()) {
+                                        logUpstreamRestore(node, upstreamVars, "node_wmc");
+                                        restore.apply(upstreamVars);
+                                    }
                                     auto value = computeWmcProfile((*nodeFormulas)[node],
                                                                    nodeWmcComputeMs, nodeWmcCalls);
                                     auto writeStart = Clock::now();
@@ -1272,6 +1465,11 @@ public:
                                         logOutputDecision(node, "reuse_old_prob", "no_evidence_no_change",
                                                           useOriginalWeights);
                                     } else {
+                                        WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                        if (!useOriginalWeights && !upstreamVars.empty()) {
+                                            logUpstreamRestore(node, upstreamVars, "node_wmc");
+                                            restore.apply(upstreamVars);
+                                        }
                                         auto value =
                                                 computeWmcProfile((*nodeFormulas)[node],
                                                                   nodeWmcComputeMs, nodeWmcCalls);
@@ -1308,6 +1506,11 @@ public:
                             }
                             if (regionalTouched || isChanged || evidenceChanged) {
                                 ensureWeights(!useOriginalWeights);
+                                WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                if (!useOriginalWeights && !upstreamVars.empty()) {
+                                    logUpstreamRestore(node, upstreamVars, "node_wmc");
+                                    restore.apply(upstreamVars);
+                                }
                                 auto joint = makeAndProfile((*nodeFormulas)[node], componentEvidence[cid],
                                                             nodeMakeAndMs, nodeMakeAndCalls);
                                 double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
@@ -1337,11 +1540,16 @@ public:
                                 logOutputDecision(node, "reuse_old_prob", "evidence_unchanged_no_change",
                                                   useOriginalWeights);
                             } else {
+                                WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                if (!useOriginalWeights && !upstreamVars.empty()) {
+                                    logUpstreamRestore(node, upstreamVars, "node_wmc");
+                                    restore.apply(upstreamVars);
+                                }
                                 auto joint = makeAndProfile((*nodeFormulas)[node], componentEvidence[cid],
                                                             nodeMakeAndMs, nodeMakeAndCalls);
                                 double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
                                 auto writeStart = Clock::now();
-                                probResult[node] = jointW / componentEvidenceWeight[cid];
+                                probResult[node] = jointW / evidenceWeightFor(cid);
                                 if (wmcProfile) {
                                     probWriteMs += toMs(writeStart);
                                 }
@@ -2043,6 +2251,37 @@ public:
                                 " weight_mode=" + weightMode +
                                 " override_count=" + std::to_string(incRegionalOutputProfile.overrideCount));
                     };
+                    auto logUpstreamRestore = [&](const NodePtr& node, const std::vector<int>& vars,
+                                                  const char* reason) {
+                        if (!regionalOutputProfile || (!incRegionalProfileEnabled && !incRegionalProfileHeavyEnabled) ||
+                                !node || vars.empty()) {
+                            return;
+                        }
+                        debugger.logMessage(
+                            Level::INFO,
+                            std::string("[inc-regional-upstream-restore] node=") +
+                                node->getTuple().toString() +
+                                " vars=" + std::to_string(vars.size()) +
+                                " reason=" + reason);
+                    };
+                    auto applyBoundaryTarget = [&](const NodePtr& node, bool useOriginalWeights,
+                                                   bool hasEvidence) -> bool {
+                        if (!regionalOutputProfile || !useOriginalWeights || hasEvidence || !node) {
+                            return false;
+                        }
+                        auto it = incRegionalOutputProfile.boundaryOutputTargets.find(node);
+                        if (it == incRegionalOutputProfile.boundaryOutputTargets.end()) {
+                            return false;
+                        }
+                        auto writeStart = Clock::now();
+                        probResult[node] = it->second;
+                        if (wmcProfile) {
+                            probWriteMs += toMs(writeStart);
+                        }
+                        nodeReuse++;
+                        logOutputDecision(node, "reuse_precomputed", "boundary_target", useOriginalWeights);
+                        return true;
+                    };
                     bool weightsCalibrated = true;
                     auto ensureWeights = [&](bool wantCalibrated) {
                         if (!hasOverrideWeights) {
@@ -2057,6 +2296,72 @@ public:
                         applyWeights(wantCalibrated ? incRegionalOutputProfile.overrideWeights
                                                     : incRegionalOutputProfile.originalWeights);
                         weightsCalibrated = wantCalibrated;
+                    };
+                    const bool hasUpstreamRestore =
+                            hasOverrideWeights && regionalOutputProfile &&
+                            !incRegionalOutputProfile.boundaryUpstreamAnchorVars.empty();
+                    std::unordered_map<NodePtr, std::vector<int>> upstreamCache;
+                    auto inDrNode = [&](const NodePtr& n) {
+                        return incRegionalOutputProfile.deltaReachableNodes.empty() ||
+                               incRegionalOutputProfile.deltaReachableNodes.count(n);
+                    };
+                    auto inDrEdge = [&](const EdgePtr& e) {
+                        return incRegionalOutputProfile.deltaReachableEdges.empty() ||
+                               incRegionalOutputProfile.deltaReachableEdges.count(e);
+                    };
+                    auto collectUpstreamVars = [&](const NodePtr& node) -> const std::vector<int>& {
+                        static const std::vector<int> empty;
+                        if (!hasUpstreamRestore || !node) {
+                            return empty;
+                        }
+                        auto it = upstreamCache.find(node);
+                        if (it != upstreamCache.end()) {
+                            return it->second;
+                        }
+                        if (!inDrNode(node)) {
+                            upstreamCache.emplace(node, std::vector<int>{});
+                            return upstreamCache[node];
+                        }
+                        std::unordered_set<NodePtr> visited;
+                        std::unordered_set<NodePtr> boundaryHits;
+                        std::queue<NodePtr> q;
+                        visited.insert(node);
+                        q.push(node);
+                        while (!q.empty()) {
+                            NodePtr cur = q.front();
+                            q.pop();
+                            if (incRegionalOutputProfile.boundaryNodes.count(cur)) {
+                                boundaryHits.insert(cur);
+                            }
+                            for (const auto& e : view.getIncomingEdges(cur)) {
+                                if (!inDrEdge(e)) {
+                                    continue;
+                                }
+                                const auto& ins = view.getInputs(e);
+                                for (const auto& in : ins) {
+                                    if (!inDrNode(in)) {
+                                        continue;
+                                    }
+                                    if (visited.insert(in).second) {
+                                        q.push(in);
+                                    }
+                                }
+                            }
+                        }
+                        std::unordered_set<int> vars;
+                        for (const auto& b : boundaryHits) {
+                            auto itB = incRegionalOutputProfile.boundaryUpstreamAnchorVars.find(b);
+                            if (itB == incRegionalOutputProfile.boundaryUpstreamAnchorVars.end()) {
+                                continue;
+                            }
+                            for (int varIdx : itB->second) {
+                                vars.insert(varIdx);
+                            }
+                        }
+                        std::vector<int> varList(vars.begin(), vars.end());
+                        std::sort(varList.begin(), varList.end());
+                        upstreamCache.emplace(node, std::move(varList));
+                        return upstreamCache[node];
                     };
                     if (!deletedOutputNodes.empty()) {
                         for (const auto& node : deletedOutputNodes) {
@@ -2136,6 +2441,12 @@ public:
                             }
                             if (regionalTouched || isChanged) {
                                 ensureWeights(!useOriginalWeights);
+                                WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                const auto& upstreamVars = collectUpstreamVars(node);
+                                if (!useOriginalWeights && !upstreamVars.empty()) {
+                                    logUpstreamRestore(node, upstreamVars, "node_wmc");
+                                    restore.apply(upstreamVars);
+                                }
                                 auto value = computeWmcProfile((*nodeFormulas)[node],
                                                                nodeWmcComputeMs, nodeWmcCalls);
                                 auto writeStart = Clock::now();
@@ -2163,6 +2474,12 @@ public:
                                     logOutputDecision(node, "reuse_old_prob", "no_evidence_no_change",
                                                       useOriginalWeights);
                                 } else {
+                                    WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                    const auto& upstreamVars = collectUpstreamVars(node);
+                                    if (!useOriginalWeights && !upstreamVars.empty()) {
+                                        logUpstreamRestore(node, upstreamVars, "node_wmc");
+                                        restore.apply(upstreamVars);
+                                    }
                                     auto value = computeWmcProfile((*nodeFormulas)[node],
                                                                    nodeWmcComputeMs, nodeWmcCalls);
                                     auto writeStart = Clock::now();
@@ -2193,11 +2510,27 @@ public:
                             if (wmcProfile) {
                                 outputClassifyMs += toMs(classifyStart);
                             }
+                            const auto& upstreamVars = collectUpstreamVars(node);
                             auto evidenceWeightFor = [&](size_t compId) {
                                 if (useOriginalWeights && !componentEvidenceWeightOriginal.empty()) {
                                     return componentEvidenceWeightOriginal[compId];
                                 }
-                                return componentEvidenceWeight[compId];
+                                if (upstreamVars.empty()) {
+                                    return componentEvidenceWeight[compId];
+                                }
+                                auto key = upstreamKey(upstreamVars);
+                                auto& cache = evidenceWeightOverrideCache[compId];
+                                auto it = cache.find(key);
+                                if (it != cache.end()) {
+                                    return it->second;
+                                }
+                                WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                logUpstreamRestore(node, upstreamVars, "evidence_wmc");
+                                restore.apply(upstreamVars);
+                                double w = computeWmcProfile(componentEvidence[compId],
+                                                             evidenceWmcComputeMs, evidenceWmcCalls);
+                                cache.emplace(std::move(key), w);
+                                return w;
                             };
 
                             if (!componentHasEvidence[cid]) {
@@ -2211,6 +2544,11 @@ public:
                                 }
                                 if (regionalTouched || isChanged) {
                                     ensureWeights(!useOriginalWeights);
+                                    WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                    if (!useOriginalWeights && !upstreamVars.empty()) {
+                                        logUpstreamRestore(node, upstreamVars, "node_wmc");
+                                        restore.apply(upstreamVars);
+                                    }
                                     auto value = computeWmcProfile((*nodeFormulas)[node],
                                                                    nodeWmcComputeMs, nodeWmcCalls);
                                     auto writeStart = Clock::now();
@@ -2238,6 +2576,11 @@ public:
                                         logOutputDecision(node, "reuse_old_prob", "no_evidence_no_change",
                                                           useOriginalWeights);
                                     } else {
+                                        WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                        if (!useOriginalWeights && !upstreamVars.empty()) {
+                                            logUpstreamRestore(node, upstreamVars, "node_wmc");
+                                            restore.apply(upstreamVars);
+                                        }
                                         auto value =
                                                 computeWmcProfile((*nodeFormulas)[node],
                                                                   nodeWmcComputeMs, nodeWmcCalls);
@@ -2274,6 +2617,11 @@ public:
                             }
                             if (regionalTouched || isChanged || evidenceChanged) {
                                 ensureWeights(!useOriginalWeights);
+                                WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                if (!useOriginalWeights && !upstreamVars.empty()) {
+                                    logUpstreamRestore(node, upstreamVars, "node_wmc");
+                                    restore.apply(upstreamVars);
+                                }
                                 auto joint = makeAndProfile((*nodeFormulas)[node], componentEvidence[cid],
                                                             nodeMakeAndMs, nodeMakeAndCalls);
                                 double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
@@ -2303,11 +2651,16 @@ public:
                                 logOutputDecision(node, "reuse_old_prob", "evidence_unchanged_no_change",
                                                   useOriginalWeights);
                             } else {
+                                WeightRestore restore(ddManager, &incRegionalOutputProfile.originalWeights);
+                                if (!useOriginalWeights && !upstreamVars.empty()) {
+                                    logUpstreamRestore(node, upstreamVars, "node_wmc");
+                                    restore.apply(upstreamVars);
+                                }
                                 auto joint = makeAndProfile((*nodeFormulas)[node], componentEvidence[cid],
                                                             nodeMakeAndMs, nodeMakeAndCalls);
                                 double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
                                 auto writeStart = Clock::now();
-                                probResult[node] = jointW / componentEvidenceWeight[cid];
+                                probResult[node] = jointW / evidenceWeightFor(cid);
                                 if (wmcProfile) {
                                     probWriteMs += toMs(writeStart);
                                 }

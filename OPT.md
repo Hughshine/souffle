@@ -1203,3 +1203,6 @@ Highlights:
   - P20 inc3: 672/697 (0.964)
 - **Insert FC times (no-profile)** are usually close between inc-naive and inc-regional when ratio≈1,
   and show larger speedups only when ratio is much smaller (e.g., P16 inc3: 0.608 ratio).
+
+### Follow-up (2026-01-24)
+- **P17 inc5 mismatch**: observed in no-profile run (iter2); needs targeted debug.

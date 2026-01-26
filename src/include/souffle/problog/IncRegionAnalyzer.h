@@ -135,6 +135,26 @@ static inline const std::unordered_set<std::string>& incRegionalTraceTargets() {
     return targets;
 }
 
+static inline std::unordered_set<NodePtr>& incRegionalTraceBoundaryHits() {
+    static std::unordered_set<NodePtr> hits;
+    return hits;
+}
+
+static inline void incRegionalClearTraceBoundaryHits() {
+    incRegionalTraceBoundaryHits().clear();
+}
+
+static inline void incRegionalAddTraceBoundaryHit(const NodePtr& node) {
+    if (!node) return;
+    incRegionalTraceBoundaryHits().insert(node);
+}
+
+static inline bool incRegionalTraceBoundaryMatch(const NodePtr& node) {
+    if (!node) return false;
+    const auto& hits = incRegionalTraceBoundaryHits();
+    return !hits.empty() && hits.count(node);
+}
+
 static inline bool incRegionalTraceEnabled() {
     return !incRegionalTraceTargets().empty();
 }
@@ -162,6 +182,7 @@ public:
         resetDerivedCaches_();
         expandSnapshots_.clear();
         have_initial_snapshot_ = false;
+        incRegionalClearTraceBoundaryHits();
 
         last_delta_inputs_.clear();
         last_delta_inputs_.insert(delta_input_facts.begin(), delta_input_facts.end());
@@ -1199,6 +1220,63 @@ private:
             std::sort(boundary_vec.begin(), boundary_vec.end(),
                     [](const NodePtr& a, const NodePtr& b) { return node_id(a) < node_id(b); });
         }
+        if (incoming_edges_map_.empty() || outgoing_edges_map_.empty()) {
+            prepareGraphStructures_();
+        }
+        std::unordered_map<NodePtr, std::unordered_set<NodePtr>> incoming_closure_cache;
+        incoming_closure_cache.reserve(boundary_vec.size());
+        auto getIncomingClosure = [&](const NodePtr& head) -> const std::unordered_set<NodePtr>& {
+            static const std::unordered_set<NodePtr> kEmpty;
+            if (!head) return kEmpty;
+            auto it = incoming_closure_cache.find(head);
+            if (it != incoming_closure_cache.end()) return it->second;
+            std::unordered_set<NodePtr> closure;
+            if (!R.nodes.count(head)) {
+                return incoming_closure_cache.emplace(head, std::move(closure)).first->second;
+            }
+            std::vector<NodePtr> stack;
+            closure.insert(head);
+            stack.push_back(head);
+            while (!stack.empty()) {
+                auto cur = stack.back();
+                stack.pop_back();
+                const auto& inEdges = view_.getIncomingEdges(cur);
+                for (const auto& e : inEdges) {
+                    if (!e) continue;
+                    for (const auto& in : view_.getInputs(e)) {
+                        if (!in) continue;
+                        if (!R.nodes.count(in)) continue;
+                        if (closure.insert(in).second) {
+                            stack.push_back(in);
+                        }
+                    }
+                }
+            }
+            return incoming_closure_cache.emplace(head, std::move(closure)).first->second;
+        };
+        auto anchorBypassesBoundary = [&](const NodePtr& head, const AnchorCandidate& cand) -> bool {
+            NodePtr source;
+            if (cand.kind == IncRegionAnalysis::AnchorKind::Node) {
+                source = cand.node;
+            } else if (cand.edge) {
+                source = view_.getOutput(cand.edge);
+            }
+            if (!source) {
+                return true;
+            }
+            const auto& incomingClosure = getIncomingClosure(head);
+            if (incomingClosure.empty()) {
+                return true;
+            }
+            const auto& reachable = ensureReachable_(source);
+            for (const auto& n : reachable) {
+                if (!R.nodes.count(n)) continue;
+                if (!incomingClosure.count(n)) {
+                    return true;
+                }
+            }
+            return false;
+        };
         for (const auto& head : boundary_vec) {
             if (delta_insert_nodes_cache_.count(head)) {
                 if (incRegionalProfileEnabled) {
@@ -1215,6 +1293,11 @@ private:
                         if (R.edges.count(e)) {
                             logAnchorCheck_(head, std::string("edge:") + edge_id(e, view_), false,
                                 "edge_anchor_in_region");
+                            continue;
+                        }
+                        if (anchorBypassesBoundary(head, AnchorCandidate::fromEdge(e))) {
+                            logAnchorCheck_(head, std::string("edge:") + edge_id(e, view_), false,
+                                "anchor_bypass_incoming_closure");
                             continue;
                         }
                         logAnchorCheck_(head, std::string("edge:") + edge_id(e, view_), true, edgeStatus.second);
@@ -1245,6 +1328,11 @@ private:
                                     "input_node_delta_insert");
                                 continue;
                             }
+                            if (anchorBypassesBoundary(head, AnchorCandidate::fromNode(inNode))) {
+                                logAnchorCheck_(head, std::string("node:") + node_id(inNode), false,
+                                    "anchor_bypass_incoming_closure");
+                                continue;
+                            }
                             anchors[head].push_back(AnchorCandidate::fromNode(inNode));
                             logAnchorCheck_(head, std::string("node:") + node_id(inNode), true, "node_anchor_ok");
                             continue;
@@ -1273,6 +1361,11 @@ private:
                                     "input_edge_delta_insert");
                                 continue;
                             }
+                            if (anchorBypassesBoundary(head, AnchorCandidate::fromEdge(inEdge))) {
+                                logAnchorCheck_(head, std::string("edge:") + edge_id(inEdge, view_), false,
+                                    "anchor_bypass_incoming_closure");
+                                continue;
+                            }
                             anchors[head].push_back(AnchorCandidate::fromEdge(inEdge));
                             logAnchorCheck_(head, std::string("edge:") + edge_id(inEdge, view_), true,
                                 "edge_anchor_ok");
@@ -1286,9 +1379,15 @@ private:
                         if (R.nodes.count(cand.node)) {
                             continue;
                         }
+                        if (anchorBypassesBoundary(head, cand)) {
+                            continue;
+                        }
                         anchors[head].push_back(cand);
                     } else {
                         if (R.edges.count(cand.edge)) {
+                            continue;
+                        }
+                        if (anchorBypassesBoundary(head, cand)) {
                             continue;
                         }
                         anchors[head].push_back(cand);
@@ -1411,8 +1510,17 @@ private:
                 break;
             }
             std::vector<NodePtr> blocking;
+            std::unordered_map<NodePtr, std::unordered_set<NodePtr>> scopeOwnersByBoundary;
             for (auto& n : boundary_nodes) {
-                if (!mergeableHead_(n, R)) {
+                bool inScope = false;
+                if (n) {
+                    const auto& owners = getScopeOwnersForHead(n);
+                    if (!owners.empty()) {
+                        inScope = true;
+                        scopeOwnersByBoundary.emplace(n, owners);
+                    }
+                }
+                if (inScope || !mergeableHead_(n, R)) {
                     blocking.push_back(n);
                 }
             }
@@ -1447,27 +1555,56 @@ private:
             }
             bool extended = false;
             for (auto& n : blocking) {
-                ensureScope_(n);
                 bool scopeEmpty = true;
-                auto sit = node_scope_.find(n);
-                if (sit != node_scope_.end()) {
-                    if (!sit->second.empty()) {
-                        scopeEmpty = false;
-                    }
-                    for (auto& sn : sit->second) {
-                        if (reach_filter_.nodes.count(sn) && R.nodes.insert(sn).second) {
-                            extended = true;
+                auto ownersIt = scopeOwnersByBoundary.find(n);
+                if (ownersIt != scopeOwnersByBoundary.end()) {
+                    for (const auto& owner : ownersIt->second) {
+                        ensureScope_(owner);
+                        auto sit = node_scope_.find(owner);
+                        if (sit != node_scope_.end()) {
+                            if (!sit->second.empty()) {
+                                scopeEmpty = false;
+                            }
+                            for (auto& sn : sit->second) {
+                                if (reach_filter_.nodes.count(sn) && R.nodes.insert(sn).second) {
+                                    extended = true;
+                                }
+                            }
+                        }
+                        auto eit = edge_scope_by_source_.find(owner);
+                        if (eit != edge_scope_by_source_.end()) {
+                            if (!eit->second.empty()) {
+                                scopeEmpty = false;
+                            }
+                            for (auto& e : eit->second) {
+                                if (reach_filter_.edges.count(e) && R.edges.insert(e).second) {
+                                    extended = true;
+                                }
+                            }
                         }
                     }
-                }
-                auto eit = edge_scope_by_source_.find(n);
-                if (eit != edge_scope_by_source_.end()) {
-                    if (!eit->second.empty()) {
-                        scopeEmpty = false;
+                } else {
+                    ensureScope_(n);
+                    auto sit = node_scope_.find(n);
+                    if (sit != node_scope_.end()) {
+                        if (!sit->second.empty()) {
+                            scopeEmpty = false;
+                        }
+                        for (auto& sn : sit->second) {
+                            if (reach_filter_.nodes.count(sn) && R.nodes.insert(sn).second) {
+                                extended = true;
+                            }
+                        }
                     }
-                    for (auto& e : eit->second) {
-                        if (reach_filter_.edges.count(e) && R.edges.insert(e).second) {
-                            extended = true;
+                    auto eit = edge_scope_by_source_.find(n);
+                    if (eit != edge_scope_by_source_.end()) {
+                        if (!eit->second.empty()) {
+                            scopeEmpty = false;
+                        }
+                        for (auto& e : eit->second) {
+                            if (reach_filter_.edges.count(e) && R.edges.insert(e).second) {
+                                extended = true;
+                            }
                         }
                     }
                 }
@@ -1708,12 +1845,16 @@ private:
                         }
                     }
                 }
+                for (const auto& b : boundaryHits) {
+                    incRegionalAddTraceBoundaryHit(b);
+                }
                 std::cout << "[inc-regional-trace-closure] tuple=" << tuple
                           << " reached_boundary=" << (reachedBoundary ? 1 : 0)
                           << " reached_region=" << (reachedRegion ? 1 : 0)
                           << " boundary_hits=" << boundaryHits.size()
                           << " visited_nodes=" << visitedNodes.size()
                           << " visited_edges=" << visitedEdges.size();
+                std::vector<std::string> overlapDebugLines;
                 if (!boundaryHits.empty() && boundaryHits.size() <= 8) {
                     std::vector<NodePtr> sortedBoundaries(boundaryHits.begin(), boundaryHits.end());
                     std::sort(sortedBoundaries.begin(), sortedBoundaries.end(),
@@ -1753,23 +1894,48 @@ private:
                         }
                         bool overlapFound = false;
                         std::ostringstream overlapPairs;
+                        const size_t scope_sample_limit = 5;
+                        const size_t scope_check_limit = 64;
                         for (size_t i = 0; i < boundaryReach.size(); ++i) {
                             for (size_t j = i + 1; j < boundaryReach.size(); ++j) {
                                 bool overlap = false;
                                 const auto& a = boundaryReach[i];
                                 const auto& b = boundaryReach[j];
+                                size_t shared_total = 0;
+                                size_t shared_scope_empty = 0;
+                                size_t shared_scope_checked = 0;
+                                std::vector<std::string> shared_samples;
+                                const bool need_full_overlap = incRegionalProfileHeavyEnabled;
                                 if (a.size() < b.size()) {
                                     for (const auto& n : a) {
                                         if (b.count(n)) {
                                             overlap = true;
-                                            break;
+                                            shared_total++;
+                                            if (incRegionalProfileHeavyEnabled && shared_scope_checked < scope_check_limit) {
+                                                const auto& scope = getScopeNodesForSource(n);
+                                                if (scope.empty()) shared_scope_empty++;
+                                                shared_scope_checked++;
+                                                if (shared_samples.size() < scope_sample_limit) {
+                                                    shared_samples.push_back(node_id(n) + ":scope=" + scopeStr_(scope));
+                                                }
+                                            }
+                                            if (!need_full_overlap) break;
                                         }
                                     }
                                 } else {
                                     for (const auto& n : b) {
                                         if (a.count(n)) {
                                             overlap = true;
-                                            break;
+                                            shared_total++;
+                                            if (incRegionalProfileHeavyEnabled && shared_scope_checked < scope_check_limit) {
+                                                const auto& scope = getScopeNodesForSource(n);
+                                                if (scope.empty()) shared_scope_empty++;
+                                                shared_scope_checked++;
+                                                if (shared_samples.size() < scope_sample_limit) {
+                                                    shared_samples.push_back(node_id(n) + ":scope=" + scopeStr_(scope));
+                                                }
+                                            }
+                                            if (!need_full_overlap) break;
                                         }
                                     }
                                 }
@@ -1780,6 +1946,27 @@ private:
                                     overlapFound = true;
                                     overlapPairs << node_id(sortedBoundaries[i]) << "<->"
                                                  << node_id(sortedBoundaries[j]);
+                                    if (incRegionalProfileHeavyEnabled) {
+                                        bool reach_ab = boundaryReach[j].count(sortedBoundaries[i]) > 0;
+                                        bool reach_ba = boundaryReach[i].count(sortedBoundaries[j]) > 0;
+                                        std::ostringstream oss;
+                                        oss << "[inc-regional-trace-overlap] pair=" << node_id(sortedBoundaries[i])
+                                            << "<->" << node_id(sortedBoundaries[j])
+                                            << " shared_nodes=" << shared_total
+                                            << " shared_scope_empty=" << shared_scope_empty
+                                            << " shared_scope_checked=" << shared_scope_checked
+                                            << " reach_ab=" << (reach_ab ? 1 : 0)
+                                            << " reach_ba=" << (reach_ba ? 1 : 0);
+                                        if (!shared_samples.empty()) {
+                                            oss << " shared_sample=[";
+                                            for (size_t k = 0; k < shared_samples.size(); ++k) {
+                                                if (k) oss << "; ";
+                                                oss << shared_samples[k];
+                                            }
+                                            oss << "]";
+                                        }
+                                        overlapDebugLines.push_back(oss.str());
+                                    }
                                 }
                             }
                         }
@@ -1810,6 +1997,9 @@ private:
                     }
                 }
                 std::cout << "\n";
+                for (const auto& line : overlapDebugLines) {
+                    std::cout << line << "\n";
+                }
             }
         }
     }

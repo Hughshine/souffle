@@ -1667,6 +1667,10 @@ void runPipeline(
         return;
     }
 
+    if (!isFullOnlyMode() && !evidences.empty()) {
+        throw std::runtime_error("Evidence is only supported with --full-only (incremental mode disables evidence).");
+    }
+
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);
     debugger.addInfo("input_fact_size", std::to_string(countInitialInputFacts()));
     auto t0 = std::chrono::steady_clock::now();

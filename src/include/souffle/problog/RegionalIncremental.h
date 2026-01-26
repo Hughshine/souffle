@@ -46,8 +46,11 @@ struct IncRegionalOutputProfile {
     std::set<NodePtr> regionNodes;
     std::set<NodePtr> boundaryNodes;
     std::unordered_set<NodePtr> deltaReachableNodes;
+    std::unordered_set<EdgePtr> deltaReachableEdges;
     std::unordered_map<int, std::pair<double, double>> originalWeights;
     std::unordered_map<int, std::pair<double, double>> overrideWeights;
+    std::unordered_map<NodePtr, std::vector<int>> boundaryUpstreamAnchorVars;
+    std::unordered_map<NodePtr, double> boundaryOutputTargets;
 
     void reset() {
         active = false;
@@ -55,8 +58,11 @@ struct IncRegionalOutputProfile {
         regionNodes.clear();
         boundaryNodes.clear();
         deltaReachableNodes.clear();
+        deltaReachableEdges.clear();
         originalWeights.clear();
         overrideWeights.clear();
+        boundaryUpstreamAnchorVars.clear();
+        boundaryOutputTargets.clear();
     }
 };
 
@@ -841,10 +847,55 @@ public:
         double target = 0.0;      // Pr_new[v]
         double oldValue = 0.0;    // WMC(BDD_old(v)) under old weights
     };
+    struct CalibrationCache {
+        struct TargetEntry {
+            FormulaNodeRef formula{};
+            double value = 0.0;
+        };
+        struct SnapshotEntry {
+            FormulaNodeRef formula{};
+            double value = 0.0;
+        };
+        struct AnchorEntry {
+            FormulaNodeRef snapshot{};
+            double alpha = 0.0;
+            double beta = 0.0;
+        };
+        std::unordered_map<NodePtr, TargetEntry> targetWmc;
+        std::unordered_map<NodePtr, SnapshotEntry> snapshotWmc;
+        std::unordered_map<NodePtr, std::unordered_map<int, AnchorEntry>> anchorWmc;
+    };
+    struct Timing {
+        double totalMs = 0.0;
+        double targetWmcMs = 0.0;
+        double anchorLoopMs = 0.0;
+        double snapshotWmcMs = 0.0;
+        double alphaWmcMs = 0.0;
+        double betaWmcMs = 0.0;
+        double weightSetMs = 0.0;
+        double anchorWmcMs = 0.0;
+        double anchorOverheadMs = 0.0;
+        double overheadMs = 0.0;
+        size_t boundaryTotal = 0;
+        size_t boundaryVisited = 0;
+        size_t boundarySkipped = 0;
+        size_t anchorCandidates = 0;
+        size_t anchorTried = 0;
+        size_t anchorUsed = 0;
+        size_t anchorInvalid = 0;
+        size_t missingSnapshot = 0;
+        size_t degenerate = 0;
+        size_t calibrated = 0;
+        size_t failed = 0;
+        size_t targetCacheHits = 0;
+        size_t snapshotCacheHits = 0;
+        size_t anchorCacheHits = 0;
+    };
     struct Result {
         std::vector<CalibrationRecord> applied;
         std::unordered_set<NodePtr> failedNodes;
         std::unordered_map<int, std::pair<double,double>> weightOverrides;
+        Timing timing;
     };
 
     static Result calibrate(
@@ -853,11 +904,118 @@ public:
         const RegionalInsertPlan& plan,
         const typename RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::Snapshot& snapshot,
         const std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
-        double eps = 1e-12) {
+        double eps = 1e-12,
+        const std::unordered_set<NodePtr>* skipNodes = nullptr,
+        CalibrationCache* cache = nullptr) {
         Result res;
+        auto nowMs = []{ return std::chrono::steady_clock::now(); };
+        auto toMs = [](auto dur){
+            return std::chrono::duration<double, std::milli>(dur).count();
+        };
+        auto tStart = nowMs();
         std::unordered_map<int, NodePtr> usedAnchorVars;
         usedAnchorVars.reserve(plan.boundaryNodes.size());
+        res.timing.boundaryTotal = plan.boundaryNodes.size();
+        const auto& traceBoundaries = incra::incRegionalTraceBoundaryHits();
         for (auto& v : plan.boundaryNodes) {
+            res.timing.boundaryVisited++;
+            const bool traceThis = !traceBoundaries.empty() && incra::incRegionalTraceBoundaryMatch(v);
+            auto reportAnchorReach = [&](const NodePtr& start, const incra::IncRegionAnalysis::AnchorCandidate& anchor) {
+                if (!traceThis || !start) {
+                    return;
+                }
+                const size_t kMaxVisited = 50000;
+                std::unordered_set<NodePtr> visited;
+                std::queue<NodePtr> q;
+                visited.insert(start);
+                q.push(start);
+                bool reachesBoundary = (start.get() == v.get());
+                std::vector<NodePtr> hitBoundaries;
+                std::vector<std::string> hitTraces;
+                const auto& traceTargets = incra::incRegionalTraceTargets();
+                std::vector<std::string> bypassTraces;
+                while (!q.empty() && visited.size() < kMaxVisited) {
+                    NodePtr cur = q.front();
+                    q.pop();
+                    if (cur.get() == v.get()) {
+                        reachesBoundary = true;
+                    } else if (plan.boundaryNodes.count(cur) && hitBoundaries.size() < 5) {
+                        hitBoundaries.push_back(cur);
+                    }
+                    const auto tuple = cur->getTuple().toString();
+                    if (traceTargets.count(tuple) && hitTraces.size() < 5) {
+                        hitTraces.push_back(tuple);
+                    }
+                    for (const auto& e : view.getOutgoingEdges(cur)) {
+                        if (!e) continue;
+                        auto out = view.getOutput(e);
+                        if (!out) continue;
+                        if (visited.insert(out).second) {
+                            q.push(out);
+                        }
+                    }
+                }
+                if (!traceTargets.empty() && start.get() != v.get()) {
+                    std::unordered_set<NodePtr> visitedNoBoundary;
+                    std::queue<NodePtr> q2;
+                    if (start.get() != v.get()) {
+                        visitedNoBoundary.insert(start);
+                        q2.push(start);
+                    }
+                    while (!q2.empty() && visitedNoBoundary.size() < kMaxVisited) {
+                        NodePtr cur = q2.front();
+                        q2.pop();
+                        if (cur.get() == v.get()) {
+                            continue;
+                        }
+                        const auto tuple = cur->getTuple().toString();
+                        if (traceTargets.count(tuple) && bypassTraces.size() < 8) {
+                            bypassTraces.push_back(tuple);
+                        }
+                        for (const auto& e : view.getOutgoingEdges(cur)) {
+                            if (!e) continue;
+                            auto out = view.getOutput(e);
+                            if (!out) continue;
+                            if (out.get() == v.get()) {
+                                continue;
+                            }
+                            if (visitedNoBoundary.insert(out).second) {
+                                q2.push(out);
+                            }
+                        }
+                    }
+                }
+                std::cout << "[inc-regional-trace-anchor-reach] head=" << incra::node_id(v)
+                          << " anchor=" << incra::anchor_id(anchor, view)
+                          << " visited_nodes=" << visited.size()
+                          << " truncated=" << (visited.size() >= kMaxVisited ? 1 : 0)
+                          << " reaches_boundary=" << (reachesBoundary ? 1 : 0)
+                          << " hit_boundaries=" << hitBoundaries.size()
+                          << " boundaries=[";
+                for (size_t i = 0; i < hitBoundaries.size(); ++i) {
+                    if (i) std::cout << ", ";
+                    std::cout << incra::node_id(hitBoundaries[i]);
+                }
+                std::cout << "]"
+                          << " hit_traces=" << hitTraces.size()
+                          << " traces=[";
+                for (size_t i = 0; i < hitTraces.size(); ++i) {
+                    if (i) std::cout << ", ";
+                    std::cout << hitTraces[i];
+                }
+                std::cout << "]"
+                          << " bypass_traces=" << bypassTraces.size()
+                          << " bypass=[";
+                for (size_t i = 0; i < bypassTraces.size(); ++i) {
+                    if (i) std::cout << ", ";
+                    std::cout << bypassTraces[i];
+                }
+                std::cout << "]\n";
+            };
+            if (skipNodes && skipNodes->count(v)) {
+                res.timing.boundarySkipped++;
+                continue;
+            }
             auto itNF = nodeFormulas.find(v);
             if (itNF == nodeFormulas.end()) {
                 if (incRegionalProfileEnabled) {
@@ -867,27 +1025,64 @@ public:
                 res.failedNodes.insert(v);
                 continue;
             }
-            double target = formulaManager.computeWeightedModelCount(itNF->second);
+            double target = 0.0;
+            bool targetCached = false;
+            if (cache) {
+                auto itCache = cache->targetWmc.find(v);
+                if (itCache != cache->targetWmc.end() &&
+                        formulaManager.isSame(itCache->second.formula, itNF->second)) {
+                    target = itCache->second.value;
+                    targetCached = true;
+                    res.timing.targetCacheHits++;
+                }
+            }
+            if (!targetCached) {
+                auto tTargetStart = nowMs();
+                target = formulaManager.computeWeightedModelCount(itNF->second);
+                res.timing.targetWmcMs += toMs(nowMs() - tTargetStart);
+                if (cache) {
+                    cache->targetWmc[v] = {itNF->second, target};
+                }
+            }
             auto anchorIt = plan.anchorCandidates.find(v);
             if (anchorIt == plan.anchorCandidates.end() || anchorIt->second.empty()) {
                 if (incRegionalProfileEnabled) {
                     std::cout << "[inc-regional] calibrate fail head=" << incra::node_id(v)
                               << " reason=no_anchor_candidates\n";
                 }
+                if (traceThis) {
+                    std::cout << "[inc-regional-trace-anchor] head=" << incra::node_id(v)
+                              << " decision=reject reason=no_anchor_candidates\n";
+                }
                 res.failedNodes.insert(v);
                 continue;
+            }
+            res.timing.anchorCandidates += anchorIt->second.size();
+            if (traceThis) {
+                std::cout << "[inc-regional-trace-anchor] head=" << incra::node_id(v)
+                          << " candidates=" << anchorIt->second.size() << "\n";
             }
             bool calibrated = false;
             size_t tried = 0;
             size_t missingSnapshot = 0;
             size_t degenerate = 0;
             size_t candidateIdx = 0;
+            auto tAnchorStart = nowMs();
             for (auto& anchor : anchorIt->second) {
                 const size_t idx = candidateIdx++;
                 const auto anchorLabel = incra::anchor_id(anchor, view);
                 auto logDecision = [&](const char* decision, const char* reason) {
                     if (!incRegionalProfileEnabled) return;
                     std::cout << "[inc-regional-calibrate-anchor] head=" << incra::node_id(v)
+                              << " idx=" << idx
+                              << " anchor=" << anchorLabel
+                              << " decision=" << decision
+                              << " reason=" << reason
+                              << "\n";
+                };
+                auto logTraceDecision = [&](const char* decision, const char* reason) {
+                    if (!traceThis) return;
+                    std::cout << "[inc-regional-trace-anchor] head=" << incra::node_id(v)
                               << " idx=" << idx
                               << " anchor=" << anchorLabel
                               << " decision=" << decision
@@ -901,7 +1096,9 @@ public:
                             std::cout << "[inc-regional] calibrate skip head=" << incra::node_id(v)
                                       << " anchor=node:<null> reason=node_null\n";
                         }
+                        res.timing.anchorInvalid++;
                         logDecision("reject", "node_null");
+                        logTraceDecision("reject", "node_null");
                         continue;
                     }
                     if (!anchor.node->isFact) {
@@ -910,7 +1107,9 @@ public:
                                       << " anchor=node:" << incra::node_id(anchor.node)
                                       << " reason=node_not_fact\n";
                         }
+                        res.timing.anchorInvalid++;
                         logDecision("reject", "node_not_fact");
+                        logTraceDecision("reject", "node_not_fact");
                         continue;
                     }
                     if (anchor.node->getProbability() >= 1.0) {
@@ -919,7 +1118,9 @@ public:
                                       << " anchor=node:" << incra::node_id(anchor.node)
                                       << " reason=node_prob_one\n";
                         }
+                        res.timing.anchorInvalid++;
                         logDecision("reject", "node_prob_one");
+                        logTraceDecision("reject", "node_prob_one");
                         continue;
                     }
                     varIdx = formulaManager.getVarIndex(*anchor.node);
@@ -929,7 +1130,9 @@ public:
                             std::cout << "[inc-regional] calibrate skip head=" << incra::node_id(v)
                                       << " anchor=edge:<null> reason=edge_null\n";
                         }
+                        res.timing.anchorInvalid++;
                         logDecision("reject", "edge_null");
+                        logTraceDecision("reject", "edge_null");
                         continue;
                     }
                     varIdx = formulaManager.getVarIndex(*anchor.edge);
@@ -944,31 +1147,87 @@ public:
                                   << " prev_head=" << incra::node_id(usedIt->second)
                                   << "\n";
                     }
+                    res.timing.anchorUsed++;
                     logDecision("reject", "anchor_var_used");
+                    logTraceDecision("reject", "anchor_var_used");
                     continue;
                 }
                 tried++;
+                res.timing.anchorTried++;
                 auto oldW = formulaManager.getVariableWeight(varIdx);
                 auto snapIt = snapshot.boundarySnapshots.find(v);
                 if (snapIt == snapshot.boundarySnapshots.end()) {
                     missingSnapshot++;
+                    res.timing.missingSnapshot++;
                     if (incRegionalProfileEnabled) {
                         std::cout << "[inc-regional] calibrate skip head=" << incra::node_id(v)
                                   << " anchor=" << incra::anchor_id(anchor, view)
                                   << " reason=missing_snapshot\n";
                     }
                     logDecision("reject", "missing_snapshot");
+                    logTraceDecision("reject", "missing_snapshot");
                     continue;
                 }
-                double oldVal = formulaManager.computeWeightedModelCount(snapIt->second);
-                formulaManager.setVariableWeight(varIdx, 0.0, 1.0);
-                double alpha = formulaManager.computeWeightedModelCount(snapIt->second);
-                formulaManager.setVariableWeight(varIdx, 1.0, 0.0);
-                double beta  = formulaManager.computeWeightedModelCount(snapIt->second);
-                formulaManager.setVariableWeight(varIdx, oldW.posWeight, oldW.negWeight);
+                double oldVal = 0.0;
+                bool snapshotCached = false;
+                if (cache) {
+                    auto itSnap = cache->snapshotWmc.find(v);
+                    if (itSnap != cache->snapshotWmc.end() &&
+                            formulaManager.isSame(itSnap->second.formula, snapIt->second)) {
+                        oldVal = itSnap->second.value;
+                        snapshotCached = true;
+                        res.timing.snapshotCacheHits++;
+                    }
+                }
+                if (!snapshotCached) {
+                    auto tOldStart = nowMs();
+                    oldVal = formulaManager.computeWeightedModelCount(snapIt->second);
+                    res.timing.snapshotWmcMs += toMs(nowMs() - tOldStart);
+                    if (cache) {
+                        cache->snapshotWmc[v] = {snapIt->second, oldVal};
+                    }
+                }
+                double alpha = 0.0;
+                double beta = 0.0;
+                bool anchorCached = false;
+                if (cache) {
+                    auto itAnchor = cache->anchorWmc.find(v);
+                    if (itAnchor != cache->anchorWmc.end()) {
+                        auto itVar = itAnchor->second.find(varIdx);
+                        if (itVar != itAnchor->second.end() &&
+                                formulaManager.isSame(itVar->second.snapshot, snapIt->second)) {
+                            alpha = itVar->second.alpha;
+                            beta = itVar->second.beta;
+                            anchorCached = true;
+                            res.timing.anchorCacheHits++;
+                        }
+                    }
+                }
+                if (!anchorCached) {
+                    auto tWeightStart = nowMs();
+                    formulaManager.setVariableWeight(varIdx, 0.0, 1.0);
+                    res.timing.weightSetMs += toMs(nowMs() - tWeightStart);
+                    auto tAlphaStart = nowMs();
+                    alpha = formulaManager.computeWeightedModelCount(snapIt->second);
+                    res.timing.alphaWmcMs += toMs(nowMs() - tAlphaStart);
+                    tWeightStart = nowMs();
+                    formulaManager.setVariableWeight(varIdx, 1.0, 0.0);
+                    res.timing.weightSetMs += toMs(nowMs() - tWeightStart);
+                    auto tBetaStart = nowMs();
+                    beta  = formulaManager.computeWeightedModelCount(snapIt->second);
+                    res.timing.betaWmcMs += toMs(nowMs() - tBetaStart);
+                    tWeightStart = nowMs();
+                    formulaManager.setVariableWeight(varIdx, oldW.posWeight, oldW.negWeight);
+                    res.timing.weightSetMs += toMs(nowMs() - tWeightStart);
+                    if (cache) {
+                        cache->anchorWmc[v][varIdx] = {snapIt->second, alpha, beta};
+                    }
+                }
                 if (std::fabs(beta - alpha) < eps) {
                     degenerate++;
+                    res.timing.degenerate++;
                     logDecision("reject", "degenerate");
+                    logTraceDecision("reject", "degenerate");
                     continue;
                 }
                 double pStar = (target - alpha) / (beta - alpha);
@@ -984,6 +1243,7 @@ public:
                                   << "\n";
                     }
                     logDecision("reject", "pstar_non_finite");
+                    logTraceDecision("reject", "pstar_non_finite");
                     continue;
                 }
                 if (pStar < -eps) {
@@ -998,6 +1258,7 @@ public:
                                   << "\n";
                     }
                     logDecision("reject", "pstar_negative");
+                    logTraceDecision("reject", "pstar_negative");
                     continue;
                 }
                 const bool pStarOutOfRange = (pStar > 1.0 + eps);
@@ -1025,8 +1286,30 @@ public:
                 usedAnchorVars[varIdx] = v;
                 calibrated = true;
                 logDecision("accept", pStarOutOfRange ? "pstar_out_of_range" : "ok");
+                if (traceThis) {
+                    std::cout << "[inc-regional-trace-anchor] head=" << incra::node_id(v)
+                              << " idx=" << idx
+                              << " anchor=" << incra::anchor_id(anchor, view)
+                              << " decision=accept"
+                              << " reason=" << (pStarOutOfRange ? "pstar_out_of_range" : "ok")
+                              << " varIdx=" << varIdx
+                              << " pStar=" << pStar
+                              << " alpha=" << alpha
+                              << " beta=" << beta
+                              << " target=" << target
+                              << " oldValue=" << oldVal
+                              << "\n";
+                    NodePtr start;
+                    if (anchor.kind == incra::IncRegionAnalysis::AnchorKind::Node) {
+                        start = anchor.node;
+                    } else if (anchor.edge) {
+                        start = view.getOutput(anchor.edge);
+                    }
+                    reportAnchorReach(start, anchor);
+                }
                 break;
             }
+            res.timing.anchorLoopMs += toMs(nowMs() - tAnchorStart);
             if (!calibrated) {
                 if (incRegionalProfileEnabled) {
                     std::string reason = "no_valid_anchor";
@@ -1046,7 +1329,18 @@ public:
                 }
                 res.failedNodes.insert(v);
             }
+            if (calibrated) {
+                res.timing.calibrated++;
+            } else {
+                res.timing.failed++;
+            }
         }
+        res.timing.anchorWmcMs = res.timing.snapshotWmcMs + res.timing.alphaWmcMs + res.timing.betaWmcMs;
+        res.timing.anchorOverheadMs = std::max(0.0, res.timing.anchorLoopMs -
+                                                      (res.timing.anchorWmcMs + res.timing.weightSetMs));
+        res.timing.totalMs = toMs(nowMs() - tStart);
+        res.timing.overheadMs = std::max(0.0, res.timing.totalMs -
+                                                 (res.timing.targetWmcMs + res.timing.anchorLoopMs));
         return res;
     }
 };
@@ -1057,6 +1351,7 @@ public:
     struct Options {
         bool enableFallbackToClassicInsertion = true;
         bool enableNearFullExpansion = false;
+        bool enableOverlapExpansion = false;
         double eps = 1e-12;
     };
     struct Stats {
@@ -1091,10 +1386,15 @@ public:
         double sccCloseMs = 0.0;
         double planMs = 0.0;
         double rebuildMs = 0.0;
+        double rebuildTotalMs = 0.0;
         double calibrateMs = 0.0;
+        double calibrateTotalMs = 0.0;
+        double fallbackSnapshotMs = 0.0;
+        double fallbackRestoreMs = 0.0;
         double totalMs = 0.0;
         double fallbackMs = 0.0;
         double totalWithFallbackMs = 0.0;
+        double overheadMs = 0.0;
         std::string fallbackReason;
         typename RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::Timing rebuildDetail;
     };
@@ -1920,6 +2220,9 @@ public:
             };
 
             for (const auto& b : boundaries) {
+                if (inDrNode(b)) {
+                    updateWithBoundary(b, b);
+                }
                 for (const auto& e : view.getIncomingEdges(b)) {
                     if (!inDrEdge(e)) continue;
                     for (const auto& in : view.getInputs(e)) {
@@ -2122,13 +2425,12 @@ public:
             size_t multiNonEmpty = 0;
             size_t multiEmpty = 0;
             std::unordered_set<NodePtr> effectiveMultiNodes;
-            for (const auto& n : multiNodes) {
-                const auto& scopeNodes = analyzer.getScopeNodesForSource(n);
-                const auto& scopeEdges = analyzer.getScopeEdgesForSource(n);
-                bool any = false;
+            auto addScopeForSource = [&](const NodePtr& source, bool& anyFlag) {
+                const auto& scopeNodes = analyzer.getScopeNodesForSource(source);
+                const auto& scopeEdges = analyzer.getScopeEdgesForSource(source);
                 for (const auto& sn : scopeNodes) {
                     if (!inDrNode(sn)) continue;
-                    any = true;
+                    anyFlag = true;
                     overlapNodes.insert(sn);
                     if (analysis.region.nodes.insert(sn).second) {
                         addedNodes++;
@@ -2136,11 +2438,60 @@ public:
                 }
                 for (const auto& se : scopeEdges) {
                     if (!inDrEdge(se)) continue;
-                    any = true;
+                    anyFlag = true;
                     if (analysis.region.edges.insert(se).second) {
                         addedEdges++;
                     }
                 }
+            };
+            auto expandOverlapBoundary = [&](const NodePtr& boundary,
+                                             std::vector<NodePtr>& reached) -> bool {
+                reached.clear();
+                if (!boundary || !inDrNode(boundary)) {
+                    return false;
+                }
+                bool changed = false;
+                std::unordered_set<NodePtr> visited;
+                std::queue<NodePtr> localQ;
+                visited.insert(boundary);
+                localQ.push(boundary);
+                while (!localQ.empty()) {
+                    NodePtr cur = localQ.front();
+                    localQ.pop();
+                    overlapNodes.insert(cur);
+                    if (analysis.region.nodes.insert(cur).second) {
+                        addedNodes++;
+                        changed = true;
+                    }
+                    for (const auto& e : view.getOutgoingEdges(cur)) {
+                        if (!inDrEdge(e)) continue;
+                        if (analysis.region.edges.insert(e).second) {
+                            addedEdges++;
+                            changed = true;
+                        }
+                        auto out = view.getOutput(e);
+                        if (!out) continue;
+                        if (!inDrNode(out)) continue;
+                        if (visited.insert(out).second) {
+                            localQ.push(out);
+                        }
+                    }
+                }
+                reached.assign(visited.begin(), visited.end());
+                return changed;
+            };
+            for (const auto& n : multiNodes) {
+                bool any = false;
+                std::vector<NodePtr> boundaryReach;
+                if (boundarySet.count(n)) {
+                    if (expandOverlapBoundary(n, boundaryReach)) {
+                        any = true;
+                    }
+                    for (const auto& source : boundaryReach) {
+                        addScopeForSource(source, any);
+                    }
+                }
+                addScopeForSource(n, any);
                 if (any) {
                     scopeSeeds++;
                     multiNonEmpty++;
@@ -2383,7 +2734,7 @@ public:
                 regionDirty = false;
             }
 
-            if (closeDependentBoundaryOverlaps("preplan")) {
+            if (opt_.enableOverlapExpansion && closeDependentBoundaryOverlaps("preplan")) {
                 recordRegionChange("overlap_preplan");
                 regionDirty = true;
                 continue;
@@ -2566,11 +2917,16 @@ public:
         std::unordered_map<EdgePtr, FormulaSnapshot> preEdgeSnapshot;
         bool snapshotTaken = false;
         auto takeSnapshot = [&]() {
-            if (snapshotTaken) return;
-            snapshotTaken = true;
-            preNodeSnapshot.reserve(analysis.region.nodes.size());
-            preEdgeSnapshot.reserve(analysis.region.edges.size());
+            auto tSnapStart = nowMs();
+            if (!snapshotTaken) {
+                snapshotTaken = true;
+                preNodeSnapshot.reserve(analysis.region.nodes.size());
+                preEdgeSnapshot.reserve(analysis.region.edges.size());
+            }
             for (const auto& node : analysis.region.nodes) {
+                if (preNodeSnapshot.count(node)) {
+                    continue;
+                }
                 auto it = nodeFormulas.find(node);
                 if (it != nodeFormulas.end()) {
                     preNodeSnapshot[node] = {true, it->second};
@@ -2579,6 +2935,9 @@ public:
                 }
             }
             for (const auto& edge : analysis.region.edges) {
+                if (preEdgeSnapshot.count(edge)) {
+                    continue;
+                }
                 auto it = edgeFormulas.find(edge);
                 if (it != edgeFormulas.end()) {
                     preEdgeSnapshot[edge] = {true, it->second};
@@ -2586,9 +2945,11 @@ public:
                     preEdgeSnapshot[edge] = {false, formulaManager.getFalse()};
                 }
             }
+            lastTiming_.fallbackSnapshotMs += toMs(nowMs() - tSnapStart);
         };
         auto restoreSnapshot = [&]() {
             if (!snapshotTaken) return;
+            auto tRestoreStart = nowMs();
             for (const auto& [node, snap] : preNodeSnapshot) {
                 if (snap.has) {
                     nodeFormulas[node] = snap.formula;
@@ -2603,6 +2964,7 @@ public:
                     edgeFormulas.erase(edge);
                 }
             }
+            lastTiming_.fallbackRestoreMs += toMs(nowMs() - tRestoreStart);
         };
 
         auto fallbackClassic = [&]() {
@@ -2625,125 +2987,231 @@ public:
             return;
         }
 
-        if (opt_.enableFallbackToClassicInsertion) {
-            takeSnapshot();
-        }
-
-        // === 4) Regional rebuild ===
-        const bool rebuildTouchesCycle = regionTouchesCycle(view, plan.regionNodes);
-        if (incRegionalProfileEnabled) {
-            std::cout << "[inc-regional] regionTouchesCycle rebuild=" << (rebuildTouchesCycle ? 1 : 0)
-                      << "\n";
-        }
-        typename RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::DagPlan dagPlan;
-        double dagBuildMs = 0.0;
-        const bool dagFastPath = false;  // keep insert algorithm aligned with inc-naive (cyclewise)
-        if (incRegionalProfileEnabled) {
-            std::cout << "[inc-regional] dag_fast_path=" << (dagFastPath ? 1 : 0)
-                      << " dag_build_ms=" << dagBuildMs << "\n";
-        }
+        std::unordered_set<NodePtr> calibrationSkip;
+        bool needRebuild = true;
+        bool rebuiltOnce = false;
         typename RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::Result rebuildRes;
-        if (dagFastPath) {
-            rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegionDag(
-                view, formulaManager, nodeFormulas, edgeFormulas, plan, analysis.region.edges, dagPlan, dagBuildMs, constInfo);
-            if (rebuildRes.fallbackToCycle) {
+        typename BoundaryGateCalibrator<FormulaManagerT, FormulaNodeRef>::Result calibRes;
+        size_t calibrateAttempt = 0;
+        typename BoundaryGateCalibrator<FormulaManagerT, FormulaNodeRef>::CalibrationCache calibrateCache;
+
+        while (true) {
+            if (needRebuild) {
+                if (rebuiltOnce && opt_.enableFallbackToClassicInsertion) {
+                    restoreSnapshot();
+                }
+                if (opt_.enableFallbackToClassicInsertion) {
+                    takeSnapshot();
+                }
+
+                auto tRebuildStart = nowMs();
+                // === 4) Regional rebuild ===
+                const bool rebuildTouchesCycle = regionTouchesCycle(view, plan.regionNodes);
                 if (incRegionalProfileEnabled) {
-                    std::cout << "[inc-regional] dag_fast_path fallback reason=missing_inside_region"
-                              << " missing=" << rebuildRes.missingInsideRegion
+                    std::cout << "[inc-regional] regionTouchesCycle rebuild=" << (rebuildTouchesCycle ? 1 : 0)
                               << "\n";
                 }
-                auto tDepGraphStart = nowMs();
-                const CycleDependencyGraph* depGraphPtr =
-                        &depGraphForReachable("rebuild_fallback", analyzer.lastDeltaReachable());
-                auto tDepGraphEnd = nowMs();
-                const double depGraphMs = toMs(tDepGraphEnd - tDepGraphStart);
-                rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegion(
-                    view, formulaManager, nodeFormulas, edgeFormulas, plan, analysis.region.edges, constInfo, depGraphPtr);
-                rebuildRes.timing.depGraphMs += depGraphMs;
-                rebuildRes.timing.totalMs += depGraphMs;
+                typename RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::DagPlan dagPlan;
+                double dagBuildMs = 0.0;
+                const bool dagFastPath = false;  // keep insert algorithm aligned with inc-naive (cyclewise)
+                if (incRegionalProfileEnabled) {
+                    std::cout << "[inc-regional] dag_fast_path=" << (dagFastPath ? 1 : 0)
+                              << " dag_build_ms=" << dagBuildMs << "\n";
+                }
+                if (dagFastPath) {
+                    rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegionDag(
+                        view, formulaManager, nodeFormulas, edgeFormulas, plan, analysis.region.edges, dagPlan, dagBuildMs, constInfo);
+                    if (rebuildRes.fallbackToCycle) {
+                        if (incRegionalProfileEnabled) {
+                            std::cout << "[inc-regional] dag_fast_path fallback reason=missing_inside_region"
+                                      << " missing=" << rebuildRes.missingInsideRegion
+                                      << "\n";
+                        }
+                        auto tDepGraphStart = nowMs();
+                        const CycleDependencyGraph* depGraphPtr =
+                                &depGraphForReachable("rebuild_fallback", analyzer.lastDeltaReachable());
+                        auto tDepGraphEnd = nowMs();
+                        const double depGraphMs = toMs(tDepGraphEnd - tDepGraphStart);
+                        rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegion(
+                            view, formulaManager, nodeFormulas, edgeFormulas, plan, analysis.region.edges, constInfo, depGraphPtr);
+                        rebuildRes.timing.depGraphMs += depGraphMs;
+                        rebuildRes.timing.totalMs += depGraphMs;
+                    }
+                } else {
+                    auto tDepGraphStart = nowMs();
+                    const CycleDependencyGraph* depGraphPtr =
+                            &depGraphForReachable("rebuild", analyzer.lastDeltaReachable());
+                    auto tDepGraphEnd = nowMs();
+                    const double depGraphMs = toMs(tDepGraphEnd - tDepGraphStart);
+                    rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegion(
+                        view, formulaManager, nodeFormulas, edgeFormulas, plan, analysis.region.edges, constInfo, depGraphPtr);
+                    rebuildRes.timing.depGraphMs += depGraphMs;
+                    rebuildRes.timing.totalMs += depGraphMs;
+                }
+                changedNodes.insert(rebuildRes.changedNodes.begin(), rebuildRes.changedNodes.end());
+                const auto& rt = rebuildRes.timing;
+                if (incRegionalProfileEnabled) {
+                    std::cout << "[inc-regional rebuild] timing(ms):"
+                              << " snapshot=" << rt.snapshotMs
+                              << " preConfig=" << rt.preConfigMs
+                              << " initNodes=" << rt.initNodesMs
+                              << " initEdges=" << rt.initEdgesMs
+                              << " depGraph=" << rt.depGraphMs
+                              << " regionCycles=" << rt.regionCyclesMs
+                              << " indegree=" << rt.indegreeMs
+                              << " rebuildLoop=" << rt.rebuildLoopMs
+                              << " total=" << rt.totalMs
+                              << " reorder=" << rt.reorderMs
+                              << " edgesProcessed=" << rt.edgesProcessed
+                              << " edgeRequeued=" << rt.edgeRequeued
+                              << " edgesRebuilt=" << rt.edgesRebuilt
+                              << " nodesUpdated=" << rt.nodesUpdated
+                              << " cycleCount=" << rt.regionCycleCount
+                              << " make_and_calls=" << rt.makeAndCalls
+                              << " make_and_ms=" << rt.makeAndMs
+                              << " make_or_calls=" << rt.makeOrCalls
+                              << " make_or_ms=" << rt.makeOrMs
+                              << " input_literal_calls=" << rt.inputLiteralCalls
+                              << " input_literal_missing=" << rt.inputLiteralMissing
+                              << " input_literal_ms=" << rt.inputLiteralMs
+                              << "\n";
+                }
+                auto tRebuildEnd = nowMs();
+                const double rebuildMs = toMs(tRebuildEnd - tRebuildStart);
+                lastTiming_.rebuildMs = rebuildMs;
+                lastTiming_.rebuildTotalMs += rebuildMs;
+                lastTiming_.rebuildDetail = rebuildRes.timing;
+
+                if (incRegionalTraceEnabled()) {
+                    for (const auto& node : plan.regionNodes) {
+                        if (!incRegionalTraceMatch(node)) {
+                            continue;
+                        }
+                        auto it = nodeFormulas.find(node);
+                        if (it == nodeFormulas.end()) {
+                            std::cout << "[inc-regional-rebuild] post-rebuild head=" << incra::node_id(node)
+                                      << " formula_missing\n";
+                            continue;
+                        }
+                        double wmc = formulaManager.computeWeightedModelCount(it->second);
+                        std::cout << "[inc-regional-rebuild] post-rebuild head=" << incra::node_id(node)
+                                  << " wmc=" << wmc << "\n";
+                    }
+                }
+                rebuiltOnce = true;
             }
-        } else {
-            auto tDepGraphStart = nowMs();
-            const CycleDependencyGraph* depGraphPtr =
-                    &depGraphForReachable("rebuild", analyzer.lastDeltaReachable());
-            auto tDepGraphEnd = nowMs();
-            const double depGraphMs = toMs(tDepGraphEnd - tDepGraphStart);
-            rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegion(
-                view, formulaManager, nodeFormulas, edgeFormulas, plan, analysis.region.edges, constInfo, depGraphPtr);
-            rebuildRes.timing.depGraphMs += depGraphMs;
-            rebuildRes.timing.totalMs += depGraphMs;
-        }
-        changedNodes.insert(rebuildRes.changedNodes.begin(), rebuildRes.changedNodes.end());
-        const auto& rt = rebuildRes.timing;
-        if (incRegionalProfileEnabled) {
-            std::cout << "[inc-regional rebuild] timing(ms):"
-                      << " snapshot=" << rt.snapshotMs
-                      << " preConfig=" << rt.preConfigMs
-                      << " initNodes=" << rt.initNodesMs
-                      << " initEdges=" << rt.initEdgesMs
-                      << " depGraph=" << rt.depGraphMs
-                      << " regionCycles=" << rt.regionCyclesMs
-                      << " indegree=" << rt.indegreeMs
-                      << " rebuildLoop=" << rt.rebuildLoopMs
-                      << " total=" << rt.totalMs
-                      << " reorder=" << rt.reorderMs
-                      << " edgesProcessed=" << rt.edgesProcessed
-                      << " edgeRequeued=" << rt.edgeRequeued
-                      << " edgesRebuilt=" << rt.edgesRebuilt
-                      << " nodesUpdated=" << rt.nodesUpdated
-                      << " cycleCount=" << rt.regionCycleCount
-                      << " make_and_calls=" << rt.makeAndCalls
-                      << " make_and_ms=" << rt.makeAndMs
-                      << " make_or_calls=" << rt.makeOrCalls
-                      << " make_or_ms=" << rt.makeOrMs
-                      << " input_literal_calls=" << rt.inputLiteralCalls
-                      << " input_literal_missing=" << rt.inputLiteralMissing
-                      << " input_literal_ms=" << rt.inputLiteralMs
+
+            // === 5) Calibrate boundary gates ===
+            auto t4 = nowMs();
+            calibRes = BoundaryGateCalibrator<FormulaManagerT, FormulaNodeRef>::calibrate(
+                view, formulaManager, plan, rebuildRes.snapshot, nodeFormulas, opt_.eps,
+                calibrationSkip.empty() ? nullptr : &calibrationSkip,
+                &calibrateCache);
+            auto t5 = nowMs();
+            const double calibrateMs = toMs(t5 - t4);
+            lastTiming_.calibrateMs = calibrateMs;
+            lastTiming_.calibrateTotalMs += calibrateMs;
+            lastTiming_.totalMs = toMs(t5 - t0);
+
+            const auto& ct = calibRes.timing;
+            const size_t calibIdx = calibrateAttempt++;
+            auto addCalibInfoDouble = [&](const char* key, double value) {
+                debugger.addInfo("inc_regional_calibrate_" + std::to_string(calibIdx) + "_" + key,
+                                 std::to_string(value));
+            };
+            auto addCalibInfoSize = [&](const char* key, size_t value) {
+                debugger.addInfo("inc_regional_calibrate_" + std::to_string(calibIdx) + "_" + key,
+                                 std::to_string(value));
+            };
+            addCalibInfoDouble("total_ms", ct.totalMs);
+            addCalibInfoDouble("target_wmc_ms", ct.targetWmcMs);
+            addCalibInfoDouble("anchor_loop_ms", ct.anchorLoopMs);
+            addCalibInfoDouble("anchor_wmc_ms", ct.anchorWmcMs);
+            addCalibInfoDouble("anchor_overhead_ms", ct.anchorOverheadMs);
+            addCalibInfoDouble("weight_set_ms", ct.weightSetMs);
+            addCalibInfoDouble("snapshot_wmc_ms", ct.snapshotWmcMs);
+            addCalibInfoDouble("alpha_wmc_ms", ct.alphaWmcMs);
+            addCalibInfoDouble("beta_wmc_ms", ct.betaWmcMs);
+            addCalibInfoDouble("overhead_ms", ct.overheadMs);
+            addCalibInfoSize("boundary_total", ct.boundaryTotal);
+            addCalibInfoSize("boundary_visited", ct.boundaryVisited);
+            addCalibInfoSize("boundary_skipped", ct.boundarySkipped);
+            addCalibInfoSize("candidates", ct.anchorCandidates);
+            addCalibInfoSize("tried", ct.anchorTried);
+            addCalibInfoSize("used", ct.anchorUsed);
+            addCalibInfoSize("invalid", ct.anchorInvalid);
+            addCalibInfoSize("missing_snapshot", ct.missingSnapshot);
+            addCalibInfoSize("degenerate", ct.degenerate);
+            addCalibInfoSize("calibrated", ct.calibrated);
+            addCalibInfoSize("failed", ct.failed);
+            addCalibInfoSize("target_cache_hits", ct.targetCacheHits);
+            addCalibInfoSize("snapshot_cache_hits", ct.snapshotCacheHits);
+            addCalibInfoSize("anchor_cache_hits", ct.anchorCacheHits);
+            std::cout << "[inc-regional-calibrate-profile]"
+                      << " total_ms=" << ct.totalMs
+                      << " target_wmc_ms=" << ct.targetWmcMs
+                      << " anchor_loop_ms=" << ct.anchorLoopMs
+                      << " anchor_wmc_ms=" << ct.anchorWmcMs
+                      << " anchor_overhead_ms=" << ct.anchorOverheadMs
+                      << " weight_set_ms=" << ct.weightSetMs
+                      << " snapshot_wmc_ms=" << ct.snapshotWmcMs
+                      << " alpha_wmc_ms=" << ct.alphaWmcMs
+                      << " beta_wmc_ms=" << ct.betaWmcMs
+                      << " overhead_ms=" << ct.overheadMs
+                      << " boundary_total=" << ct.boundaryTotal
+                      << " boundary_visited=" << ct.boundaryVisited
+                      << " boundary_skipped=" << ct.boundarySkipped
+                      << " candidates=" << ct.anchorCandidates
+                      << " tried=" << ct.anchorTried
+                      << " used=" << ct.anchorUsed
+                      << " invalid=" << ct.anchorInvalid
+                      << " missing_snapshot=" << ct.missingSnapshot
+                      << " degenerate=" << ct.degenerate
+                      << " calibrated=" << ct.calibrated
+                      << " failed=" << ct.failed
+                      << " target_cache_hits=" << ct.targetCacheHits
+                      << " snapshot_cache_hits=" << ct.snapshotCacheHits
+                      << " anchor_cache_hits=" << ct.anchorCacheHits
                       << "\n";
-        }
-        auto t4 = nowMs();
-        lastTiming_.rebuildMs = toMs(t4 - t3);
-        lastTiming_.rebuildDetail = rebuildRes.timing;
 
-        if (incRegionalTraceEnabled()) {
-            for (const auto& node : plan.regionNodes) {
-                if (!incRegionalTraceMatch(node)) {
-                    continue;
-                }
-                auto it = nodeFormulas.find(node);
-                if (it == nodeFormulas.end()) {
-                    std::cout << "[inc-regional-rebuild] post-rebuild head=" << incra::node_id(node)
-                              << " formula_missing\n";
-                    continue;
-                }
-                double wmc = formulaManager.computeWeightedModelCount(it->second);
-                std::cout << "[inc-regional-rebuild] post-rebuild head=" << incra::node_id(node)
-                          << " wmc=" << wmc << "\n";
+            if (calibRes.failedNodes.empty()) {
+                break;
+            }
+
+            if (!opt_.enableFallbackToClassicInsertion) {
+                break;
+            }
+
+            if (incRegionalProfileEnabled) {
+                std::cout << "[inc-regional] calibration failed for " << calibRes.failedNodes.size()
+                          << " nodes; expanding region to delta-reach\n";
+            }
+            calibrationSkip.insert(calibRes.failedNodes.begin(), calibRes.failedNodes.end());
+            bool expanded = expandRegionToBoundaryComponents(calibRes.failedNodes);
+            if (expanded) {
+                recordRegionChange("calibration_expand");
+                auto tB = nowMs();
+                analysis.boundaries = analyzer.recomputeBoundaries(analysis.region);
+                planProfile.recomputeBoundariesMs += toMs(nowMs() - tB);
+                auto tA = nowMs();
+                analysis.mergeableAnchorsByHead = analyzer.recomputeAnchors(analysis.region, analysis.boundaries);
+                planProfile.recomputeAnchorsMs += toMs(nowMs() - tA);
+                plan = buildPlan();
+                planBuilt = true;
+            }
+            needRebuild = expanded;
+            if (!needRebuild) {
+                continue;
             }
         }
 
-        // === 5) Calibrate boundary gates ===
-        auto calibRes = BoundaryGateCalibrator<FormulaManagerT, FormulaNodeRef>::calibrate(
-            view, formulaManager, plan, rebuildRes.snapshot, nodeFormulas, opt_.eps);
         stats_.calibratedCount = calibRes.applied.size();
         lastCalibrations_ = calibRes.applied;
         lastOverrides_ = calibRes.weightOverrides;
         lastPlanRegionNodes_ = plan.regionNodes;
         lastPlanBoundaryNodes_ = plan.boundaryNodes;
-        auto t5 = nowMs();
-        lastTiming_.calibrateMs = toMs(t5 - t4);
-        lastTiming_.totalMs = toMs(t5 - t0);
-
-        if (!calibRes.failedNodes.empty() && opt_.enableFallbackToClassicInsertion) {
-            if (incRegionalProfileEnabled) {
-                std::cout << "[inc-regional] calibration failed for " << calibRes.failedNodes.size()
-                          << " nodes, fallback to classic\n";
-            }
-            lastTiming_.fallbackReason = "calibration_failed";
-            lastTiming_.totalWithFallbackMs = lastTiming_.totalMs;
-            fallbackClassic();
-            return;
-        }
+        stats_.regionNodeCount = plan.regionNodes.size();
+        stats_.boundaryNodeCount = plan.boundaryNodes.size();
 
         // Apply calibrated gate weights so the existing (non-rebuilt) outside-of-region formulas
         // evaluate consistently under the new boundary targets. Also snapshot original weights for WMC routing.
@@ -2753,8 +3221,11 @@ public:
             incRegionalOutputProfile.regionNodes = plan.regionNodes;
             incRegionalOutputProfile.boundaryNodes = plan.boundaryNodes;
             incRegionalOutputProfile.deltaReachableNodes = analyzer.lastDeltaReachable().nodes;
+            incRegionalOutputProfile.deltaReachableEdges = analyzer.lastDeltaReachable().edges;
             incRegionalOutputProfile.originalWeights.clear();
             incRegionalOutputProfile.overrideWeights.clear();
+            incRegionalOutputProfile.boundaryUpstreamAnchorVars.clear();
+            incRegionalOutputProfile.boundaryOutputTargets.clear();
         }
         for (const auto& [varIdx, weights] : calibRes.weightOverrides) {
             auto oldW = formulaManager.getVariableWeight(varIdx);
@@ -2762,49 +3233,120 @@ public:
             incRegionalOutputProfile.overrideWeights[varIdx] = {weights.first, weights.second};
             formulaManager.setVariableWeight(varIdx, weights.first, weights.second);
         }
+        if (!calibRes.applied.empty()) {
+            std::unordered_map<NodePtr, std::unordered_set<int>> boundaryAnchorVars;
+            boundaryAnchorVars.reserve(calibRes.applied.size());
+            for (const auto& rec : calibRes.applied) {
+                if (!rec.v) {
+                    continue;
+                }
+                boundaryAnchorVars[rec.v].insert(rec.varIdx);
+                if (rec.v->needOutput) {
+                    incRegionalOutputProfile.boundaryOutputTargets[rec.v] = rec.target;
+                }
+            }
+            const auto& dr = analyzer.lastDeltaReachable();
+            auto inDrNode = [&](const NodePtr& n) {
+                return dr.nodes.empty() || dr.nodes.count(n);
+            };
+            auto inDrEdge = [&](const EdgePtr& e) {
+                return dr.edges.empty() || dr.edges.count(e);
+            };
+            for (const auto& b : plan.boundaryNodes) {
+                if (!b || !inDrNode(b)) {
+                    continue;
+                }
+                std::unordered_set<int> vars;
+                std::unordered_set<NodePtr> visited;
+                std::queue<NodePtr> q;
+                visited.insert(b);
+                q.push(b);
+                while (!q.empty()) {
+                    NodePtr cur = q.front();
+                    q.pop();
+                    if (cur.get() != b.get()) {
+                        auto it = boundaryAnchorVars.find(cur);
+                        if (it != boundaryAnchorVars.end()) {
+                            for (int varIdx : it->second) {
+                                vars.insert(varIdx);
+                            }
+                        }
+                    }
+                    for (const auto& e : view.getIncomingEdges(cur)) {
+                        if (!inDrEdge(e)) {
+                            continue;
+                        }
+                        const auto& ins = view.getInputs(e);
+                        for (const auto& in : ins) {
+                            if (!inDrNode(in)) {
+                                continue;
+                            }
+                            if (visited.insert(in).second) {
+                                q.push(in);
+                            }
+                        }
+                    }
+                }
+                if (!vars.empty()) {
+                    std::vector<int> varList(vars.begin(), vars.end());
+                    std::sort(varList.begin(), varList.end());
+                    incRegionalOutputProfile.boundaryUpstreamAnchorVars.emplace(b, std::move(varList));
+                }
+            }
+        }
         if (incRegionalProfileEnabled) {
             std::cout << "[inc-regional] applied_gate_overrides=" << calibRes.weightOverrides.size() << "\n";
         }
 
         stats_.usedFallback = false;
 
-        if (incRegionalProfileEnabled) {
-            std::cout << "[inc-regional] timing(ms): analyze=" << lastTiming_.analyzeMs
-                      << " sccClose=" << lastTiming_.sccCloseMs
-                      << " plan=" << lastTiming_.planMs
-                      << " rebuild=" << lastTiming_.rebuildMs
-                      << " calibrate=" << lastTiming_.calibrateMs
-                      << " total=" << lastTiming_.totalMs
-                      << " fallback=" << lastTiming_.fallbackMs
-                      << " total_with_fallback=" << lastTiming_.totalWithFallbackMs
-                      << "\n";
-            const double prepInsertMs = rt.regionCyclesMs + rt.indegreeMs;
-            const double prepTotalMs = rt.preConfigMs + rt.initNodesMs + rt.initEdgesMs
-                    + rt.regionCyclesMs + rt.indegreeMs;
-            std::cout << "[inc-regional-insert-profile]"
-                      << " dep_graph_ms=" << rt.depGraphMs
-                      << " dep_graph_scope=" << (depGraphScope ? depGraphScope : "unknown")
-                      << " reach_nodes=" << analysisStats.dr_nodes
-                      << " reach_edges=" << analysisStats.dr_edges
-                      << " rederive_ms=0"
-                      << " preconfig_ms=" << rt.preConfigMs
-                      << " init_nodes_ms=" << rt.initNodesMs
-                      << " init_edges_ms=" << rt.initEdgesMs
-                      << " prep_insert_ms=" << prepInsertMs
-                      << " prep_total_ms=" << prepTotalMs
-                      << " insert_ms=" << rt.rebuildLoopMs
-                      << " total_ms=" << lastTiming_.totalMs
-                      << " rebuild_total_ms=" << rt.totalMs
-                      << " make_and_calls=" << rt.makeAndCalls
-                      << " make_and_ms=" << rt.makeAndMs
-                      << " make_or_calls=" << rt.makeOrCalls
-                      << " make_or_ms=" << rt.makeOrMs
-                      << " edge_requeued=" << rt.edgeRequeued
-                      << " input_literal_calls=" << rt.inputLiteralCalls
-                      << " input_literal_missing=" << rt.inputLiteralMissing
-                      << " input_literal_ms=" << rt.inputLiteralMs
-                      << "\n";
-        }
+        const auto& rt = rebuildRes.timing;
+        const double accountedMs = lastTiming_.analyzeMs + lastTiming_.sccCloseMs + lastTiming_.planMs
+                + lastTiming_.rebuildTotalMs + lastTiming_.calibrateTotalMs
+                + lastTiming_.fallbackSnapshotMs + lastTiming_.fallbackRestoreMs;
+        lastTiming_.overheadMs = std::max(0.0, lastTiming_.totalMs - accountedMs);
+
+        std::cout << "[inc-regional] timing(ms): analyze=" << lastTiming_.analyzeMs
+                  << " sccClose=" << lastTiming_.sccCloseMs
+                  << " plan=" << lastTiming_.planMs
+                  << " rebuild=" << lastTiming_.rebuildMs
+                  << " rebuild_total=" << lastTiming_.rebuildTotalMs
+                  << " calibrate=" << lastTiming_.calibrateMs
+                  << " calibrate_total=" << lastTiming_.calibrateTotalMs
+                  << " fallback_snapshot=" << lastTiming_.fallbackSnapshotMs
+                  << " fallback_restore=" << lastTiming_.fallbackRestoreMs
+                  << " overhead=" << lastTiming_.overheadMs
+                  << " total=" << lastTiming_.totalMs
+                  << " fallback=" << lastTiming_.fallbackMs
+                  << " total_with_fallback=" << lastTiming_.totalWithFallbackMs
+                  << "\n";
+        const double prepInsertMs = rt.regionCyclesMs + rt.indegreeMs;
+        const double prepTotalMs = rt.preConfigMs + rt.initNodesMs + rt.initEdgesMs
+                + rt.regionCyclesMs + rt.indegreeMs;
+        std::cout << "[inc-regional-insert-profile]"
+                  << " dep_graph_ms=" << rt.depGraphMs
+                  << " dep_graph_scope=" << (depGraphScope ? depGraphScope : "unknown")
+                  << " reach_nodes=" << analysisStats.dr_nodes
+                  << " reach_edges=" << analysisStats.dr_edges
+                  << " rederive_ms=0"
+                  << " preconfig_ms=" << rt.preConfigMs
+                  << " init_nodes_ms=" << rt.initNodesMs
+                  << " init_edges_ms=" << rt.initEdgesMs
+                  << " prep_insert_ms=" << prepInsertMs
+                  << " prep_total_ms=" << prepTotalMs
+                  << " insert_ms=" << rt.rebuildLoopMs
+                  << " fc_ms=" << lastTiming_.rebuildMs
+                  << " total_ms=" << lastTiming_.totalMs
+                  << " rebuild_total_ms=" << rt.totalMs
+                  << " make_and_calls=" << rt.makeAndCalls
+                  << " make_and_ms=" << rt.makeAndMs
+                  << " make_or_calls=" << rt.makeOrCalls
+                  << " make_or_ms=" << rt.makeOrMs
+                  << " edge_requeued=" << rt.edgeRequeued
+                  << " input_literal_calls=" << rt.inputLiteralCalls
+                  << " input_literal_missing=" << rt.inputLiteralMissing
+                  << " input_literal_ms=" << rt.inputLiteralMs
+                  << "\n";
     }
 
     const Stats& getStats() const { return stats_; }

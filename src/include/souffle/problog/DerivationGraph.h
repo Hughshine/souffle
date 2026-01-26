@@ -470,7 +470,7 @@ NodePtr DerivationGraphViewInterface::getOutput(EdgePtr edge) const {
     if (getNodes().count(out) == 0) {
         std::cout << "Node not in view: " << out->toString() << std::endl;
         // assert (getNodes().count(out) != 0);
-        std::cerr << "Warning: Output node not in view or being deleted: " << out->toString() << std::endl;
+//        std::cerr << "Warning: Output node not in view or being deleted: " << out->toString() << std::endl;
     }
     return getNodes().count(out) ? out : nullptr;
 }
@@ -1955,6 +1955,13 @@ void IncrementalDerivationGraph::applyDeltaInserts(
 
                 // Mark the edge as a delta insert.
                 deltaInsertEdges.insert(newEdge);
+
+                // Ensure fact inputs (e.g., det-opt facts) are initialized during incremental FC.
+                for (const auto& inputNode : newEdge->getInputs()) {
+                    if (inputNode->isFact) {
+                        deltaInsertNodes.insert(inputNode);
+                    }
+                }
 
                 // Get the output node.
                 NodePtr outputNode = newEdge->getOutput();

@@ -2609,6 +2609,7 @@ void buildFormulasIncCyclewise(
             insertPrepMs = toMs(insertPrepStart, Clock::now());
         }
         auto insertLoopStart = Clock::now();
+        std::unordered_map<EdgePtr, std::size_t> missingInputLogs;
         while (!ready.empty()) {
             size_t cid = ready.front(); ready.pop();
             scheduled[cid] = true;
@@ -2654,6 +2655,19 @@ void buildFormulasIncCyclewise(
                         if (!inputLiteralProfile(inputs[i], negs[i], lit, insertStats, fcProfile)) {
     //                    std::cout << "    [WAIT] Missing input: " << inputs[i]->toString() << std::endl;
                             allAvailable = false;
+                            auto& cnt = missingInputLogs[edge];
+                            if (cnt < 3) {
+                                NodePtr missing = inputs[i];
+                                std::cout << "    [REQUEUE-MISS] input="
+                                          << (missing ? missing->getTuple().toString() : "<null>")
+                                          << " isFact=" << (missing && missing->isFact ? 1 : 0)
+                                          << " in_nodeFormulas=" << (missing && nodeFormulas.count(missing) ? 1 : 0)
+                                          << " in_delta_insert_nodes=" << (missing && deltaInsertedNodes.count(missing) ? 1 : 0)
+                                          << " in_view_nodes=" << (missing && view.getNodes().count(missing) ? 1 : 0)
+                                          << " head=" << (view.getOutput(edge) ? view.getOutput(edge)->getTuple().toString() : "<null>")
+                                          << "\n";
+                            }
+                            ++cnt;
                             break;
                         }
                         inputFormulas.push_back(lit);
@@ -3693,6 +3707,11 @@ void buildFormulasIncRegionalCyclewise(
     auto updateStart = std::chrono::steady_clock::now();
     orchestrator.applyUpdate(view, formulaManager, nodeFormulas, edgeFormulas, changedNodes, constInfoPtr);
     auto updateEnd = std::chrono::steady_clock::now();
+    const auto& timing = orchestrator.getTiming();
+    debugger.addInfo("inc_regional_analyze_ms", std::to_string(timing.analyzeMs));
+    if (!timing.fallbackReason.empty()) {
+        debugger.addInfo("inc_regional_fallback_reason", timing.fallbackReason);
+    }
     if (incRegionalProfileEnabled) {
         const auto updateMs = std::chrono::duration_cast<std::chrono::milliseconds>(updateEnd - updateStart).count();
         debugger.addInfo("inc_regional_apply_update_ms", std::to_string(updateMs));
@@ -3733,17 +3752,12 @@ void buildFormulasIncRegionalCyclewise(
     if (incRegionalProfileEnabled) {
         auto debugStart = std::chrono::steady_clock::now();
         const auto& stats = orchestrator.getStats();
-        const auto& timing = orchestrator.getTiming();
         const auto& rt = timing.rebuildDetail;
-        debugger.addInfo("inc_regional_analyze_ms", std::to_string(timing.analyzeMs));
         debugger.addInfo("inc_regional_scc_close_ms", std::to_string(timing.sccCloseMs));
         debugger.addInfo("inc_regional_plan_ms", std::to_string(timing.planMs));
         debugger.addInfo("inc_regional_rebuild_ms", std::to_string(timing.rebuildMs));
         debugger.addInfo("inc_regional_calibrate_ms", std::to_string(timing.calibrateMs));
         debugger.addInfo("inc_regional_total_ms", std::to_string(timing.totalMs));
-        if (!timing.fallbackReason.empty()) {
-            debugger.addInfo("inc_regional_fallback_reason", timing.fallbackReason);
-        }
         debugger.addInfo("inc_regional_analyze_region_nodes", std::to_string(stats.analyzeRegionNodes));
         debugger.addInfo("inc_regional_analyze_region_edges", std::to_string(stats.analyzeRegionEdges));
         debugger.addInfo("inc_regional_analyze_dr_nodes", std::to_string(stats.analyzeDrNodes));
