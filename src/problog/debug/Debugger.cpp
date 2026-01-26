@@ -19,7 +19,7 @@ TurnInfo* Debugger::startTurn(const std::string& mode) {
     }
     turns_.emplace_back(++turnCount_, realMode);
     TurnInfo& turn = turns_.back();
-    turn.setMemStart(getCurrentMemoryUsage());
+//    turn.setMemStart(getCurrentMemoryUsage());
     turn.markStartTime();
     currentTurn_ = &turn;
     return &turn;
@@ -28,8 +28,8 @@ TurnInfo* Debugger::startTurn(const std::string& mode) {
 void Debugger::endTurn() {
     std::lock_guard<std::mutex> lock(mtx_);
     if (!currentTurn_) return;
-    currentTurn_->setMemEnd(getCurrentMemoryUsage());
-    currentTurn_->setMemPeak(getPeakMemoryUsage());
+//    currentTurn_->setMemEnd(getCurrentMemoryUsage());
+//    currentTurn_->setMemPeak(getPeakMemoryUsage());
     currentTurn_->markEndTime();
     currentTurn_ = nullptr;
 }
@@ -39,7 +39,7 @@ StageInfo* Debugger::startStage(StageKind kind) {
     if (!currentTurn_) return nullptr;
     currentTurn_->stages.emplace_back(kind);
     StageInfo& stage = currentTurn_->stages.back();
-    stage.setMemStart(getCurrentMemoryUsage());
+//    stage.setMemStart(getCurrentMemoryUsage());
     stage.markStartTime();
     currentStage_ = &stage;
     return &stage;
@@ -48,8 +48,8 @@ StageInfo* Debugger::startStage(StageKind kind) {
 void Debugger::endStage() {
     std::lock_guard<std::mutex> lock(mtx_);
     if (!currentStage_ || !currentTurn_) return;
-    currentStage_->setMemEnd(getCurrentMemoryUsage());
-    currentStage_->setMemPeak(getPeakMemoryUsage());
+//    currentStage_->setMemEnd(getCurrentMemoryUsage());
+//    currentStage_->setMemPeak(getPeakMemoryUsage());
     currentStage_->markEndTime();
     currentStage_ = nullptr;
 }
@@ -60,7 +60,7 @@ IterationInfo* Debugger::startIteration() {
     size_t idx = currentStage_->iterations.size();
     currentStage_->iterations.emplace_back(static_cast<int>(idx));
     IterationInfo& iter = currentStage_->iterations.back();
-    iter.setMemStart(getCurrentMemoryUsage());
+//    iter.setMemStart(getCurrentMemoryUsage());
     iter.markStartTime();
     currentIteration_ = &iter;
     return &iter;
@@ -69,8 +69,8 @@ IterationInfo* Debugger::startIteration() {
 void Debugger::endIteration() {
     std::lock_guard<std::mutex> lock(mtx_);
     if (!currentIteration_) return;
-    currentIteration_->setMemEnd(getCurrentMemoryUsage());
-    currentIteration_->setMemPeak(getPeakMemoryUsage());
+//    currentIteration_->setMemEnd(getCurrentMemoryUsage());
+//    currentIteration_->setMemPeak(getPeakMemoryUsage());
     currentIteration_->markEndTime();
     currentIteration_ = nullptr;
 }

@@ -468,7 +468,9 @@ NodePtr DerivationGraphViewInterface::getOutput(EdgePtr edge) const {
     NodePtr out = edge->getOutput();
     assert (out != nullptr);
     if (getNodes().count(out) == 0) {
-        std::cout << "Node not in view: " << out->toString() << std::endl;
+        if (fcProfileEnabled) {
+            std::cout << "Node not in view: " << out->toString() << std::endl;
+        }
         // assert (getNodes().count(out) != 0);
 //        std::cerr << "Warning: Output node not in view or being deleted: " << out->toString() << std::endl;
     }
