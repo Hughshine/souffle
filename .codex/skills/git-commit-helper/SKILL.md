@@ -1,6 +1,6 @@
 ---
 name: git-commit-helper
-description: Draft and prepare comprehensive git commits: review `git status`, confirm diffs, and write commit messages per README.git.md when asked to stage/commit.
+description: "Draft and prepare comprehensive git commits: review `git status`, confirm diffs, and write commit messages per README.git.md when asked to stage/commit."
 ---
 
 # Git Commit Helper
