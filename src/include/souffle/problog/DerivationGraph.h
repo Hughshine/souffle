@@ -652,6 +652,10 @@ public:
     virtual const std::set<EdgePtr>& getDeltaInsertEdges() const = 0;
     virtual const std::set<NodePtr>& getDeltaDeleteNodes() const = 0;
     virtual const std::set<EdgePtr>& getDeltaDeleteEdges() const = 0;
+    virtual const std::set<NodePtr>& getDeltaInsertFactNodes() const {
+        static const std::set<NodePtr> empty;
+        return empty;
+    }
     virtual const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& getNodeImpactedByDeltaDelete() const = 0;
     virtual const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& getEdgeImpactedByDeltaDelete() const = 0;
     virtual const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& getNodeImpactedByDeltaInsert() const = 0;
@@ -782,6 +786,7 @@ public:
                     const std::set<EdgePtr>& deltaInsertEdges,
                     const std::set<NodePtr>& deltaDeleteNodes,
                     const std::set<EdgePtr>& deltaDeleteEdges,
+                    const std::set<NodePtr>& deltaInsertFactNodes = {},
             const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& nodeImpactedByDeltaDelete = {},
             const std::unordered_map<NodePtr, std::unordered_set<EdgePtr>>& edgeImpactedByDeltaDelete = {},
             const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& nodeImpactedByDeltaInsert = {},
@@ -801,6 +806,7 @@ public:
               deltaInsertEdges_(deltaInsertEdges),
               deltaDeleteNodes_(deltaDeleteNodes),
               deltaDeleteEdges_(deltaDeleteEdges),
+            deltaInsertFactNodes_(deltaInsertFactNodes),
             nodeImpactedByDeltaDelete_(nodeImpactedByDeltaDelete),
             edgeImpactedByDeltaDelete_(edgeImpactedByDeltaDelete),
             nodeImpactedByDeltaInsert_(nodeImpactedByDeltaInsert),
@@ -825,6 +831,7 @@ public:
     const std::set<EdgePtr>& getDeltaInsertEdges() const override {return deltaInsertEdges_; };
     const std::set<NodePtr>& getDeltaDeleteNodes() const override {return deltaDeleteNodes_; };
     const std::set<EdgePtr>& getDeltaDeleteEdges() const override {return deltaDeleteEdges_; };
+    const std::set<NodePtr>& getDeltaInsertFactNodes() const override {return deltaInsertFactNodes_; };
 
 
     const std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& getNodeImpactedByDeltaDelete() const override {
@@ -875,6 +882,7 @@ protected:
     std::set<EdgePtr> deltaInsertEdges_;
     std::set<NodePtr> deltaDeleteNodes_;
     std::set<EdgePtr> deltaDeleteEdges_;
+    std::set<NodePtr> deltaInsertFactNodes_;
     std::unordered_map<NodePtr, std::unordered_set<NodePtr>> nodeImpactedByDeltaDelete_;
     std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> edgeImpactedByDeltaDelete_;
     std::unordered_map<NodePtr, std::unordered_set<NodePtr>> nodeImpactedByDeltaInsert_;
@@ -1772,6 +1780,7 @@ public:
             this->deltaInsertEdges.clear();
             this->deltaDeleteNodes.clear();
             this->deltaDeleteEdges.clear();
+            this->deltaInsertFactNodes.clear();
 
             this->deletedFactImpactedNodes.clear();
             this->deletedFactImpactedEdges.clear();
@@ -1844,6 +1853,7 @@ public:
     std::set<EdgePtr> deltaInsertEdges;
     std::set<NodePtr> deltaDeleteNodes;
     std::set<EdgePtr> deltaDeleteEdges;
+    std::set<NodePtr> deltaInsertFactNodes;
 
     std::unordered_map<NodePtr, std::unordered_set<NodePtr>> deletedFactImpactedNodes;
     std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> deletedFactImpactedEdges;
@@ -1855,6 +1865,9 @@ public:
 
     const std::set<NodePtr>& getDeltaInsertNodes() const {
         return deltaInsertNodes;
+    }
+    const std::set<NodePtr>& getDeltaInsertFactNodes() const override {
+        return deltaInsertFactNodes;
     }
 
     const std::set<EdgePtr>& getDeltaInsertEdges() const {
@@ -1936,6 +1949,7 @@ void IncrementalDerivationGraph::applyDeltaInserts(
             }
             node->setProbability(prob);
             node->isFact = true;
+            deltaInsertFactNodes.insert(node);
         }
     }
 
@@ -1962,11 +1976,15 @@ void IncrementalDerivationGraph::applyDeltaInserts(
                 for (const auto& inputNode : newEdge->getInputs()) {
                     if (inputNode->isFact) {
                         deltaInsertNodes.insert(inputNode);
+                        deltaInsertFactNodes.insert(inputNode);
                     }
                 }
 
                 // Get the output node.
                 NodePtr outputNode = newEdge->getOutput();
+                if (outputNode && outputNode->isFact) {
+                    deltaInsertFactNodes.insert(outputNode);
+                }
 
                 // If this is a reinserted node (previously marked deleted)
                 if (deltaDeleteNodes.find(outputNode) != deltaDeleteNodes.end()) {
@@ -2439,6 +2457,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
 
     std::set<NodePtr> newDeltaInsertedNodes;
     std::set<EdgePtr> newDeltaInsertedEdges;
+    std::set<NodePtr> newDeltaInsertFactNodes;
 
     for (const auto& insertedNode : deltaInsertNodes) {
         if (liveNodes.count(insertedNode)) {
@@ -2448,6 +2467,11 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     for (const auto& insertedEdge : deltaInsertEdges) {
         if (liveEdges.count(insertedEdge)) {
             newDeltaInsertedEdges.insert(insertedEdge);
+        }
+    }
+    for (const auto& insertedNode : deltaInsertFactNodes) {
+        if (liveNodes.count(insertedNode)) {
+            newDeltaInsertFactNodes.insert(insertedNode);
         }
     }
 
@@ -2540,6 +2564,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                                std::move(newDeltaInsertedEdges),
                                std::move(newDeltaDeletedNodes),
                                std::move(newDeltaDeletedEdges),
+                               std::move(newDeltaInsertFactNodes),
                                std::move(newDeletedFactImpactedNodes),
                                std::move(newDeletedFactImpactedEdges),
                                std::move(newInsertedFactImpactedNodes),

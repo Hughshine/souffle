@@ -271,6 +271,7 @@ std::string incRegionalTraceTuples;
 bool depGraphProfileEnabled = false;
 bool postDelEnabled = false;
 bool reuseVarIndexEnabled = true;
+bool incReorderEnabled = false;
 
 void DerivationManager::clearDetDeltaTuples() {
     detDeltaDeleteTuples.clear();

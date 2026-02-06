@@ -91,6 +91,7 @@ protected:
     std::string inc_regional_trace_tuples;  // comma-separated tuples for inc-regional trace
     bool dep_graph_profile = false;  // enable dependency-graph profiling
     bool post_del = false;  // enable postprocessUselessVariables after deletion
+    bool enable_inc_reord = false;  // enable CUDD dynamic reordering in incremental turns
     bool det_opt = false;  // enable deterministic-relation analysis and det gating
     bool det_force = false;  // force deterministic evaluation (skip derivation graph)
     bool reuse_var_index = true;  // reuse freed variable indices in CUDD (default on)
@@ -229,6 +230,9 @@ public:
     bool isPostDelEnabled() const {
         return post_del;
     }
+    bool isIncReorderEnabled() const {
+        return enable_inc_reord;
+    }
     bool isDetOptEnabled() const {
         return det_opt;
     }
@@ -296,6 +300,7 @@ public:
                 {"inc-regional-trace-tuples", true, nullptr, 1012},
                 {"profile-dep-graph", false, nullptr, 1010},
                 {"post-del", false, nullptr, 1006},
+                {"enable-inc-reord", false, nullptr, 1015},
                 {"det-opt", false, nullptr, 'Z'},
                 {"det-force", false, nullptr, 1007},
                 {"no-reuse-var-index", false, nullptr, 1008},
@@ -467,6 +472,9 @@ public:
                 case 1006:
                     post_del = true;
                     break;
+                case 1015:
+                    enable_inc_reord = true;
+                    break;
                 case 'Z':
                     det_opt = true;
                     break;
@@ -530,6 +538,7 @@ private:
         std::cerr << "    --inc-regional-trace-tuples=<LIST> -- Comma-separated tuples to trace\n";
         std::cerr << "    --profile-dep-graph          -- Enable dependency-graph profiling\n";
         std::cerr << "    --post-del                   -- Enable post-delete variable postprocess (FC)\n";
+        std::cerr << "    --enable-inc-reord           -- Enable CUDD dynamic reordering in incremental turns\n";
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
         std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
         std::cerr << "    --det-force                  -- Force deterministic mode (skip derivation graph; emit prob=1.0)\n";

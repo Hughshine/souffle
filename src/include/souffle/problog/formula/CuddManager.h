@@ -25,6 +25,7 @@ using Duration = std::chrono::duration<double>;
 
 static constexpr bool kCuddVerbose = false;
 extern bool fcProfileEnabled;
+extern bool incReorderEnabled;
 inline std::string cuddPreConfigTag;
 inline void setCuddPreConfigTag(const std::string& tag) {
     cuddPreConfigTag = tag;
@@ -380,6 +381,11 @@ public:
                 incView != nullptr &&
                 (!incView->getDeltaInsertNodes().empty() || !incView->getDeltaInsertEdges().empty() ||
                         !incView->getDeltaDeleteNodes().empty() || !incView->getDeltaDeleteEdges().empty());
+        const bool disableReorder = incView != nullptr && hasDelta && !incReorderEnabled;
+        if (disableReorder) {
+            Cudd_AutodynDisable(manager.get());
+            currentReorderingType = CUDD_REORDER_SAME;
+        }
         auto factStart = steady_clock::now();
         if (incView != nullptr && hasDelta) {
             for (const auto& node : incView->getDeltaInsertNodes()) {
@@ -492,15 +498,21 @@ public:
         if (!reorderConfigured_) {
             // Rely on CUDD adaptive dynamic reordering; skip heavy static heuristic ordering.
             std::cout << "[CUDD] Enabling adaptive dynamic reordering (skip static ordering)" << std::endl;
-            if (profileTime) {
-                auto reorderStart = steady_clock::now();
-                adaptiveReorder(manager.get());
-                reorderMs = toMs(steady_clock::now() - reorderStart);
-            } else {
-                adaptiveReorder(manager.get());
+            if (!disableReorder) {
+                if (profileTime) {
+                    auto reorderStart = steady_clock::now();
+                    adaptiveReorder(manager.get());
+                    reorderMs = toMs(steady_clock::now() - reorderStart);
+                } else {
+                    adaptiveReorder(manager.get());
+                }
+                std::cout << "[CUDD] Adaptive reordering initialized" << std::endl;
             }
-            std::cout << "[CUDD] Adaptive reordering initialized" << std::endl;
             reorderConfigured_ = true;
+        }
+        if (disableReorder) {
+            // Keep incremental turns from pinning the reorder configuration for later full turns.
+            reorderConfigured_ = false;
         }
         if (fcProfile) {
             const auto totalMs = toMs(steady_clock::now() - totalStart);

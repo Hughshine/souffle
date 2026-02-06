@@ -378,6 +378,7 @@ public:
         depGraphProfileEnabled = options.isDepGraphProfileEnabled();
         postDelEnabled = options.isPostDelEnabled();
         reuseVarIndexEnabled = options.isReuseVarIndexEnabled();
+        incReorderEnabled = options.isIncReorderEnabled();
         auto& mode = options.getIncMode();
         if (mode == "full" || mode == "full-hard") {
             setIncMode(IncMode::FULL_HARD);

@@ -1645,6 +1645,7 @@ void runPipeline(
     incRegionalTraceTuples = opt.getIncRegionalTraceTuples();
     depGraphProfileEnabled = opt.isDepGraphProfileEnabled();
     postDelEnabled = opt.isPostDelEnabled();
+    incReorderEnabled = opt.isIncReorderEnabled();
     DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
     DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());
     DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());

@@ -1246,6 +1246,10 @@ void buildFormulasInc(
         stage->logMessage(Level::INFO, "No changes to apply, skipping incremental update\n");
         return;
     }
+    if (!incReorderEnabled) {
+        // Disable dynamic reordering for the entire incremental turn (delete + insert).
+        formulaManager.stopDynamicOptimization();
+    }
     const bool useConst = DerivationGraph::isConstFoldEnabled();
     const bool dumpConst = DerivationGraph::isConstDumpEnabled();
     ConstAnalysisResult constInfo;
@@ -1727,6 +1731,7 @@ void buildFormulasIncCyclewise(
     const auto& deltaDeletedEdges = view.getDeltaDeleteEdges();
     const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
     const auto& deltaDeletedNodes = view.getDeltaDeleteNodes();
+    const auto& deltaInsertFactNodes = view.getDeltaInsertFactNodes();
     debugger.logMessage(Level::INFO, "[inc-naive] delta counts: insNodes=" +
         std::to_string(deltaInsertedNodes.size()) + " insEdges=" +
         std::to_string(deltaInsertedEdges.size()) + " delNodes=" +
@@ -2187,7 +2192,7 @@ void buildFormulasIncCyclewise(
             formulaManager.dumpProfilingStatistics();
         }
 
-        if (!deletedVarsIndex.empty() && postDelEnabled) {
+        if (!deletedVarsIndex.empty() && postDelEnabled && incReorderEnabled) {
             auto postStart = Clock::now();
             formulaManager.postprocessUselessVariables(deletedVarsIndex);
             if (deleteProfile) {
@@ -2231,26 +2236,25 @@ void buildFormulasIncCyclewise(
             deletePrepMs = toMs(deletePrepStart, Clock::now());
         }
         // Ensure inserted fact nodes are available during re-derivation (det-opt can treat derived facts as inputs).
-        if (!deltaInsertedNodes.empty()) {
+        if (!deltaInsertFactNodes.empty()) {
             std::size_t preInitFacts = 0;
-            for (auto node : deltaInsertedNodes) {
+            for (auto node : deltaInsertFactNodes) {
                 if (!node || nodeFormulas.count(node)) {
                     continue;
                 }
-                if (node->isFact) {
-                    const double prob = node->getProbability();
-                    if (prob == 1.0) {
-                        nodeFormulas[node] = formulaManager.getTrue();
-                    } else {
-                        int idx = formulaManager.getVarIndex(*node);
-                        nodeFormulas[node] = formulaManager.createVar(idx, *node);
-                        assertProbabilityInRange(prob, "inc preinit fact " + node->toString());
-                        formulaManager.setVariableWeight(idx, prob, 1 - prob);
-                    }
-                    ++preInitFacts;
-                } else {
-                    nodeFormulas[node] = formulaManager.getFalse();
+                if (!node->isFact) {
+                    continue;
                 }
+                const double prob = node->getProbability();
+                if (prob == 1.0) {
+                    nodeFormulas[node] = formulaManager.getTrue();
+                } else {
+                    int idx = formulaManager.getVarIndex(*node);
+                    nodeFormulas[node] = formulaManager.createVar(idx, *node);
+                    assertProbabilityInRange(prob, "inc preinit fact " + node->toString());
+                    formulaManager.setVariableWeight(idx, prob, 1 - prob);
+                }
+                ++preInitFacts;
             }
             if (fcProfile && preInitFacts > 0) {
                 std::cout << "[fc-preinit] phase=rederive facts=" << preInitFacts << std::endl;
@@ -2310,10 +2314,25 @@ void buildFormulasIncCyclewise(
                     for (size_t i = 0; i < inputs.size(); ++i) {
                         FormulaNodeRef lit;
                         if (!inputLiteralProfile(inputs[i], negs[i], lit, rederiveStats, deleteProfile)) {
-    //                    std::cout << "    [WAIT] Missing input: " << inputs[i]->toString() << std::endl;
+                            NodePtr missing = inputs[i];
+                            if (missing && nodeFormulas.count(missing) == 0 &&
+                                    view.getDeltaInsertNodes().count(missing)) {
+                                if (missing->isFact) {
+                                    const double prob = missing->getProbability();
+                                    if (prob == 1.0) {
+                                        nodeFormulas[missing] = formulaManager.getTrue();
+                                    } else {
+                                        int idx = formulaManager.getVarIndex(*missing);
+                                        nodeFormulas[missing] = formulaManager.createVar(idx, *missing);
+                                        assertProbabilityInRange(prob, "inc lazy preinit fact " + missing->toString());
+                                        formulaManager.setVariableWeight(idx, prob, 1 - prob);
+                                    }
+                                } else {
+                                    nodeFormulas[missing] = formulaManager.getFalse();
+                                }
+                            }
                             allAvailable = false;
                             if (fcProfile) {
-                                NodePtr missing = inputs[i];
                                 NodePtr head = view.getOutput(edge);
                                 std::cout << "    [REQUEUE-MISS] input_index=" << i
                                           << " input=" << (missing ? missing->getTuple().toString() : "<null>")
@@ -2321,6 +2340,7 @@ void buildFormulasIncCyclewise(
                                           << " isFact=" << (missing && missing->isFact ? 1 : 0)
                                           << " in_nodeFormulas=" << (missing && nodeFormulas.count(missing) ? 1 : 0)
                                           << " in_delta_insert_nodes=" << (missing && deltaInsertedNodes.count(missing) ? 1 : 0)
+                                          << " in_delta_insert_fact_nodes=" << (missing && deltaInsertFactNodes.count(missing) ? 1 : 0)
                                           << " in_delta_delete_nodes=" << (missing && deltaDeletedNodes.count(missing) ? 1 : 0)
                                           << " in_view_nodes=" << (missing && view.getNodes().count(missing) ? 1 : 0)
                                           << " head=" << (head ? head->getTuple().toString() : "<null>")
@@ -3353,6 +3373,7 @@ void buildFormulasIncRegionalCyclewise(
     const auto& deltaDeletedEdges = view.getDeltaDeleteEdges();
     const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
     const auto& deltaDeletedNodes = view.getDeltaDeleteNodes();
+    const auto& deltaInsertFactNodes = view.getDeltaInsertFactNodes();
     debugger.logMessage(Level::INFO, "[inc-regional] delta counts: insNodes=" +
         std::to_string(deltaInsertedNodes.size()) + " insEdges=" +
         std::to_string(deltaInsertedEdges.size()) + " delNodes=" +
@@ -3387,6 +3408,10 @@ void buildFormulasIncRegionalCyclewise(
     ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager};
 
     if (!deltaDeletedEdges.empty() || !deltaDeletedNodes.empty()) {
+        if (!incReorderEnabled) {
+            // Ensure delete/rederive does not trigger dynamic reordering in incremental turns.
+            formulaManager.stopDynamicOptimization();
+        }
         auto start = high_resolution_clock::now();
         auto& depGraph = view.getCycleDependencyGraph();  // includes SCC/dependencies/depths
         auto end = high_resolution_clock::now();
@@ -3672,7 +3697,7 @@ void buildFormulasIncRegionalCyclewise(
         debugger.logMessage(Level::INFO, "Deletion deletedVarsIndex size: " +
             std::to_string(deletedVarsIndex.size()));
         formulaManager.dumpProfilingStatistics();
-        if (!deletedVarsIndex.empty() && postDelEnabled) {
+        if (!deletedVarsIndex.empty() && postDelEnabled && incReorderEnabled) {
             formulaManager.postprocessUselessVariables(deletedVarsIndex);
             formulaManager.dumpProfilingStatistics();
         }
@@ -3694,6 +3719,32 @@ void buildFormulasIncRegionalCyclewise(
                           << " formula_false=" << (isFalse ? 1 : 0)
                           << " changed=" << (changed ? 1 : 0)
                           << std::endl;
+            }
+        }
+
+        // Ensure inserted fact nodes are available during re-derivation (det-opt can treat derived facts as inputs).
+        if (!deltaInsertFactNodes.empty()) {
+            std::size_t preInitFacts = 0;
+            for (auto node : deltaInsertFactNodes) {
+                if (!node || nodeFormulas.count(node)) {
+                    continue;
+                }
+                if (!node->isFact) {
+                    continue;
+                }
+                const double prob = node->getProbability();
+                if (prob == 1.0) {
+                    nodeFormulas[node] = formulaManager.getTrue();
+                } else {
+                    int idx = formulaManager.getVarIndex(*node);
+                    nodeFormulas[node] = formulaManager.createVar(idx, *node);
+                    assertProbabilityInRange(prob, "inc preinit fact " + node->toString());
+                    formulaManager.setVariableWeight(idx, prob, 1 - prob);
+                }
+                ++preInitFacts;
+            }
+            if (fcProfile && preInitFacts > 0) {
+                std::cout << "[fc-preinit] phase=rederive facts=" << preInitFacts << std::endl;
             }
         }
 
@@ -3729,6 +3780,23 @@ void buildFormulasIncRegionalCyclewise(
                     for (size_t i = 0; i < inputs.size(); ++i) {
                         FormulaNodeRef lit;
                         if (!constAccess.inputLiteral(nodeFormulas, inputs[i], negs[i], lit)) {
+                            NodePtr missing = inputs[i];
+                            if (missing && nodeFormulas.count(missing) == 0 &&
+                                    deltaInsertedNodes.count(missing)) {
+                                if (missing->isFact) {
+                                    const double prob = missing->getProbability();
+                                    if (prob == 1.0) {
+                                        nodeFormulas[missing] = formulaManager.getTrue();
+                                    } else {
+                                        int idx = formulaManager.getVarIndex(*missing);
+                                        nodeFormulas[missing] = formulaManager.createVar(idx, *missing);
+                                        assertProbabilityInRange(prob, "inc lazy preinit fact " + missing->toString());
+                                        formulaManager.setVariableWeight(idx, prob, 1 - prob);
+                                    }
+                                } else {
+                                    nodeFormulas[missing] = formulaManager.getFalse();
+                                }
+                            }
                             allAvailable = false;
                             break;
                         }

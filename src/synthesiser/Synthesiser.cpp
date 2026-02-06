@@ -4511,6 +4511,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "incRegionalTraceTuples = opt.getIncRegionalTraceTuples();\n";
     hook << "depGraphProfileEnabled = opt.isDepGraphProfileEnabled();\n";
     hook << "reuseVarIndexEnabled = opt.isReuseVarIndexEnabled();\n";
+    hook << "incReorderEnabled = opt.isIncReorderEnabled();\n";
 
     if (!db.getNS(false).empty()) {
         hook << db.getNS(false) << "::";

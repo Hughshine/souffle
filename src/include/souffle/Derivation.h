@@ -154,6 +154,7 @@ extern std::string incRegionalTraceTuples;
 extern bool depGraphProfileEnabled;
 extern bool postDelEnabled;
 extern bool reuseVarIndexEnabled;
+extern bool incReorderEnabled;
 
 class DerivationManager {
 public:
