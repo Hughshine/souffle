@@ -1106,7 +1106,7 @@ static void runBddPipeline(
     if (enableOnlineCli) {
         IncrementalCLI<BddNodeRef> cli(
                 &program, &graph, &ruleManager, &queryManager, bddManager.get(), &nodeFormulas,
-                &edgeFormulas, false);
+                &edgeFormulas);
         cli.setCmdOptions(opt);
         cli.run();
     }
@@ -1621,7 +1621,7 @@ static void runSddPipeline(
     if (enableOnlineCli) {
         IncrementalCLI<SddNodeRef> cli(
                 &program, &graph, &ruleManager, &queryManager, sddManager.get(), &nodeFormulas,
-                &edgeFormulas, false);
+                &edgeFormulas);
         cli.setCmdOptions(opt);
         cli.run();
     }

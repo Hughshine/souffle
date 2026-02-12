@@ -269,6 +269,10 @@ public:
 
     int getVarIndex(const Node& node) override;
     int getVarIndex(const Hyperedge& edge) override;
+    bool peekVarIndex(const Node& node, int& idx) const override;
+    bool peekVarIndex(const Hyperedge& edge, int& idx) const override;
+    void bindVarIndex(const Node& node, int idx) override;
+    void bindVarIndex(const Hyperedge& edge, int idx) override;
     void releaseVarIndex(const Node& node) override;
     void releaseVarIndex(const Hyperedge& edge) override;
     void tryGarbageCollection() override;
@@ -543,6 +547,52 @@ inline int SddFormulaManager::getVarIndex(const Hyperedge& edge) {
     int idx = nextRawVar++;
     edgeToRawIndex_[&edge] = idx;
     return idx;
+}
+
+inline bool SddFormulaManager::peekVarIndex(const Node& node, int& idx) const {
+    auto it = nodeToRawIndex_.find(&node);
+    if (it == nodeToRawIndex_.end()) {
+        return false;
+    }
+    idx = it->second;
+    return true;
+}
+
+inline bool SddFormulaManager::peekVarIndex(const Hyperedge& edge, int& idx) const {
+    auto it = edgeToRawIndex_.find(&edge);
+    if (it == edgeToRawIndex_.end()) {
+        return false;
+    }
+    idx = it->second;
+    return true;
+}
+
+inline void SddFormulaManager::bindVarIndex(const Node& node, int idx) {
+    if (idx <= 0) {
+        return;
+    }
+    auto it = nodeToRawIndex_.find(&node);
+    if (it != nodeToRawIndex_.end() && it->second == idx) {
+        return;
+    }
+    nodeToRawIndex_[&node] = idx;
+    if (idx >= nextRawVar) {
+        nextRawVar = idx + 1;
+    }
+}
+
+inline void SddFormulaManager::bindVarIndex(const Hyperedge& edge, int idx) {
+    if (idx <= 0) {
+        return;
+    }
+    auto it = edgeToRawIndex_.find(&edge);
+    if (it != edgeToRawIndex_.end() && it->second == idx) {
+        return;
+    }
+    edgeToRawIndex_[&edge] = idx;
+    if (idx >= nextRawVar) {
+        nextRawVar = idx + 1;
+    }
 }
 
 

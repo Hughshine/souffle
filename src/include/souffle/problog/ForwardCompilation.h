@@ -108,10 +108,10 @@ static inline void collectImpactUnion(
     }
 }
 
-static inline std::unordered_map<NodePtr, std::vector<EdgePtr>> buildDeletedOutEdges(
+static inline std::unordered_map<UntypedTuple, std::vector<EdgePtr>> buildDeletedOutEdges(
     const std::set<EdgePtr>& deletedEdges
 ) {
-    std::unordered_map<NodePtr, std::vector<EdgePtr>> deletedOutEdges;
+    std::unordered_map<UntypedTuple, std::vector<EdgePtr>> deletedOutEdges;
     for (const auto& edge : deletedEdges) {
         if (!edge) {
             continue;
@@ -120,7 +120,7 @@ static inline std::unordered_map<NodePtr, std::vector<EdgePtr>> buildDeletedOutE
             if (!input) {
                 continue;
             }
-            deletedOutEdges[input].push_back(edge);
+            deletedOutEdges[input->getTuple()].push_back(edge);
         }
     }
     return deletedOutEdges;
@@ -129,7 +129,7 @@ static inline std::unordered_map<NodePtr, std::vector<EdgePtr>> buildDeletedOutE
 static inline void collectImpactUnionWithDeletedEdges(
     const IncrementalDerivationGraphViewInterface& view,
     const std::vector<NodePtr>& sources,
-    const std::unordered_map<NodePtr, std::vector<EdgePtr>>& deletedOutEdges,
+    const std::unordered_map<UntypedTuple, std::vector<EdgePtr>>& deletedOutEdges,
     std::unordered_set<NodePtr>& outNodes,
     std::unordered_set<EdgePtr>& outEdges
 ) {
@@ -138,44 +138,85 @@ static inline void collectImpactUnionWithDeletedEdges(
     }
     const auto& liveNodes = view.getNodes();
     const auto& liveEdges = view.getEdges();
-    std::queue<NodePtr> q;
+    std::unordered_map<UntypedTuple, NodePtr> liveNodeByTuple;
+    liveNodeByTuple.reserve(liveNodes.size());
+    for (const auto& node : liveNodes) {
+        if (!node) {
+            continue;
+        }
+        liveNodeByTuple.emplace(node->getTuple(), node);
+    }
+    std::queue<NodePtr> liveQueue;
+    std::queue<UntypedTuple> deletedQueue;
+    std::unordered_set<UntypedTuple> deletedVisited;
+    auto enqueueByTuple = [&](const UntypedTuple& tuple) {
+        auto liveIt = liveNodeByTuple.find(tuple);
+        if (liveIt != liveNodeByTuple.end()) {
+            if (outNodes.insert(liveIt->second).second) {
+                liveQueue.push(liveIt->second);
+            }
+            return;
+        }
+        if (deletedOutEdges.count(tuple) && deletedVisited.insert(tuple).second) {
+            deletedQueue.push(tuple);
+        }
+    };
     for (const auto& src : sources) {
         if (!src) {
             continue;
         }
         if (outNodes.insert(src).second) {
-            q.push(src);
+            liveQueue.push(src);
         }
     }
-    while (!q.empty()) {
-        NodePtr cur = q.front();
-        q.pop();
-        const bool curIsLive = liveNodes.count(cur) > 0;
-        if (curIsLive) {
-            for (const auto& e : cur->getOutgoingEdges()) {
-                if (!liveEdges.count(e)) {
-                    continue;
+    while (!liveQueue.empty() || !deletedQueue.empty()) {
+        while (!liveQueue.empty()) {
+            NodePtr cur = liveQueue.front();
+            liveQueue.pop();
+            const bool curIsLive = liveNodes.count(cur) > 0;
+            if (curIsLive) {
+                for (const auto& e : cur->getOutgoingEdges()) {
+                    if (!liveEdges.count(e)) {
+                        continue;
+                    }
+                    outEdges.insert(e);
+                    NodePtr nxt = e->getOutput();
+                    if (nxt && liveNodes.count(nxt) && outNodes.insert(nxt).second) {
+                        liveQueue.push(nxt);
+                    }
                 }
-                outEdges.insert(e);
-                NodePtr nxt = e->getOutput();
-                if (nxt && liveNodes.count(nxt) && outNodes.insert(nxt).second) {
-                    q.push(nxt);
+            }
+            auto it = deletedOutEdges.find(cur->getTuple());
+            if (it != deletedOutEdges.end()) {
+                for (const auto& e : it->second) {
+                    outEdges.insert(e);
+                    NodePtr nxt = e->getOutput();
+                    if (!nxt) {
+                        continue;
+                    }
+                    enqueueByTuple(nxt->getTuple());
                 }
             }
         }
-        auto it = deletedOutEdges.find(cur);
-        if (it != deletedOutEdges.end()) {
-            for (const auto& e : it->second) {
-                outEdges.insert(e);
-                NodePtr nxt = e->getOutput();
-                if (!nxt) {
-                    continue;
-                }
-                // Allow traversing deleted chains so we can reach live nodes beyond a deleted node.
-                if ((liveNodes.count(nxt) || deletedOutEdges.count(nxt)) && outNodes.insert(nxt).second) {
-                    q.push(nxt);
-                }
+        if (deletedQueue.empty()) {
+            continue;
+        }
+        UntypedTuple curTuple = deletedQueue.front();
+        deletedQueue.pop();
+        auto it = deletedOutEdges.find(curTuple);
+        if (it == deletedOutEdges.end()) {
+            continue;
+        }
+        for (const auto& e : it->second) {
+            if (!e) {
+                continue;
             }
+            outEdges.insert(e);
+            NodePtr nxt = e->getOutput();
+            if (!nxt) {
+                continue;
+            }
+            enqueueByTuple(nxt->getTuple());
         }
     }
 }

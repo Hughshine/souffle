@@ -197,6 +197,15 @@ public:
         return idx;
     }
 
+    bool peekVarIndex(const Node& node, int& idx) const override {
+        auto it = nodeIndex_.find(&node);
+        if (it == nodeIndex_.end()) {
+            return false;
+        }
+        idx = it->second;
+        return true;
+    }
+
     int getVarIndex(const Hyperedge& edge) override {
         auto it = edgeIndex_.find(&edge);
         if (it != edgeIndex_.end()) return it->second;
@@ -217,6 +226,46 @@ public:
         edgeIndex_[&edge] = idx;
         return idx;
     }
+
+    bool peekVarIndex(const Hyperedge& edge, int& idx) const override {
+        auto it = edgeIndex_.find(&edge);
+        if (it == edgeIndex_.end()) {
+            return false;
+        }
+        idx = it->second;
+        return true;
+    }
+
+    void bindVarIndex(const Node& node, int idx) override {
+        if (idx < 0) {
+            return;
+        }
+        auto it = nodeIndex_.find(&node);
+        if (it != nodeIndex_.end() && it->second == idx) {
+            return;
+        }
+        dropFreeIndex(idx);
+        nodeIndex_[&node] = idx;
+        if (idx >= nextVarIndex_) {
+            nextVarIndex_ = idx + 1;
+        }
+    }
+
+    void bindVarIndex(const Hyperedge& edge, int idx) override {
+        if (idx < 0) {
+            return;
+        }
+        auto it = edgeIndex_.find(&edge);
+        if (it != edgeIndex_.end() && it->second == idx) {
+            return;
+        }
+        dropFreeIndex(idx);
+        edgeIndex_[&edge] = idx;
+        if (idx >= nextVarIndex_) {
+            nextVarIndex_ = idx + 1;
+        }
+    }
+
     void releaseVarIndex(const Node& node) override {
         if (!reuseVarIndexEnabled) {
             return;

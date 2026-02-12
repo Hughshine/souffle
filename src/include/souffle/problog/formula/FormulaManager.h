@@ -39,6 +39,10 @@ public:
     virtual double computeWeightedModelCount(const NodeRef& node) = 0;
     virtual int getVarIndex(const Node& node) = 0;
     virtual int getVarIndex(const Hyperedge& edge) = 0;
+    virtual bool peekVarIndex(const Node&, int&) const { return false; }
+    virtual bool peekVarIndex(const Hyperedge&, int&) const { return false; }
+    virtual void bindVarIndex(const Node&, int) {}
+    virtual void bindVarIndex(const Hyperedge&, int) {}
     virtual void releaseVarIndex(const Node&) {}
     virtual void releaseVarIndex(const Hyperedge&) {}
 
