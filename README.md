@@ -60,18 +60,24 @@ See `docs/TESTING.md` for test status and alternative verification paths.
 - `CONTRIBUTING.md`: contributor workflow and review checklist.
 - `AGENTS.md`: Codex constraints and verification expectations.
 - `docs/ARCHITECTURE.md`: high-level system design.
+- `docs/project/README.md`: project-level module map, fork delta, and maintenance invariants.
+- `docs/project/PROBLOG_EXTENSION_STACK.md`: detailed ProbLog extension implementation from driver/parser through runtime pipeline.
 - `docs/TESTING.md`: verification strategy and CI command sources.
 - `docs/RUNBOOK.md`: run/rollback/troubleshooting guide.
 - `docs/SECURITY.md`: data handling and dependency hygiene.
 - `docs/USAGE.md`: program syntax, CLI, and runtime options.
+- `docs/process/README.git.md`: commit hygiene and message conventions.
 - `docs/INDEX.md`: index of research notes and evaluation docs.
+- `docs/topics/README.md`: map of current topic docs (pipeline/rewrite/backends/profiling/eval).
+- `docs/design/README.md`: design proposals not fully implemented.
+- `docs/historical/README.md`: archived historical notes.
 
 ## FAQ / Common Issues
 - ctest fails: this fork intentionally disables `ctest`; see `docs/TESTING.md`.
 - Need rewrite or incremental details: start at `docs/INDEX.md`.
-- Commit hygiene: see `README.git.md` for what to include and exclude.
+- Commit hygiene: see `docs/process/README.git.md` for what to include and exclude.
 
 ## Related commits
+- `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack guide and link it from README
+- `UNCOMMITTED` — docs(repo): add project-level docs and move commit hygiene guide under docs/process
 - `812ea4081` — docs(repo): refine README narratives
-- `3e9b024ca` — docs(readme): refresh eval and pipeline notes
-- `e1e9f6c84` — perf(problog): add hybrid stage metrics for component FC

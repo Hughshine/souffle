@@ -75,7 +75,7 @@ listed below; use `-h` for the authoritative values.
 - `--dumpjson`: default `false`
 - `--dumpdot`: default `false`
 - `--dumpstat`: default `false`
-- `--dumpconst`: default `false` (write const-prepass details; see `README.const.md`)
+- `--dumpconst`: default `false` (write const-prepass details; see `docs/topics/pipeline/README.const.md`)
 - `--dred-profile`: default `false` (requires compile-time `--profile --dred-profile` to emit DRed sub-phase timers;
   per-SCC workload counters also need `--dumpstat`)
 - `--inc-profile`: default `false` (print per-stage incremental timings to stdout)
@@ -145,7 +145,7 @@ Example (batch from delta file):
 - Deterministic-force mode (`--det-force`) to bypass the derivation graph and
   emit probability `1.0` for all outputs (useful for deterministic baselines).
 - Optional deterministic constant pre-analysis in FC (`--fold-const`); use
-  `--dumpconst` to write true/false nodes and edges (see `README.const.md`).
+  `--dumpconst` to write true/false nodes and edges (see `docs/topics/pipeline/README.const.md`).
 - Debug/profiling outputs: JSON/DOT/stats dumps after prune.
 
 ### Incremental (Online) Changes

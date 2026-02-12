@@ -11,6 +11,11 @@
 This fork extends upstream Souffle with a probabilistic pipeline and online incremental
 execution. Online compilation is the default; there is no interpreter path.
 
+For project-level ownership and module boundaries, use:
+- `docs/project/MODULES.md`
+- `docs/project/FORK_DELTA.md`
+- `docs/project/MAINTENANCE.md`
+
 ## High-Level Flow
 1. Parse Datalog into AST, lower to RAM, then apply the online translator.
 2. Synthesize C++ for compiled programs and link against the precompiled runtime.
@@ -44,4 +49,5 @@ execution. Online compilation is the default; there is no interpreter path.
 See `docs/INDEX.md` for the complete doc map, including rewrite and evaluation notes.
 
 ## Related commits
+- `UNCOMMITTED` — docs(project): link architecture overview to project-level module and maintenance docs
 - `aaa18c137` — docs(repo): add core docs

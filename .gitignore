@@ -41,12 +41,33 @@ doc
 /problog-benchmark/
 # local side-channel experiment workspace
 /side_channel_inc/
+/side_channel_inc_*/
+
+# local experiment archive:
+# keep README files tracked, ignore bulky artifacts
+/archive/*
+!/archive/README.md
+!/archive/*/
+/archive/*/*
+!/archive/*/README.md
 
 # local plotting cache
 **/.mplconfig/
 
+# local incremental benchmark summaries and ad-hoc plots
+/end2end_combo_*.tsv
+/fc_inc_regional_vs_inc_naive_speedup_per_delta*.tsv
+/inc_regional_vs_naive_fc_wmc_per_*.tsv
+/region_ratio_pie.pdf
+/region_ratio_pie.png
+/img/region_ratio_pie.pdf
+/img/region_ratio_pie.png
+/img/runtime_breakdown_pie.pdf
+/img/runtime_breakdown_pie.png
+
 # generated souffle scratch files in repo root
 /compute.souffle*
+/codex_work.log
 
 *.swp
 *.tgz

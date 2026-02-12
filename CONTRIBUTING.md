@@ -18,7 +18,7 @@ and align documentation with behavior changes.
 ## Branch and PR Flow
 - Branch from `master` and keep PRs scoped to a single topic.
 - Explain the motivation, expected behavior change, and any performance data.
-- Avoid committing generated artifacts (see `README.git.md`).
+- Avoid committing generated artifacts (see `docs/process/README.git.md`).
 
 ## Code Style and Formatting
 - Run `sh/run_test_format.sh` before submitting.
@@ -26,11 +26,11 @@ and align documentation with behavior changes.
 
 ## Testing Strategy
 - See `docs/TESTING.md` for test status and recommended verification steps.
-- For behavior changes, run a relevant experiment flow (`README.eval*.md`) and
+- For behavior changes, run a relevant experiment flow (`docs/topics/evaluation/README.md`) and
   include the commands and outputs in your PR description.
 
 ## Commit Messages
-- Follow the format and rules in `README.git.md`.
+- Follow the format and rules in `docs/process/README.git.md`.
 
 ## Documentation Updates
 - Update the primary doc for any user-facing or workflow change:
@@ -47,4 +47,5 @@ and align documentation with behavior changes.
 - No generated artifacts or experiment outputs are committed.
 
 ## Related commits
+- `UNCOMMITTED` — docs(repo): align contributing guidance with docs/process and evaluation map
 - `aaa18c137` — docs(repo): add core docs

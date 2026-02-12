@@ -12,51 +12,69 @@ Legend:
 ## Entry Points
 - [PRIMARY] `README.md` — project overview + quickstart
 - [PRIMARY] `docs/USAGE.md` — CLI/runtime options (authoritative)
-- [SECONDARY] `README.flag.md` — consolidated compiler/runtime flag reference
-- [SECONDARY] `README.dump.md` — dump/debug outputs (compiler + runtime)
+- [PRIMARY] `docs/project/README.md` — project map (modules, fork delta, maintenance)
+- [PRIMARY] `docs/topics/README.md` — topical docs map (current behavior)
+- [PRIMARY] `docs/design/README.md` — design proposals map
+- [PRIMARY] `docs/historical/README.md` — archived/historical docs map
+- [SECONDARY] `docs/topics/runtime/README.flag.md` — consolidated compiler/runtime flag reference
+- [SECONDARY] `docs/topics/runtime/README.dump.md` — dump/debug outputs (compiler + runtime)
 - [PRIMARY] `docs/TESTING.md` — verification status + test commands
 - [PRIMARY] `docs/RUNBOOK.md` — build/run/rollback/troubleshooting
 - [PRIMARY] `docs/ARCHITECTURE.md` — system architecture map
-- [PRIMARY] `README.git.md` — commit hygiene
+- [PRIMARY] `docs/process/README.git.md` — commit hygiene
+- [SECONDARY] `docs/process/README.md` — process docs map
 - [SECONDARY] `CONTRIBUTING.md` — contributor workflow
 - [PRIMARY] `AGENTS.md` — Codex constraints (kept at repo root)
 
+## Project-Level Docs
+- [PRIMARY] `docs/project/MODULES.md` — whole-project module inventory
+- [PRIMARY] `docs/project/FORK_DELTA.md` — fork-owned modules and contributions
+- [PRIMARY] `docs/project/MAINTENANCE.md` — invariants, risks, and module-level checks
+- [PRIMARY] `docs/project/PROBLOG_EXTENSION_STACK.md` — end-to-end ProbLog extension implementation details
+- [PRIMARY] `docs/project/DOC_SYSTEM.md` — documentation architecture and placement rules
+
 ## Current Pipeline & Semantics
-- [PRIMARY] `README.dred.md` — online DRed semantics + performance
-- [PRIMARY] `README.inc.region.md` — inc-regional implementation
-- [PRIMARY] `README.prune.md` — prune behavior + constraints
-- [PRIMARY] `README.fc.delete.md` — incremental delete logic
-- [PRIMARY] `README.evidence.md` — evidence semantics and flow
-- [PRIMARY] `README.const.md` — det-opt behavior
-- [SECONDARY] `README.souffle.opt.md` — AST/RAM transform inventory
+- [PRIMARY] `docs/topics/pipeline/README.dred.md` — online DRed semantics + performance
+- [PRIMARY] `docs/topics/pipeline/README.inc.region.md` — inc-regional implementation
+- [PRIMARY] `docs/topics/pipeline/README.prune.md` — prune behavior + constraints
+- [PRIMARY] `docs/topics/pipeline/README.fc.delete.md` — incremental delete logic
+- [PRIMARY] `docs/topics/pipeline/README.evidence.md` — evidence semantics and flow
+- [PRIMARY] `docs/topics/pipeline/README.const.md` — det-opt behavior
+- [SECONDARY] `docs/topics/pipeline/README.souffle.opt.md` — AST/RAM transform inventory
 
 ## Rewrite & Graph Transforms
-- [PRIMARY] `README.rewrite.impl.md` — current rewrite behavior
-- [SECONDARY] `README.split.md` — split behavior + design notes
-- [SECONDARY] `README.siso.md` — SISO detection details
-- [SECONDARY] `README.mst.md` — magic-set (MST) translator notes
-- [DESIGN] `README.rewrite.opt.md` — optimization ideas (not implemented)
+- [PRIMARY] `docs/topics/rewrite/README.rewrite.impl.md` — current rewrite behavior
+- [SECONDARY] `docs/topics/rewrite/README.split.md` — split behavior + design notes
+- [SECONDARY] `docs/topics/rewrite/README.siso.md` — SISO detection details
+- [SECONDARY] `docs/topics/rewrite/README.mst.md` — magic-set (MST) translator notes
+- [DESIGN] `docs/design/README.rewrite.opt.md` — optimization ideas (not implemented)
 
 ## Backends
-- [PRIMARY] `README.cudd.md` — BDD backend
-- [SECONDARY] `README.cudd.reordering.md` — reordering details
-- [SECONDARY] `README.sdd.md` — SDD backend status/gaps
-- [DESIGN] `README.ordering.md` — ordering implementation notes (FORCE path exists but is unused by CUDD)
+- [PRIMARY] `docs/topics/backends/README.cudd.md` — BDD backend
+- [SECONDARY] `docs/topics/backends/README.cudd.reordering.md` — reordering details
+- [SECONDARY] `docs/topics/backends/README.sdd.md` — SDD backend status/gaps
+- [DESIGN] `docs/design/README.ordering.md` — ordering implementation notes (FORCE path exists but is unused by CUDD)
 
 ## Profiling
-- [PRIMARY] `README.profile.md` — profiling guide (online)
-- [SECONDARY] `README.profile.inc.md` — incremental profiling notes
-- [SECONDARY] `README.fc.profile.md` — FC profiling fields
+- [PRIMARY] `docs/topics/profiling/README.profile.md` — profiling guide (online)
+- [SECONDARY] `docs/topics/profiling/README.profile.inc.md` — incremental profiling notes
+- [SECONDARY] `docs/topics/profiling/README.fc.profile.md` — FC profiling fields
 
 ## Evaluation & Results (Souffle)
-- [LATEST] `README.eval.final.md` — latest incremental evaluation log (2026-01-21)
-- [SECONDARY] `README.eval.inc.md` — incremental benchmark workflow + historical runs
-- [SECONDARY] `README.eval.md` — full benchmark workflow + notes
-- [SECONDARY] `OPT.md` — inc-regional run procedure + ratio collection notes
-- [SECONDARY] `README.artifact.inc.md` — incremental artifact reproduction
-- [HISTORICAL] `README.table.md` — table generation notes
-- [HISTORICAL] `README.disjunct.md` — disjunction strengthening log
-- [HISTORICAL] `README.problog.md` — ProbLog baseline runs
+- [PRIMARY] `docs/topics/evaluation/README.md` — evaluation doc map (current vs historical)
+- [LATEST] `docs/topics/evaluation/README.eval.final.md` — latest curated batch summary
+- [LATEST] `archive/README.md` — dated experiment archive index (batch READMEs tracked, artifacts ignored)
+- [PRIMARY] `docs/topics/evaluation/README.eval.inc.md` — incremental benchmark workflow (current)
+- [PRIMARY] `docs/topics/evaluation/README.eval.md` — full benchmark workflow (current)
+- [SECONDARY] `docs/topics/evaluation/OPT.md` — optimization-focused inc-regional run checklist
+- [SECONDARY] `docs/topics/evaluation/README.artifact.inc.md` — incremental artifact reproduction
+- [HISTORICAL] `docs/historical/README.eval.inc.log.md` — archived incremental run log
+- [HISTORICAL] `docs/historical/README.eval.full.log.md` — archived full-mode run log
+- [HISTORICAL] `docs/historical/README.eval.final.2026-01-21.md` — archived detailed incremental snapshot
+- [HISTORICAL] `docs/historical/OPT.md` — archived optimization notebook
+- [HISTORICAL] `docs/historical/README.table.md` — table generation notes
+- [HISTORICAL] `docs/historical/README.disjunct.md` — disjunction strengthening log
+- [HISTORICAL] `docs/historical/README.problog.md` — ProbLog baseline runs
 
 ## Out of Scope (Benchmarks/Experiments/Examples)
 - Benchmark, experiment, and example docs remain in their original directories and are not reorganized here.
@@ -64,29 +82,36 @@ Legend:
 - Historical benchmark notes remain in `problog-benchmark/README.sc.original.md` and `experiments/smokers_11/Plan.md`.
 
 ## Design Notes (Not Implemented)
-- [DESIGN] `README.inc.regional.multi.md` — multi-turn inc-regional state
-- [DESIGN] `README.inc.regional.opt.md` — inc-regional optimizations
-- [DESIGN] `IncRegional_PaperFormal_TechReport.md` — formalization notes
-- [DESIGN] `README.elastic.md` — elastic switch ideas
-- [DESIGN] `README.eqrel.md` — eqrel pruning concept
-- [DESIGN] `README.lazy.md` — lazy DD plan
-- [DESIGN] `README.refactor.md` — refactor opportunities
+- [DESIGN] `docs/design/README.inc.regional.multi.md` — multi-turn inc-regional state
+- [DESIGN] `docs/design/README.inc.regional.opt.md` — inc-regional optimizations
+- [DESIGN] `docs/design/IncRegional_PaperFormal_TechReport.md` — formalization notes
+- [DESIGN] `docs/design/README.elastic.md` — elastic switch ideas
+- [DESIGN] `docs/design/README.eqrel.md` — eqrel pruning concept
+- [DESIGN] `docs/design/README.lazy.md` — lazy DD plan
+- [DESIGN] `docs/design/README.refactor.md` — refactor opportunities
 
 ## Archive
-- [HISTORICAL] `README.rewrite.120725.md`
-- [HISTORICAL] `README.rewrite.120825.md`
-- [HISTORICAL] `README.rewrite.2.md`
-- [HISTORICAL] `README.rewrite.conj.md`
-- [HISTORICAL] `README.rewrite.md`
-- [HISTORICAL] `README.precompile.md`
-- [HISTORICAL] `README.codex.md`
-- [HISTORICAL] `Plan.md`
+- [HISTORICAL] `docs/historical/PAPER.md` — paper table/figure working note (archived)
+- [HISTORICAL] `docs/historical/FINAL.md` — FC-only speedup snapshot note (archived)
+- [HISTORICAL] `docs/historical/TODO.md` — archived experiment follow-ups
+- [HISTORICAL] `docs/historical/README.rewrite.120725.md`
+- [HISTORICAL] `docs/historical/README.rewrite.120825.md`
+- [HISTORICAL] `docs/historical/README.rewrite.2.md`
+- [HISTORICAL] `docs/historical/README.rewrite.conj.md`
+- [HISTORICAL] `docs/historical/README.rewrite.md`
+- [HISTORICAL] `docs/historical/README.precompile.md`
+- [HISTORICAL] `docs/historical/README.codex.md`
+- [HISTORICAL] `docs/historical/Plan.md`
+- [HISTORICAL] `docs/historical/README.eval.inc.log.md`
+- [HISTORICAL] `docs/historical/README.eval.full.log.md`
+- [HISTORICAL] `docs/historical/README.eval.final.2026-01-21.md`
+- [HISTORICAL] `docs/historical/OPT.md`
 
 ## Source references
 - [src/MainDriver.cpp](src/MainDriver.cpp)
 - [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
 
 ## Related commits
-- `e214cd028` — docs(repo): refresh incremental docs and index
-- `668298ef8` — fix(inc-region): update regional WMC routing and profiling
-- `ce3dd2f5b` — docs(inc-region): add SCC-closure optimization notes
+- `UNCOMMITTED` — docs(project): add project-level module map, fork delta, and maintenance docs
+- `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack documentation
+- `UNCOMMITTED` — docs(process): move commit hygiene guide under docs/process

@@ -20,7 +20,7 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 
 ## Change Discipline
 - Keep changes minimal; avoid touching unrelated files and generated artifacts.
-- Follow `README.git.md` for commit hygiene (outputs/logs stay local).
+- Follow `docs/process/README.git.md` for commit hygiene (outputs/logs stay local).
 - Avoid introducing new dependencies unless explicitly requested.
 - Keep documentation in the single source of truth and link, do not duplicate.
 - Prefer repo-scoped skills: `repo-docs`, `verify-changes`, `pr-ready`, `git-commit-helper`.
@@ -35,7 +35,7 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 ## Pitfalls / Do & Don't
 - `sh/run_test_format.sh` rewrites files in the current git diff; run it only when you intend to format changed C++/headers.
 - `examples/running_example/run.sh` only auto-detects `cmake-build-release`; set `SOUFFLE_BIN` if you build elsewhere.
-- Treat `README.codex.md` as historical; prefer `AGENTS.md`, `docs/*`, and `README*.md`.
+- Treat `docs/historical/README.codex.md` as historical; prefer `AGENTS.md`, `docs/*`, and `README*.md`.
 - Keep `docs/INDEX.md` updated when adding or renaming documentation.
 
 ## Reference Docs
@@ -45,7 +45,9 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - `docs/SECURITY.md`
 - `docs/USAGE.md`
 - `docs/INDEX.md`
-- `README.codex.md` (historical context only)
+- `docs/project/README.md`
+- `docs/process/README.git.md`
+- `docs/historical/README.codex.md` (historical context only)
 
 ## Source references
 - [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)
@@ -53,6 +55,6 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - [cmake/CTestDisabled.cmake](cmake/CTestDisabled.cmake)
 
 ## Related commits
+- `UNCOMMITTED` — docs(repo): move commit hygiene guidance to `docs/process/README.git.md`
 - `UNCOMMITTED` — docs(agents): add git-commit-helper skill preference
 - `668298ef8` — fix(inc-region): update regional WMC routing and profiling
-- `812ea4081` — docs(repo): refine README narratives

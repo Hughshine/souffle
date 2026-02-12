@@ -15,8 +15,9 @@
   config currently defines them).
 
 ## Operate / Run Experiments
-- Full-mode evaluation: see `README.eval.md`.
-- Incremental evaluation: see `README.eval.inc.md`.
+- Full-mode evaluation: see `docs/topics/evaluation/README.eval.md`.
+- Incremental evaluation: see `docs/topics/evaluation/README.eval.inc.md`.
+- Evaluation docs map and historical logs: `docs/topics/evaluation/README.md`.
 - Interactive incremental runs use the turn-based CLI (`insert`, `delete`, `commit`).
 
 ## Rollback
@@ -33,11 +34,12 @@
 - `souffle` not found: set `SOUFFLE_BIN` or add the built binary to `PATH`.
 - Missing BDD/SDD backend: ensure CUDD is installed (SDD optional for `-k sdd`).
 - `--inc` not recognized: the legacy backend is removed; use online incremental modes.
-- Large outputs/logs: avoid committing generated artifacts (see `README.git.md`).
+- Large outputs/logs: avoid committing generated artifacts (see `docs/process/README.git.md`).
 
 ## Common Checks
 - Compare `facts.prob` outputs across runs for consistency.
 - Inspect stdout timing lines and JSON logs for hot stages before tuning.
 
 ## Related commits
+- `UNCOMMITTED` — docs(process): update artifact-commit hygiene reference path
 - `812ea4081` — docs(repo): refine README narratives

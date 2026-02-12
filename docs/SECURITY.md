@@ -15,7 +15,7 @@ security policy defined in this repo yet.
 
 ## Data Handling
 - Treat input facts and output logs as potentially sensitive.
-- Keep generated artifacts out of commits (see `README.git.md`).
+- Keep generated artifacts out of commits (see `docs/process/README.git.md`).
 
 ## Dependency Hygiene
 - Dependency install scripts live under `sh/setup/`.
@@ -31,4 +31,5 @@ TODO: define a security contact and disclosure process for this fork.
 - Update docs and run the recommended verification steps.
 
 ## Related commits
+- `UNCOMMITTED` — docs(process): update security hygiene reference to docs/process commit guide
 - `aaa18c137` — docs(repo): add core docs
