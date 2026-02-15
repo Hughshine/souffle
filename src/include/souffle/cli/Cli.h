@@ -2166,24 +2166,166 @@ public:
                     pendingOperations.clear();
                     return;
                 }
-                if (!isIncrementalFcMode()) {
-                    assert(false && "sem=inc currently supports only fc=inc-naive/inc-regional");
-                }
-                debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
-                if (useRegional) {
-                    buildFormulasIncRegionalCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);
+                if (isIncrementalFcMode()) {
+                    debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
+                    if (useRegional) {
+                        buildFormulasIncRegionalCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);
+                    } else {
+                        buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
+                    }
+                    debugger.endStage();
+                    runIncrementalWmc(view, useRegional);
+                    std::string incTag = useRegional ? "-inc-regional" : "-inc-naive";
+                    std::string incPrefix = "fact-iter" + std::to_string(iteration) + incTag;
+                    dumpProbabilities(probResult, opt.getOutputFileDir() + "/", incPrefix);
+                } else if (isFullFcMode()) {
+                    debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+                    nodeFormulas->clear();
+                    edgeFormulas->clear();
+                    if (fcMode == FcMode::FULL_HARD) {
+                        ddManager->resetHard();
+                    } else {
+                        ddManager->reset();
+                    }
+                    buildFormulasCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas);
+                    debugger.endStage();
+
+                    debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
+                    probResult.clear();
+                    {
+                        const bool wmcProfile = wmcProfileEnabled;
+                        using Clock = std::chrono::steady_clock;
+                        auto toMs = [](Clock::time_point start) {
+                            return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+                        };
+                        auto stageStart = Clock::now();
+                        double evidenceBuildMs = 0.0;
+                        double evidenceMakeAndMs = 0.0;
+                        double evidenceWmcComputeMs = 0.0;
+                        double nodeMakeAndMs = 0.0;
+                        double nodeWmcComputeMs = 0.0;
+                        std::size_t evidenceWmcCalls = 0;
+                        std::size_t nodeWmcCalls = 0;
+                        std::size_t evidenceMakeAndCalls = 0;
+                        std::size_t nodeMakeAndCalls = 0;
+                        auto makeAndProfile = [&](const NodeRef& lhs, const NodeRef& rhs,
+                                                  double& ms, std::size_t& calls) {
+                            if (!wmcProfile) {
+                                return ddManager->makeAnd(lhs, rhs);
+                            }
+                            auto andStart = Clock::now();
+                            auto res = ddManager->makeAnd(lhs, rhs);
+                            ms += toMs(andStart);
+                            calls++;
+                            return res;
+                        };
+                        auto computeWmcProfile = [&](const NodeRef& node, double& ms, std::size_t& calls) {
+                            calls++;
+                            if (!wmcProfile) {
+                                return ddManager->computeWeightedModelCount(node);
+                            }
+                            auto wmcStart = Clock::now();
+                            double res = ddManager->computeWeightedModelCount(node);
+                            ms += toMs(wmcStart);
+                            return res;
+                        };
+
+                        auto& depGraph = view.getCycleDependencyGraph();
+                        size_t componentCount = depGraph.getComponentCount();
+                        std::vector<NodeRef> componentEvidence(componentCount, ddManager->getTrue());
+                        std::vector<double> componentEvidenceWeight(componentCount, 1.0);
+                        std::vector<bool> componentHasEvidence(componentCount, false);
+
+                        auto evidenceBuildStart = Clock::now();
+                        for (size_t cid = 0; cid < componentCount; ++cid) {
+                            const auto& evidences = depGraph.getComponentEvidences(cid);
+                            if (evidences.empty()) {
+                                continue;
+                            }
+                            componentHasEvidence[cid] = true;
+                            NodeRef evidenceNode = ddManager->getTrue();
+                            for (const auto& [node, val] : evidences) {
+                                auto it = nodeFormulas->find(node);
+                                if (it == nodeFormulas->end()) {
+                                    throw std::runtime_error("Evidence node has no formula: " + node->getTuple().toString());
+                                }
+                                NodeRef lit = it->second;
+                                if (!val) {
+                                    lit = ddManager->makeNot(lit);
+                                }
+                                evidenceNode = makeAndProfile(evidenceNode, lit, evidenceMakeAndMs, evidenceMakeAndCalls);
+                            }
+                            componentEvidence[cid] = evidenceNode;
+                        }
+                        evidenceBuildMs = toMs(evidenceBuildStart);
+
+                        for (size_t cid = 0; cid < componentCount; ++cid) {
+                            if (componentHasEvidence[cid]) {
+                                componentEvidenceWeight[cid] = computeWmcProfile(
+                                        componentEvidence[cid], evidenceWmcComputeMs, evidenceWmcCalls);
+                            }
+                        }
+
+                        for (auto& [node, formula] : *nodeFormulas) {
+                            if (!node->needOutput) {
+                                continue;
+                            }
+                            size_t cid = depGraph.getComponentId(node);
+                            if (!componentHasEvidence[cid]) {
+                                probResult[node] = computeWmcProfile(formula, nodeWmcComputeMs, nodeWmcCalls);
+                                continue;
+                            }
+                            if (componentEvidenceWeight[cid] == 0.0) {
+                                probResult[node] = 0.0;
+                                continue;
+                            }
+                            auto joint = makeAndProfile(formula, componentEvidence[cid],
+                                                        nodeMakeAndMs, nodeMakeAndCalls);
+                            double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
+                            probResult[node] = jointW / componentEvidenceWeight[cid];
+                        }
+                        for (const auto& [node, prob] : precomputedProbResult) {
+                            probResult.emplace(node, prob);
+                        }
+                        if (wmcProfile) {
+                            std::size_t componentWithEvidence = 0;
+                            for (bool hasEv : componentHasEvidence) {
+                                if (hasEv) {
+                                    componentWithEvidence++;
+                                }
+                            }
+                            std::cout << "[wmc-profile] stage=FULL"
+                                      << " mode=" << (fcMode == FcMode::FULL_SOFT ? "inc-full-soft" : "inc-full-hard")
+                                      << " total_ms=" << toMs(stageStart)
+                                      << " components=" << componentCount
+                                      << " components_ev=" << componentWithEvidence
+                                      << " nodes=" << view.getValidNodes().size()
+                                      << " evidence_build_ms=" << evidenceBuildMs
+                                      << " evidence_make_and_calls=" << evidenceMakeAndCalls
+                                      << " evidence_make_and_ms=" << evidenceMakeAndMs
+                                      << " evidence_wmc_calls=" << evidenceWmcCalls
+                                      << " evidence_wmc_compute_ms=" << evidenceWmcComputeMs
+                                      << " node_make_and_calls=" << nodeMakeAndCalls
+                                      << " node_make_and_ms=" << nodeMakeAndMs
+                                      << " node_wmc_calls=" << nodeWmcCalls
+                                      << " node_wmc_compute_ms=" << nodeWmcComputeMs
+                                      << " live_nodes=" << ddManager->getLiveNodeCount()
+                                      << std::endl;
+                        }
+                    }
+                    debugger.endStage();
+                    debugger.startStage(StageKind::IO_DUMP_FULL);
+                    const std::string fullTag = (fcMode == FcMode::FULL_SOFT) ? "-inc-full-soft" : "-inc-full-hard";
+                    const std::string outPrefix = "fact-iter" + std::to_string(iteration) + fullTag;
+                    dumpProbabilities(probResult, opt.getOutputFileDir() + "/", outPrefix);
+                    debugger.endStage();
                 } else {
-                    buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
+                    assert(false && "Unsupported fc mode for sem=inc");
                 }
-                debugger.endStage();
-                runIncrementalWmc(view, useRegional);
                 if (ddManager != nullptr) {
                     ddManager->tryGarbageCollection();
                 }
                 debugger.endTurn();
-                std::string incTag = useRegional ? "-inc-regional" : "-inc-naive";
-                std::string incPrefix = "fact-iter" + std::to_string(iteration) + incTag;
-                dumpProbabilities(probResult, opt.getOutputFileDir() + "/", incPrefix);
                 iteration++;
             } else if (isFullSemMode()) {
                 const bool useIncFc = isIncrementalFcMode();
