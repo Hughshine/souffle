@@ -753,8 +753,11 @@ static void runBddPipeline(
                             continue;
                         }
                         auto itTrue = fast.valuesTrue.find(node);
-                        bool vTrue = (itTrue != fast.valuesTrue.end()) ? itTrue->second : false;
                         auto itFalse = fast.valuesFalse.find(node);
+                        if (itTrue == fast.valuesTrue.end() && itFalse == fast.valuesFalse.end()) {
+                            continue;
+                        }
+                        bool vTrue = (itTrue != fast.valuesTrue.end()) ? itTrue->second : false;
                         bool vFalse = (itFalse != fast.valuesFalse.end()) ? itFalse->second : false;
                         double numerator = (vTrue ? p : 0.0) + (vFalse ? (1.0 - p) : 0.0);
                         probResult[node] = numerator;
@@ -1408,8 +1411,11 @@ static void runSddPipeline(
                             continue;
                         }
                         auto itTrue = fast.valuesTrue.find(node);
-                        bool vTrue = (itTrue != fast.valuesTrue.end()) ? itTrue->second : false;
                         auto itFalse = fast.valuesFalse.find(node);
+                        if (itTrue == fast.valuesTrue.end() && itFalse == fast.valuesFalse.end()) {
+                            continue;
+                        }
+                        bool vTrue = (itTrue != fast.valuesTrue.end()) ? itTrue->second : false;
                         bool vFalse = (itFalse != fast.valuesFalse.end()) ? itFalse->second : false;
                         double numerator = (vTrue ? p : 0.0) + (vFalse ? (1.0 - p) : 0.0);
                         double prob = numerator;

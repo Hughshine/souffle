@@ -366,6 +366,7 @@ static DetOptMeta buildDetOptMeta(const ast::Program& program, Global& glb) {
 
 void Synthesiser::emitRules (std::ostream& out) {
     // out << "class RuleComponents {" << std::endl;
+    std::size_t anonVarCounter = 0;
     std::vector<std::string> ruleNames;
     // const auto& initialClauses = this->initialAstProgram->getClauses();
     const auto& newClauses = this->newAstProgram->getClauses();
@@ -456,18 +457,43 @@ void Synthesiser::emitRules (std::ostream& out) {
             atomId ++;
             if (isA<ast::Atom>(bodyLiteral)) {
                 ast::Atom* atom = as<ast::Atom>(bodyLiteral);
-                std::vector<std::string> fieldVars{};  // only consider variables for now
-                const auto& fields = atom->getArguments();
-                for (size_t j = 0; j < fields.size(); ++j) {
-                    auto field = fields[j];
+                std::vector<std::pair<char, std::string>> fields;
+                const auto args = atom->getArguments();
+                for (std::size_t argIdx = 0; argIdx < args.size(); ++argIdx) {
+                    auto* field = args[argIdx];
                     if (isA<ast::Variable>(field)) {
                         auto var = as<ast::Variable>(field);
-                        fieldVars.push_back(var->getName());
-                    } /*else if (isA<ast::UnnamedVariable>(field)) {
-                        assert (false && "No unnamedVariable");
-                        auto var = as<ast::Variable>(initialField);
-                        fieldVars.push_back(var->getName());
-                    } */ else {
+                        fields.emplace_back('V', var->getName());
+                    } else if (isA<ast::UnnamedVariable>(field)) {
+                        fields.emplace_back('V', "__anon_" + std::to_string(ruleId) + "_" +
+                                                     std::to_string(atomId) + "_" +
+                                                     std::to_string(argIdx) + "_" +
+                                                     std::to_string(anonVarCounter++));
+                    } else if (isA<ast::NumericConstant>(field)) {
+                        auto constant = as<ast::NumericConstant>(field);
+                        if (!constant->getFixedType().has_value()) {
+                            fields.emplace_back('I', constant->getConstant());
+                            continue;
+                        }
+                        switch (constant->getFixedType().value()) {
+                            case ast::NumericConstant::Type::Int:
+                                fields.emplace_back('I', constant->getConstant());
+                                break;
+                            case ast::NumericConstant::Type::Float:
+                                fields.emplace_back('F', constant->getConstant());
+                                break;
+                            case ast::NumericConstant::Type::Uint:
+                                fields.emplace_back('U', constant->getConstant());
+                                break;
+                        }
+                    } else if (isA<ast::StringConstant>(field)) {
+                        auto constant = as<ast::StringConstant>(field);
+                        fields.emplace_back('S', constant->getConstant());
+                    } else if (isA<ast::IntrinsicFunctor>(field)) {
+                        auto fieldFunctor = as<ast::IntrinsicFunctor>(field);
+                        fields.emplace_back('E', fieldFunctor->serialize());
+                    } else {
+                        std::cout << atom->getQualifiedName().toString() << std::endl;
                         assert (false && "Not impl yet, atom");
                     }
                 }
@@ -475,25 +501,100 @@ void Synthesiser::emitRules (std::ostream& out) {
                 std::string res = atom->getQualifiedName().toString();
                 atomNames.push_back(atomName);
                 out << "const Atom " << atomName << " = Atom{\"" << res << "\", {";
-                for (auto var: fieldVars) {
-                    out << "SymbolicField::makeVariable(\"" << var << "\"), ";
+                for (size_t j = 0; j < fields.size(); ++j) {
+                    const auto& [tag, field] = fields[j];
+                    switch (tag) {
+                        case 'V':
+                            out << "SymbolicField::makeVariable(\"" << field << "\")";
+                            break;
+                        case 'I':
+                        case 'F':
+                        case 'U':
+                            out << "SymbolicField{" << field << "}";
+                            break;
+                        case 'S':
+                            out << "SymbolicField{StringField{" << field << "}}";
+                            break;
+                        case 'E':
+                            out << "SymbolicField(std::shared_ptr<ExprField>(" << field << "))";
+                            break;
+                        default:
+                            assert (false && "Unknown field type");
+                    }
+                    if (j + 1 != fields.size()) {
+                        out << ", ";
+                    }
                 }
                 out << "}};" << std::endl;
             } else if (isA<ast::Negation>(bodyLiteral)) {
                 ast::Negation* negation = as<ast::Negation>(bodyLiteral);
                 ast::Atom* atom = negation->getAtom();
-                std::vector<std::string> fieldVars{};  // only consider variables for now
-                for (auto field: atom->getArguments()) {
+                std::vector<std::pair<char, std::string>> fields;
+                const auto args = atom->getArguments();
+                for (std::size_t argIdx = 0; argIdx < args.size(); ++argIdx) {
+                    auto* field = args[argIdx];
                     if (isA<ast::Variable>(field)) {
                         auto var = as<ast::Variable>(field);
-                        fieldVars.push_back(var->getName());
+                        fields.emplace_back('V', var->getName());
+                    } else if (isA<ast::UnnamedVariable>(field)) {
+                        fields.emplace_back('V', "__anon_" + std::to_string(ruleId) + "_" +
+                                                     std::to_string(atomId) + "_" +
+                                                     std::to_string(argIdx) + "_" +
+                                                     std::to_string(anonVarCounter++));
+                    } else if (isA<ast::NumericConstant>(field)) {
+                        auto constant = as<ast::NumericConstant>(field);
+                        if (!constant->getFixedType().has_value()) {
+                            fields.emplace_back('I', constant->getConstant());
+                            continue;
+                        }
+                        switch (constant->getFixedType().value()) {
+                            case ast::NumericConstant::Type::Int:
+                                fields.emplace_back('I', constant->getConstant());
+                                break;
+                            case ast::NumericConstant::Type::Float:
+                                fields.emplace_back('F', constant->getConstant());
+                                break;
+                            case ast::NumericConstant::Type::Uint:
+                                fields.emplace_back('U', constant->getConstant());
+                                break;
+                        }
+                    } else if (isA<ast::StringConstant>(field)) {
+                        auto constant = as<ast::StringConstant>(field);
+                        fields.emplace_back('S', constant->getConstant());
+                    } else if (isA<ast::IntrinsicFunctor>(field)) {
+                        auto fieldFunctor = as<ast::IntrinsicFunctor>(field);
+                        fields.emplace_back('E', fieldFunctor->serialize());
+                    } else {
+                        std::cout << atom->getQualifiedName().toString() << std::endl;
+                        assert (false && "Not impl yet, atom");
                     }
                 }
                 std::string atomName = "atom_" + std::to_string(clause->getClauseId()) + "_" + std::to_string(atomId);
                 atomNames.push_back(atomName);
                 out << "static const Atom " << atomName << " = Atom{\"" << atom->getQualifiedName().toString() << "\", {";
-                for (auto var: fieldVars) {
-                    out << "SymbolicField::makeVariable(\"" << var << "\"), ";
+                for (size_t j = 0; j < fields.size(); ++j) {
+                    const auto& [tag, field] = fields[j];
+                    switch (tag) {
+                        case 'V':
+                            out << "SymbolicField::makeVariable(\"" << field << "\")";
+                            break;
+                        case 'I':
+                        case 'F':
+                        case 'U':
+                            out << "SymbolicField{" << field << "}";
+                            break;
+                        case 'S':
+                            out << "SymbolicField{StringField{" << field << "}}";
+                            break;
+                        case 'E':
+                            out << "SymbolicField(std::shared_ptr<ExprField>(" << field << "))";
+                            break;
+                        default:
+                            assert (false && "Unknown field type");
+                    }
+                    if (j + 1 != fields.size()) {
+                        out << ", ";
+                    }
                 }
                 out << "}, true};" << std::endl;
             } else if (isA<ast::Constraint>(bodyLiteral)) {

@@ -33,7 +33,8 @@ struct VariableField {
 using AtomicField = std::variant<IntegerField, FloatField, StringField, VariableField>;
 std::string atomicToString(const AtomicField& field);
 souffle::RamDomain evaluateAtomic(
-        const AtomicField& field, const std::vector<std::string>& vars, const std::vector<int>& values);
+        const AtomicField& field, const std::vector<std::string>& vars,
+        const std::vector<souffle::RamDomain>& values);
 
 struct ExprField;
 using ExprFieldPtr = std::shared_ptr<ExprField>;
@@ -47,7 +48,8 @@ struct ExprField {
     ExprField(OpType op, std::vector<ExprFieldReal> ops)
     : op(op), operands(std::move(ops)) {}
 
-    souffle::RamDomain evaluate(const std::vector<std::string>& vars, const std::vector<int>& values);
+    souffle::RamDomain evaluate(const std::vector<std::string>& vars,
+            const std::vector<souffle::RamDomain>& values);
 
     static std::shared_ptr<ExprField> makeAtom(IntegerField field) {
         return std::make_shared<ExprField>(OpType::Atom, std::vector{ExprFieldReal{std::move(field)}});
@@ -124,7 +126,8 @@ struct ExprField {
 };
 
 souffle::RamDomain evaluateExprReal(
-        const ExprFieldReal& real, const std::vector<std::string>& vars, const std::vector<int>& values);
+        const ExprFieldReal& real, const std::vector<std::string>& vars,
+        const std::vector<souffle::RamDomain>& values);
 
 struct SymbolicField {
     std::variant<IntegerField,
@@ -215,7 +218,8 @@ public:
         return vars;
     }
 
-    std::vector<souffle::RamDomain> instantiatedFields(const std::vector<std::string>& vars, const std::vector<int>& values) const {
+    std::vector<souffle::RamDomain> instantiatedFields(const std::vector<std::string>& vars,
+            const std::vector<souffle::RamDomain>& values) const {
         std::vector<souffle::RamDomain> result;  // TODO
         for (const auto& field : fields) {
             if (std::holds_alternative<VariableField>(field.field)) {
@@ -232,11 +236,16 @@ public:
                     assert(false && "Variable not found in map");
                 }
             } else if (std::holds_alternative<IntegerField>(field.field)) {
-	                result.push_back(std::get<IntegerField>(field.field).value);
+                result.push_back(std::get<IntegerField>(field.field).value);
+            } else if (std::holds_alternative<FloatField>(field.field)) {
+                result.push_back(souffle::ramBitCast<souffle::RamDomain>(
+                        static_cast<souffle::RamFloat>(std::get<FloatField>(field.field).value)));
             } else if (std::holds_alternative<std::shared_ptr<ExprField>>(field.field)) {
                 // Handle expression fields, if needed
                 result.push_back(
                     std::get<std::shared_ptr<ExprField>>(field.field)->evaluate(vars, values));
+            } else {
+                assert(false && "Unsupported symbolic field in Atom::instantiatedFields");
             }
         }
         return result;

@@ -1162,8 +1162,10 @@ inline bool evaluateSingleRandComponent(
     nodeValues.reserve(comp.nodes.size());
     for (const auto& node : comp.nodes) {
         auto it = nodeFormulas.find(node);
-        bool value = (it != nodeFormulas.end()) ? it->second.value : false;
-        nodeValues.emplace(node, value);
+        if (it == nodeFormulas.end() || !it->second.get()) {
+            continue;
+        }
+        nodeValues.emplace(node, it->second.value);
     }
     return true;
 }
@@ -1190,10 +1192,10 @@ inline bool evaluateConjComponent(
     nodeProbs.reserve(comp.nodes.size());
     for (const auto& node : comp.nodes) {
         auto it = nodeFormulas.find(node);
-        double prob = 0.0;
-        if (it != nodeFormulas.end() && it->second.get()) {
-            prob = manager.computeWeightedModelCount(it->second);
+        if (it == nodeFormulas.end() || !it->second.get()) {
+            continue;
         }
+        double prob = manager.computeWeightedModelCount(it->second);
         nodeProbs.emplace(node, prob);
     }
     return true;

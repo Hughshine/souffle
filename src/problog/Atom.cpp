@@ -15,9 +15,13 @@ std::string atomicToString(const AtomicField& field) {
 }
 
 souffle::RamDomain evaluateAtomic(
-        const AtomicField& field, const std::vector<std::string>& vars, const std::vector<int>& values) {
+        const AtomicField& field, const std::vector<std::string>& vars,
+        const std::vector<souffle::RamDomain>& values) {
     if (std::holds_alternative<IntegerField>(field)) {
         return std::get<IntegerField>(field).value;
+    } else if (std::holds_alternative<FloatField>(field)) {
+        return souffle::ramBitCast<souffle::RamDomain>(
+                static_cast<souffle::RamFloat>(std::get<FloatField>(field).value));
     } else if (std::holds_alternative<VariableField>(field)) {
         const std::string& var = std::get<VariableField>(field).name;
         for (size_t i = 0; i < vars.size(); ++i) {
@@ -32,7 +36,8 @@ souffle::RamDomain evaluateAtomic(
 }
 
 souffle::RamDomain evaluateExprReal(
-        const ExprFieldReal& real, const std::vector<std::string>& vars, const std::vector<int>& values) {
+        const ExprFieldReal& real, const std::vector<std::string>& vars,
+        const std::vector<souffle::RamDomain>& values) {
     if (std::holds_alternative<AtomicField>(real)) {
         return evaluateAtomic(std::get<AtomicField>(real), vars, values);
     } else if (std::holds_alternative<ExprFieldPtr>(real)) {
@@ -42,7 +47,8 @@ souffle::RamDomain evaluateExprReal(
     return 0;
 }
 
-souffle::RamDomain ExprField::evaluate(const std::vector<std::string>& vars, const std::vector<int>& values) {
+souffle::RamDomain ExprField::evaluate(const std::vector<std::string>& vars,
+        const std::vector<souffle::RamDomain>& values) {
     using Op = ExprField::OpType;
     assert(op == Op::Atom || operands.size() >= 1);
 
