@@ -1,0 +1,73 @@
+name: Regression-CI
+
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    name: Ubuntu-Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-jobs
+        run: |
+          JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
+          echo "JOBS=${JOBS}" >> "$GITHUB_ENV"
+
+      - name: install-deps
+        run: |
+          sudo sh/setup/install_ubuntu_deps.sh
+          # Keep in sync with problog-benchmark/Dockerfile's toolchain additions.
+          sudo apt-get update -q
+          sudo apt-get install -y -q autoconf automake libtool libreadline-dev
+
+      - name: install-cudd
+        run: |
+          rm -rf /tmp/cudd
+          git clone --depth 1 https://github.com/cuddorg/cudd.git /tmp/cudd
+          cd /tmp/cudd
+          autoreconf -fiv
+          ./configure --enable-shared --prefix=/usr/local CFLAGS="-O3 -fPIC" CXXFLAGS="-O3 -fPIC"
+          make -j"${JOBS}"
+          sudo make install
+          sudo ldconfig
+
+      - name: install-sddpp
+        run: |
+          rm -rf /tmp/sddpp
+          git clone --depth 1 https://github.com/black-sat/sddpp.git /tmp/sddpp
+          cmake -S /tmp/sddpp -B /tmp/sddpp/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          cmake --build /tmp/sddpp/build -j"${JOBS}"
+          sudo cmake --install /tmp/sddpp/build
+          sudo ldconfig
+
+      - name: cmake-configure
+        run: |
+          cmake -S . -B build \
+            -DSOUFFLE_ENABLE_LEGACY_TESTS=OFF \
+            -DSOUFFLE_ENABLE_REGRESSION_TESTS=ON \
+            -DSOUFFLE_DISABLE_CTEST=OFF
+
+      - name: cmake-build
+        run: cmake --build build -j"${JOBS}"
+
+      - name: regression-tests
+        run: ctest --test-dir build -L regression --output-on-failure --progress -j"${JOBS}"
+
+      - name: smoke-example
+        run: SOUFFLE_BIN=./build/src/souffle examples/running_example/run.sh
