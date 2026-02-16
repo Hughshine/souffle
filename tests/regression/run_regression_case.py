@@ -17,11 +17,11 @@ import re
 import shutil
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 PROB_LINE_RE = re.compile(r"^\s*(.*?)\s*:\s*([+\-]?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)\s*$")
+CASES_ROOT = Path(__file__).resolve().parent / "cases"
 
 
 class CaseFailure(RuntimeError):
@@ -71,34 +71,38 @@ def write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def write_relation(
-    input_dir: Path,
-    relation: str,
-    tuples: Iterable[Tuple[int, ...]],
-    *,
-    probs: Iterable[float] | None = None,
-) -> None:
-    tuple_list = list(tuples)
-    facts_path = input_dir / f"{relation}.facts"
-    with facts_path.open("w", encoding="utf-8") as f:
-        for row in tuple_list:
-            f.write("\t".join(str(v) for v in row))
-            f.write("\n")
+def prepare_case_workspace(case_id: str, work_root: Path) -> Path:
+    case_src = CASES_ROOT / case_id
+    if not case_src.exists():
+        raise CaseFailure(f"missing regression case directory: {case_src}")
 
-    if probs is None:
-        return
+    case_dir = work_root / case_id
+    reset_dir(case_dir)
 
-    prob_list = list(probs)
-    if len(prob_list) != len(tuple_list):
-        raise CaseFailure(
-            f"probability count mismatch for relation {relation}: "
-            f"{len(prob_list)} probs vs {len(tuple_list)} tuples"
+    for entry in sorted(case_src.iterdir()):
+        if entry.name == "generate.py":
+            continue
+        dst = case_dir / entry.name
+        if entry.is_dir():
+            shutil.copytree(entry, dst)
+        elif entry.is_file():
+            shutil.copy2(entry, dst)
+
+    generator = case_src / "generate.py"
+    if generator.exists():
+        run_cmd(
+            [sys.executable, str(generator), "--out-dir", str(case_dir)],
+            cwd=case_src,
+            timeout=180,
         )
 
-    prob_path = input_dir / f"{relation}.prob"
-    with prob_path.open("w", encoding="utf-8") as f:
-        for p in prob_list:
-            f.write(f"{p:.12g}\n")
+    program = case_dir / "compute.dl"
+    input_dir = case_dir / "input"
+    if not program.exists():
+        raise CaseFailure(f"case {case_id} did not provide compute.dl")
+    if not input_dir.exists():
+        raise CaseFailure(f"case {case_id} did not provide input/")
+    return case_dir
 
 
 def parse_prob_file(path: Path) -> Dict[str, float]:
@@ -262,93 +266,11 @@ def assert_glob_nonempty(base_dir: Path, pattern: str, *, label: str) -> None:
         raise CaseFailure(f"{label}: expected files matching {base_dir / pattern}")
 
 
-def make_dred_mix_program() -> str:
-    return textwrap.dedent(
-        """
-        .decl edge(x:number, y:number)
-        .input edge
-        .decl bridge(x:number, y:number)
-        .input bridge
-
-        .decl hop(x:number, y:number)
-        hop(x,y) :- edge(x,y).
-        hop(x,y) :- bridge(x,y).
-
-        .decl path(x:number, y:number)
-        path(x,y) :- hop(x,y).
-        path(x,z) :- path(x,y), hop(y,z).
-
-        .decl alarm(y:number)
-        .output alarm
-        alarm(y) :- path(1,y).
-        alarm(y) :- path(2,y).
-        """
-    ).strip() + "\n"
-
-
-def make_detopt_program() -> str:
-    return textwrap.dedent(
-        """
-        .decl trust(x:number, y:number)
-        .input trust
-        .decl chance(x:number, y:number)
-        .input chance
-
-        .decl det_path(x:number, y:number)
-        det_path(x,y) :- trust(x,y).
-        det_path(x,z) :- det_path(x,y), trust(y,z).
-
-        .decl risk(y:number)
-        risk(y) :- chance(1,y).
-
-        .decl alert(y:number)
-        .output alert
-        alert(y) :- det_path(1,y).
-        alert(y) :- risk(y).
-        """
-    ).strip() + "\n"
-
-
-def make_path_program() -> str:
-    return textwrap.dedent(
-        """
-        .decl edge(x:number, y:number)
-        .input edge
-
-        .decl path(x:number, y:number)
-        .output path
-        path(x,y) :- edge(x,y).
-        path(x,z) :- path(x,y), edge(y,z).
-        """
-    ).strip() + "\n"
-
-
 def case_smoke_full_only(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = work_root / "smoke_full_only"
-    reset_dir(case_dir)
-
+    case_dir = prepare_case_workspace("smoke_full_only", work_root)
     input_dir = case_dir / "input"
     output_dir = case_dir / "output_run"
-    input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    write_text(
-        case_dir / "compute.dl",
-        textwrap.dedent(
-            """
-            .decl edge(x:number, y:number)
-            .input edge
-            .decl path(x:number, y:number)
-            .output path
-            path(x,y) :- edge(x,y).
-            path(x,z) :- path(x,y), edge(y,z).
-            """
-        ).strip()
-        + "\n",
-    )
-    edges = [(1, 2), (2, 3), (3, 4), (1, 4)]
-    probs = [0.9, 0.8, 0.7, 0.2]
-    write_relation(input_dir, "edge", edges, probs=probs)
 
     compute_bin, in_dir, _ = compile_compute(
         souffle_bin=souffle_bin, case_dir=case_dir, full_only=True
@@ -362,26 +284,8 @@ def case_smoke_full_only(souffle_bin: Path, work_root: Path) -> None:
 
 
 def case_dred_mix_naive_vs_full(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = work_root / "dred_mix"
-    reset_dir(case_dir)
+    case_dir = prepare_case_workspace("dred_mix_naive_vs_full", work_root)
     input_dir = case_dir / "input"
-    input_dir.mkdir(parents=True, exist_ok=True)
-    write_text(case_dir / "compute.dl", make_dred_mix_program())
-
-    edge_rows = [
-        (1, 2),
-        (2, 3),
-        (1, 3),
-        (3, 4),
-        (2, 4),
-        (4, 5),
-        (5, 6),
-        (2, 6),
-        (1, 5),
-    ]
-    edge_probs = [0.91, 0.72, 0.33, 0.84, 0.61, 0.77, 0.66, 0.42, 0.55]
-    write_relation(input_dir, "edge", edge_rows, probs=edge_probs)
-    write_relation(input_dir, "bridge", [(2, 5)], probs=[0.44])
 
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
     turns = [
@@ -416,50 +320,8 @@ def case_dred_mix_naive_vs_full(souffle_bin: Path, work_root: Path) -> None:
 
 
 def case_dred_hub_rederive_naive_vs_full(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = work_root / "dred_hub_rederive"
-    reset_dir(case_dir)
+    case_dir = prepare_case_workspace("dred_hub_rederive_naive_vs_full", work_root)
     input_dir = case_dir / "input"
-    input_dir.mkdir(parents=True, exist_ok=True)
-
-    write_text(
-        case_dir / "compute.dl",
-        textwrap.dedent(
-            """
-            .decl seed(x:number)
-            .input seed
-            .decl edge(x:number, y:number)
-            .input edge
-
-            .decl reach(x:number)
-            reach(x) :- seed(x).
-            reach(y) :- reach(x), edge(x,y).
-
-            .decl hot(x:number)
-            .output hot
-            hot(x) :- reach(x).
-            hot(x) :- seed(s), edge(s,x).
-            """
-        ).strip()
-        + "\n",
-    )
-
-    seed_rows = [(i,) for i in range(1, 9)]
-    write_relation(input_dir, "seed", seed_rows)
-
-    edge_rows: List[Tuple[int, int]] = []
-    for i in range(1, 25):
-        edge_rows.append((i, i + 1))
-    for i in range(1, 17):
-        edge_rows.append((i, 40))
-    edge_rows.extend([(40, 41), (41, 42), (42, 43), (10, 30), (12, 32), (32, 43)])
-    # Preserve order while dropping duplicates.
-    edge_rows = list(dict.fromkeys(edge_rows))
-
-    edge_probs = []
-    for idx, _ in enumerate(edge_rows):
-        p = 0.31 + ((idx * 17) % 59) / 100.0
-        edge_probs.append(min(p, 0.97))
-    write_relation(input_dir, "edge", edge_rows, probs=edge_probs)
 
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
 
@@ -498,17 +360,8 @@ def case_dred_hub_rederive_naive_vs_full(souffle_bin: Path, work_root: Path) -> 
 
 
 def case_detopt_inc_naive_combo_vs_full(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = work_root / "detopt_inc_naive_combo"
-    reset_dir(case_dir)
+    case_dir = prepare_case_workspace("detopt_inc_naive_combo_vs_full", work_root)
     input_dir = case_dir / "input"
-    input_dir.mkdir(parents=True, exist_ok=True)
-    write_text(case_dir / "compute.dl", make_detopt_program())
-
-    trust_rows = [(1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (6, 4)]
-    chance_rows = [(1, 2), (1, 3), (1, 4), (1, 6)]
-    chance_probs = [0.25, 0.60, 0.40, 0.80]
-    write_relation(input_dir, "trust", trust_rows)
-    write_relation(input_dir, "chance", chance_rows, probs=chance_probs)
 
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
     extra = ["--det-opt", "--post-del", "--no-reuse-var-index", "--no-single-rand-fast"]
@@ -546,17 +399,8 @@ def case_detopt_inc_naive_combo_vs_full(souffle_bin: Path, work_root: Path) -> N
 
 
 def case_detopt_inc_regional_single_round_vs_full(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = work_root / "detopt_inc_regional_single_round"
-    reset_dir(case_dir)
+    case_dir = prepare_case_workspace("detopt_inc_regional_single_round_vs_full", work_root)
     input_dir = case_dir / "input"
-    input_dir.mkdir(parents=True, exist_ok=True)
-    write_text(case_dir / "compute.dl", make_detopt_program())
-
-    trust_rows = [(1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (6, 4)]
-    chance_rows = [(1, 2), (1, 3), (1, 4), (1, 6)]
-    chance_probs = [0.25, 0.60, 0.40, 0.80]
-    write_relation(input_dir, "trust", trust_rows)
-    write_relation(input_dir, "chance", chance_rows, probs=chance_probs)
 
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
     turns = [
@@ -594,18 +438,8 @@ def case_detopt_inc_regional_single_round_vs_full(souffle_bin: Path, work_root: 
 
 
 def case_rewrite_split_modes_equiv(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = work_root / "rewrite_split_modes"
-    reset_dir(case_dir)
+    case_dir = prepare_case_workspace("rewrite_split_modes_equiv", work_root)
     input_dir = case_dir / "input"
-    input_dir.mkdir(parents=True, exist_ok=True)
-
-    write_text(case_dir / "compute.dl", make_path_program())
-    write_relation(
-        input_dir,
-        "edge",
-        [(1, 2), (2, 3), (1, 3), (3, 4), (2, 4), (4, 5)],
-        probs=[0.8, 0.6, 0.3, 0.9, 0.55, 0.5],
-    )
 
     compute_bin, in_dir, _ = compile_compute(
         souffle_bin=souffle_bin, case_dir=case_dir, full_only=True
@@ -632,17 +466,8 @@ def case_rewrite_split_modes_equiv(souffle_bin: Path, work_root: Path) -> None:
 
 
 def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = work_root / "full_det_modes"
-    reset_dir(case_dir)
+    case_dir = prepare_case_workspace("full_det_modes", work_root)
     input_dir = case_dir / "input"
-    input_dir.mkdir(parents=True, exist_ok=True)
-    write_text(case_dir / "compute.dl", make_detopt_program())
-
-    trust_rows = [(1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (6, 4)]
-    chance_rows = [(1, 2), (1, 3), (1, 4), (1, 6)]
-    chance_probs = [0.25, 0.60, 0.40, 0.80]
-    write_relation(input_dir, "trust", trust_rows)
-    write_relation(input_dir, "chance", chance_rows, probs=chance_probs)
 
     compute_bin, in_dir, _ = compile_compute(
         souffle_bin=souffle_bin, case_dir=case_dir, full_only=True
@@ -679,15 +504,8 @@ def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
 
 
 def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = work_root / "dump_outputs_contract"
-    reset_dir(case_dir)
+    case_dir = prepare_case_workspace("dump_outputs_contract", work_root)
     input_dir = case_dir / "input"
-    input_dir.mkdir(parents=True, exist_ok=True)
-    write_text(case_dir / "compute.dl", make_path_program())
-
-    edge_rows = [(1, 2), (2, 3), (1, 3), (3, 4)]
-    edge_probs = [0.9, 0.8, 0.5, 0.7]
-    write_relation(input_dir, "edge", edge_rows, probs=edge_probs)
 
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
     out_full = case_dir / "out_full_hard"

@@ -19,6 +19,7 @@ Legend:
 - [SECONDARY] `docs/topics/runtime/README.flag.md` — consolidated compiler/runtime flag reference
 - [SECONDARY] `docs/topics/runtime/README.dump.md` — dump/debug outputs (compiler + runtime)
 - [PRIMARY] `docs/TESTING.md` — verification status + test commands
+- [SECONDARY] `docs/topics/testing/README.regression.md` — maintained regression suite details and case map
 - [PRIMARY] `docs/RUNBOOK.md` — build/run/rollback/troubleshooting
 - [PRIMARY] `docs/ARCHITECTURE.md` — system architecture map
 - [PRIMARY] `docs/process/README.git.md` — commit hygiene
@@ -59,6 +60,10 @@ Legend:
 - [PRIMARY] `docs/topics/profiling/README.profile.md` — profiling guide (online)
 - [SECONDARY] `docs/topics/profiling/README.profile.inc.md` — incremental profiling notes
 - [SECONDARY] `docs/topics/profiling/README.fc.profile.md` — FC profiling fields
+
+## Testing & Validation
+- [PRIMARY] `docs/TESTING.md` — testing status, command entry points, and policy
+- [SECONDARY] `docs/topics/testing/README.regression.md` — regression suite scope, cases, and limits
 
 ## Evaluation & Results (Souffle)
 - [PRIMARY] `docs/topics/evaluation/README.md` — evaluation doc map (current vs historical)
@@ -110,8 +115,10 @@ Legend:
 ## Source references
 - [src/MainDriver.cpp](src/MainDriver.cpp)
 - [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+- [tests/regression/CMakeLists.txt](tests/regression/CMakeLists.txt)
 
 ## Related commits
+- `UNCOMMITTED` — docs(testing): add topical regression workflow docs and index entries
 - `UNCOMMITTED` — docs(project): add project-level module map, fork delta, and maintenance docs
 - `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack documentation
 - `UNCOMMITTED` — docs(process): move commit hygiene guide under docs/process

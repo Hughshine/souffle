@@ -55,6 +55,9 @@ Pick the smallest set of checks that match your change:
   - dump/log artifact contracts
 - The regression runner always compiles with the repo-built binary passed from
   CMake (`$<TARGET_FILE:souffle>`), avoiding accidental `/usr/local/bin/souffle`.
+- Regression inputs are organized under `tests/regression/cases/`:
+  - static `compute.dl` + `input/*.facts/*.prob` by default
+  - optional per-case `generate.py` for larger derived inputs
 
 ## Legacy/Experimental Tests
 - Historical legacy suites were removed; use `docs/historical/` notes for past workflows.

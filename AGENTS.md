@@ -15,21 +15,25 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
   - `cmake -S . -B build`
   - `cmake --build build -j${JOBS}` (set `JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)`)
 - Format/style: `sh/run_test_format.sh`
-- Tests (see `docs/TESTING.md` for status):
-  - `ctest --test-dir build -I "<range>" --output-on-failure --progress -j${JOBS}`
+- Regression tests (see `docs/TESTING.md`):
+  - `ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}`
+  - `cmake --build build --target check-regression`
+  - `sh/run_regression_tests.sh`
 
 ## Change Discipline
 - Keep changes minimal; avoid touching unrelated files and generated artifacts.
 - Follow `docs/process/README.git.md` for commit hygiene (outputs/logs stay local).
 - Avoid introducing new dependencies unless explicitly requested.
 - Keep documentation in the single source of truth and link, do not duplicate.
-- Prefer repo-scoped skills: `repo-docs`, `verify-changes`, `pr-ready`, `git-commit-helper`.
+- Prefer repo-scoped skills: `repo-docs`, `verify-changes`, `pr-ready`, `git-commit-helper`, `souffle-test-case`.
 
 ## Verification
 - If C++ changes: rebuild. Run `sh/run_test_format.sh` only when explicitly requested.
   TODO: Align this with CI expectations once clang-format is available by default.
 - If CLI/runtime behavior changes: run the example script:
   `SOUFFLE_BIN=./build/src/souffle examples/running_example/run.sh`.
+- If incremental/probabilistic behavior changes: run `ctest -L regression` using
+  the repo-built binary from `build/src/souffle`.
 - If tests cannot run, state why and point to `docs/TESTING.md`.
 
 ## Pitfalls / Do & Don't
@@ -45,6 +49,7 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - `docs/SECURITY.md`
 - `docs/USAGE.md`
 - `docs/INDEX.md`
+- `docs/topics/testing/README.regression.md`
 - `docs/project/README.md`
 - `docs/process/README.git.md`
 - `docs/historical/README.codex.md` (historical context only)
@@ -52,9 +57,12 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 ## Source references
 - [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)
 - [sh/run_test_format.sh](sh/run_test_format.sh)
+- [sh/run_regression_tests.sh](sh/run_regression_tests.sh)
 - [cmake/CTestDisabled.cmake](cmake/CTestDisabled.cmake)
 
 ## Related commits
+- `UNCOMMITTED` — test(regression): add maintained CTest regression workflow
+- `UNCOMMITTED` — docs(testing): document regression labels and cmake targets
 - `UNCOMMITTED` — docs(repo): move commit hygiene guidance to `docs/process/README.git.md`
 - `UNCOMMITTED` — docs(agents): add git-commit-helper skill preference
 - `668298ef8` — fix(inc-region): update regional WMC routing and profiling

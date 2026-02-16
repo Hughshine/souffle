@@ -13,7 +13,9 @@ Use this for any change that should include verification evidence.
    - Build: `cmake -S . -B build`
    - Build: `cmake --build build -j${JOBS}` (set `JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)`)
    - Smoke run: `SOUFFLE_BIN=./build/src/souffle examples/running_example/run.sh`
-   - Tests: `ctest --test-dir build -I "<range>" --output-on-failure --progress -j${JOBS}`
+   - Regression tests: `ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}`
+   - Regression target: `cmake --build build --target check-regression`
+   - One-shot script: `sh/run_regression_tests.sh`
 2. If a command is skipped or fails, record the reason and how a maintainer can run it.
 3. Report a verification summary with each command and its status (ran/skipped).
 4. Always keep Skills and docs up to date; if they diverge, update both.
@@ -22,5 +24,6 @@ Use this for any change that should include verification evidence.
    Related commits section (latest 3).
 
 ## Related commits
+- `UNCOMMITTED` — docs(testing): switch verify-changes skill to maintained regression workflow
 - `668298ef8` — fix(inc-region): update regional WMC routing and profiling
 - `e28b76ffe` — chore(repo): add codex metadata
