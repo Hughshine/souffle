@@ -1,8 +1,0 @@
-input
-output
-*.json
-*.txt
-*.cpp
-*-full
-*-incr
-*-full-with-delta

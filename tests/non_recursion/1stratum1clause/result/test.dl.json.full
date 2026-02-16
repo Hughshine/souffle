@@ -1,1 +1,0 @@
-[{"edges": [{"mapping": [{"x": 1}, {"y": 2}], "ruleId": 1}], "tuple": {"fields": [2], "rel": "A"}}, {"edges": [{"mapping": [{"x": 1}, {"y": 4}], "ruleId": 1}], "tuple": {"fields": [4], "rel": "A"}}, {"edges": [{"mapping": [{"x": 1}, {"y": 7}], "ruleId": 1}], "tuple": {"fields": [7], "rel": "A"}}]

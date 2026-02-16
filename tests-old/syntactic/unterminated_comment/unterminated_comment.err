@@ -1,4 +1,0 @@
-Error: unterminated comment block, missing '*/' in file unterminated_comment.dl at line 1
-/* a
-^----
-1 errors generated, evaluation aborted

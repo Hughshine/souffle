@@ -1,3 +1,0 @@
-.decl A(X:number)
-A(to_number(to_number(2))).
-.output A()

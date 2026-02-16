@@ -1,2 +1,0 @@
-// try to include a file that does not exist
-.include "non-existant.dl"

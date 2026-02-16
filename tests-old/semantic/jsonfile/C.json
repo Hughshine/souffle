@@ -1,3 +1,0 @@
-[{"x": null},
-{"x": {"head": 1, "tail": null}},
-{"x": {"head": 2, "tail": {"head": 3, "tail": null}}}]

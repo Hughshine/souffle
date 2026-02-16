@@ -1,3 +1,0 @@
-.once
-.decl q1(s:number)
-q1(1).

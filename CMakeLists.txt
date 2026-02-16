@@ -50,9 +50,6 @@ project(souffle VERSION "${SOUFFLE_VERSION}"
                 DESCRIPTION "A datalog compiler"
                 LANGUAGES CXX)
 include(CTest)
-# Block ctest runs in this fork (tests are out of date).
-set_property(DIRECTORY PROPERTY TEST_INCLUDE_FILES
-    "${PROJECT_SOURCE_DIR}/cmake/CTestDisabled.cmake")
 
 # Require out-of-source builds
 file(TO_CMAKE_PATH "${PROJECT_BINARY_DIR}/CMakeLists.txt" LOC_PATH)
@@ -104,6 +101,8 @@ option(SOUFFLE_NDEBUG "Enable/Disable runtime checks even in release mode" OFF)
 option(SOUFFLE_TEST_EXAMPLES "Enable/Disable testing of code examples in tests/examples" OFF)
 option(SOUFFLE_TEST_EVALUATION "Enable/Disable testing of evaluation examples in tests/examples" ON)
 option(SOUFFLE_ENABLE_TESTING "Enable/Disable testing" ${SOUFFLE_ENABLE_TESTING_DEFAULT})
+option(SOUFFLE_ENABLE_REGRESSION_TESTS "Enable/Disable the maintained regression test suite" ON)
+option(SOUFFLE_DISABLE_CTEST "Disable ctest invocations with the legacy fatal guard" OFF)
 option(SOUFFLE_GENERATE_DOXYGEN "Generate Doxygen files (html;htmlhelp;man;rtf;xml;latex)" "")
 option(SOUFFLE_CODE_COVERAGE "Enable coverage reporting" OFF)
 option(SOUFFLE_BASH_COMPLETION "Enable/Disable bash completion" OFF)
@@ -170,6 +169,15 @@ if (SOUFFLE_USE_CURSES)
             INTERFACE_INCLUDE_DIRECTORIES "${CURSES_INCLUDE_DIR}"
         )
     endif()
+endif()
+
+if (SOUFFLE_DISABLE_CTEST)
+    # Keep an escape hatch for older workflows that intentionally block ctest.
+    set_property(DIRECTORY PROPERTY TEST_INCLUDE_FILES
+        "${PROJECT_SOURCE_DIR}/cmake/CTestDisabled.cmake")
+else()
+    # Clear any prior guard include when ctest is enabled again.
+    set_property(DIRECTORY PROPERTY TEST_INCLUDE_FILES "")
 endif()
 
 # --------------------------------------------------
@@ -373,11 +381,12 @@ endif(SOUFFLE_CODE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 # including CTest
 add_subdirectory(src)
 
-#if (SOUFFLE_ENABLE_TESTING)
-find_package(Python3 3.10 REQUIRED)
-# add_subdirectory(src/tests)
-add_subdirectory(tests)
-#endif()
+if (SOUFFLE_ENABLE_TESTING AND BUILD_TESTING)
+    find_package(Python3 3.10 REQUIRED)
+    if (SOUFFLE_ENABLE_REGRESSION_TESTS)
+        add_subdirectory(tests/regression)
+    endif()
+endif()
 
 
 # --------------------------------------------------

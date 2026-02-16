@@ -59,9 +59,8 @@ jobs:
       - name: cmake-configure
         run: |
           cmake -S . -B build \
-            -DSOUFFLE_ENABLE_LEGACY_TESTS=OFF \
-            -DSOUFFLE_ENABLE_REGRESSION_TESTS=ON \
-            -DSOUFFLE_DISABLE_CTEST=OFF
+            -DSOUFFLE_ENABLE_REGRESSION_TESTS:BOOL=ON \
+            -DSOUFFLE_DISABLE_CTEST:BOOL=OFF
 
       - name: cmake-build
         run: cmake --build build -j"${JOBS}"

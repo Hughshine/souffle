@@ -17,7 +17,7 @@ or an upstream area extended by this fork.
 | Knowledge backends | `src/include/souffle/problog/formula/*` | Fork extension | BDD/SDD manager and formula operations used by FC/WMC | `docs/topics/backends/README.cudd.md`<br>`docs/topics/backends/README.sdd.md` |
 | Incremental command interface | `src/include/souffle/cli/Cli.h` | Fork extension | Interactive/batch `insert/delete/commit`, mode switching, output naming | `docs/USAGE.md`<br>`docs/topics/pipeline/README.inc.region.md`<br>`docs/project/PROBLOG_EXTENSION_STACK.md` |
 | Reporting and debug output | `src/reports/*`<br>`src/problog/debug/*` | Upstream + fork extension | JSON/DOT/stats dumps, runtime logs, diagnostics | `docs/topics/runtime/README.dump.md` |
-| Tests and validation artifacts | `tests/*`<br>`tests-old/*`<br>`src/tests/*` | Mixed (legacy-heavy) | Unit/legacy tests and historical validation scripts | `docs/TESTING.md` |
+| Tests and validation artifacts | `tests/regression/*`<br>`src/tests/*` | Mixed (regression + unit) | Maintained regression checks and runtime/unit validation helpers | `docs/TESTING.md` |
 | Benchmarks and experiment tooling | `problog-benchmark/*`<br>`examples/*` | Fork extension | Reproducible benchmark generation, run orchestration, artifact collection | `docs/topics/evaluation/README.md`<br>`archive/README.md` |
 
 ## Source references
