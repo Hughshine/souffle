@@ -1,7 +1,6 @@
 #include "souffle/problog/Pipeline.h"
 
 #include "souffle/Derivation.h"
-#include "souffle/cli/Cli.h"
 #include "souffle/problog/DerivationGraph.h"
 #include "souffle/problog/ForwardCompilation.h"
 #include "souffle/problog/GraphAnalyzer.h"
@@ -287,7 +286,7 @@ static void dumpDeterministicProbabilities(const CmdOptions& opt, SouffleProgram
 }
 
 static std::vector<std::pair<NodePtr, bool>> applyEvidence(
-        IncrementalDerivationGraph& graph,
+        DerivationGraph& graph,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences) {
     std::vector<std::pair<NodePtr, bool>> resolved;
     resolved.reserve(evidences.size());
@@ -355,13 +354,12 @@ static void dumpSisoRegions(const DerivationGraphViewInterface& view) {
 
 static void runBddPipeline(
         const CmdOptions& opt,
-        SouffleProgram& program,
-        RuleManager& ruleManager,
-        QueryManager& queryManager,
-        IncrementalDerivationGraph& graph,
+        SouffleProgram& /*program*/,
+        RuleManager& /*ruleManager*/,
+        QueryManager& /*queryManager*/,
+        DerivationGraph& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        bool enableOnlineCli,
         StageInfo* rewriteHybridStage) {
     Debugger& debugger = Debugger::getInstance();
 
@@ -1105,25 +1103,16 @@ static void runBddPipeline(
 
     debugger.endTurn();
     dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter0.txt");
-
-    if (enableOnlineCli) {
-        IncrementalCLI<BddNodeRef> cli(
-                &program, &graph, &ruleManager, &queryManager, bddManager.get(), &nodeFormulas,
-                &edgeFormulas);
-        cli.setCmdOptions(opt);
-        cli.run();
-    }
 }
 
 static void runSddPipeline(
         const CmdOptions& opt,
-        SouffleProgram& program,
-        RuleManager& ruleManager,
-        QueryManager& queryManager,
-        IncrementalDerivationGraph& graph,
+        SouffleProgram& /*program*/,
+        RuleManager& /*ruleManager*/,
+        QueryManager& /*queryManager*/,
+        DerivationGraph& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        bool enableOnlineCli,
         StageInfo* rewriteHybridStage) {
     Debugger& debugger = Debugger::getInstance();
 
@@ -1623,14 +1612,6 @@ static void runSddPipeline(
 
     debugger.endTurn();
     dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter0.txt");
-
-    if (enableOnlineCli) {
-        IncrementalCLI<SddNodeRef> cli(
-                &program, &graph, &ruleManager, &queryManager, sddManager.get(), &nodeFormulas,
-                &edgeFormulas);
-        cli.setCmdOptions(opt);
-        cli.run();
-    }
 }
 
 void runPipeline(
@@ -1639,19 +1620,13 @@ void runPipeline(
         RuleManager& ruleManager,
         QueryManager& queryManager,
         const std::unordered_map<UntypedTuple, double>& factProb,
-        const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        bool enableOnlineCli) {
+        const std::vector<std::pair<UntypedTuple, bool>>& evidences) {
     std::cout << std::fixed << std::setprecision(8);
     Debugger& debugger = Debugger::getInstance();
     fcProfileEnabled = opt.isFcProfileEnabled();
-    incDeleteProfileEnabled = opt.isIncDeleteProfileEnabled();
     wmcProfileEnabled = opt.isWmcProfileEnabled();
-    incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();
-    incRegionalProfileHeavyEnabled = opt.isIncRegionalProfileHeavyEnabled();
-    incRegionalTraceTuples = opt.getIncRegionalTraceTuples();
     depGraphProfileEnabled = opt.isDepGraphProfileEnabled();
     postDelEnabled = opt.isPostDelEnabled();
-    incReorderEnabled = opt.isIncReorderEnabled();
     DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
     DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());
     DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());
@@ -1661,27 +1636,19 @@ void runPipeline(
     DerivationGraph::setConstFoldEnabled(opt.isConstFoldEnabled());
     DerivationGraph::setConstDumpEnabled(opt.isDumpConstEnabled());
     precomputedProbResult.clear();
-    bool rewritePerformed = false;
 
     if (::detForceEnabled) {
         std::cout << "[det-force] enabled; skip derivation graph and emit prob=1.0" << std::endl;
         dumpDeterministicProbabilities(opt, program);
-        if (enableOnlineCli) {
-            std::cout << "[det-force] incremental CLI disabled" << std::endl;
-        }
         debugger.endTurn();
         dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter0.txt");
         return;
     }
 
-    if (!isFullOnlyMode() && !evidences.empty()) {
-        throw std::runtime_error("Evidence is only supported with --full-only (incremental mode disables evidence).");
-    }
-
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);
     debugger.addInfo("input_fact_size", std::to_string(countInitialInputFacts()));
     auto t0 = std::chrono::steady_clock::now();
-    auto graph = IncrementalDerivationGraph::createFrom(
+    auto graph = DerivationGraph::createFrom(
             DerivationManager::untypedTuple2RuleApplications, ruleManager, queryManager, factProb, evidences);
     auto t1 = std::chrono::steady_clock::now();
     std::cout << "[pipeline] create graph took "
@@ -1752,20 +1719,12 @@ void runPipeline(
         if (opt.isDumpDotEnabled()) {
             view.dumpDot(makeOutputPath(opt, "rewrite_final.dot"));
         }
-        rewritePerformed = true;
-    }
-
-    bool allowOnlineCli = enableOnlineCli && !rewritePerformed;
-    if (enableOnlineCli && rewritePerformed) {
-        std::cout << "[pipeline] rewrite performed in full run; skip incremental CLI" << std::endl;
     }
 
     if (program.getKnowledge() == souffle::Knowledge::BDD) {
-        runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, allowOnlineCli,
-                rewriteHybridStage);
+        runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage);
     } else if (program.getKnowledge() == souffle::Knowledge::SDD) {
-        runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, allowOnlineCli,
-                rewriteHybridStage);
+        runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage);
     } else {
         std::cerr << "Unknown knowledge representation" << std::endl;
     }

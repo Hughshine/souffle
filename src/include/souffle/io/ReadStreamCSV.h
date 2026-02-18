@@ -380,44 +380,19 @@ protected:
      * @return input filename
      */
     static std::string getFileName(const std::map<std::string, std::string>& rwOperation) {
-        if (rwOperation.count("output-dir") != 0) {  // if EDB read old result... TODO
+        if (rwOperation.count("output-dir") != 0) {
             auto name = getOr(rwOperation, "filename", rwOperation.at("name") + ".csv");
             if (!isAbsolute(name)) {
                 name = getOr(rwOperation, "fact-dir", ".") + pathSeparator + name;
             }
             return name;
         }
-        std::string incInsert = rwOperation.at("inc-insert");
-        std::string incDelete = rwOperation.at("inc-delete");
         auto name = getOr(rwOperation, "filename", rwOperation.at("name") + ".facts");
         if (!isAbsolute(name)) {
             name = getOr(rwOperation, "fact-dir", ".") + pathSeparator + name;
         }
-        if (incInsert == "true" && incDelete == "false") {
-            name += ".insert";
-        } else if (incInsert == "false" && incDelete == "true") {
-            name += ".delete";
-        }
         return name;
     }
-
-    static std::string getDeltaInsertFileName(const std::map<std::string, std::string>& rwOperation) {
-        auto name = getOr(rwOperation, "filename", rwOperation.at("name") + ".facts.insert");
-        if (!isAbsolute(name)) {
-            name = getOr(rwOperation, "fact-dir", ".") + pathSeparator + name;
-        }
-        return name;
-    }
-
-    static std::string getDeltaDeleteFileName(const std::map<std::string, std::string>& rwOperation) {
-        auto name = getOr(rwOperation, "filename", rwOperation.at("name") + ".facts.delete");
-        if (!isAbsolute(name)) {
-            name = getOr(rwOperation, "fact-dir", ".") + pathSeparator + name;
-        }
-        return name;
-    }
-
-    // * Or .facts.insert/.facts.delete for delta inputs
 
     std::string baseName;
 #ifdef USE_LIBZ

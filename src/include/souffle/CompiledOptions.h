@@ -82,16 +82,10 @@ protected:
     bool dump_stat = false;  // dump derivation graph stats after prune
     bool dump_const = false;  // dump constant pre-analysis details
     bool dred_profile = false;  // enable detailed DRed profiling
-    bool inc_profile = false;  // enable incremental stage profiling
     bool fc_profile = false;  // enable detailed forward-compilation profiling
-    bool inc_delete_profile = false;  // enable delete-phase profiling for incremental FC
     bool wmc_profile = false;  // enable weighted model counting profiling
-    bool inc_regional_profile = false;  // enable inc-regional profiling/diagnostics
-    bool inc_regional_profile_heavy = false;  // enable heavy inc-regional profiling
-    std::string inc_regional_trace_tuples;  // comma-separated tuples for inc-regional trace
     bool dep_graph_profile = false;  // enable dependency-graph profiling
     bool post_del = false;  // enable postprocessUselessVariables after deletion
-    bool enable_inc_reord = false;  // enable CUDD dynamic reordering in incremental turns
     bool det_opt = false;  // enable deterministic-relation analysis and det gating
     bool det_force = false;  // force deterministic evaluation (skip derivation graph)
     bool reuse_var_index = true;  // reuse freed variable indices in CUDD (default on)
@@ -99,28 +93,20 @@ protected:
 public:
     // all argument constructor
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
-            std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc",
+            std::string lfn = "log.txt", bool donly = false,
             bool merge_bi = true, bool foldconst = false, bool rewrite = false,
             bool dumpjson = false, bool dumpdot = false, bool dumpstat = false, bool dumpconst = false,
             bool dredProfile = false,
             const std::string& splitmode = "naive-split",
-            bool incProfile = false,
             bool fcProfile = false,
-            bool incDeleteProfile = false,
             bool wmcProfile = false,
-            bool incRegionalProfile = false,
-            bool incRegionalProfileHeavy = false,
-            std::string incRegionalTraceTuples = "",
             bool depGraphProfile = false,
             bool postDel = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
-    , incMode(mode), merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
+    , merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
       dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
-      dred_profile(dredProfile), inc_profile(incProfile), fc_profile(fcProfile),
-      inc_delete_profile(incDeleteProfile),
+      dred_profile(dredProfile), fc_profile(fcProfile),
       wmc_profile(wmcProfile),
-      inc_regional_profile(incRegionalProfile), inc_regional_profile_heavy(incRegionalProfileHeavy),
-      inc_regional_trace_tuples(std::move(incRegionalTraceTuples)),
       dep_graph_profile(depGraphProfile), post_del(postDel),
       split_mode(splitmode) {}
 
@@ -149,10 +135,6 @@ public:
         return log_file_name;
     }
 
-    std::string incMode = "inc-naive";
-    const std::string& getIncMode() const {
-        return incMode;
-    }
     /**
      * is profiling switched on
      */
@@ -203,35 +185,17 @@ public:
     bool isDredProfileEnabled() const {
         return dred_profile;
     }
-    bool isIncProfileEnabled() const {
-        return inc_profile;
-    }
     bool isFcProfileEnabled() const {
         return fc_profile;
     }
-    bool isIncDeleteProfileEnabled() const {
-        return inc_delete_profile;
-    }
     bool isWmcProfileEnabled() const {
         return wmc_profile;
-    }
-    bool isIncRegionalProfileEnabled() const {
-        return inc_regional_profile;
-    }
-    bool isIncRegionalProfileHeavyEnabled() const {
-        return inc_regional_profile_heavy;
-    }
-    const std::string& getIncRegionalTraceTuples() const {
-        return inc_regional_trace_tuples;
     }
     bool isDepGraphProfileEnabled() const {
         return dep_graph_profile;
     }
     bool isPostDelEnabled() const {
         return post_del;
-    }
-    bool isIncReorderEnabled() const {
-        return enable_inc_reord;
     }
     bool isDetOptEnabled() const {
         return det_opt;
@@ -283,7 +247,7 @@ public:
         option longOptions[] = {{"facts", true, nullptr, 'F'}, {"output", true, nullptr, 'D'},
                 {"profile", true, nullptr, 'p'}, {"jobs", true, nullptr, 'j'}, {"index", true, nullptr, 'i'},
                 {"knowledge", true, nullptr, 'k'}, {"logfile", true, nullptr, 'l'},
-                {"derv-only", optional_argument, nullptr, 'd'}, {"setmode", true, nullptr, 'm'},
+                {"derv-only", optional_argument, nullptr, 'd'},
                 {"merge-bi-imp", false, nullptr, 'e'}, {"prune-extra", false, nullptr, 1004}, {"fold-const", false, nullptr, 'C'},
                 {"rewrite", false, nullptr, 'r'},
                 {"split-mode", true, nullptr, 'P'},
@@ -291,16 +255,10 @@ public:
                 {"dumpstat", false, nullptr, 'S'},
                 {"dumpconst", false, nullptr, 'U'},
                 {"dred-profile", false, nullptr, 1002},
-                {"inc-profile", false, nullptr, 1003},
                 {"fc-profile", false, nullptr, 1005},
-                {"profile-inc-delete", false, nullptr, 1013},
                 {"profile-wmc", false, nullptr, 1014},
-                {"profile-inc-regional", false, nullptr, 1009},
-                {"profile-inc-regional-heavy", false, nullptr, 1011},
-                {"inc-regional-trace-tuples", true, nullptr, 1012},
                 {"profile-dep-graph", false, nullptr, 1010},
                 {"post-del", false, nullptr, 1006},
-                {"enable-inc-reord", false, nullptr, 1015},
                 {"det-opt", false, nullptr, 'Z'},
                 {"det-force", false, nullptr, 1007},
                 {"no-reuse-var-index", false, nullptr, 1008},
@@ -312,7 +270,7 @@ public:
         bool ok = true;
         knowledge_representation = "bdd";  // default knowledge representation
         int c; /* command-line arguments processing */
-        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d::em:C:rP:JTSUZ", longOptions, nullptr)) != EOF) {
+        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d::eC:rP:JTSUZ", longOptions, nullptr)) != EOF) {
             switch (c) {
                 /* Fact directories */
                 case 'F':
@@ -388,21 +346,6 @@ public:
                     }
                     break;
                 }
-                case 'm': {
-                    std::string modeArg(optarg);
-                    if (modeArg == "inc" || modeArg == "incremental" || modeArg == "incr") {
-                        incMode = "inc-naive";
-                    } else if (modeArg == "full") {
-                        incMode = "full-hard";
-                    } else if (modeArg == "inc-naive" || modeArg == "inc-regional" ||
-                               modeArg == "full-hard" || modeArg == "full-soft" || modeArg == "elastic") {
-                        incMode = modeArg;
-                    } else {
-                        std::cerr << "Invalid incremental mode [-m]: " << optarg << "\n";
-                        ok = false;
-                    }
-                    break;
-                }
                 case 'e':
                     merge_bi_imp = true;
                     break;
@@ -444,36 +387,17 @@ public:
                 case 1002:
                     dred_profile = true;
                     break;
-                case 1003:
-                    inc_profile = true;
-                    break;
                 case 1005:
                     fc_profile = true;
                     break;
-                case 1013:
-                    inc_delete_profile = true;
-                    break;
                 case 1014:
                     wmc_profile = true;
-                    break;
-                case 1009:
-                    inc_regional_profile = true;
-                    break;
-                case 1011:
-                    inc_regional_profile = true;
-                    inc_regional_profile_heavy = true;
-                    break;
-                case 1012:
-                    inc_regional_trace_tuples = optarg ? optarg : "";
                     break;
                 case 1010:
                     dep_graph_profile = true;
                     break;
                 case 1006:
                     post_del = true;
-                    break;
-                case 1015:
-                    enable_inc_reord = true;
                     break;
                 case 'Z':
                     det_opt = true;
@@ -529,16 +453,10 @@ private:
         std::cerr << "    --dumpdot                    -- Dump derivation graph DOT after prune\n";
         std::cerr << "    --dumpstat                   -- Dump derivation graph stats after prune\n";
         std::cerr << "    --dred-profile               -- Enable detailed DRed profiling (requires --profile)\n";
-        std::cerr << "    --inc-profile                -- Enable incremental stage profiling\n";
         std::cerr << "    --fc-profile                 -- Enable detailed forward-compilation profiling\n";
-        std::cerr << "    --profile-inc-delete         -- Enable incremental delete-phase profiling\n";
         std::cerr << "    --profile-wmc                -- Enable weighted model counting profiling\n";
-        std::cerr << "    --profile-inc-regional       -- Enable inc-regional diagnostics/profiling\n";
-        std::cerr << "    --profile-inc-regional-heavy -- Enable heavy inc-regional diagnostics (closure trace)\n";
-        std::cerr << "    --inc-regional-trace-tuples=<LIST> -- Comma-separated tuples to trace\n";
         std::cerr << "    --profile-dep-graph          -- Enable dependency-graph profiling\n";
         std::cerr << "    --post-del                   -- Enable post-delete variable postprocess (FC)\n";
-        std::cerr << "    --enable-inc-reord           -- Enable CUDD dynamic reordering in incremental turns\n";
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
         std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
         std::cerr << "    --det-force                  -- Force deterministic mode (skip derivation graph; emit prob=1.0)\n";

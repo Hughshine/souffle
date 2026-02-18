@@ -183,7 +183,7 @@ TEST(BTreeSet, Duplicates) {
     //        t.printTree();
 }
 
-TEST(BTreeSet, Incremental) {
+TEST(BTreeSet, StepwiseInsert) {
     using test_set = btree_set<int, detail::comparator<int>, std::allocator<int>, 16>;
 
     test_set t;

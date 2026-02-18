@@ -141,7 +141,7 @@ TEST(EqRelTest, TransitivityTest) {
     EXPECT_TRUE(br.contains(3, 3));
 }
 
-TEST(EqRelTest, PairwiseIncremental) {
+TEST(EqRelTest, PairwiseStepwise) {
     EqRel br;
 
     const std::size_t N = 100;

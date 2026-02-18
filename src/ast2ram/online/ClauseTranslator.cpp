@@ -107,8 +107,8 @@ std::string ClauseTranslator::getClauseString(const ast::Clause& clause) const {
     return toString(*renamedClone);
 }
 
-std::string ClauseTranslator::getClauseAtomName(const ast::Clause& clause, const ast::Atom* atom, const bool isDelete) const {
-    return getAtomName(clause, atom, sccAtoms, version, isRecursive(), mode, isDelete);
+std::string ClauseTranslator::getClauseAtomName(const ast::Clause& clause, const ast::Atom* atom) const {
+    return getAtomName(clause, atom, sccAtoms, version, isRecursive(), mode);
 }
 
 // TODO: change to heap

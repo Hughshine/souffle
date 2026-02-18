@@ -5,7 +5,7 @@ Regression runner for the maintained Souffle fork test suite.
 Each ctest case executes one scenario end-to-end:
 - generate a small program + inputs
 - compile with the repo-built souffle binary
-- run full/incremental modes
+- run full mode
 - assert semantic and artifact contracts
 """
 
@@ -167,15 +167,10 @@ def assert_prob_all_ones(path: Path, *, tol: float = 1e-12, label: str) -> None:
         )
 
 
-def iter_prob_path(output_dir: Path, iteration: int, suffix: str) -> Path:
-    return output_dir / f"fact-iter{iteration}-{suffix}.prob"
-
-
 def compile_compute(
     *,
     souffle_bin: Path,
     case_dir: Path,
-    full_only: bool = False,
     compile_args: Sequence[str] | None = None,
 ) -> Tuple[Path, Path, Path]:
     input_dir = case_dir / "input"
@@ -187,9 +182,7 @@ def compile_compute(
     compute_dl = case_dir / "compute.dl"
     compute_bin = build_dir / "compute"
 
-    cmd = [str(souffle_bin), "--online"]
-    if full_only:
-        cmd.append("--full-only")
+    cmd = [str(souffle_bin)]
     if compile_args:
         cmd.extend(compile_args)
     cmd.extend(
@@ -207,42 +200,6 @@ def compile_compute(
     if not compute_bin.exists():
         raise CaseFailure(f"compile did not create binary: {compute_bin}")
     return compute_bin, input_dir, output_dir
-
-
-def make_cli_script(turns: Sequence[Sequence[str]]) -> str:
-    lines: List[str] = []
-    for turn_ops in turns:
-        lines.extend(turn_ops)
-        lines.append("commit")
-    lines.append("q")
-    return "\n".join(lines) + "\n"
-
-
-def run_cli_mode(
-    *,
-    compute_bin: Path,
-    input_dir: Path,
-    output_dir: Path,
-    mode: str,
-    turns: Sequence[Sequence[str]],
-    extra_args: Sequence[str] | None = None,
-    timeout: int = 240,
-) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        str(compute_bin),
-        "-F",
-        str(input_dir),
-        "-D",
-        str(output_dir),
-        "--setmode",
-        mode,
-    ]
-    if extra_args:
-        cmd.extend(extra_args)
-    cli_script = make_cli_script(turns)
-    write_text(output_dir / "commands.txt", cli_script)
-    run_cmd(cmd, cwd=compute_bin.parent, stdin_text=cli_script, timeout=timeout)
 
 
 def run_full_once(
@@ -272,9 +229,7 @@ def case_smoke_full_only(souffle_bin: Path, work_root: Path) -> None:
     output_dir = case_dir / "output_run"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    compute_bin, in_dir, _ = compile_compute(
-        souffle_bin=souffle_bin, case_dir=case_dir, full_only=True
-    )
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
     run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=output_dir)
 
     facts_prob = output_dir / "facts.prob"
@@ -283,167 +238,11 @@ def case_smoke_full_only(souffle_bin: Path, work_root: Path) -> None:
         raise CaseFailure(f"smoke test produced empty probability output: {facts_prob}")
 
 
-def case_dred_mix_naive_vs_full(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = prepare_case_workspace("dred_mix_naive_vs_full", work_root)
-    input_dir = case_dir / "input"
-
-    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-    turns = [
-        [],
-        ["insert 0.35::bridge(1,3)", "delete edge(2,4)"],
-        ["insert 0.41::edge(3,6)"],
-    ]
-
-    out_inc = case_dir / "out_inc_naive"
-    out_full = case_dir / "out_full_hard"
-    run_cli_mode(
-        compute_bin=compute_bin,
-        input_dir=in_dir,
-        output_dir=out_inc,
-        mode="inc-naive",
-        turns=turns,
-    )
-    run_cli_mode(
-        compute_bin=compute_bin,
-        input_dir=in_dir,
-        output_dir=out_full,
-        mode="full-hard",
-        turns=turns,
-    )
-
-    for iteration in (1, 2, 3):
-        assert_prob_close(
-            iter_prob_path(out_inc, iteration, "inc-naive"),
-            iter_prob_path(out_full, iteration, "full"),
-            label=f"dred_mix iter={iteration}",
-        )
-
-
-def case_dred_hub_rederive_naive_vs_full(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = prepare_case_workspace("dred_hub_rederive_naive_vs_full", work_root)
-    input_dir = case_dir / "input"
-
-    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-
-    delete_ops = [f"delete edge({i},40)" for i in range(1, 7)]
-    turns = [
-        [],
-        delete_ops + ["delete edge(6,7)"],
-        ["insert 0.73::edge(6,7)", "insert 0.67::edge(17,40)", "insert 0.55::edge(12,30)"],
-    ]
-
-    out_inc = case_dir / "out_inc_naive"
-    out_full = case_dir / "out_full_hard"
-    run_cli_mode(
-        compute_bin=compute_bin,
-        input_dir=in_dir,
-        output_dir=out_inc,
-        mode="inc-naive",
-        turns=turns,
-        timeout=300,
-    )
-    run_cli_mode(
-        compute_bin=compute_bin,
-        input_dir=in_dir,
-        output_dir=out_full,
-        mode="full-hard",
-        turns=turns,
-        timeout=300,
-    )
-
-    for iteration in (1, 2, 3):
-        assert_prob_close(
-            iter_prob_path(out_inc, iteration, "inc-naive"),
-            iter_prob_path(out_full, iteration, "full"),
-            label=f"dred_hub_rederive iter={iteration}",
-        )
-
-
-def case_detopt_inc_naive_combo_vs_full(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = prepare_case_workspace("detopt_inc_naive_combo_vs_full", work_root)
-    input_dir = case_dir / "input"
-
-    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-    extra = ["--det-opt", "--post-del", "--no-reuse-var-index", "--no-single-rand-fast"]
-    turns = [
-        [],
-        ["delete trust(1,2)", "delete trust(2,3)"],
-        ["insert trust(1,2)", "insert trust(2,3)", "delete chance(1,4)"],
-    ]
-
-    out_inc = case_dir / "out_inc_naive"
-    out_full = case_dir / "out_full_hard"
-    run_cli_mode(
-        compute_bin=compute_bin,
-        input_dir=in_dir,
-        output_dir=out_inc,
-        mode="inc-naive",
-        turns=turns,
-        extra_args=extra,
-    )
-    run_cli_mode(
-        compute_bin=compute_bin,
-        input_dir=in_dir,
-        output_dir=out_full,
-        mode="full-hard",
-        turns=turns,
-        extra_args=extra,
-    )
-
-    for iteration in (1, 2, 3):
-        assert_prob_close(
-            iter_prob_path(out_inc, iteration, "inc-naive"),
-            iter_prob_path(out_full, iteration, "full"),
-            label=f"detopt_combo iter={iteration}",
-        )
-
-
-def case_detopt_inc_regional_single_round_vs_full(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = prepare_case_workspace("detopt_inc_regional_single_round_vs_full", work_root)
-    input_dir = case_dir / "input"
-
-    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-    turns = [
-        [],
-        ["delete trust(1,5)", "insert 0.52::chance(1,5)"],
-    ]
-    extra = ["--det-opt"]
-
-    out_regional = case_dir / "out_inc_regional"
-    out_full = case_dir / "out_full_hard"
-    run_cli_mode(
-        compute_bin=compute_bin,
-        input_dir=in_dir,
-        output_dir=out_regional,
-        mode="inc-regional",
-        turns=turns,
-        extra_args=extra,
-    )
-    run_cli_mode(
-        compute_bin=compute_bin,
-        input_dir=in_dir,
-        output_dir=out_full,
-        mode="full-hard",
-        turns=turns,
-        extra_args=extra,
-    )
-
-    # NOTE: inc-regional is currently validated in single-round form only.
-    for iteration in (1, 2):
-        assert_prob_close(
-            iter_prob_path(out_regional, iteration, "inc-regional"),
-            iter_prob_path(out_full, iteration, "full"),
-            label=f"detopt_inc_regional iter={iteration}",
-        )
-
-
 def case_rewrite_split_modes_equiv(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("rewrite_split_modes_equiv", work_root)
     input_dir = case_dir / "input"
 
-    compute_bin, in_dir, _ = compile_compute(
-        souffle_bin=souffle_bin, case_dir=case_dir, full_only=True
-    )
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
 
     out_base = case_dir / "out_base"
     run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base)
@@ -469,9 +268,7 @@ def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("full_det_modes", work_root)
     input_dir = case_dir / "input"
 
-    compute_bin, in_dir, _ = compile_compute(
-        souffle_bin=souffle_bin, case_dir=case_dir, full_only=True
-    )
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
 
     out_base = case_dir / "out_base"
     out_detopt = case_dir / "out_detopt"
@@ -510,37 +307,26 @@ def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
     out_full = case_dir / "out_full_hard"
 
-    run_cli_mode(
+    run_full_once(
         compute_bin=compute_bin,
         input_dir=in_dir,
         output_dir=out_full,
-        mode="full-hard",
-        turns=[[]],
         extra_args=["--dumpjson", "--dumpdot", "--dumpstat", "--logfile", "reglog"],
     )
 
-    expected_dot_before = out_full / "derivation-full-before-prune1.dot"
-    expected_dot_after = out_full / "derivation-full-after-prune1.dot"
-    expected_prob = out_full / "fact-iter1-full.prob"
+    expected_dot_before = out_full / "before_prune.dot"
+    expected_dot_after = out_full / "after_prune.dot"
+    expected_prob = out_full / "facts.prob"
     for expected in (expected_dot_before, expected_dot_after, expected_prob):
         if not expected.exists():
             raise CaseFailure(f"dump contract: missing expected artifact {expected}")
 
-    assert_glob_nonempty(
-        out_full,
-        "derivation-full-after-prune1-*.json",
-        label="dump contract json after prune",
-    )
+    assert_glob_nonempty(out_full, "derivation*.json", label="dump contract json after prune")
     assert_glob_nonempty(out_full, "reglog_*.json", label="dump contract debugger logs")
-    assert_glob_nonempty(out_full, "graph-*.json", label="dump contract graph stats")
 
 
 CASES = {
     "smoke_full_only": case_smoke_full_only,
-    "dred_mix_naive_vs_full": case_dred_mix_naive_vs_full,
-    "dred_hub_rederive_naive_vs_full": case_dred_hub_rederive_naive_vs_full,
-    "detopt_inc_naive_combo_vs_full": case_detopt_inc_naive_combo_vs_full,
-    "detopt_inc_regional_single_round_vs_full": case_detopt_inc_regional_single_round_vs_full,
     "rewrite_split_modes_equiv": case_rewrite_split_modes_equiv,
     "full_det_modes": case_full_det_modes,
     "dump_outputs_contract": case_dump_outputs_contract,

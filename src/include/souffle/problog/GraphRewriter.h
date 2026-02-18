@@ -90,8 +90,8 @@ public:
     * @param debug   Legacy flag (ignored for output); use --dumpstat/--dumpdot instead.
     * @param flags   Feature switches controlling which SISO kinds / passes are enabled.
     */
-    GraphRewriteStats rewriteUntilFixpoint(IncrementalDerivationGraph& graph,
-                                           IncSubgraphView& view,
+    GraphRewriteStats rewriteUntilFixpoint(DerivationGraph& graph,
+                                           SubgraphView& view,
                                            bool debug = false,
                                            const RewriteFeatureFlags& flags = RewriteFeatureFlags{}) const {
         GraphRewriteStats stats;
@@ -1102,7 +1102,7 @@ private:
         return p > 0.0 && p < 1.0;
     }
 
-    std::unordered_set<NodePtr> collectEvidenceAffectedNodes(const IncSubgraphView& view) const {
+    std::unordered_set<NodePtr> collectEvidenceAffectedNodes(const SubgraphView& view) const {
         std::unordered_set<NodePtr> affected;
         auto& depGraph = view.getCycleDependencyGraph();
         size_t componentCount = depGraph.getComponentCount();
@@ -1124,7 +1124,7 @@ private:
         return affected;
     }
 
-    static NodePtr createShadowFact(IncrementalDerivationGraph& graph, const NodePtr& fact,
+    static NodePtr createShadowFact(DerivationGraph& graph, const NodePtr& fact,
             const EdgePtr& edgeHint) {
         if (!fact || !edgeHint) return nullptr;
         UntypedTuple shadowTuple;
@@ -1142,7 +1142,7 @@ private:
         return shadow;
     }
 
-    static bool canPrecomputeOutputFact(const IncSubgraphView& view, const NodePtr& node,
+    static bool canPrecomputeOutputFact(const SubgraphView& view, const NodePtr& node,
             const std::unordered_set<NodePtr>& evidenceAffectedNodes) {
         if (!node || !node->needOutput || !node->isFact) return false;
         if (node->hasEvidence()) return false;
@@ -1152,7 +1152,7 @@ private:
         return true;
     }
 
-    static size_t precomputeOutputFacts(IncSubgraphView& view,
+    static size_t precomputeOutputFacts(SubgraphView& view,
             const std::unordered_set<NodePtr>& evidenceAffectedNodes) {
         size_t count = 0;
         for (auto node : view.getNodes()) {
@@ -1167,7 +1167,7 @@ private:
         return count;
     }
 
-    SplitStats splitFanoutNaive(IncrementalDerivationGraph& graph, IncSubgraphView& view,
+    SplitStats splitFanoutNaive(DerivationGraph& graph, SubgraphView& view,
             GraphRewriteStats& stats,
             const std::unordered_set<NodePtr>& evidenceAffectedNodes) const {
         SplitStats out;
@@ -1292,7 +1292,7 @@ private:
         return out;
     }
 
-    SplitStats splitFanoutComplete(IncrementalDerivationGraph& graph, IncSubgraphView& view,
+    SplitStats splitFanoutComplete(DerivationGraph& graph, SubgraphView& view,
             GraphRewriteStats& stats, const RewriteFeatureFlags& flags,
             const std::unordered_set<NodePtr>& evidenceAffectedNodes) const {
         SplitStats out;
@@ -1391,7 +1391,7 @@ private:
             return out;
         }
 
-        // Simple candidate queue seeded once per split pass; can be made incremental later.
+        // Simple candidate queue seeded once per split pass.
         std::deque<NodePtr> queue;
         std::unordered_set<NodePtr> inQueue;
         auto enqueueFact = [&](const NodePtr& n) {
@@ -1801,7 +1801,7 @@ private:
 
         if (pEntry <= std::numeric_limits<double>::epsilon()) {
             if (debug) {
-                std::cout << " (entryProbâ‰ˆ0, treat as 0)" << std::endl;
+                std::cout << " (entryProbâ‰?, treat as 0)" << std::endl;
             }
             return 0.0;
         }
@@ -1818,8 +1818,8 @@ private:
         return pCond;
     }
 
-    EdgePtr applyRegionRewrite(IncrementalDerivationGraph& graph,
-                               IncSubgraphView& view,
+    EdgePtr applyRegionRewrite(DerivationGraph& graph,
+                               SubgraphView& view,
                                const SISORegionInfo& region,
                                double condProb,
                                GraphRewriteStats& stats,
@@ -1903,3 +1903,5 @@ private:
 };
 
 }  // namespace souffle::problog
+
+

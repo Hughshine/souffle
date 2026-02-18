@@ -38,26 +38,11 @@ namespace souffle::ast2ram {
 
 std::string getAtomName(const ast::Clause& clause, const ast::Atom* atom,
         const std::vector<ast::Atom*>& sccAtoms, std::size_t version, bool isRecursive,
-        TranslationMode mode, bool isIncremental, bool isDelete) {
+        TranslationMode mode) {
     if (isA<ast::SubsumptiveClause>(clause)) {
         assert(false && "subsumptive clause not supported");
     }
-    if (atom->isRederive) {
-        // allow rederive atoms even when the clause itself is non-recursive
-        if (!isRecursive) {
-            return getIncTupleOverDeleteRelationName(atom->getQualifiedName());
-        }
-        return getIncDervOverDeleteRelationName(atom->getQualifiedName());
-    }
-    if (clause.isRederive) {
-        if (clause.getHead() == atom) {
-            return getIncNewDervRederiveRelationName(atom->getQualifiedName());
-        }
-        if (!sccAtoms.empty() && sccAtoms.at(version) == atom) {
-            return getIncDeltaTupleRederiveRelationName(atom->getQualifiedName());
-        }
-        return getConcreteRelationName(atom->getQualifiedName());
-    }
+    assert(!atom->isRederive && !clause.isRederive && "rederive clauses are unsupported");
     if (!isRecursive) {
         if (mode == Auxiliary && clause.getHead() == atom) {
             assert (false && "auxiliary mode not supported");
@@ -65,36 +50,13 @@ std::string getAtomName(const ast::Clause& clause, const ast::Atom* atom,
         }
         return getConcreteRelationName(atom->getQualifiedName());
     }
-    if (!isIncremental) {
-        if (clause.getHead() == atom) {
-            return getNewRelationName(atom->getQualifiedName());
-        }
-        if (sccAtoms.at(version) == atom) {
-            return getDeltaRelationName(atom->getQualifiedName());
-        }
-        return getConcreteRelationName(atom->getQualifiedName());
-    } else {
-        // TODO: should be, return DervDel (new) for head
-        // return tuple delta delete for sccAtom (if is deletion)
-        // return tuple delete for non sccAtoms
-        if (isDelete) {
-            if (clause.getHead() == atom) {
-                return getNewDeletionRelationName(atom->getQualifiedName());
-            }
-            if (sccAtoms.at(version) == atom) {
-                return getDeltaDeletionRelationName(atom->getQualifiedName());
-            }
-            return getIncDeltaDervDeleteRelationName(atom->getQualifiedName());
-        } else {
-            if (clause.getHead() == atom) {
-                return getNewInsertionRelationName(atom->getQualifiedName());
-            }
-            if (sccAtoms.at(version) == atom) {
-                return getDeltaInsertionRelationName(atom->getQualifiedName());
-            }
-            return getIncDeltaDervInsertRelationName(atom->getQualifiedName());
-        }
+    if (clause.getHead() == atom) {
+        return getNewRelationName(atom->getQualifiedName());
     }
+    if (sccAtoms.at(version) == atom) {
+        return getDeltaRelationName(atom->getQualifiedName());
+    }
+    return getConcreteRelationName(atom->getQualifiedName());
 }
 
 std::string getConcreteRelationName(const ast::QualifiedName& name, const std::string prefix) {
@@ -113,25 +75,6 @@ std::string getNewRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "@new_");
 }
 
-/**
- * For inc + recursion; delta_delta
- */
-std::string getDeltaDeletionRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@delta_tuple_delete_");
-}
-
-std::string getDeltaInsertionRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@delta_tuple_insert_");
-}
-
-std::string getNewDeletionRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@new_derv_delete_");
-}
-
-std::string getNewInsertionRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@new_derv_insert_");
-}
-
 std::string getLubRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "@lub_");
 }
@@ -144,95 +87,20 @@ std::string getDeleteRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "@delete_");
 }
 
-// std::string getIncDeltaRelationName(const ast::QualifiedName& name) {
-//     return getConcreteRelationName(name, "@inc_delta_");
-// }
-// for inc + non recursion; in recursion, we need a concept of "delta_delta"
-std::string getIncDeltaDervInsertRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "$inc_delta_derv_insert_");
-}
-
-std::string getIncDeltaDervDeleteRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "$inc_delta_derv_delete_");
-}
-// for inc, final delta computed
-std::string getIncDeltaTupleInsertRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "$inc_delta_tuple_insert_");
-}
-
-std::string getIncDeltaTupleDeleteRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "$inc_delta_tuple_delete_");
-}
-
-/**
- * for Dred, over-deletion and rederive
- * - before rederive, move tuples with over-deleted derivations to @inc_delta_derv_overdelete
- * - during rederive, rederive derivations to @inc_delta_derv_rederive
- * - after each iteration of rederive, delta union tuples (can be considered as insertion )
-     and find real deleted tuples @inc_delta_tuple_rederive, update original relation at the same time
- * - and @inc_delta_tuple_overdelete will minus @inc_delta_tuple_rederive
- * if inc_delta_derv_overdelete, the rederivation finishes.
- * @inc_delta_tuple_overdelete will be $inc_delta_tuple_delete (swap and clear)
- */
-std::string getIncTupleOverDeleteRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@inc_tuple_overdelete_");
-}
-
-std::string getIncDervOverDeleteRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@inc_derv_overdelete_");
-}
-
-std::string getIncNewDervRederiveRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@inc_new_derv_rederive_");
-}
-
-std::string getIncDeltaTupleRederiveRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@inc_delta_tuple_rederive_");
-}
-
-
-std::string getTmpRelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@tmp_");
-}
-
-std::string getTmp2RelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@tmp2_");
-}
-
-std::string getTmp3RelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@tmp3_");
-}
-
-std::string getTmp4RelationName(const ast::QualifiedName& name) {
-    return getConcreteRelationName(name, "@tmp4_");
-}
 const std::string& getRelationName(const ast::QualifiedName& name) {
     return name.toString();
 }
 
 std::string getBaseRelationName(const ast::QualifiedName& name) {
-    auto str =
-    stripPrefix("$inc_delta_tuple_delete_",
-    stripPrefix("$inc_delta_tuple_insert_",
-    stripPrefix("$inc_delta_derv_delete_",
-    stripPrefix("$inc_delta_derv_insert_",
-    stripPrefix("@tmp4_",
-    stripPrefix("@tmp3_",
-    stripPrefix("@tmp2_",
-    stripPrefix("@tmp_",
-        stripPrefix("@old_",
-            stripPrefix("@delta_tuple_delete_",
-                stripPrefix("@delta_tuple_insert_",
-                    stripPrefix("@new_derv_delete_",
-                        stripPrefix("@new_derv_insert_",
-                            stripPrefix("@new_",
-                                stripPrefix("@delta_",
-                                    stripPrefix("@info_", name.toString()))))))))))))))));
-
-    str = stripPrefix( "@inc_tuple_overdelete_", str);
-    str = stripPrefix( "@inc_derv_overdelete_", str);
-    str = stripPrefix( "@inc_new_derv_rederive_", str);
-    str = stripPrefix( "@inc_delta_tuple_rederive_", str);
+    auto str = name.toString();
+    str = stripPrefix("@info_", str);
+    str = stripPrefix("@delta_", str);
+    str = stripPrefix("@new_", str);
+    str = stripPrefix("@old_", str);
+    str = stripPrefix("@tmp_", str);
+    str = stripPrefix("@tmp2_", str);
+    str = stripPrefix("@tmp3_", str);
+    str = stripPrefix("@tmp4_", str);
     return str;
 }
 

@@ -116,3 +116,6 @@ experiments/side_channel_full*/
 experiments/side_channel_inc_eval/
 experiments/side_channel_inc_mini/*/
 experiments/smokers_*/
+
+examples/
+tests/

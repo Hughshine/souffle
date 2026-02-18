@@ -66,10 +66,6 @@ enum TranslationMode {
 
     // delete delete-R(x0) :- R(x0), R(x1), x0!=x1, body. (outside fix-point)
     SubsumeDeleteCurrentCurrent,
-
-    Incremental,
-
-    // ONLINE_INC
 };
 
 /* Abstract Clause Translator */
@@ -91,7 +87,7 @@ public:
 
     /** Translate a recursive clause */
     virtual Own<ram::Statement> translateRecursiveClause(
-            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false, bool isPrefill = false, bool isRederive = false) = 0; // isDelete flag is only useful for incremental computation
+            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false, bool isPrefill = false, bool isRederive = false) = 0; // isDelete is used by delete/rederive translation paths
 
 protected:
     /** Translation context */

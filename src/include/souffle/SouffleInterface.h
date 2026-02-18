@@ -823,7 +823,6 @@ public:
      * on).
      */
     virtual void run() {}
-    virtual void runInc() {}
     /**
      * Execute program, loading inputs and storing outputs as required.
      * File IO types can use the given directories to find their input file.
@@ -835,10 +834,6 @@ public:
      */
     virtual void runAll(std::string inputDirectory = "", std::string outputDirectory = "",
             bool performIO = false, bool pruneImdtRels = true) = 0;
-    virtual void runAllInc(std::string inputDirectory = "", std::string outputDirectory = "",
-            bool performIO = false, bool pruneImdtRels = true) {
-        assert(false && "inc not supported in this pipeline");
-    };
     /**
      * Read all input relations.
      *
@@ -1197,7 +1192,7 @@ public:
 
 // void problog(SouffleProgram* prog) {
 //     std::cout << std::fixed << std::setprecision(10);
-//     auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);
+//     auto graph = DerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);
 // }
 
 }  // namespace souffle

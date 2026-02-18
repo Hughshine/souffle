@@ -1,0 +1,18 @@
+digraph SubgraphView {
+  rankdir=LR;
+  node [shape=box, style=filled, fillcolor=lightblue];
+  node16 [label="res(5)"];
+  node12 [label="c(5,2)"];
+  node18 [label="@magic.a.{bf}(1)"];
+  node2 [label="b(1,2)"];
+  node17 [label="a.{bf}(1,5)"];
+  node [shape=point, fillcolor=red, width=0.2];
+  edge0;
+  node17 -> edge0;
+  edge0 -> node16;
+  edge1;
+  node18 -> edge1;
+  node2 -> edge1;
+  node12 -> edge1;
+  edge1 -> node17;
+}

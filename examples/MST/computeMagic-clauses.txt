@@ -1,0 +1,4 @@
+3  [1:1-1:1] a.{bf}(X,Y) :-  @magic.@interm_out.res.{b}(X),  b(X,Z),  c(Y,Z).
+1  [1:1-1:1] @interm_out.res.{b}(X) :-  @magic.@interm_out.res.{b}(X),  a.{bf}(X,Y).
+4  [1:1-1:1] res(@query_x0) :-  @interm_out.res.{b}(@query_x0),  @query_x0 = 1.
+2  [1:1-1:1] @magic.@interm_out.res.{b}(1).

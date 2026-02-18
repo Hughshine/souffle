@@ -66,7 +66,7 @@ protected:
     bool isRecursive() const;
 
     std::string getClauseString(const ast::Clause& clause) const;
-    std::string getClauseAtomName(const ast::Clause& clause, const ast::Atom* atom, const bool isDelete = false) const;
+    std::string getClauseAtomName(const ast::Clause& clause, const ast::Atom* atom) const;
     std::map<std::string, Own<ram::Expression>> getClauseVars(const ast::Clause& clause) const;
     std::vector<Own<ram::Expression>> getClauseVarExprs(const ast::Clause& clause) const;
     virtual Own<ram::Operation> addNegatedAtom(

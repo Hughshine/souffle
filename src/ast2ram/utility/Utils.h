@@ -40,7 +40,7 @@ struct Location;
 
 /** Get the corresponding atom name given the clause and other state */
 std::string getAtomName(const ast::Clause& clause, const ast::Atom* atom,
-        const std::vector<ast::Atom*>& sccAtoms, std::size_t version, bool isRecursive, TranslationMode mode, bool isIncremental = false, bool isDelete = false);
+        const std::vector<ast::Atom*>& sccAtoms, std::size_t version, bool isRecursive, TranslationMode mode);
 
 /** Get the corresponding concretised RAM relation name for the relation */
 std::string getConcreteRelationName(const ast::QualifiedName& name, std::string prefix = "");
@@ -65,34 +65,6 @@ std::string getRejectRelationName(const ast::QualifiedName& name);
 
 /** Get the corresponding RAM 'delete' relation name for the relation */
 std::string getDeleteRelationName(const ast::QualifiedName& name);
-
-/** INC */
-std::string getIncDeltaDervInsertRelationName(const ast::QualifiedName& name);
-
-std::string getIncDeltaDervDeleteRelationName(const ast::QualifiedName& name);
-
-std::string getIncDeltaTupleInsertRelationName(const ast::QualifiedName& name);
-
-std::string getIncDeltaTupleDeleteRelationName(const ast::QualifiedName& name);
-
-std::string getTmpRelationName(const ast::QualifiedName& name);
-std::string getTmp2RelationName(const ast::QualifiedName& name);
-std::string getTmp3RelationName(const ast::QualifiedName& name);
-std::string getTmp4RelationName(const ast::QualifiedName& name);
-
-/**
- * For inc + recursion
- */
-std::string getDeltaDeletionRelationName(const ast::QualifiedName& name);
-std::string getDeltaInsertionRelationName(const ast::QualifiedName& name);
-std::string getNewDeletionRelationName(const ast::QualifiedName& name);
-std::string getNewInsertionRelationName(const ast::QualifiedName& name);
-
-// rederivation
-std::string getIncTupleOverDeleteRelationName(const ast::QualifiedName& name);
-std::string getIncDervOverDeleteRelationName(const ast::QualifiedName& name);
-std::string getIncNewDervRederiveRelationName(const ast::QualifiedName& name);
-std::string getIncDeltaTupleRederiveRelationName(const ast::QualifiedName& name);
 
 /** Get base relation name, strip off any possible prefix */
 std::string getBaseRelationName(const ast::QualifiedName& name);

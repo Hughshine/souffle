@@ -636,7 +636,7 @@ TEST(LambdaBTree, ContendParallel) {
         return p.second;
     };
 
-    // shuffle the vector around to make us insert non-incremental pairs (seems to make it more common...?)
+    // shuffle the vector around to make us insert non-batched pairs (seems to make it more common...?)
     std::vector<std::size_t> data_source;
     for (std::size_t i = 0; i < N; ++i) {
         data_source.push_back(i);

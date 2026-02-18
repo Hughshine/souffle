@@ -297,7 +297,7 @@ public:
      * - Edges with edge_alive_[e]==1 -> createHyperedge(inputs, output)
      * - For nodes with present_base_[u]==1, additionally set node->isFact = true
      */
-    // void materialize(IncrementalDerivationGraph& out) const {
+    // void materialize(DerivationGraph& out) const {
     //     // 1) Create/reuse DG nodes for all visible nodes
     //     std::vector<NodePtr> id2node(nodes_.size(), nullptr);
     //     for (NodeId u = 0; u < nodes_.size(); ++u) {
@@ -337,92 +337,41 @@ public:
     //     }
     // }
 
-    void materialize(IncrementalDerivationGraph& out) const {
-        // --- Prep: clear previous incremental info and capture old state ---
-        out.deltaInsertNodes.clear();
-        out.deltaInsertEdges.clear();
-        out.deltaDeleteNodes.clear();
-        out.deltaDeleteEdges.clear();
-
-        std::unordered_set<NodePtr> oldNodes = out.nodes; // Direct access
-        std::unordered_set<EdgePtr> oldEdges = out.edges; // Direct access
-
-        // --- Step 1: handle nodes (add/delete/update) ---
+    void materialize(DerivationGraph& out) const {
         std::vector<NodePtr> id2node(nodes_.size(), nullptr);
         for (NodeId u = 0; u < nodes_.size(); ++u) {
-            if (!present_[u]) continue;
+            if (!present_[u]) {
+                continue;
+            }
             const AtomKey& k = nodes_[u];
             UntypedTuple tup{k.rel, k.args};
-            NodePtr np = out.findNode(tup);
-            if (np == nullptr) {
-                np = out.createNode(tup);
-                out.deltaInsertNodes.insert(np);
-            } else {
-                oldNodes.erase(np);
-            }
+            NodePtr np = out.createNode(tup);
             np->isFact = present_base_[u];
             np->setProbability(node_probabilities_.at(u));
             id2node[u] = np;
         }
-        out.deltaDeleteNodes.insert(oldNodes.begin(), oldNodes.end());
 
-        // --- Step 2: handle edges (add/delete/update) ---
         for (EdgeId e = 0; e < edges_.size(); ++e) {
-            if (!edge_alive_[e]) continue;
+            if (!edge_alive_[e]) {
+                continue;
+            }
             const auto& E = edges_[e];
             std::vector<NodePtr> inputs;
             inputs.reserve(E.inputs.size());
-            bool inputs_valid = true;
+            bool inputsValid = true;
             for (NodeId u : E.inputs) {
-                if (!(id2node[u])) { inputs_valid = false; break; }
+                if (!id2node[u]) {
+                    inputsValid = false;
+                    break;
+                }
                 inputs.push_back(id2node[u]);
             }
-            if (!inputs_valid || !id2node[E.output]) continue;
-
-            auto outNode = id2node[E.output];
-            assert (outNode != nullptr);
-            EdgePtr ep = nullptr;
-            for (const auto& candidate_edge : outNode->getIncomingEdges()) {
-                if (oldEdges.count(candidate_edge) && candidate_edge->getInputs().size() == inputs.size()) {
-                    std::unordered_set<NodePtr> current_inputs(candidate_edge->getInputs().begin(), candidate_edge->getInputs().end());
-                    std::unordered_set<NodePtr> target_inputs(inputs.begin(), inputs.end());
-                    if (current_inputs == target_inputs) { ep = candidate_edge; break; }
-                }
+            if (!inputsValid || !id2node[E.output] || inputs.empty()) {
+                continue;
             }
-
-            if (ep == nullptr) {
-                if (inputs.empty()) {
-                    assert (false);  // fact rules should be omitted already
-                }
-                ep = out.createHyperedge(inputs, outNode, nullptr, E.bodyNegations, {static_cast<souffle::RamDomain>(e), {}});
-                out.deltaInsertEdges.insert(ep);
-            } else {
-                oldEdges.erase(ep);
-            }
-            ep->setProbability(E.probability);
-        }
-        out.deltaDeleteEdges.insert(oldEdges.begin(), oldEdges.end());
-
-        // --- Step 3: perform actual deletions to keep graph consistent ---
-        // 1. Delete edges
-        for (const auto& edgeToDelete : out.deltaDeleteEdges) {
-            edgeToDelete->getOutput()->getIncomingEdges().erase(
-                std::remove(edgeToDelete->getOutput()->getIncomingEdges().begin(), edgeToDelete->getOutput()->getIncomingEdges().end(), edgeToDelete),
-                edgeToDelete->getOutput()->getIncomingEdges().end());
-
-            for (const auto& inputNode : edgeToDelete->getInputs()) {
-                inputNode->getOutgoingEdges().erase(
-                    std::remove(inputNode->getOutgoingEdges().begin(), inputNode->getOutgoingEdges().end(), edgeToDelete),
-                    inputNode->getOutgoingEdges().end());
-            }
-            out.edges.erase(edgeToDelete); // Direct access to out.edges
-            // Note: still cannot clean edgeKeyToEdgeMap because it needs Rule info to rebuild the key
-        }
-
-        // 2. Delete nodes
-        for (const auto& nodeToDelete : out.deltaDeleteNodes) {
-            out.tupleToNodeMap.erase(nodeToDelete->getTuple()); // Direct access
-            out.nodes.erase(nodeToDelete); // Direct access
+            auto edge = out.createHyperedge(inputs, id2node[E.output], nullptr, E.bodyNegations,
+                    {static_cast<souffle::RamDomain>(e), {}});
+            edge->setProbability(E.probability);
         }
     }
 

@@ -168,7 +168,7 @@ TEST(BTreeMultiSet, Duplicates) {
     }
 }
 
-TEST(BTreeMultiSet, Incremental) {
+TEST(BTreeMultiSet, StepwiseInsert) {
     using test_set = btree_multiset<int, detail::comparator<int>, std::allocator<int>, 16>;
     test_set t;
     int N = 1000;

@@ -267,7 +267,6 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     hook << std::stoi(glb.config().get("jobs"));
     hook << ", \"log.txt\"";
     hook << ", " << (glb.config().has("derv-only") ? "true" : "false");
-    hook << ",\"" << glb.config().get("setmode") << "\"";
     hook << "," << (glb.config().has("merge-bi-imp") ? "true" : "false");
     hook << "," << (glb.config().has("rewrite") ? "true" : "false");
     hook << ");\n";
@@ -322,14 +321,10 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     db.addGlobalInclude("\"souffle/problog/ForwardCompilation.h\"");
     db.addGlobalInclude("\"souffle/problog/debug/Debugger.h\"");
     db.addGlobalInclude("\"souffle/problog/Pipeline.h\"");
-    if (glb.config().has("online")) {
-        db.addGlobalInclude("\"souffle/cli/Cli.h\"");
-    }
-
     // synthesize rules
     // TODO: should make this pure static?
     // hook << "fullComp(dg, opt, {";
-    hook << "fullCompPlusIncForGround(preDG, opt, {";
+    hook << "fullCompForGround(preDG, opt, {";
     for (size_t i = 0; i < groundInfo.outputRelationNames.size(); ++i) {
         hook << "\"" << groundInfo.outputRelationNames[i].toString() << "\"";
         if (i != groundInfo.outputRelationNames.size() - 1) {
@@ -337,16 +332,6 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
         }
     }
     hook << "});\n";
-
-
-
-    // // TODO: add online incremental&interactive computation
-    // if (glb.config().has("online")) {
-    //     hook << "IncrementalCLI cli(&obj, graph, &ruleManager, &bddManager, &nodeFormulas, &edgeFormulas, true, &preDG);\n";
-    //     hook << "cli.setCmdOptions(opt);\n";
-    //     hook << "cli.run();\n";
-    // }
-
     hook << "return 0;\n";
     hook << "} catch (std::exception& e) {std::cerr << \"Problog calc failed\" << e.what() << std::endl;}\n";
     hook << "} catch(std::exception &e) { souffle::SignalHandler::instance()->error(e.what());}\n";

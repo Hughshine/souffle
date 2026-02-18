@@ -677,13 +677,7 @@ std::vector<MainOption> getMainOptions() {
           "Enable detailed DRed profiling (requires --profile to emit data)."},
       {"profile-frequency", nextOptChar++, "", "", false,
           "Enable the frequency counter in the profiler."},
-      {"setmode", 0, "[ full | inc-naive | inc-regional | elastic ]", "inc-naive", false,
-          "Set the incremental mode (default: inc-naive)."},
       {"derv-only", 'd', "", "", false, "Only compute the derivation graph."}, // TODO
-    {"online", 'O', "", "", false,
-          "Enable online compilation that allows interactive incremental updates"}, // TODO
-    {"full-only", 'x', "", "", false,
-        "Debugging purpose... do not generate inc code for online mode"}, // TODO
       {"show", nextOptChar++, "[ <see-list> ]", "", true,
           "Print selected program information.\n"
           "Modes:\n"
@@ -769,10 +763,8 @@ int main(Global& glb, const char* souffle_executable) {
             std::cerr << "No compile option specified; defaulting to -o " << defaultOutput
                       << " (compile only)." << std::endl;
         }
-        if (!glb.config().has("online")) {
-            glb.config().set("online");
-            std::cout << "Defaulting to --online" << std::endl;
-        }
+        // Full-only mode is enforced in this branch.
+        glb.config().set("full-only");
 
         /* for the jobs option, to determine the number of threads used */
         if (isNumber(glb.config().get("jobs").c_str())) {

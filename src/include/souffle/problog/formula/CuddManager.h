@@ -425,114 +425,50 @@ public:
         size_t factVars = 0;
         size_t edgeVars = 0;
 
-        const auto* incView = dynamic_cast<const IncrementalDerivationGraphViewInterface*>(&view);
-        const bool hasDelta =
-                incView != nullptr &&
-                (!incView->getDeltaInsertNodes().empty() || !incView->getDeltaInsertEdges().empty() ||
-                        !incView->getDeltaDeleteNodes().empty() || !incView->getDeltaDeleteEdges().empty());
-        const bool disableReorder = incView != nullptr && hasDelta && !incReorderEnabled;
-        if (disableReorder) {
-            Cudd_AutodynDisable(manager.get());
-            currentReorderingType = CUDD_REORDER_SAME;
-        }
         auto factStart = steady_clock::now();
-        if (incView != nullptr && hasDelta) {
-            for (const auto& node : incView->getDeltaInsertNodes()) {
-                    if (node->isFact && node->getProbability() < 1.0) {
-                        int idx = getVarIndex(*node);
-                        if (profileCreate) {
-                            if (variableRegistry.find(idx) != variableRegistry.end()) {
-                                ++factVarHits;
-                            } else {
-                                ++factVarMisses;
-                            }
-                        }
-                        if (profileCreate) {
-                            auto cvStart = steady_clock::now();
-                            createVar(idx, *node);
-                            recordCreate(toMs(steady_clock::now() - cvStart),
-                                    factCreateMs, factCreateMaxMs, factCreateCount, factCreateSlow);
-                        } else {
-                            createVar(idx, *node);
-                        }
-                        ++factVars;
-                    }
-            }
-        } else {
-            for (const auto& node : view.getNodes()) {
-                if (node->isFact && node->getProbability() < 1.0) {
-                    int idx = getVarIndex(*node);
-                    if (profileCreate) {
-                        if (variableRegistry.find(idx) != variableRegistry.end()) {
-                            ++factVarHits;
-                        } else {
-                            ++factVarMisses;
-                        }
-                    }
-                    if (profileCreate) {
-                        auto cvStart = steady_clock::now();
-                        createVar(idx, *node);
-                        recordCreate(toMs(steady_clock::now() - cvStart),
-                                factCreateMs, factCreateMaxMs, factCreateCount, factCreateSlow);
+        for (const auto& node : view.getNodes()) {
+            if (node->isFact && node->getProbability() < 1.0) {
+                int idx = getVarIndex(*node);
+                if (profileCreate) {
+                    if (variableRegistry.find(idx) != variableRegistry.end()) {
+                        ++factVarHits;
                     } else {
-                        createVar(idx, *node);
+                        ++factVarMisses;
                     }
-                    // std::cout << "[CUDD] createVar(fact " << node->getId()
-                    //           << " -> idx " << idx << ") took "
-                    //           << cvMs << " ms" << std::endl;
-                    ++factVars;
                 }
+                if (profileCreate) {
+                    auto cvStart = steady_clock::now();
+                    createVar(idx, *node);
+                    recordCreate(toMs(steady_clock::now() - cvStart),
+                            factCreateMs, factCreateMaxMs, factCreateCount, factCreateSlow);
+                } else {
+                    createVar(idx, *node);
+                }
+                ++factVars;
             }
         }
         double factMs = toMs(steady_clock::now() - factStart);
 
         auto edgeStart = steady_clock::now();
-        if (incView != nullptr && hasDelta) {
-            for (const auto& edge : incView->getDeltaInsertEdges()) {
-                if (!edge->isDeterministic()) {
-                    int idx = getVarIndex(*edge);
-                    if (profileCreate) {
-                        if (variableRegistry.find(idx) != variableRegistry.end()) {
-                            ++edgeVarHits;
-                        } else {
-                            ++edgeVarMisses;
-                        }
-                    }
-                    if (profileCreate) {
-                        auto cvStart = steady_clock::now();
-                        createVar(idx, *edge);
-                        recordCreate(toMs(steady_clock::now() - cvStart),
-                                edgeCreateMs, edgeCreateMaxMs, edgeCreateCount, edgeCreateSlow);
+        for (const auto& edge : view.getEdges()) {
+            if (!edge->isDeterministic()) {
+                int idx = getVarIndex(*edge);
+                if (profileCreate) {
+                    if (variableRegistry.find(idx) != variableRegistry.end()) {
+                        ++edgeVarHits;
                     } else {
-                        createVar(idx, *edge);
+                        ++edgeVarMisses;
                     }
-                    ++edgeVars;
                 }
-            }
-        } else {
-            for (const auto& edge : view.getEdges()) {
-                if (!edge->isDeterministic()) {
-                    int idx = getVarIndex(*edge);
-                    if (profileCreate) {
-                        if (variableRegistry.find(idx) != variableRegistry.end()) {
-                            ++edgeVarHits;
-                        } else {
-                            ++edgeVarMisses;
-                        }
-                    }
-                    if (profileCreate) {
-                        auto cvStart = steady_clock::now();
-                        createVar(idx, *edge);
-                        recordCreate(toMs(steady_clock::now() - cvStart),
-                                edgeCreateMs, edgeCreateMaxMs, edgeCreateCount, edgeCreateSlow);
-                    } else {
-                        createVar(idx, *edge);
-                    }
-                    // std::cout << "[CUDD] createVar(edge " << edge->getId()
-                    //           << " -> idx " << idx << ") took "
-                    //           << cvMs << " ms" << std::endl;
-                    ++edgeVars;
+                if (profileCreate) {
+                    auto cvStart = steady_clock::now();
+                    createVar(idx, *edge);
+                    recordCreate(toMs(steady_clock::now() - cvStart),
+                            edgeCreateMs, edgeCreateMaxMs, edgeCreateCount, edgeCreateSlow);
+                } else {
+                    createVar(idx, *edge);
                 }
+                ++edgeVars;
             }
         }
         double edgeMs = toMs(steady_clock::now() - edgeStart);
@@ -547,55 +483,21 @@ public:
         if (!reorderConfigured_) {
             // Rely on CUDD adaptive dynamic reordering; skip heavy static heuristic ordering.
             std::cout << "[CUDD] Enabling adaptive dynamic reordering (skip static ordering)" << std::endl;
-            if (!disableReorder) {
-                if (profileTime) {
-                    auto reorderStart = steady_clock::now();
-                    adaptiveReorder(manager.get());
-                    reorderMs = toMs(steady_clock::now() - reorderStart);
-                } else {
-                    adaptiveReorder(manager.get());
-                }
-                std::cout << "[CUDD] Adaptive reordering initialized" << std::endl;
+            if (profileTime) {
+                auto reorderStart = steady_clock::now();
+                adaptiveReorder(manager.get());
+                reorderMs = toMs(steady_clock::now() - reorderStart);
+            } else {
+                adaptiveReorder(manager.get());
             }
+            std::cout << "[CUDD] Adaptive reordering initialized" << std::endl;
             reorderConfigured_ = true;
-        }
-        if (disableReorder) {
-            // Keep incremental turns from pinning the reorder configuration for later full turns.
-            reorderConfigured_ = false;
         }
         if (fcProfile) {
             const auto totalMs = toMs(steady_clock::now() - totalStart);
             const std::string& rawTag = getCuddPreConfigTag();
             const std::string tag = rawTag.empty() ? "unknown" : rawTag;
             std::cout << "[fc-profile] stage=CUDD_PRECONFIG tag=" << tag
-                      << " total_ms=" << totalMs
-                      << " cache_ms=" << cacheMs
-                      << " fact_loop_ms=" << factMs
-                      << " fact_create_ms=" << factCreateMs
-                      << " edge_loop_ms=" << edgeMs
-                      << " edge_create_ms=" << edgeCreateMs
-                      << " reorder_ms=" << reorderMs
-                      << " old_var_size=" << oldCuddVarSize
-                      << " new_var_size=" << newCuddVarSize
-                      << " fact_vars=" << factVars
-                      << " edge_vars=" << edgeVars
-                      << " fact_create_count=" << factCreateCount
-                      << " edge_create_count=" << edgeCreateCount
-                      << " fact_create_max_ms=" << factCreateMaxMs
-                      << " edge_create_max_ms=" << edgeCreateMaxMs
-                      << " create_slow_threshold_ms=" << slowCreateThresholdMs
-                      << " fact_create_slow=" << factCreateSlow
-                      << " edge_create_slow=" << edgeCreateSlow
-                      << " fact_hit=" << factVarHits
-                      << " fact_miss=" << factVarMisses
-                      << " edge_hit=" << edgeVarHits
-                      << " edge_miss=" << edgeVarMisses
-                      << std::endl;
-        } else if (incProfileEnabled) {
-            const auto totalMs = toMs(steady_clock::now() - totalStart);
-            const std::string& rawTag = getCuddPreConfigTag();
-            const std::string tag = rawTag.empty() ? "unknown" : rawTag;
-            std::cout << "[inc-profile] stage=CUDD_PRECONFIG tag=" << tag
                       << " total_ms=" << totalMs
                       << " cache_ms=" << cacheMs
                       << " fact_loop_ms=" << factMs

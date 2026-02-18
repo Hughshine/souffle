@@ -27,7 +27,6 @@ void runPipeline(
         RuleManager& ruleManager,
         QueryManager& queryManager,
         const std::unordered_map<UntypedTuple, double>& factProb,
-        const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        bool enableOnlineCli = false);
+        const std::vector<std::pair<UntypedTuple, bool>>& evidences);
 
 }  // namespace souffle::problog
