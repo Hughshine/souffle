@@ -625,20 +625,19 @@ Own<ram::Operation> ClauseTranslator::addNegatedAtomDerived(
 
     auto clauseVarMap = getClauseVars(clause);
     auto varExprs = getClauseVarExprs(clause);
-    VecOwn<ram::Expression> derivationValues;
-    VecOwn<ram::Expression> existenceValues;
+    VecOwn<ram::Expression> values;
     for (const auto* arg : head->getArguments()) {
-        derivationValues.push_back(context.translateValue(*valueIndex, arg));
-        existenceValues.push_back(context.translateValue(*valueIndex, arg));
+        values.push_back(context.translateValue(*valueIndex, arg));
     }
 
     auto clauseStr = clause.toString();
-    op =  mk<ram::Filter>(
-    mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(derivationValues), context.getClauseNum(&clause),
+    // Probabilistic recursive translation should guard at derivation granularity.
+    // Tuple-level existence checks suppress alternate derivations and can break
+    // incremental delete/rederive semantics.
+    return mk<ram::Filter>(
+    mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause),
         std::move(cloneClauseVarMap(clauseVarMap)), std::move(cloneVarExprs(varExprs)))),
         std::move(op));
-    return mk<ram::Filter>(
-            mk<ram::Negation>(mk<ram::ExistenceCheck>(headRelationName, std::move(existenceValues))), std::move(op));
 }
 
 Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(

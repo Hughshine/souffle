@@ -517,6 +517,47 @@ def case_detopt_inc_regional_single_round_vs_full(souffle_bin: Path, work_root: 
         )
 
 
+def case_detopt_recursive_derivation_guard_vs_full(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("detopt_recursive_derivation_guard_vs_full", work_root)
+
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    # Two distinct recursive supports derive reach(1,4) initially:
+    #   1->2->4 and 1->3->4.
+    # This exercises derivation-level delete/rederive behavior under det-opt.
+    turns = [
+        [],
+        ["delete edge(1,2)"],
+        ["delete edge(1,3)"],
+    ]
+    extra = ["--det-opt"]
+
+    out_inc = case_dir / "out_inc_naive"
+    out_full = case_dir / "out_full_hard"
+    run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_inc,
+        mode="inc-naive",
+        turns=turns,
+        extra_args=extra,
+    )
+    run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_full,
+        mode="full-hard",
+        turns=turns,
+        extra_args=extra,
+    )
+
+    for iteration in (1, 2, 3):
+        assert_prob_close(
+            iter_prob_path(out_inc, iteration, "inc-naive"),
+            iter_prob_path(out_full, iteration, "full"),
+            label=f"detopt_recursive_derivation_guard iter={iteration}",
+        )
+
+
 def case_rewrite_split_modes_equiv(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("rewrite_split_modes_equiv", work_root)
     input_dir = case_dir / "input"
@@ -722,6 +763,7 @@ CASES = {
     "dred_hub_rederive_naive_vs_full": case_dred_hub_rederive_naive_vs_full,
     "detopt_inc_naive_combo_vs_full": case_detopt_inc_naive_combo_vs_full,
     "detopt_inc_regional_single_round_vs_full": case_detopt_inc_regional_single_round_vs_full,
+    "detopt_recursive_derivation_guard_vs_full": case_detopt_recursive_derivation_guard_vs_full,
     "rewrite_split_modes_equiv": case_rewrite_split_modes_equiv,
     "rewrite_dirty_detect_equiv": case_rewrite_dirty_detect_equiv,
     "full_det_modes": case_full_det_modes,

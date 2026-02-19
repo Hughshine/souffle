@@ -1848,7 +1848,9 @@ public:
             this->deletedFacts_.clear();
             this->deletedDeterminsticFacts_.clear();
             this->deletedNonDeterministicFacts_.clear();
-            this->clearCycleDependencyGraphCache();
+            // Invalidate all view-level caches before structural delta updates.
+            // applyDeltaDeletes/applyDeltaInserts mutate node/edge adjacencies.
+            this->clearViewCaches();
             if (incProfile) {
                 clearMs = toMs(t0);
             }

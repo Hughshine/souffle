@@ -43,6 +43,8 @@ Current maintained cases:
     (explicit `--det-opt` kept for coverage; default is on).
 - `regression.detopt_regional` (`detopt_inc_regional_single_round_vs_full`):
   - `inc-regional + det-opt` correctness check against `full-hard` (default-on behavior).
+- `regression.detopt_derivation_guard` (`detopt_recursive_derivation_guard_vs_full`):
+  - det-opt recursive delete/rederive guard for multi-support tuples (`inc-naive` vs `full-hard`).
 - `regression.rewrite_split` (`rewrite_split_modes_equiv`):
   - rewrite/no-rewrite consistency across split modes.
 - `regression.rewrite_dirty_detect` (`rewrite_dirty_detect_equiv`):
