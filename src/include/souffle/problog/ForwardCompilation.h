@@ -22,6 +22,7 @@
 #include <climits>
 #include <type_traits>
 #include <utility>
+#include <functional>
 #include <fstream>
 #include <cstdlib>
 #include <sstream>
@@ -441,6 +442,18 @@ struct FcProfileStats {
     double input_literal_ms = 0.0;
 };
 
+struct FcHeartbeatSnapshot {
+    std::size_t elapsedMs = 0;
+    std::size_t totalCycles = 0;
+    std::size_t completedCycles = 0;
+    std::size_t currentCycleId = 0;
+    std::size_t round = 0;
+    std::size_t readyQueueSize = 0;
+    std::size_t worklistSize = 0;
+    std::size_t nodeFormulaCount = 0;
+    std::size_t edgeFormulaCount = 0;
+};
+
 template<typename FormulaNodeRef>
 void buildFormulasCyclewise(
     SubgraphView& view,
@@ -450,7 +463,9 @@ void buildFormulasCyclewise(
     const std::unordered_set<NodePtr>& seedTrueNodes = {},
     std::vector<double>* roundTimingsMs = nullptr,
     bool allowConst = true,
-    bool allowDumpConst = true
+    bool allowDumpConst = true,
+    const std::function<void(const FcHeartbeatSnapshot&)>& heartbeatCallback = nullptr,
+    std::size_t heartbeatIntervalMs = 5000
 ) {
      FunctionTimer timer("Build Formulas Cyclewise using DAG + Depth");
      const bool fcProfile = fcProfileEnabled;
@@ -552,13 +567,42 @@ void buildFormulasCyclewise(
 
     // 2. Schedule SCCs
     auto cycleTotalStart = Clock::now();
+    auto lastHeartbeat = overallStart;
+    const std::size_t totalCycles = depGraph.nodeCycles.size();
+    std::size_t completedCycles = 0;
     std::vector<size_t> remainingInDegrees = depGraph.inDegrees;
     std::vector<bool> visited(depGraph.nodeCycles.size(), false);
     std::queue<size_t> ready;
+    auto maybeEmitHeartbeat = [&](std::size_t cycleId, std::size_t worklistSize, bool force) {
+        if (!heartbeatCallback) {
+            return;
+        }
+        const auto now = Clock::now();
+        const auto elapsedSinceLast = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                              now - lastHeartbeat)
+                                              .count();
+        if (!force && elapsedSinceLast < static_cast<long long>(heartbeatIntervalMs)) {
+            return;
+        }
+        FcHeartbeatSnapshot snapshot;
+        snapshot.elapsedMs = static_cast<std::size_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - overallStart).count());
+        snapshot.totalCycles = totalCycles;
+        snapshot.completedCycles = completedCycles;
+        snapshot.currentCycleId = cycleId;
+        snapshot.round = round;
+        snapshot.readyQueueSize = ready.size();
+        snapshot.worklistSize = worklistSize;
+        snapshot.nodeFormulaCount = nodeFormulas.size();
+        snapshot.edgeFormulaCount = edgeFormulas.size();
+        heartbeatCallback(snapshot);
+        lastHeartbeat = now;
+    };
     for (size_t i = 0; i < remainingInDegrees.size(); ++i) {
         if (remainingInDegrees[i] == 0)
             ready.push(i);
     }
+    maybeEmitHeartbeat(0, 0, true);
 
     while (!ready.empty()) {
         auto cycleStart = Clock::now();
@@ -578,6 +622,7 @@ void buildFormulasCyclewise(
         //              << " with depth " << depGraph.edgeDepthsGlobal.at(edge) << " to worklist.\n";
             inWorklist.insert(edge);
         }
+        maybeEmitHeartbeat(cid, worklist.size(), false);
 
         // Track repeated stalls to help diagnose infinite loops.
         std::map<EdgePtr, size_t> stallCount;
@@ -587,6 +632,9 @@ void buildFormulasCyclewise(
         while (!worklist.empty()) {
             auto roundStart = Clock::now();
             round++;
+            if ((round & 0x1ffU) == 0U) {
+                maybeEmitHeartbeat(cid, worklist.size(), false);
+            }
 //            std::cout << "Round: " << round << std::endl;
 //            std::cout << "Processing cycle " << cid << ", worklist size: " << worklist.size() << std::endl;
             formulaManager.dumpProfilingStatistics();
@@ -741,9 +789,12 @@ void buildFormulasCyclewise(
                 ready.push(succ);
             }
         }
+        completedCycles++;
+        maybeEmitHeartbeat(cid, 0, false);
 
         (void)cycleStart;  // silence unused warning if roundTimingsMs is null
     }
+    maybeEmitHeartbeat(totalCycles == 0 ? 0 : totalCycles - 1, 0, true);
     auto cycleMs = toMs(Clock::now() - cycleTotalStart);
 
     auto end = Clock::now();

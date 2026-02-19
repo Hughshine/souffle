@@ -43,7 +43,7 @@ This file summarizes the SISO rewrite pipeline: design, current state (post reve
 
 ## Latest evaluation (2026-01-05, full rule set)
 Settings:
-- `--det-opt` always on; `--rewrite` toggled.
+- det-opt behavior always on (`--det-opt` explicit or default-on); `--rewrite` toggled.
 - Compile with `--full-only`.
 - Split mode: default `naive-split`.
 - Backend: BDD (CUDD); bucketed init for small/medium graphs and defaults for large graphs.

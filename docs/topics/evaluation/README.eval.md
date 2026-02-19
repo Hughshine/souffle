@@ -26,7 +26,7 @@ python3 problog-benchmark/side_channel_full.py \
 
 python3 problog-benchmark/side_channel_full.py \
   --base-dir problog-benchmark/side_channel_full_eval \
-  run --cases 1,3-20 --timeout 1200 --souffle-arg=--det-opt
+  run --cases 1,3-20 --timeout 1200
 
 python3 problog-benchmark/side_channel_full.py \
   --base-dir problog-benchmark/side_channel_full_eval \
@@ -38,12 +38,15 @@ Run in two separate base directories to avoid output collisions:
 ```bash
 python3 problog-benchmark/side_channel_full.py \
   --base-dir problog-benchmark/side_channel_full_norewrite \
-  run --cases 1,3-20 --timeout 1200 --souffle-only --souffle-arg=--det-opt
+  run --cases 1,3-20 --timeout 1200 --souffle-only
 
 python3 problog-benchmark/side_channel_full.py \
   --base-dir problog-benchmark/side_channel_full_rewrite \
-  run --cases 1,3-20 --timeout 1200 --souffle-only --souffle-arg=--det-opt --souffle-arg=--rewrite
+  run --cases 1,3-20 --timeout 1200 --souffle-only --souffle-arg=--rewrite
 ```
+
+Note: det-opt is enabled by default. Use `--souffle-arg=--no-det-opt` only for
+ablation runs.
 
 ## Outputs To Inspect
 - `<base-dir>/operation.log`

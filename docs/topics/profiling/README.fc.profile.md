@@ -19,8 +19,9 @@ Runtime flag (no compile-time toggle):
 
 Optional flags commonly used in experiments:
 ```
-./compute -F input -D output --setmode inc --det-opt --fc-profile
+./compute -F input -D output --setmode inc --fc-profile
 ```
+`--det-opt` is default-on; add `--no-det-opt` only for ablation.
 To enable post-delete variable postprocess (off by default):
 ```
 ./compute -F input -D output --setmode inc --fc-profile --post-del

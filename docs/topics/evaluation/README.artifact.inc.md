@@ -46,7 +46,8 @@ The script defaults to:
 - Cases: `P12`–`P20`
 - Rule set: `full`
 - Delta sizes: `inc0p1=0.001`, `inc0p3=0.003`, `inc0p5=0.005`
-- Runs: `--det-opt` (reuse-var-index enabled by default; disable with `--no-reuse-var-index`)
+- Runs: det-opt behavior default on (use `--run-arg=--no-det-opt` to disable for ablation;
+  reuse-var-index remains enabled by default and can be disabled with `--no-reuse-var-index`)
 - Output base dir: `../problog-benchmark/side_channel_inc_artifact`
 
 You can override defaults via environment variables:

@@ -50,8 +50,9 @@ Pick the smallest set of checks that match your change:
   - `inc-regional` vs `full-hard` (single-round only)
 - Coverage includes:
   - DRed-sensitive deletion/rederive scenarios
-  - `--det-opt` with incremental/full mode combinations
+  - det-opt/default-on and `--no-det-opt` with incremental/full mode combinations
   - rewrite split-mode equivalence
+  - dirty-frontier rewrite detection vs forced full-detect equivalence
   - dump/log artifact contracts
 - The regression runner always compiles with the repo-built binary passed from
   CMake (`$<TARGET_FILE:souffle>`), avoiding accidental `/usr/local/bin/souffle`.

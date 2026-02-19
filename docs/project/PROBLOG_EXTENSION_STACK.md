@@ -169,7 +169,7 @@ Runtime hook loads `<relation>.facts` and `<relation>.prob`:
 - defaults missing/invalid probability to `1.0`,
 - fills global `fact_prob`.
 
-When `det-opt` is enabled, synthesiser emits a deterministic prepass that:
+With det-opt behavior enabled (default on; disable with `--no-det-opt`), synthesiser emits a deterministic prepass that:
 - computes relation-level probabilistic seeds (`relationHasProbFact` + probabilistic rules),
 - propagates through SCC dependencies,
 - writes `relationIsDet`,

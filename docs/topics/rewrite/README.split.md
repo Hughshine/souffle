@@ -10,7 +10,7 @@ before rewrite and forward compilation. It combines current implementation
 status, design notes, and historical evaluation observations.
 
 ## Status
-- Active design note. Current behavior matches the implementation as of 2026-01-04.
+- Active design note. Current behavior matches the implementation as of 2026-02-18.
 - Historical results are labeled and should be re-run after semantic changes.
 
 ## Scope
@@ -18,9 +18,9 @@ status, design notes, and historical evaluation observations.
 - Applies to full-mode rewrite only; incremental modes skip rewrite.
 - Split is an optional pre-pass inside the rewrite loop.
 
-## Current behavior (2026-01-04)
+## Current behavior (2026-02-18)
 - CLI: `--split-mode={no-split|naive-split|complete-split}` (short `-P`),
-  default `naive-split`.
+  default `naive-split` (aliases: `none|naive|complete`).
 - Split currently only duplicates input fact nodes; incoming edges of internal
   nodes are not cloned yet. Facts with evidence or `needOutput` are skipped, and
   facts in evidence-affected components are excluded.
@@ -37,6 +37,20 @@ status, design notes, and historical evaluation observations.
   iteration.
 - Logs: `[GraphRewriter] split(mode): nodes=.. edges=.. time=.. ms`.
 - Debug DOT: `siso_regions_iter*.dot` in output directory when `--dumpdot`.
+
+## Mode comparison (taint, full/unsampled, 120s stage timeout)
+
+Observed on inline `pt-obj` taint runs in February 2026:
+
+| Case | `no-split` | `naive-split` (default) | `complete-split` |
+|---|---|---|---|
+| `andors-trail` | failed (`-6`, CUDD OOM path) at ~83s | success at ~19s | timed out at 120s |
+| `noisy-sounds` | success at ~33s | success at ~12s | timed out at 120s |
+
+Takeaways:
+- Default `naive-split` currently gives the best tradeoff for taint pointer-analysis style graphs.
+- `no-split` keeps too many RVs, increasing FC/WMC pressure and can hit memory failures.
+- `complete-split` is semantics-safe but expensive: conservative grouping plus repeated budgeted passes can spend most time in rewrite before enough RV reduction is realized.
 
 ## Executable workflow
 - Use the full evaluation scripts in `docs/topics/evaluation/README.eval.md` with `--rewrite` and

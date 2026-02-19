@@ -45,6 +45,7 @@ Legend:
 
 ## Rewrite & Graph Transforms
 - [PRIMARY] `docs/topics/rewrite/README.rewrite.impl.md` — current rewrite behavior
+- [PRIMARY] `docs/topics/rewrite/README.derivation.analyzer.md` — standalone derivation JSON analyzer and interactive viewer
 - [SECONDARY] `docs/topics/rewrite/README.split.md` — split behavior + design notes
 - [SECONDARY] `docs/topics/rewrite/README.siso.md` — SISO detection details
 - [SECONDARY] `docs/topics/rewrite/README.mst.md` — magic-set (MST) translator notes
@@ -118,6 +119,7 @@ Legend:
 - [tests/regression/CMakeLists.txt](tests/regression/CMakeLists.txt)
 
 ## Related commits
+- `UNCOMMITTED` — docs(rewrite): index standalone derivation analyzer guide
 - `UNCOMMITTED` — docs(testing): add topical regression workflow docs and index entries
 - `UNCOMMITTED` — docs(project): add project-level module map, fork delta, and maintenance docs
 - `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack documentation

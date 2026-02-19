@@ -93,7 +93,7 @@ Top analyze components (ms; most expensive per case):
 ## Inc-analyzer profiling + optimizations (2026-01-24)
 Dataset: `problog-benchmark/side_channel_inc_strengthen_fresh`.
 Runs used: `side_channel_inc.py run --cases 15/18 --delta-labels inc3 --compare-all`
-with `--det-opt --inc-profile --profile-inc-regional`.
+with det-opt behavior (default on) + `--inc-profile --profile-inc-regional`.
 
 ### Changes applied (analyzer-only)
 - Build `incoming_edges_map_`/`outgoing_edges_map_` from **delta‑reachable edges**

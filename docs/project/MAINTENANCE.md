@@ -17,7 +17,7 @@ This file records the invariants most likely to cause regressions if violated.
 | --- | --- | --- |
 | `src/ast2ram/online/*` | Wrong delta relation generation breaks incremental correctness | Build + run example + one side-channel incremental smoke run |
 | `src/include/souffle/problog/DerivationGraph.h` | Incorrect prune/delta handling can silently bias probabilities | Build + compare `facts.prob` across modes on a representative case |
-| `src/include/souffle/problog/ForwardCompilation.h` | FC/WMC performance and correctness regressions | Build + full-mode run with `--det-opt` + inspect FC/WMC stage logs |
+| `src/include/souffle/problog/ForwardCompilation.h` | FC/WMC performance and correctness regressions | Build + full-mode run (det-opt default on; optional explicit `--det-opt`) + inspect FC/WMC stage logs |
 | `src/include/souffle/problog/RegionalIncremental.h` | `inc-regional` regressions on insert/delete boundaries | Build + `--compare-all` incremental run + check per-turn JSON consistency |
 | `src/include/souffle/cli/Cli.h` | Mode/output naming and batch-command semantics drift | Build + scripted `insert/delete/commit` replay and output file checks |
 | `src/include/souffle/CompiledOptions.h` and `docs/USAGE.md` | Option docs drift from runtime behavior | Verify `./compute -h` and update docs in same change |

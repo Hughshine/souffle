@@ -14,12 +14,15 @@ python3 problog-benchmark/side_channel_inc.py \
 
 python3 problog-benchmark/side_channel_inc.py \
   --base-dir problog-benchmark/side_channel_inc_opt \
-  run --cases 1-20 --timeout 900 --compare-all --run-arg=--det-opt
+  run --cases 1-20 --timeout 900 --compare-all
 
 python3 problog-benchmark/side_channel_inc.py \
   --base-dir problog-benchmark/side_channel_inc_opt \
   collect --cases 1-20
 ```
+
+Note: det-opt is enabled by default. Use `--run-arg=--no-det-opt` only for
+ablation runs.
 
 ## What To Extract
 From `delta-*.json` and `log_*.json`:

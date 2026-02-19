@@ -4648,6 +4648,14 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
              << glb.config().get("version") << R"_(");)_" << '\n';
     }
     hook << "Debugger& debugger = Debugger::getInstance();\n";
+    hook << "std::string logBase = basenameFromPath(opt.getLogFileName());\n";
+    hook << "std::string reportFileName = generateFilename(logBase, \".json\");\n";
+    hook << "std::string reportFile = souffle::problog::makeOutputPath(opt, reportFileName);\n";
+    hook << "std::string reportTerminationFile = reportFile + \".termination\";\n";
+    hook << "debugger.setReportOutputFile(reportFile);\n";
+    hook << "debugger.setRunStatus(\"running\");\n";
+    hook << "souffle::SignalHandler::instance()->setTerminationStatusFile(reportTerminationFile);\n";
+    hook << "souffle::SignalHandler::instance()->set();\n";
     // if (glb.config().has("inc")) {
     // hook << "{\n";
     // hook << "FunctionTimer timer(\"reading derivations\");\n";
@@ -4655,6 +4663,43 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // hook << "}\n";
     // }
     hook << "debugger.startTurn();\n";
+    hook << "auto parseProbFast = [](const std::string& line, double& probOut) {\n";
+    hook << "    const char* p = line.c_str();\n";
+    hook << "    while (*p != '\\0' && std::isspace(static_cast<unsigned char>(*p))) { ++p; }\n";
+    hook << "    if (*p == '\\0') {\n";
+    hook << "        return false;\n";
+    hook << "    }\n";
+    hook << "    errno = 0;\n";
+    hook << "    char* end = nullptr;\n";
+    hook << "    double parsed = std::strtod(p, &end);\n";
+    hook << "    if (p == end || errno == ERANGE || parsed < 0.0 || parsed > 1.0) {\n";
+    hook << "        return false;\n";
+    hook << "    }\n";
+    hook << "    probOut = parsed;\n";
+    hook << "    return true;\n";
+    hook << "};\n";
+    hook << "auto parseFactFieldsFast = [](const std::string& line, std::vector<souffle::RamDomain>& fields) {\n";
+    hook << "    fields.clear();\n";
+    hook << "    const char* p = line.c_str();\n";
+    hook << "    while (*p != '\\0') {\n";
+    hook << "        while (*p != '\\0' && std::isspace(static_cast<unsigned char>(*p))) { ++p; }\n";
+    hook << "        if (*p == '\\0') {\n";
+    hook << "            break;\n";
+    hook << "        }\n";
+    hook << "        errno = 0;\n";
+    hook << "        char* end = nullptr;\n";
+    hook << "        long long value = std::strtoll(p, &end, 10);\n";
+    hook << "        if (p == end || errno == ERANGE) {\n";
+    hook << "            break;\n";
+    hook << "        }\n";
+    hook << "        if (value < static_cast<long long>(std::numeric_limits<souffle::RamDomain>::min()) ||\n";
+    hook << "                value > static_cast<long long>(std::numeric_limits<souffle::RamDomain>::max())) {\n";
+    hook << "            break;\n";
+    hook << "        }\n";
+    hook << "        fields.push_back(static_cast<souffle::RamDomain>(value));\n";
+    hook << "        p = end;\n";
+    hook << "    }\n";
+    hook << "};\n";
     hook << "try {\n";
     hook << "if (detOptEnabled) {\n";
     hook << "auto* detStage = debugger.startStage(StageKind::IO_LOAD_FULL);\n";
@@ -4668,6 +4713,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "relationHasProbFact.clear();\n";
     for (auto input : loadIOs) {
         auto rel = input->getRelation();
+        auto relArity = lookup(rel)->getArity();
         hook << "{\n";
         hook << "std::string rel = \"" << rel << "\";\n";
         hook << "relationHasProbFact[rel] = false;\n";
@@ -4683,21 +4729,19 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << "    std::cerr << \"[Warning] Missing prob file for relation: \" << rel << \", defaulting probabilities to 1.0\" << std::endl;\n";
         hook << "}\n";
         hook << "std::string factLine, probLine;\n";
+        hook << "std::vector<souffle::RamDomain> fields;\n";
+        hook << "fields.reserve(" << relArity << ");\n";
         hook << "while (std::getline(factFile, factLine)) {\n";
-        hook << "std::istringstream fs(factLine);";
         hook << "    double prob = 1.0;\n";
         hook << "    if (probExists && std::getline(probFile, probLine)) {\n";
-        hook << "        std::istringstream ps(probLine);\n";
-        hook << "        if (!(ps >> prob) || prob < 0 || prob > 1) {\n";
+        hook << "        if (!parseProbFast(probLine, prob)) {\n";
         hook << "            std::cerr << \"[Warning] Invalid probability in \" << rel << \".prob, defaulting to 1.0\" << std::endl;\n";
         hook << "            prob = 1.0;\n";
         hook << "        }\n";
         hook << "    }\n";
-        hook << "souffle::RamDomain field;\n";
-        hook << "std::vector<souffle::RamDomain> fields;\n";
-        hook << "while (fs >> field) {fields.push_back(field);}\n";
+        hook << "parseFactFieldsFast(factLine, fields);\n";
         hook << "UntypedTuple tuple{rel, fields};\n";
-        hook << "fact_prob[tuple] = prob;\n";
+        hook << "fact_prob.insert_or_assign(std::move(tuple), prob);\n";
         hook << "if (prob > 0.0 && prob < 1.0) { relationHasProbFact[rel] = true; }\n";
         hook << "}\n";
         hook << "}\n";
@@ -4782,12 +4826,15 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "debugger.startStage(StageKind::SEMINAIVE_FULL);\n";
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
     hook << "debugger.endStage();\n";
+    hook << "souffle::SignalHandler::instance()->setTerminationStatusFile(reportTerminationFile);\n";
+    hook << "souffle::SignalHandler::instance()->set();\n";
     hook << "if (!detOptEnabled) {\n";
     hook << "debugger.startStage(StageKind::IO_LOAD_FULL);\n";
     hook << "{\n";
     hook << "FunctionTimer timer(\"Reading fact probability from \" + opt.getInputFileDir());\n";
-     for (auto input : loadIOs) {
+    for (auto input : loadIOs) {
         auto rel = input->getRelation();
+        auto relArity = lookup(rel)->getArity();
         hook << "{\n";
 
         hook << "std::string ioRel = \"" << rel << "\";\n";
@@ -4849,18 +4896,16 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << "}\n";
 
         hook << "std::string factLine, probLine;\n";
+        hook << "std::vector<souffle::RamDomain> fields;\n";
+        hook << "fields.reserve(" << relArity << ");\n";
         hook << "while (std::getline(factFile, factLine)) {\n";
-        hook << "  std::istringstream fs(factLine);\n";
         hook << "  double prob = 1.0;\n";
         hook << "  if (probExists && std::getline(probFile, probLine)) {\n";
-        hook << "    std::istringstream ps(probLine);\n";
-        hook << "    if (!(ps >> prob) || prob < 0 || prob > 1) prob = 1.0;\n";
+        hook << "    if (!parseProbFast(probLine, prob)) prob = 1.0;\n";
         hook << "  }\n";
-        hook << "  souffle::RamDomain field;\n";
-        hook << "  std::vector<souffle::RamDomain> fields;\n";
-        hook << "  while (fs >> field) fields.push_back(field);\n";
+        hook << "  parseFactFieldsFast(factLine, fields);\n";
         hook << "  UntypedTuple tuple{ioRel, fields};\n";
-        hook << "  fact_prob[tuple] = prob;\n";
+        hook << "  fact_prob.insert_or_assign(std::move(tuple), prob);\n";
         hook << "}\n";
 
         hook << "}\n";
@@ -4884,17 +4929,15 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     emitProblogPipeline(hook);
 
-    hook << "std::string logBase = basenameFromPath(opt.getLogFileName());\n";
-    hook << "std::string reportFileName = generateFilename(logBase, \".json\");\n";
-    hook << "std::string reportFile = souffle::problog::makeOutputPath(opt, reportFileName);\n";
-    hook << "std::ofstream ofs = std::ofstream(reportFile);\n";
-    hook << "debugger.printReportJson(ofs);\n";
+    hook << "debugger.setRunStatus(\"completed\");\n";
+    hook << "debugger.dumpReportJsonToFile();\n";
     hook << "std::cout << \"[pipeline] debugger log: \" << reportFileName << std::endl;\n";
+    hook << "souffle::SignalHandler::instance()->reset();\n";
     hook << "// debugger.printReport(std::cout);\n";
     // add online incremental&interactive computation
 
 
-    hook << "} catch (std::exception& e) {std::cerr << \"Problog calc failed\" << e.what() << std::endl;}\n";
+    hook << "} catch (std::exception& e) { debugger.setRunStatus(\"exception\"); debugger.dumpReportJsonToFile(); souffle::SignalHandler::instance()->reset(); std::cerr << \"Problog calc failed\" << e.what() << std::endl;}\n";
     // }
 
 

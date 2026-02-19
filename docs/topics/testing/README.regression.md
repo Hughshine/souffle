@@ -16,7 +16,7 @@ This document is the detailed runbook for the maintained regression suite under
 Use this suite for correctness regression checks before merging changes to:
 - incremental CLI behavior (`--setmode`, `insert/delete/commit`)
 - DRed / apply-delta behavior
-- `det-opt` and related mixed-mode options
+- det-opt/no-det-opt and related mixed-mode options
 - rewrite split-mode behavior
 - dump/log output contracts
 
@@ -39,13 +39,16 @@ Current maintained cases:
 - `regression.dred_hub` (`dred_hub_rederive_naive_vs_full`):
   - higher fan-in/fan-out rederive pressure; compares `inc-naive` to `full-hard`.
 - `regression.detopt_combo` (`detopt_inc_naive_combo_vs_full`):
-  - `--det-opt --post-del --no-reuse-var-index --no-single-rand-fast` with incremental turns.
+  - `--det-opt --post-del --no-reuse-var-index --no-single-rand-fast` with incremental turns
+    (explicit `--det-opt` kept for coverage; default is on).
 - `regression.detopt_regional` (`detopt_inc_regional_single_round_vs_full`):
-  - `inc-regional + det-opt` correctness check against `full-hard`.
+  - `inc-regional + det-opt` correctness check against `full-hard` (default-on behavior).
 - `regression.rewrite_split` (`rewrite_split_modes_equiv`):
   - rewrite/no-rewrite consistency across split modes.
+- `regression.rewrite_dirty_detect` (`rewrite_dirty_detect_equiv`):
+  - dirty-frontier SISO detection correctness/equivalence against forced full detection.
 - `regression.full_det_modes` (`full_det_modes`):
-  - `det-opt` equivalence to baseline and `det-force` all-ones contract.
+  - det-opt (default-on) equivalence to baseline and `det-force` all-ones contract.
 - `regression.dump_contract` (`dump_outputs_contract`):
   - verifies dump/log/stats artifact creation contracts.
 

@@ -49,6 +49,165 @@ static std::size_t estimateBddVarCount(const SubgraphView& view) {
     return count;
 }
 
+struct GraphSummary {
+    std::size_t nodes = 0;
+    std::size_t edges = 0;
+    std::size_t factNodes = 0;
+    std::size_t derivedNodes = 0;
+    std::size_t queryNodes = 0;
+    std::size_t outputNodes = 0;
+    std::size_t evidenceNodes = 0;
+    std::size_t shadowNodes = 0;
+    std::size_t probabilisticFactNodes = 0;
+    std::size_t probabilisticEdges = 0;
+    std::size_t randomVariables = 0;
+    std::size_t disjunctionNodes = 0;
+    std::size_t maxInDegree = 0;
+    std::size_t maxOutDegree = 0;
+    std::size_t maxHyperedgeInputs = 0;
+};
+
+static GraphSummary summarizeGraphLight(const DerivationGraphViewInterface& view) {
+    GraphSummary s;
+    const auto& nodes = view.getNodes();
+    const auto& edges = view.getEdges();
+    s.nodes = nodes.size();
+    s.edges = edges.size();
+
+    std::unordered_map<NodePtr, std::size_t> indeg;
+    std::unordered_map<NodePtr, std::size_t> outdeg;
+    indeg.reserve(nodes.size());
+    outdeg.reserve(nodes.size());
+    for (const auto& n : nodes) {
+        indeg.emplace(n, 0);
+        outdeg.emplace(n, 0);
+    }
+
+    for (const auto& e : edges) {
+        const auto inputs = view.getInputs(e);
+        s.maxHyperedgeInputs = std::max(s.maxHyperedgeInputs, inputs.size());
+        NodePtr out = view.getOutput(e);
+        if (out) {
+            auto it = indeg.find(out);
+            if (it != indeg.end()) {
+                ++it->second;
+            }
+        }
+        for (const auto& in : inputs) {
+            auto it = outdeg.find(in);
+            if (it != outdeg.end()) {
+                ++it->second;
+            }
+        }
+        if (!e->isDeterministic()) {
+            ++s.probabilisticEdges;
+        }
+    }
+
+    for (const auto& n : nodes) {
+        if (n->isFact) {
+            ++s.factNodes;
+            if (n->getProbability() < 1.0) {
+                ++s.probabilisticFactNodes;
+            }
+        } else {
+            ++s.derivedNodes;
+        }
+        if (n->isQuery) {
+            ++s.queryNodes;
+        }
+        if (n->needOutput) {
+            ++s.outputNodes;
+        }
+        if (n->hasEvidence()) {
+            ++s.evidenceNodes;
+        }
+        if (n->isShadow) {
+            ++s.shadowNodes;
+        }
+        const auto inIt = indeg.find(n);
+        const auto outIt = outdeg.find(n);
+        const std::size_t in = (inIt == indeg.end()) ? 0 : inIt->second;
+        const std::size_t out = (outIt == outdeg.end()) ? 0 : outIt->second;
+        s.maxInDegree = std::max(s.maxInDegree, in);
+        s.maxOutDegree = std::max(s.maxOutDegree, out);
+        if ((!n->isFact && in > 1) || (n->isFact && in > 0)) {
+            ++s.disjunctionNodes;
+        }
+    }
+    s.randomVariables = s.probabilisticFactNodes + s.probabilisticEdges;
+    return s;
+}
+
+static void addGraphSummaryInfo(
+        Debugger& debugger, const std::string& prefix, const GraphSummary& s) {
+    auto add = [&](const std::string& key, const std::size_t value) {
+        debugger.addInfo(prefix + key, std::to_string(value));
+    };
+    add("nodes", s.nodes);
+    add("edges", s.edges);
+    add("fact_nodes", s.factNodes);
+    add("derived_nodes", s.derivedNodes);
+    add("query_nodes", s.queryNodes);
+    add("output_nodes", s.outputNodes);
+    add("evidence_nodes", s.evidenceNodes);
+    add("shadow_nodes", s.shadowNodes);
+    add("prob_fact_nodes", s.probabilisticFactNodes);
+    add("prob_rule_edges", s.probabilisticEdges);
+    add("random_variables", s.randomVariables);
+    add("disjunction_nodes", s.disjunctionNodes);
+    add("max_in_degree", s.maxInDegree);
+    add("max_out_degree", s.maxOutDegree);
+    add("max_hyperedge_inputs", s.maxHyperedgeInputs);
+}
+
+static void recordFcHeartbeat(
+        Debugger& debugger,
+        StageInfo* stage,
+        const FcHeartbeatSnapshot& hb,
+        const std::string& mode,
+        std::size_t slowDone = 0,
+        std::size_t slowTotal = 0,
+        std::size_t componentId = std::numeric_limits<std::size_t>::max(),
+        std::size_t liveNodes = 0) {
+    debugger.addInfo("fc_heartbeat_mode", mode);
+    debugger.addInfo("fc_heartbeat_elapsed_ms", std::to_string(hb.elapsedMs));
+    debugger.addInfo("fc_heartbeat_round", std::to_string(hb.round));
+    debugger.addInfo("fc_heartbeat_cycle_id", std::to_string(hb.currentCycleId));
+    debugger.addInfo("fc_heartbeat_cycles_done", std::to_string(hb.completedCycles));
+    debugger.addInfo("fc_heartbeat_cycles_total", std::to_string(hb.totalCycles));
+    debugger.addInfo("fc_heartbeat_worklist_size", std::to_string(hb.worklistSize));
+    debugger.addInfo("fc_heartbeat_ready_queue_size", std::to_string(hb.readyQueueSize));
+    debugger.addInfo("fc_heartbeat_node_formulas", std::to_string(hb.nodeFormulaCount));
+    debugger.addInfo("fc_heartbeat_edge_formulas", std::to_string(hb.edgeFormulaCount));
+    debugger.addInfo("fc_heartbeat_live_nodes", std::to_string(liveNodes));
+    if (slowTotal > 0) {
+        debugger.addInfo("fc_heartbeat_slow_components_done", std::to_string(slowDone));
+        debugger.addInfo("fc_heartbeat_slow_components_total", std::to_string(slowTotal));
+    }
+    if (componentId != std::numeric_limits<std::size_t>::max()) {
+        debugger.addInfo("fc_heartbeat_component_id", std::to_string(componentId));
+    }
+    if (stage) {
+        std::string msg = "heartbeat mode=" + mode + " elapsed_ms=" + std::to_string(hb.elapsedMs) +
+                " round=" + std::to_string(hb.round) + " cycle=" + std::to_string(hb.currentCycleId) +
+                " cycles=" + std::to_string(hb.completedCycles) + "/" + std::to_string(hb.totalCycles) +
+                " worklist=" + std::to_string(hb.worklistSize) +
+                " ready=" + std::to_string(hb.readyQueueSize) +
+                " node_formulas=" + std::to_string(hb.nodeFormulaCount) +
+                " edge_formulas=" + std::to_string(hb.edgeFormulaCount) +
+                " live_nodes=" + std::to_string(liveNodes);
+        if (componentId != std::numeric_limits<std::size_t>::max()) {
+            msg += " component=" + std::to_string(componentId);
+        }
+        if (slowTotal > 0) {
+            msg += " slow_components=" + std::to_string(slowDone) + "/" + std::to_string(slowTotal);
+        }
+        stage->logMessage(Level::INFO, msg);
+    }
+    debugger.dumpReportJsonToFile();
+}
+
 static WeightedBDDManager::InitConfig makeCuddInitConfig(std::size_t varCount) {
     WeightedBDDManager::InitConfig cfg;
     const auto maxVars = std::numeric_limits<unsigned int>::max();
@@ -775,6 +934,8 @@ static void runBddPipeline(
                 }
             }
             fastPathMs = fastStats.evalMs + conjStats.evalMs;
+            const std::size_t slowTotal = slowEvals.size();
+            std::size_t slowDone = 0;
             for (auto& slow : slowEvals) {
                 if (!bddManager) {
                     throw std::runtime_error("Missing BDD manager for slow components.");
@@ -791,13 +952,21 @@ static void runBddPipeline(
                 SubgraphView subview(std::move(slow.comp.nodes), std::move(slow.comp.edges));
 
                 auto buildStart = std::chrono::steady_clock::now();
-                buildFormulasCyclewise(subview, *bddManager, compNodeFormulas, compEdgeFormulas);
+                auto heartbeatCallback = [&](const FcHeartbeatSnapshot& hb) {
+                    const std::size_t liveNodes = static_cast<std::size_t>(
+                            Cudd_ReadNodeCount(bddManager->getManager()));
+                    recordFcHeartbeat(debugger, hybridStage, hb, "rewrite", slowDone, slowTotal, compId,
+                            liveNodes);
+                };
+                buildFormulasCyclewise(subview, *bddManager, compNodeFormulas, compEdgeFormulas, {}, nullptr,
+                        true, true, heartbeatCallback);
                 auto buildMsComp = std::chrono::duration_cast<std::chrono::milliseconds>(
                                            std::chrono::steady_clock::now() - buildStart)
                                            .count();
                 buildMs += buildMsComp;
                 liveNodesSum += static_cast<long long>(
                         Cudd_ReadNodeCount(bddManager->getManager()));
+                slowDone++;
 
                 const auto& componentEvs = evidencesByComponent[compId];
                 auto evidenceBuildStart = std::chrono::steady_clock::now();
@@ -952,7 +1121,16 @@ static void runBddPipeline(
                 fcStage->logMessage(Level::INFO, "manager_init_ms=" + std::to_string(initMs));
             }
             auto t0 = std::chrono::steady_clock::now();
-            buildFormulasCyclewise(view, *bddManager, nodeFormulas, edgeFormulas, seedTrueNodes);
+            auto heartbeatCallback = [&](const FcHeartbeatSnapshot& hb) {
+                std::size_t liveNodes = 0;
+                if (bddManager) {
+                    liveNodes = bddManager->getLiveNodeCount();
+                }
+                recordFcHeartbeat(debugger, fcStage, hb, "no-rewrite", 0, 0,
+                        std::numeric_limits<std::size_t>::max(), liveNodes);
+            };
+            buildFormulasCyclewise(view, *bddManager, nodeFormulas, edgeFormulas, seedTrueNodes, nullptr, true,
+                    true, heartbeatCallback);
             auto t1 = std::chrono::steady_clock::now();
             std::cout << "[pipeline] BDD formula build took "
                       << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
@@ -1684,6 +1862,8 @@ void runPipeline(
     auto graph = IncrementalDerivationGraph::createFrom(
             DerivationManager::untypedTuple2RuleApplications, ruleManager, queryManager, factProb, evidences);
     auto t1 = std::chrono::steady_clock::now();
+    const GraphSummary createdSummary = summarizeGraphLight(*graph);
+    addGraphSummaryInfo(debugger, "graph_", createdSummary);
     std::cout << "[pipeline] create graph took "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
               << " ms\n";
@@ -1695,7 +1875,15 @@ void runPipeline(
 
     debugger.startStage(StageKind::PRUNING_FULL);
     auto t2 = std::chrono::steady_clock::now();
+    const GraphSummary beforePrune = summarizeGraphLight(*graph);
+    addGraphSummaryInfo(debugger, "before_", beforePrune);
     auto view = graph->prune(program.getOutputRelations());
+    const GraphSummary afterPrune = summarizeGraphLight(view);
+    addGraphSummaryInfo(debugger, "after_", afterPrune);
+    debugger.addInfo("removed_nodes", std::to_string(
+            beforePrune.nodes > afterPrune.nodes ? beforePrune.nodes - afterPrune.nodes : 0));
+    debugger.addInfo("removed_edges", std::to_string(
+            beforePrune.edges > afterPrune.edges ? beforePrune.edges - afterPrune.edges : 0));
     auto t3 = std::chrono::steady_clock::now();
     std::cout << "[pipeline] pruning took "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
@@ -1712,10 +1900,11 @@ void runPipeline(
     if (opt.isRewriteEnabled() && !opt.isDerivationOnly()) {
         rewriteHybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
     }
-    if (opt.isRewriteEnabled()) {
+    if (opt.isRewriteEnabled() && !opt.isDerivationOnly()) {
         auto rewriteStart = std::chrono::steady_clock::now();
         GraphRewriter rewriter;
         RewriteFeatureFlags rewriteFlags;
+        rewriteFlags.forceCompleteSisoDetect = opt.isForceCompleteSisoDetectEnabled();
         const auto& splitMode = opt.getSplitMode();
         if (splitMode == "no-split") {
             rewriteFlags.splitMode = SplitMode::None;
@@ -1753,6 +1942,8 @@ void runPipeline(
             view.dumpDot(makeOutputPath(opt, "rewrite_final.dot"));
         }
         rewritePerformed = true;
+    } else if (opt.isRewriteEnabled() && opt.isDerivationOnly()) {
+        std::cout << "[pipeline] derivation-only mode; skip rewrite" << std::endl;
     }
 
     bool allowOnlineCli = enableOnlineCli && !rewritePerformed;

@@ -357,8 +357,8 @@ public:
     // include_heavy=true enables SCC-based cycle stats (expensive on large graphs).
     void writeGraphStatsJson(bool include_heavy = false) const;
 
-    std::vector<EdgePtr> getIncomingEdges(NodePtr node) const;
-    std::vector<EdgePtr> getOutgoingEdges(NodePtr node) const;
+    const std::vector<EdgePtr>& getIncomingEdges(NodePtr node) const;
+    const std::vector<EdgePtr>& getOutgoingEdges(NodePtr node) const;
     std::vector<NodePtr> getInputs(EdgePtr edge) const;
     std::vector<NodePtr> getInputsStable(EdgePtr edge) const;
 
@@ -392,13 +392,23 @@ public:
         return filename;
     }
 
+    void clearViewCaches() const;
+
+    struct EdgeAdjacencyCacheEntry {
+        size_t epoch = 0;
+        std::vector<EdgePtr> edges;
+    };
+
+    mutable std::unordered_map<size_t, EdgeAdjacencyCacheEntry> cachedIncomingEdges;
+    mutable std::unordered_map<size_t, EdgeAdjacencyCacheEntry> cachedOutgoingEdges;
     mutable std::unordered_map<size_t, std::vector<EdgePtr>> cachedSortedIncomingEdges;
     CycleDependencyGraph& getCycleDependencyGraph() const;
     void clearCycleDependencyGraphCache() const;
-    std::vector<EdgePtr> getIncomingEdgesStable(NodePtr node) const;
+    const std::vector<EdgePtr>& getIncomingEdgesStable(NodePtr node) const;
 
     virtual ~DerivationGraphViewInterface() = default;
 protected:
+    mutable size_t adjacencyCacheEpoch_ = 1;
     mutable std::shared_ptr<CycleDependencyGraph> cachedCycleDependencyGraph_;
     static inline bool dumpDotEnabled = false;
     static inline bool dumpJsonEnabled = false;
@@ -406,18 +416,31 @@ protected:
     static inline std::string dumpOutputDir = "";
 };
 
-std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdges(NodePtr node) const {
-    std::vector<EdgePtr> result;
+const std::vector<EdgePtr>& DerivationGraphViewInterface::getIncomingEdges(NodePtr node) const {
+    static const std::vector<EdgePtr> empty;
+    if (!node) {
+        return empty;
+    }
+    auto& cached = cachedIncomingEdges[node->getId()];
+    if (cached.epoch == adjacencyCacheEpoch_) {
+        return cached.edges;
+    }
+    auto& result = cached.edges;
+    result.clear();
+    result.reserve(node->getIncomingEdges().size());
+    const auto& edges = getEdges();
     for (const auto& edge : node->getIncomingEdges()) {
-        if (getEdges().count(edge)) {
+        if (edges.count(edge)) {
             result.push_back(edge);
         }
     }
+    cached.epoch = adjacencyCacheEpoch_;
     return result;
 }
 
-std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdgesStable(NodePtr node) const {
-    if (!node) return {};
+const std::vector<EdgePtr>& DerivationGraphViewInterface::getIncomingEdgesStable(NodePtr node) const {
+    static const std::vector<EdgePtr> empty;
+    if (!node) return empty;
     auto it = cachedSortedIncomingEdges.find(node->getId());
     if (it != cachedSortedIncomingEdges.end()) {
         return it->second;
@@ -426,20 +449,44 @@ std::vector<EdgePtr> DerivationGraphViewInterface::getIncomingEdgesStable(NodePt
     std::sort(sorted.begin(), sorted.end(), [](const EdgePtr& a, const EdgePtr& b) {
         return a->getEdgeKey() < b->getEdgeKey();
     });
-    cachedSortedIncomingEdges.emplace(node->getId(), sorted);
-    return sorted;
+    auto inserted = cachedSortedIncomingEdges.emplace(node->getId(), std::move(sorted));
+    return inserted.first->second;
 }
 
 
 
-std::vector<EdgePtr> DerivationGraphViewInterface::getOutgoingEdges(NodePtr node) const {
-    std::vector<EdgePtr> result;
+const std::vector<EdgePtr>& DerivationGraphViewInterface::getOutgoingEdges(NodePtr node) const {
+    static const std::vector<EdgePtr> empty;
+    if (!node) {
+        return empty;
+    }
+    auto& cached = cachedOutgoingEdges[node->getId()];
+    if (cached.epoch == adjacencyCacheEpoch_) {
+        return cached.edges;
+    }
+    auto& result = cached.edges;
+    result.clear();
+    result.reserve(node->getOutgoingEdges().size());
+    const auto& edges = getEdges();
     for (const auto& edge : node->getOutgoingEdges()) {
-        if (getEdges().count(edge)) {
+        if (edges.count(edge)) {
             result.push_back(edge);
         }
     }
+    cached.epoch = adjacencyCacheEpoch_;
     return result;
+}
+
+void DerivationGraphViewInterface::clearViewCaches() const {
+    if (adjacencyCacheEpoch_ == std::numeric_limits<size_t>::max()) {
+        adjacencyCacheEpoch_ = 1;
+        cachedIncomingEdges.clear();
+        cachedOutgoingEdges.clear();
+    } else {
+        ++adjacencyCacheEpoch_;
+    }
+    cachedSortedIncomingEdges.clear();
+    clearCycleDependencyGraphCache();
 }
 
 std::vector<NodePtr> DerivationGraphViewInterface::getInputs(EdgePtr edge) const {
@@ -743,8 +790,7 @@ public:
         deletedFacts_.clear();
         deletedDeterminsticFacts_.clear();
         deletedNonDeterministicFacts_.clear();
-        cachedSortedIncomingEdges.clear();
-        clearCycleDependencyGraphCache();
+        clearViewCaches();
     }
 
     // deletion impacted
@@ -1091,6 +1137,11 @@ public:
             UntypedTuple headTuple{rule->getHead().getRelation(),
                     rule->getHead().instantiatedFields(vars, ruleApp.varValuesPure)};
             auto headNode = createNode(headTuple);
+            if (rule->isFact() && !headNode->isFact) {
+                // Fact rules are represented as fact nodes (no hyperedge is created for empty-body rules).
+                headNode->isFact = true;
+                headNode->setProbability(rule->getProbability());
+            }
 
             // Create input nodes.
             std::vector<NodePtr> bodyNodes;
@@ -1143,6 +1194,11 @@ public:
         const auto t_head_node0 = t_head_inst1;
         auto headNode = createNode(headTuple);
         const auto t_head_node1 = std::chrono::steady_clock::now();
+        if (rule->isFact() && !headNode->isFact) {
+            // Fact rules are represented as fact nodes (no hyperedge is created for empty-body rules).
+            headNode->isFact = true;
+            headNode->setProbability(rule->getProbability());
+        }
 
         // Create input nodes.
         std::vector<NodePtr> bodyNodes;

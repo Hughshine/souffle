@@ -30,7 +30,7 @@ python3 problog-benchmark/side_channel_inc.py \
 
 python3 problog-benchmark/side_channel_inc.py \
   --base-dir problog-benchmark/side_channel_inc_eval \
-  run --cases 12-20 --timeout 900 --compare-all --run-arg=--det-opt
+  run --cases 12-20 --timeout 900 --compare-all
 
 python3 problog-benchmark/side_channel_inc.py \
   --base-dir problog-benchmark/side_channel_inc_eval \
@@ -46,12 +46,15 @@ python3 problog-benchmark/side_channel_inc.py \
 
 python3 problog-benchmark/side_channel_inc.py \
   --base-dir problog-benchmark/side_channel_inc_eval_mix \
-  run --cases 13-20 --timeout 1200 --compare-all --delta-runs 5 --run-arg=--det-opt
+  run --cases 13-20 --timeout 1200 --compare-all --delta-runs 5
 
 python3 problog-benchmark/side_channel_inc.py \
   --base-dir problog-benchmark/side_channel_inc_eval_mix \
   collect --cases 13-20
 ```
+
+Note: det-opt is enabled by default. Use `--run-arg=--no-det-opt` only for
+ablation runs.
 
 ## Outputs To Inspect
 - `<base-dir>/operation_inc.log`

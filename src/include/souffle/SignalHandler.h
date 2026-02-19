@@ -23,10 +23,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <initializer_list>
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <fcntl.h>
 
 #ifndef _MSC_VER
 #include <unistd.h>
@@ -61,6 +63,44 @@ public:
 
     bool profilingEnabled() const {
         return profileEnabled;
+    }
+
+    void setTerminationStatusFile(const std::string& file) {
+#ifdef _MSC_VER
+        int fd = ::_open(file.c_str(), _O_WRONLY | _O_CREAT | _O_TRUNC, _S_IREAD | _S_IWRITE);
+#else
+        int fd = ::open(file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+#endif
+        if (fd >= 0) {
+            if (terminationStatusFd >= 0) {
+#ifdef _MSC_VER
+                ::_close(terminationStatusFd);
+#else
+                ::close(terminationStatusFd);
+#endif
+            }
+            terminationStatusFd = fd;
+            terminationStatusPath = file;
+        }
+    }
+
+    void clearTerminationStatusFile() {
+        std::string path = terminationStatusPath;
+        if (terminationStatusFd >= 0) {
+#ifdef _MSC_VER
+            ::_close(terminationStatusFd);
+#else
+            ::close(terminationStatusFd);
+#endif
+            terminationStatusFd = -1;
+        }
+        terminationStatusPath.clear();
+        if (!path.empty()) {
+            std::ifstream in(path, std::ios::binary | std::ios::ate);
+            if (in.good() && in.tellg() == 0) {
+                std::remove(path.c_str());
+            }
+        }
     }
 
     // set signal message
@@ -105,6 +145,11 @@ public:
                 perror("Failed to set SIGINT signal handler.");
                 exit(1);
             }
+            // external termination (e.g. timeout)
+            if ((prevTermHandler = signal(SIGTERM, handler)) == SIG_ERR) {
+                perror("Failed to set SIGTERM signal handler.");
+                exit(1);
+            }
             // memory issues
             if ((prevSegVHandler = signal(SIGSEGV, handler)) == SIG_ERR) {
                 perror("Failed to set SIGSEGV signal handler.");
@@ -131,6 +176,10 @@ public:
                 perror("Failed to reset SIGINT signal handler.");
                 exit(1);
             }
+            if (signal(SIGTERM, prevTermHandler) == SIG_ERR) {
+                perror("Failed to reset SIGTERM signal handler.");
+                exit(1);
+            }
             // memory issues
             if (signal(SIGSEGV, prevSegVHandler) == SIG_ERR) {
                 perror("Failed to reset SIGSEGV signal handler.");
@@ -138,6 +187,7 @@ public:
             }
             isSet = false;
         }
+        clearTerminationStatusFile();
         profileEnabled = false;
     }
 
@@ -169,7 +219,10 @@ private:
     // previous signal handler routines
     void (*prevFpeHandler)(int) = nullptr;
     void (*prevIntHandler)(int) = nullptr;
+    void (*prevTermHandler)(int) = nullptr;
     void (*prevSegVHandler)(int) = nullptr;
+    int terminationStatusFd = -1;
+    std::string terminationStatusPath;
 
     /**
      * Signal handler for various types of signals.
@@ -216,6 +269,35 @@ private:
             write({error, "dumping profiling data...\n"});
             ProfileEventSingleton::instance().stopTimer();
             ProfileEventSingleton::instance().dump();
+        }
+
+        const int termFd = instance()->terminationStatusFd;
+        if (termFd >= 0) {
+            const char* status = nullptr;
+            switch (signal) {
+                case SIGINT:
+                    status = "{\"status\":\"terminated\",\"signal\":\"SIGINT\",\"signal_num\":2}\n";
+                    break;
+                case SIGTERM:
+                    status = "{\"status\":\"terminated\",\"signal\":\"SIGTERM\",\"signal_num\":15}\n";
+                    break;
+                case SIGSEGV:
+                    status = "{\"status\":\"terminated\",\"signal\":\"SIGSEGV\",\"signal_num\":11}\n";
+                    break;
+                case SIGFPE:
+                    status = "{\"status\":\"terminated\",\"signal\":\"SIGFPE\",\"signal_num\":8}\n";
+                    break;
+                default:
+                    status = "{\"status\":\"terminated\",\"signal\":\"UNKNOWN\",\"signal_num\":0}\n";
+                    break;
+            }
+#ifdef _MSC_VER
+            [[maybe_unused]] auto _ =
+                    ::_write(termFd, status, static_cast<unsigned int>(::strlen(status)));
+#else
+            [[maybe_unused]] auto _ =
+                    ::write(termFd, status, static_cast<unsigned int>(::strlen(status)));
+#endif
         }
 
         std::_Exit(EXIT_FAILURE);

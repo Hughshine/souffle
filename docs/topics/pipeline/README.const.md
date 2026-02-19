@@ -15,10 +15,10 @@ relations (probability 1). The approach here is to avoid recording derivations f
 deterministic relations from the start. This doc tracks both design and the
 implemented pieces: `--det-opt` computes/dumps determinism and gates
 `RecordDerivation` + graph construction behavior. All current evaluations should
-run with `--det-opt` enabled.
+run with det-opt behavior enabled (default on; disable with `--no-det-opt`).
 
 ## Status
-- Active design and implementation notes; `--det-opt` is current behavior.
+- Active design and implementation notes; det-opt behavior is current default.
 
 ## Problem statement
 - Const-FC runs inside forward compilation, after graph construction and pruning.
@@ -88,7 +88,7 @@ from the start.
 Evidence note (temporary): treat relations that appear in evidence as deterministic
 for now (TODO: tighten; false evidence should be treated as a contradiction).
 
-## Det analysis pass (`--det-opt`)
+## Det analysis pass (`--det-opt`, default on)
 Goal: compute the relation-level `det` map early enough to skip `RecordDerivation`.
 
 Inputs:
@@ -103,9 +103,9 @@ Execution order (full mode, current implementation):
 2) Run det analysis using SCC topo order.
 3) Dump `det-relations.txt` / `det-scc.txt`.
 4) Execute RAM evaluation with `RecordDerivation` gated by `rel_is_det`
-   (only when `--det-opt` is enabled).
+   (when det-opt behavior is enabled; default on).
 
-Dump (always when `--det-opt` is enabled):
+Dump (always when det-opt behavior is enabled; default on):
 - `det-relations.txt` (per relation: scc id, rule seed, fact seed, final det/prob).
 - `det-scc.txt` (SCC summary).
 
@@ -150,7 +150,8 @@ for each facts line:
 ```
 
 ## Implementation status (det-opt gating)
-- `src/include/souffle/CompiledOptions.h` adds `--det-opt` flag, help text, and getter.
+- `src/include/souffle/CompiledOptions.h` exposes `--det-opt` (default on) and
+  `--no-det-opt` runtime controls.
 - `src/synthesiser/Synthesiser.cpp` emits SCC metadata + seeds, runs det analysis
   + dumps before `runAll()` (with timing logs), and adds the `.facts`+`.prob` prepass.
 - `src/synthesiser/Synthesiser.cpp` gates `RecordDerivation` when `--det-opt`
@@ -206,7 +207,8 @@ for each facts line:
   assign/equal_assign in side_channel.
 
 ## Evaluation (2026-01-05, full rule set)
-- All runs use `--det-opt`, full-only compilation, and default `naive-split`.
+- All runs use det-opt behavior (explicit `--det-opt` or default-on), full-only
+  compilation, and default `naive-split`.
 - Rewrite runs use component-wise FC/WMC with `FC_WMC_HYBRID` (now includes
   rewrite time and reports `rewrite_ms`); BDD init is lazy and skipped when no
   slow components exist. Probabilities are stored only for `needOutput` nodes

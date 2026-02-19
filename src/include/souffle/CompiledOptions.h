@@ -92,10 +92,11 @@ protected:
     bool dep_graph_profile = false;  // enable dependency-graph profiling
     bool post_del = false;  // enable postprocessUselessVariables after deletion
     bool enable_inc_reord = false;  // enable CUDD dynamic reordering in incremental turns
-    bool det_opt = false;  // enable deterministic-relation analysis and det gating
+    bool det_opt = true;  // enable deterministic-relation analysis and det gating (default on)
     bool det_force = false;  // force deterministic evaluation (skip derivation graph)
     bool reuse_var_index = true;  // reuse freed variable indices in CUDD (default on)
     bool single_rand_fast = true;  // enable single-randvar fast path in component FC
+    bool force_complete_siso_detect = false;  // force full-graph SISO detection (disable dirty-frontier detect)
 public:
     // all argument constructor
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
@@ -245,6 +246,9 @@ public:
     bool isSingleRandFastEnabled() const {
         return single_rand_fast;
     }
+    bool isForceCompleteSisoDetectEnabled() const {
+        return force_complete_siso_detect;
+    }
 
     /**
      * get filename of profile
@@ -302,15 +306,18 @@ public:
                 {"post-del", false, nullptr, 1006},
                 {"enable-inc-reord", false, nullptr, 1015},
                 {"det-opt", false, nullptr, 'Z'},
+                {"no-det-opt", false, nullptr, 1017},
                 {"det-force", false, nullptr, 1007},
                 {"no-reuse-var-index", false, nullptr, 1008},
                 {"no-single-rand-fast", false, nullptr, 1001},
+                {"force-complete-siso-detect", false, nullptr, 1016},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
         // check whether all options are fine
         bool ok = true;
         knowledge_representation = "bdd";  // default knowledge representation
+        det_opt = true;  // default deterministic optimization: enabled unless explicitly disabled
         int c; /* command-line arguments processing */
         while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d::em:C:rP:JTSUZ", longOptions, nullptr)) != EOF) {
             switch (c) {
@@ -478,6 +485,9 @@ public:
                 case 'Z':
                     det_opt = true;
                     break;
+                case 1017:
+                    det_opt = false;
+                    break;
                 case 1007:
                     det_force = true;
                     break;
@@ -486,6 +496,9 @@ public:
                     break;
                 case 1001:
                     single_rand_fast = false;
+                    break;
+                case 1016:
+                    force_complete_siso_detect = true;
                     break;
                 default: printHelpPage(exec_name); return false;
             }
@@ -540,8 +553,10 @@ private:
         std::cerr << "    --post-del                   -- Enable post-delete variable postprocess (FC)\n";
         std::cerr << "    --enable-inc-reord           -- Enable CUDD dynamic reordering in incremental turns\n";
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
-        std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
+        std::cerr << "    --det-opt                    -- Enable deterministic-relation analysis (default on)\n";
+        std::cerr << "    --no-det-opt                 -- Disable deterministic-relation analysis\n";
         std::cerr << "    --det-force                  -- Force deterministic mode (skip derivation graph; emit prob=1.0)\n";
+        std::cerr << "    --force-complete-siso-detect -- Disable dirty-frontier SISO detect and always scan full graph\n";
         std::cerr << "    --no-reuse-var-index         -- Disable reuse of freed CUDD variable indices (reuse is unsafe unless deletion fully removes vars)\n";
         std::cerr << "    --no-single-rand-fast        -- Disable single-randvar fast path in component FC\n";
 #ifdef _OPENMP

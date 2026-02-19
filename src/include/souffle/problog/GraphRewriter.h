@@ -71,6 +71,7 @@ struct RewriteFeatureFlags {
     size_t splitMaxGroupsPerNode = 2;       ///< complete-split cap: max groups kept per node (incl. original)
     size_t splitMinGroupEdges = 1;          ///< complete-split threshold: min edges in a split group
     bool enableCleanupIsolated  = true;   ///< drop isolated fact/shadow nodes at end of iteration
+    bool forceCompleteSisoDetect = false; ///< force full-graph SISO detect (disable dirty-frontier detect)
 };
 
 /**
@@ -117,14 +118,19 @@ public:
         bool firstRegionTiming = true;
 
         auto rewriteStart = std::chrono::steady_clock::now();
+        std::unordered_set<NodePtr> detectDirtyNodes;
+        std::unordered_set<EdgePtr> detectDirtyEdges;
+        bool hasDetectDirty = false;
 
-        auto runSplitPass = [&]() -> bool {
+        auto runSplitPass = [&](std::unordered_set<NodePtr>* splitDirtyNodes,
+                                std::unordered_set<EdgePtr>* splitDirtyEdges) -> bool {
             if (flags.splitMode == SplitMode::None) {
                 return false;
             }
             SplitStats splitStats = (flags.splitMode == SplitMode::Naive)
-                    ? splitFanoutNaive(graph, view, stats, evidenceAffectedNodes)
-                    : splitFanoutComplete(graph, view, stats, flags, evidenceAffectedNodes);
+                    ? splitFanoutNaive(graph, view, stats, evidenceAffectedNodes, splitDirtyNodes, splitDirtyEdges)
+                    : splitFanoutComplete(
+                              graph, view, stats, flags, evidenceAffectedNodes, splitDirtyNodes, splitDirtyEdges);
             std::cout << "[GraphRewriter]   split(" << splitModeToString(flags.splitMode)
                       << "): nodes=" << splitStats.nodesAdded
                       << " edges=" << splitStats.edgesRewritten
@@ -160,6 +166,32 @@ public:
             auto countBeforeStart = std::chrono::steady_clock::now();
             size_t iterRandomVarsBefore = countRandomVarsInView(view);
             double countBeforeMs = toMs(std::chrono::steady_clock::now() - countBeforeStart);
+            std::unordered_set<NodePtr> iterDirtyNodes;
+            std::unordered_set<EdgePtr> iterDirtyEdges;
+            auto markDirtyNode = [&](NodePtr n) {
+                if (n) iterDirtyNodes.insert(n);
+            };
+            auto markDirtyEdge = [&](EdgePtr e) {
+                if (e) iterDirtyEdges.insert(e);
+            };
+            auto markDirtyEdgeEndpoints = [&](EdgePtr e) {
+                if (!e) return;
+                markDirtyEdge(e);
+                markDirtyNode(e->getOutput());
+                for (auto in : e->getInputs()) {
+                    markDirtyNode(in);
+                }
+            };
+            auto markDirtyRegion = [&](const SISORegionInfo& region) {
+                markDirtyNode(region.entry);
+                markDirtyNode(region.exit);
+                for (auto n : region.internalNodes) {
+                    markDirtyNode(n);
+                }
+                for (auto e : region.internalEdges) {
+                    markDirtyEdgeEndpoints(e);
+                }
+            };
 
             view.cachedSortedIncomingEdges.clear();
             double dumpBeforeDotMs = 0.0;
@@ -175,7 +207,11 @@ public:
                 }
             }
             auto detectStart = std::chrono::steady_clock::now();
-            auto regions = GraphAnalyzer::detectAllSISOStrictFromExit(view);
+            auto regions = hasDetectDirty
+                    ? GraphAnalyzer::detectAllSISOStrictFromExit(
+                              view, &detectDirtyNodes, &detectDirtyEdges, flags.forceCompleteSisoDetect)
+                    : GraphAnalyzer::detectAllSISOStrictFromExit(
+                              view, nullptr, nullptr, flags.forceCompleteSisoDetect);
             // Filter by enabled flags.
             if (!flags.enableSingleHyperedge || !flags.enableAllFactsToSO ||
                     !flags.enableLinearTwoEdge || !flags.enableParallelEdge ||
@@ -242,7 +278,15 @@ public:
                     std::cout << "[GraphRewriter] No SISO regions found; rewrite fixpoint at iteration "
                               << stats.numIterations << std::endl;
                 }
-                if (runSplitPass()) {
+                if (runSplitPass(&iterDirtyNodes, &iterDirtyEdges)) {
+                    hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
+                    if (hasDetectDirty) {
+                        detectDirtyNodes.swap(iterDirtyNodes);
+                        detectDirtyEdges.swap(iterDirtyEdges);
+                    } else {
+                        detectDirtyNodes.clear();
+                        detectDirtyEdges.clear();
+                    }
                     continue;
                 }
                 break;
@@ -352,6 +396,7 @@ public:
                         if (dumpStats) {
                             // Fast-path all-facts debug logging elided to reduce overhead.
                         }
+                        markDirtyRegion(region);
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
                         continue;
@@ -419,6 +464,8 @@ public:
                         if (dumpStats) {
                             // Fast-path single-hyperedge debug logging elided to reduce overhead.
                         }
+                        markDirtyRegion(region);
+                        markDirtyEdgeEndpoints(newEdge);
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
                         continue;
@@ -494,6 +541,8 @@ public:
                         if (dumpStats) {
                             // Fast-path linear-two-edge debug logging elided to reduce overhead.
                         }
+                        markDirtyRegion(region);
+                        markDirtyEdgeEndpoints(newEdge);
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
                         continue;
@@ -568,6 +617,8 @@ public:
                         if (dumpStats) {
                             // Fast-path parallel-edge debug logging elided to reduce overhead.
                         }
+                        markDirtyRegion(region);
+                        markDirtyEdgeEndpoints(newEdge);
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
                         continue;
@@ -640,6 +691,7 @@ public:
                             stats.numEdgesRemoved += removedEdges;
                             stats.numNodesRemoved += removedNodes;
                             view.invalidateCaches();
+                            markDirtyRegion(region);
                             ++rewrittenThisRound;
                             ++stats.numRegionsRewritten;
                             continue;
@@ -683,6 +735,10 @@ public:
                         stats.numNodesRemoved += removedNodes;
                         view.invalidateCaches();
 
+                        markDirtyRegion(region);
+                        if (newEdge) {
+                            markDirtyEdgeEndpoints(newEdge);
+                        }
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
                         continue;
@@ -808,6 +864,10 @@ public:
                               << ", kind=" << (isSimple ? "simple_fact" : "general")
                               << std::endl;
                 }
+                markDirtyRegion(region);
+                if (newEdge) {
+                    markDirtyEdgeEndpoints(newEdge);
+                }
                 ++rewrittenThisRound;
                 stats.totalRandomVars += regionRandomVars;
                 stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
@@ -840,7 +900,6 @@ public:
                     auto inputs = view.getInputs(edge);
                     if (inputs.empty()) continue;
                     std::vector<NodePtr> keepInputs;
-                    std::vector<NodePtr> factInputs;
                     auto negs = view.getBodyNegations(edge);
                     double p = edge->getProbability();
                     assertRewriteProbability(p, "edge compaction base edge id=" + std::to_string(edge->getId()));
@@ -850,7 +909,7 @@ public:
                         if (!n) continue;
                         if (n->isFact && !n->hasEvidence() && !n->needOutput) {
                             // absorb only if fact has exactly one outgoing edge (this edge)
-                            auto outs = view.getOutgoingEdges(n);
+                            const auto& outs = view.getOutgoingEdges(n);
                             if (outs.size() != 1 || outs[0] != edge) {
                                 keepInputs.push_back(n);
                                 continue;
@@ -859,7 +918,6 @@ public:
                             assertRewriteProbability(np, "edge compaction input fact id=" + std::to_string(n->getId()));
                             bool isNeg = (idx < negs.size() ? negs[idx] : false);
                             p *= isNeg ? (1.0 - np) : np;
-                            factInputs.push_back(n);
                             changed = true;
                         } else {
                             keepInputs.push_back(n);
@@ -874,22 +932,13 @@ public:
                     newEdge->setProbability(p);
 
                     auto& edges = view.mutableEdges();
-                    auto& nodes = view.mutableNodes();
                     if (edges.erase(edge) > 0) {
                         ++compactRemovedEdges;
                     }
                     edges.insert(newEdge);
                     ++compactAddedEdges;
-
-                    // Remove fact inputs that became isolated.
-                    for (auto n : factInputs) {
-                        if (!n) continue;
-                        if (view.getIncomingEdges(n).empty() && view.getOutgoingEdges(n).empty()) {
-                            if (nodes.erase(n) > 0) {
-                                ++compactRemovedNodes;
-                            }
-                        }
-                    }
+                    markDirtyEdgeEndpoints(edge);
+                    markDirtyEdgeEndpoints(newEdge);
 
                     ++compactedEdges;
                 }
@@ -1013,10 +1062,27 @@ public:
                               << stats.numIterations << " (rewrite fixpoint reached in "
                               << iterMs << " ms)." << std::endl;
                 }
-                if (runSplitPass()) {
+                if (runSplitPass(&iterDirtyNodes, &iterDirtyEdges)) {
+                    hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
+                    if (hasDetectDirty) {
+                        detectDirtyNodes.swap(iterDirtyNodes);
+                        detectDirtyEdges.swap(iterDirtyEdges);
+                    } else {
+                        detectDirtyNodes.clear();
+                        detectDirtyEdges.clear();
+                    }
                     continue;
                 }
                 break;
+            }
+
+            hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
+            if (hasDetectDirty) {
+                detectDirtyNodes.swap(iterDirtyNodes);
+                detectDirtyEdges.swap(iterDirtyEdges);
+            } else {
+                detectDirtyNodes.clear();
+                detectDirtyEdges.clear();
             }
 
             stats.numRegionsRewritten += rewrittenThisRound;
@@ -1169,7 +1235,9 @@ private:
 
     SplitStats splitFanoutNaive(IncrementalDerivationGraph& graph, IncSubgraphView& view,
             GraphRewriteStats& stats,
-            const std::unordered_set<NodePtr>& evidenceAffectedNodes) const {
+            const std::unordered_set<NodePtr>& evidenceAffectedNodes,
+            std::unordered_set<NodePtr>* dirtyNodes = nullptr,
+            std::unordered_set<EdgePtr>* dirtyEdges = nullptr) const {
         SplitStats out;
         auto splitStart = std::chrono::steady_clock::now();
         constexpr size_t kMaxReachable = 50;
@@ -1177,7 +1245,7 @@ private:
         for (auto fact : nodesList) {
             if (!fact || !fact->isFact || fact->hasEvidence() || fact->needOutput) continue;
             if (evidenceAffectedNodes.count(fact)) continue;
-            auto outs = view.getOutgoingEdges(fact);
+            const auto& outs = view.getOutgoingEdges(fact);
             if (outs.size() < 2) continue;
 
             // Compute reachable sets for each outgoing edge's output.
@@ -1201,7 +1269,7 @@ private:
                 while (!q.empty()) {
                     NodePtr cur = q.front();
                     q.pop();
-                    auto nextEdges = view.getOutgoingEdges(cur);
+                    const auto& nextEdges = view.getOutgoingEdges(cur);
                     for (auto ne : nextEdges) {
                         if (!ne) continue;
                         NodePtr outNode = view.getOutput(ne);
@@ -1221,26 +1289,36 @@ private:
             }
             if (skipFact || reachSets.size() != outs.size()) continue;
 
-            // Identify branches disjoint from all others.
-            std::vector<size_t> independentIdx;
+            // Identify branches disjoint from all others by marking per-node branch ownership.
+            // This avoids O(k^2) pairwise set-intersection checks across branch reachability sets.
+            size_t totalReachableNodes = 0;
+            for (const auto& set : reachSets) {
+                totalReachableNodes += set.size();
+            }
+            std::unordered_map<NodePtr, int> nodeOwner;
+            nodeOwner.reserve(totalReachableNodes * 2 + 1);
+
+            std::vector<char> hasOverlap(reachSets.size(), 0);
             for (size_t i = 0; i < reachSets.size(); ++i) {
-                bool disjoint = true;
-                for (size_t j = 0; j < reachSets.size(); ++j) {
-                    if (i == j) continue;
-                    const auto& a = reachSets[i];
-                    const auto& b = reachSets[j];
-                    // Check intersection (iterate smaller set).
-                    const auto& small = (a.size() < b.size()) ? a : b;
-                    const auto& large = (a.size() < b.size()) ? b : a;
-                    for (auto n : small) {
-                        if (large.count(n)) {
-                            disjoint = false;
-                            break;
-                        }
+                for (auto n : reachSets[i]) {
+                    auto [it, inserted] = nodeOwner.emplace(n, static_cast<int>(i));
+                    if (inserted) continue;
+                    const int prevOwner = it->second;
+                    if (prevOwner == static_cast<int>(i)) continue;
+                    hasOverlap[i] = 1;
+                    if (prevOwner >= 0) {
+                        hasOverlap[static_cast<size_t>(prevOwner)] = 1;
+                        it->second = -1;
                     }
-                    if (!disjoint) break;
                 }
-                if (disjoint) independentIdx.push_back(i);
+            }
+
+            std::vector<size_t> independentIdx;
+            independentIdx.reserve(reachSets.size());
+            for (size_t i = 0; i < hasOverlap.size(); ++i) {
+                if (!hasOverlap[i]) {
+                    independentIdx.push_back(i);
+                }
             }
             if (independentIdx.empty()) continue;
 
@@ -1281,6 +1359,18 @@ private:
                 ++stats.numEdgesAdded;
                 nodes.insert(shadow);
                 ++out.nodesAdded;
+                if (dirtyNodes) {
+                    dirtyNodes->insert(fact);
+                    dirtyNodes->insert(shadow);
+                    dirtyNodes->insert(edge->getOutput());
+                    dirtyNodes->insert(newEdge->getOutput());
+                    for (auto in : edge->getInputs()) dirtyNodes->insert(in);
+                    for (auto in : newEdge->getInputs()) dirtyNodes->insert(in);
+                }
+                if (dirtyEdges) {
+                    dirtyEdges->insert(edge);
+                    dirtyEdges->insert(newEdge);
+                }
                 changed = true;
             }
             if (changed) {
@@ -1294,7 +1384,9 @@ private:
 
     SplitStats splitFanoutComplete(IncrementalDerivationGraph& graph, IncSubgraphView& view,
             GraphRewriteStats& stats, const RewriteFeatureFlags& flags,
-            const std::unordered_set<NodePtr>& evidenceAffectedNodes) const {
+            const std::unordered_set<NodePtr>& evidenceAffectedNodes,
+            std::unordered_set<NodePtr>* dirtyNodes = nullptr,
+            std::unordered_set<EdgePtr>* dirtyEdges = nullptr) const {
         SplitStats out;
         auto splitStart = std::chrono::steady_clock::now();
         const auto& nodeSet = view.getNodes();
@@ -1418,7 +1510,7 @@ private:
             if (!fact || !fact->isFact || fact->hasEvidence() || fact->needOutput) continue;
             if (evidenceAffectedNodes.count(fact)) continue;
             if (view.getNodes().count(fact) == 0) continue;
-            auto outs = view.getOutgoingEdges(fact);
+            const auto& outs = view.getOutgoingEdges(fact);
             if (outs.size() < 2) continue;
             auto itFact = nodeIndex.find(fact);
             if (itFact == nodeIndex.end()) continue;
@@ -1589,6 +1681,18 @@ private:
                     }
                     edges.insert(newEdge);
                     ++stats.numEdgesAdded;
+                    if (dirtyNodes) {
+                        dirtyNodes->insert(fact);
+                        dirtyNodes->insert(shadow);
+                        dirtyNodes->insert(edge->getOutput());
+                        dirtyNodes->insert(newEdge->getOutput());
+                        for (auto in : edge->getInputs()) dirtyNodes->insert(in);
+                        for (auto in : newEdge->getInputs()) dirtyNodes->insert(in);
+                    }
+                    if (dirtyEdges) {
+                        dirtyEdges->insert(edge);
+                        dirtyEdges->insert(newEdge);
+                    }
                 }
                 if (rewired > 0) {
                     nodes.insert(shadow);

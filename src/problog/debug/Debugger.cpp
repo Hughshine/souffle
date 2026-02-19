@@ -1,6 +1,7 @@
 #include "souffle/problog/debug/Debugger.h"
 
 #include "souffle/utility/json11.h"
+#include <cstdio>
 
 Debugger::Debugger()
         : turnCount_(0), currentTurn_(nullptr), currentStage_(nullptr), currentIteration_(nullptr) {}
@@ -22,6 +23,11 @@ TurnInfo* Debugger::startTurn(const std::string& mode) {
 //    turn.setMemStart(getCurrentMemoryUsage());
     turn.markStartTime();
     currentTurn_ = &turn;
+    if (turnCount_ == 1) {
+        runStatus_ = "running";
+        terminationSignal_ = 0;
+    }
+    maybeAutoDumpLocked();
     return &turn;
 }
 
@@ -32,6 +38,10 @@ void Debugger::endTurn() {
 //    currentTurn_->setMemPeak(getPeakMemoryUsage());
     currentTurn_->markEndTime();
     currentTurn_ = nullptr;
+    if (runStatus_ == "running") {
+        runStatus_ = "completed";
+    }
+    maybeAutoDumpLocked();
 }
 
 StageInfo* Debugger::startStage(StageKind kind) {
@@ -42,6 +52,7 @@ StageInfo* Debugger::startStage(StageKind kind) {
 //    stage.setMemStart(getCurrentMemoryUsage());
     stage.markStartTime();
     currentStage_ = &stage;
+    maybeAutoDumpLocked();
     return &stage;
 }
 
@@ -52,6 +63,7 @@ void Debugger::endStage() {
 //    currentStage_->setMemPeak(getPeakMemoryUsage());
     currentStage_->markEndTime();
     currentStage_ = nullptr;
+    maybeAutoDumpLocked();
 }
 
 IterationInfo* Debugger::startIteration() {
@@ -140,9 +152,32 @@ void Debugger::printReport(std::ostream& os) {
 }
 
 void Debugger::printReportJson(std::ostream& os) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    printReportJsonLocked(os);
+}
+
+void Debugger::printReportJsonLocked(std::ostream& os) {
     using namespace json11;
 
     Json::array json_turns;
+    auto stageStatus = [this](const StageInfo& stage) -> std::string {
+        if (stage.hasEndTime()) {
+            return "completed";
+        }
+        if (currentStage_ == &stage) {
+            if (runStatus_ == "exception") {
+                return "exception";
+            }
+            if (runStatus_ == "terminated") {
+                return "interrupted";
+            }
+            return "running";
+        }
+        if (stage.hasStartTime()) {
+            return "interrupted";
+        }
+        return "pending";
+    };
 
     for (const auto& turn : turns_) {
         Json::object jturn;
@@ -171,6 +206,8 @@ void Debugger::printReportJson(std::ostream& os) {
             Json::object jstage;
             jstage["name"] = Json(stageKindToString(stage.kind));
             jstage["time_seconds"] = Json(stage.getDurationSeconds());
+            jstage["time_seconds_is_partial"] = Json(!stage.hasEndTime());
+            jstage["status"] = Json(stageStatus(stage));
             jstage["peak_mem_kb"] = Json(static_cast<long long>(stage.getMemPeak()));
 
             Json::object stage_info;
@@ -196,8 +233,68 @@ void Debugger::printReportJson(std::ostream& os) {
         json_turns.push_back(jturn);
     }
 
-    Json report_json = Json::object{{"turns", json_turns}};
+    Json report_json = Json::object{
+            {"status", Json(runStatus_)},
+            {"termination_signal", Json(terminationSignal_)},
+            {"turns", json_turns}};
     os << report_json.dump() << std::endl;
+}
+
+void Debugger::setReportOutputFile(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    reportOutputFile_ = path;
+    maybeAutoDumpLocked();
+}
+
+std::string Debugger::getReportOutputFile() const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    return reportOutputFile_;
+}
+
+void Debugger::setRunStatus(const std::string& status) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    runStatus_ = status;
+    maybeAutoDumpLocked();
+}
+
+void Debugger::setTerminationSignal(int signal) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    terminationSignal_ = signal;
+    maybeAutoDumpLocked();
+}
+
+void Debugger::dumpReportJsonToFile(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    const std::string target = path.empty() ? reportOutputFile_ : path;
+    if (target.empty()) {
+        return;
+    }
+    dumpReportJsonToFileLocked(target);
+}
+
+void Debugger::maybeAutoDumpLocked() {
+    if (reportOutputFile_.empty()) {
+        return;
+    }
+    dumpReportJsonToFileLocked(reportOutputFile_);
+}
+
+void Debugger::dumpReportJsonToFileLocked(const std::string& path) {
+    const std::string tmpPath = path + ".tmp";
+    std::ofstream ofs(tmpPath, std::ios::trunc);
+    if (!ofs.is_open()) {
+        return;
+    }
+    printReportJsonLocked(ofs);
+    ofs.flush();
+    if (!ofs.good()) {
+        std::remove(tmpPath.c_str());
+        return;
+    }
+    ofs.close();
+    if (std::rename(tmpPath.c_str(), path.c_str()) != 0) {
+        std::remove(tmpPath.c_str());
+    }
 }
 
 size_t Debugger::getCurrentMemoryUsage() const {

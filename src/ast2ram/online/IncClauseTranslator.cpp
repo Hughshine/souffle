@@ -1279,19 +1279,21 @@ Own<ram::Operation> IncClauseTranslator::addNegatedAtomDerived(
 
     auto clauseVarMap = getClauseVars(clause);
     auto clauseVarExprs = getClauseVarExprs(clause);
-    VecOwn<ram::Expression> values;
+    VecOwn<ram::Expression> derivationValues;
+    VecOwn<ram::Expression> existenceValues;
     for (const auto* arg : head->getArguments()) {
-        values.push_back(context.translateValue(*valueIndex, arg));
+        derivationValues.push_back(context.translateValue(*valueIndex, arg));
+        existenceValues.push_back(context.translateValue(*valueIndex, arg));
     }
 
     auto clauseStr = clause.toString();
     // return mk<ram::Filter>(
     // mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause), std::move(cloneClauseVarMapDup(clauseVarMap)))), std::move(op));
     op = mk<ram::Filter>(
-    mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause),
+    mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(derivationValues), context.getClauseNum(&clause),
         std::move(cloneClauseVarMapDup(clauseVarMap)), std::move(cloneVarExprsDup(clauseVarExprs)))), std::move(op));
     return mk<ram::Filter>(
-    mk<ram::Negation>(mk<ram::ExistenceCheck>(headRelationName, std::move(values))), std::move(op));
+    mk<ram::Negation>(mk<ram::ExistenceCheck>(headRelationName, std::move(existenceValues))), std::move(op));
 }
 Own<ram::Operation> IncClauseTranslator::addAtomDerived(
         Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const {
@@ -1300,19 +1302,21 @@ Own<ram::Operation> IncClauseTranslator::addAtomDerived(
 
     auto clauseVarMap = getClauseVars(clause);
     auto clauseVarExprs = getClauseVarExprs(clause);
-    VecOwn<ram::Expression> values;
+    VecOwn<ram::Expression> derivationValues;
+    VecOwn<ram::Expression> existenceValues;
     for (const auto* arg : head->getArguments()) {
-        values.push_back(context.translateValue(*valueIndex, arg));
+        derivationValues.push_back(context.translateValue(*valueIndex, arg));
+        existenceValues.push_back(context.translateValue(*valueIndex, arg));
     }
 
     auto clauseStr = clause.toString();
     op = mk<ram::Filter>(
-    (mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause),
+    (mk<ram::DerivationCheck>(headRelationName, std::move(derivationValues), context.getClauseNum(&clause),
         std::move(cloneClauseVarMapDup(clauseVarMap)),
         std::move(cloneVarExprsDup(clauseVarExprs))
         )), std::move(op));
     return mk<ram::Filter>(
-    mk<ram::Negation>(mk<ram::ExistenceCheck>(headRelationName, std::move(values))), std::move(op));
+    mk<ram::Negation>(mk<ram::ExistenceCheck>(headRelationName, std::move(existenceValues))), std::move(op));
 }
 
 

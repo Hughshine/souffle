@@ -101,9 +101,19 @@ public:
 
     void markStartTime() { startTime_ = std::chrono::steady_clock::now(); }
     void markEndTime() { endTime_ = std::chrono::steady_clock::now(); }
+    bool hasStartTime() const { return startTime_ != std::chrono::steady_clock::time_point{}; }
+    bool hasEndTime() const { return endTime_ != std::chrono::steady_clock::time_point{}; }
 
     double getDurationSeconds() const {
-        return std::chrono::duration<double>(endTime_ - startTime_).count();
+        using Clock = std::chrono::steady_clock;
+        if (startTime_ == Clock::time_point{}) {
+            return 0.0;
+        }
+        auto effectiveEnd = endTime_;
+        if (effectiveEnd == Clock::time_point{} || effectiveEnd < startTime_) {
+            effectiveEnd = Clock::now();
+        }
+        return std::chrono::duration<double>(effectiveEnd - startTime_).count();
     }
 
     const std::unordered_map<std::string, std::string>& getInfoMap() const { return infoMap_; }
@@ -158,9 +168,17 @@ public:
     void logMessage(Level level, const std::string& message) const;
     void printReport(std::ostream& os);
     void printReportJson(std::ostream& os);
+    void setReportOutputFile(const std::string& path);
+    std::string getReportOutputFile() const;
+    void setRunStatus(const std::string& status);
+    void setTerminationSignal(int signal);
+    void dumpReportJsonToFile(const std::string& path = "");
 
 private:
     Debugger();
+    void maybeAutoDumpLocked();
+    void printReportJsonLocked(std::ostream& os);
+    void dumpReportJsonToFileLocked(const std::string& path);
 
     mutable std::mutex mtx_;
     int turnCount_;
@@ -168,6 +186,9 @@ private:
     TurnInfo* currentTurn_;
     StageInfo* currentStage_;
     IterationInfo* currentIteration_;
+    std::string reportOutputFile_;
+    std::string runStatus_ = "running";
+    int terminationSignal_ = 0;
 
     size_t getCurrentMemoryUsage() const;
     size_t getPeakMemoryUsage() const;

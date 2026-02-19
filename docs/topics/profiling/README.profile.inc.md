@@ -35,7 +35,8 @@
 - `--fc-profile` prints `[fc-profile]` lines with FC sub-phase counters/timings (see `docs/USAGE.md`).
 
 ## FC Profiling Update (2026-01-13, --fc-profile)
-- Runs: P17–P20, inc0p1/inc0p3/inc0p5, `--det-opt --fc-profile` (post-del disabled by default).
+- Runs: P17–P20, inc0p1/inc0p3/inc0p5, det-opt (default on) + `--fc-profile`
+  (post-del disabled by default).
 - Data files:
   - `experiments/side_channel_inc_eval_small/fc-profile-summary-p17-p20-v4.tsv`
   - `experiments/side_channel_inc_eval_small/fc-preconfig-summary-p17-p20-v4.tsv`
@@ -101,7 +102,7 @@ Notes:
 - Runs (historical):
   - `experiments/side_channel_inc_preconfig_off` (preConfig skipped)
   - `experiments/side_channel_inc_preconfig_on` (preConfig forced)
-  - Both with `--det-opt`, `--timeout 600`, `--delta-labels inc0p1,inc0p3,inc0p5`.
+  - Both with det-opt behavior (default on), `--timeout 600`, `--delta-labels inc0p1,inc0p3,inc0p5`.
 - Result: skipping preConfig is slightly faster but causes correctness mismatches in
   P17 (inc0p3/0p5) and all P18 deltas. P19/P20 remain correct.
 

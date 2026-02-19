@@ -68,10 +68,12 @@ listed below; use `-h` for the authoritative values.
   compile time); it is forced off in online/incremental binaries.
 - `--prune-extra`: default `false` (enable outputless-component pruning in prune)
 - `-r, --rewrite`: default `false`
-- `--det-opt`: default `false` (enable deterministic-relation analysis + derivation gating)
+- `--force-complete-siso-detect`: default `false` (disable dirty-frontier SISO detection and force full-graph detection each rewrite iteration)
+- `--det-opt`: default `true` (enable deterministic-relation analysis + derivation gating)
+- `--no-det-opt`: default `false` (disable deterministic-relation analysis + derivation gating)
 - `--det-force`: default `false` (force deterministic evaluation; skip derivation graph and emit 1.0 probs)
 - `--split-mode=<no-split|naive-split|complete-split>`: default `naive-split`
-  (rewrite only)
+  (rewrite only; aliases: `none|naive|complete`)
 - `--dumpjson`: default `false`
 - `--dumpdot`: default `false`
 - `--dumpstat`: default `false`
@@ -140,7 +142,8 @@ Example (batch from delta file):
 - Optional SISO rewrite (`-r`) for full-mode runs only.
 - Rewrite path uses component-wise FC with a single reused BDD manager and logs
   `FC_WMC_HYBRID`.
-- Deterministic-first derivation gating (`--det-opt`) to skip recording
+- Deterministic-first derivation gating (`--det-opt`, default on; disable with
+  `--no-det-opt`) to skip recording
   derivations for deterministic relations.
 - Deterministic-force mode (`--det-force`) to bypass the derivation graph and
   emit probability `1.0` for all outputs (useful for deterministic baselines).

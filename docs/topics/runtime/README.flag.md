@@ -92,11 +92,13 @@
 - `--prune-extra`: drop outputless components during prune.
 - `-C`, `--fold-const`: constant pre-analysis (negation ignored).
 - `-r`, `--rewrite`: enable SISO-based rewrite.
-- `-P`, `--split-mode <no-split|naive-split|complete-split>`: split mode for rewrite.
+- `-P`, `--split-mode <no-split|naive-split|complete-split>`: split mode for rewrite (default `naive-split`; aliases `none|naive|complete`).
+- `--force-complete-siso-detect`: disable dirty-frontier SISO detection and force full-graph detection each rewrite iteration (for rewrite diff/validation runs).
 - `-k`, `--knowledge <bdd|sdd>`: choose DD backend.
 
 ### Determinism controls
-- `--det-opt`: enable deterministic-relation analysis.
+- `--det-opt`: enable deterministic-relation analysis (default on).
+- `--no-det-opt`: disable deterministic-relation analysis.
 - `--det-force`: skip derivation graph and force probabilities to 1.0.
 
 ### Dumps & debugging
@@ -116,6 +118,30 @@
 - `--inc-regional-trace-tuples=<LIST>`: comma-separated tuples to trace.
 - `--profile-dep-graph`: dependency-graph profiling.
 
+### Profiling flags: what they measure and cost
+The table below focuses on runtime profiling flags used by probabilistic full/inc pipelines.
+
+| Flag | Main outputs / measured scope | Typical log prefix | Relative overhead |
+|---|---|---|---|
+| `--inc-profile` | Stage-level totals and coarse breakdowns (`IO/SEM/PRN/FC/WMC`) for full/inc paths; prune/apply-delta timers and counts. | `[inc-profile]` | Low to medium |
+| `--fc-profile` | Fine-grained forward-compilation counters/timers (formula ops, round/worklist stats, CUDD preconfig/create-var timings). | `[fc-profile]` | Medium to high |
+| `--profile-wmc` | WMC sub-phase timings and call counts (AND/WMC hot paths), especially in hybrid/component evaluation. | (Pipeline WMC profile lines) | Medium |
+| `--profile-inc-delete` | Incremental delete-only phase breakdown (`conditioning`, `overdelete`, `rederive`, affected node/edge counts). | `[inc-delete-profile]` | Medium (inc delete turns) |
+| `--profile-inc-regional` | Inc-regional analysis/planning/rebuild diagnostics and timing summaries, plus region stats. | `[inc-regional-profile]` | Medium to high |
+| `--profile-inc-regional-heavy` | Extra deep traces for regional analysis (closure-style traces, large diagnostic payloads). | `[inc-regional-profile]` (heavy detail) | Very high |
+| `--profile-dep-graph` | Dependency graph internals (`SCC`, dependency edges, component/depth timings). | `[dep-profile]` | Low to medium |
+| `--dred-profile` | Detailed DRed instrumentation in incremental maintenance paths. | DRed profile lines | Medium to high |
+
+Notes:
+- Relative overhead is workload-dependent; for large graphs, I/O and extra logging volume can dominate.
+- `--fc-profile` and `--profile-inc-regional-heavy` can generate very large stdout/stderr and materially perturb runtime.
+- Prefer layered enablement: start with `--inc-profile`, then add one deep flag at a time.
+
+### Timeout behavior for profiling
+- Many counters are emitted at stage end. If a run is killed by timeout while a stage is still `running`, end-of-stage stats may be missing.
+- In particular, values like final DD `live_nodes` are typically recorded after FC/hybrid stage completion; a timeout during that stage may leave only partial stage time and no final node-count stats.
+- Stage completion and partial status are still visible in debugger JSON (`status`, `time_seconds`, `time_seconds_is_partial`).
+
 ### Profiling organization (recommended)
 - **Layered flags**: use `--inc-profile` for stage totals, then add `--fc-profile`
   and/or `--profile-wmc` for deep breakdowns.
@@ -127,7 +153,8 @@
   by profiling flags to avoid extra cost when profiling is off.
 
 ### Benchmarking quick set (side_channel_inc.py)
-- Always include `--det-opt` for incremental benchmarks (required for current analyses).
+- `--det-opt` is enabled by default for incremental benchmarks; use `--no-det-opt`
+  only for ablation/comparison runs.
 - Suggested incremental profiling bundle:
   `--inc-profile --profile-inc-regional --profile-wmc`
 - Add `--profile-inc-delete` when analyzing delete turns, and `--fc-profile` for FC details.

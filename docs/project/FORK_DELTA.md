@@ -13,7 +13,7 @@ This document explains what this fork contributes beyond baseline Souffle.
 | Incremental regional update | `src/include/souffle/problog/RegionalIncremental.h`<br>`src/include/souffle/problog/IncRegionAnalyzer.h` | Adds `inc-regional` analysis/planning/rebuild pipeline | Most complex incremental extension |
 | Online incremental translation | `src/ast2ram/online/*` | Adds `_inc` strata and delta-oriented lowering strategy | Connects compiler layer to incremental runtime semantics |
 | Incremental CLI control plane | `src/include/souffle/cli/Cli.h` | Adds `insert/delete/commit`, `setmode`, per-turn outputs and instrumentation control | User-facing interface for incremental workflow |
-| Runtime option surface | `src/include/souffle/CompiledOptions.h`<br>`src/MainDriver.cpp` | Adds fork-specific flags (`--det-opt`, `--inc-profile`, `--fc-profile`, etc.) and default behavior | Keep docs synchronized with code defaults |
+| Runtime option surface | `src/include/souffle/CompiledOptions.h`<br>`src/MainDriver.cpp` | Adds fork-specific flags (`--det-opt`/`--no-det-opt`, `--inc-profile`, `--fc-profile`, etc.) and default behavior | Keep docs synchronized with code defaults |
 | Benchmark and artifact tooling | `problog-benchmark/side_channel_inc.py`<br>`problog-benchmark/side_channel_full.py` | Adds reproducible evaluation pipelines and TSV/log collectors | Keep outputs archived under `archive/` |
 
 ## Upstream-Core Areas (with local touches)

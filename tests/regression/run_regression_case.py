@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -21,6 +22,13 @@ from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
 PROB_LINE_RE = re.compile(r"^\s*(.*?)\s*:\s*([+\-]?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)\s*$")
+REWRITE_ITER_DETECT_RE = re.compile(
+    r"^\[GraphRewriter\] Iteration (\d+) : detected (\d+) SISO region\(s\)\."
+)
+REWRITE_SISO_MODE_RE = re.compile(
+    r"^\[siso-detect\] mode=(\S+) fallback=(\d+) "
+    r"seeds\(nodes=(\d+),edges=(\d+)\) frontier\(nodes=(\d+),edges=(\d+)\)$"
+)
 CASES_ROOT = Path(__file__).resolve().parent / "cases"
 
 
@@ -38,7 +46,11 @@ def run_cmd(
     *,
     stdin_text: str | None = None,
     timeout: int = 240,
+    env: Dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    proc_env = os.environ.copy()
+    if env:
+        proc_env.update(env)
     proc = subprocess.run(
         list(cmd),
         cwd=str(cwd),
@@ -46,6 +58,7 @@ def run_cmd(
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=proc_env,
         timeout=timeout,
         check=False,
     )
@@ -171,6 +184,72 @@ def iter_prob_path(output_dir: Path, iteration: int, suffix: str) -> Path:
     return output_dir / f"fact-iter{iteration}-{suffix}.prob"
 
 
+def parse_rewrite_detect_counts(stdout: str) -> List[Tuple[int, int]]:
+    counts: List[Tuple[int, int]] = []
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        m = REWRITE_ITER_DETECT_RE.match(line)
+        if not m:
+            continue
+        counts.append((int(m.group(1)), int(m.group(2))))
+    return counts
+
+
+def parse_siso_detect_modes(stdout: str) -> List[Tuple[str, int, int, int, int, int]]:
+    rows: List[Tuple[str, int, int, int, int, int]] = []
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        m = REWRITE_SISO_MODE_RE.match(line)
+        if not m:
+            continue
+        rows.append(
+            (
+                m.group(1),
+                int(m.group(2)),
+                int(m.group(3)),
+                int(m.group(4)),
+                int(m.group(5)),
+                int(m.group(6)),
+            )
+        )
+    return rows
+
+
+def build_layered_edge_graph(*, num_layers: int, width: int) -> Tuple[List[Tuple[int, int]], List[float]]:
+    layers: List[List[int]] = []
+    next_id = 1
+    for _ in range(num_layers):
+        layer = list(range(next_id, next_id + width))
+        layers.append(layer)
+        next_id += width
+
+    edges: List[Tuple[int, int]] = []
+    probs: List[float] = []
+    for i in range(len(layers) - 1):
+        nxt = layers[i + 1]
+        for idx, src in enumerate(layers[i]):
+            fan_out = 3 + ((src + idx) % 2)  # 3 or 4
+            for dst in nxt[:fan_out]:
+                edges.append((src, dst))
+                probs.append(0.55 + ((src + dst) % 7) * 0.05)
+
+    return edges, probs
+
+
+def overwrite_edge_inputs(
+    input_dir: Path, *, edges: Sequence[Tuple[int, int]], probs: Sequence[float]
+) -> None:
+    if len(edges) != len(probs):
+        raise CaseFailure(
+            f"overwrite_edge_inputs: edge/prob size mismatch ({len(edges)} vs {len(probs)})"
+        )
+
+    facts_text = "".join(f"{src}\t{dst}\n" for src, dst in edges)
+    prob_text = "".join(f"{prob:.2f}\n" for prob in probs)
+    write_text(input_dir / "edge.facts", facts_text)
+    write_text(input_dir / "edge.prob", prob_text)
+
+
 def compile_compute(
     *,
     souffle_bin: Path,
@@ -251,13 +330,14 @@ def run_full_once(
     input_dir: Path,
     output_dir: Path,
     extra_args: Sequence[str] | None = None,
+    env: Dict[str, str] | None = None,
     timeout: int = 180,
-) -> None:
+) -> subprocess.CompletedProcess[str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [str(compute_bin), "-F", str(input_dir), "-D", str(output_dir)]
     if extra_args:
         cmd.extend(extra_args)
-    run_cmd(cmd, cwd=compute_bin.parent, timeout=timeout)
+    return run_cmd(cmd, cwd=compute_bin.parent, timeout=timeout, env=env)
 
 
 def assert_glob_nonempty(base_dir: Path, pattern: str, *, label: str) -> None:
@@ -465,6 +545,107 @@ def case_rewrite_split_modes_equiv(souffle_bin: Path, work_root: Path) -> None:
         )
 
 
+def case_rewrite_dirty_detect_equiv(souffle_bin: Path, work_root: Path) -> None:
+    # Keep fixture source shared, but isolate workspace path so this case can run
+    # in parallel with rewrite_split_modes_equiv without rmtree/copy races.
+    case_dir = prepare_case_workspace(
+        "rewrite_split_modes_equiv", work_root / "rewrite_dirty_detect_equiv_ws"
+    )
+    compute_bin, in_dir, _ = compile_compute(
+        souffle_bin=souffle_bin, case_dir=case_dir, full_only=True
+    )
+    args = ["--rewrite", "--dumpstat", "--split-mode=naive-split"]
+
+    out_dirty = case_dir / "out_rewrite_dirty_detect"
+    dirty_run = run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_dirty,
+        extra_args=args,
+    )
+
+    out_full_detect = case_dir / "out_rewrite_force_full_detect"
+    full_run = run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_full_detect,
+        extra_args=[*args, "--force-complete-siso-detect"],
+    )
+
+    dirty_counts = parse_rewrite_detect_counts(dirty_run.stdout)
+    full_counts = parse_rewrite_detect_counts(full_run.stdout)
+    if not dirty_counts or not full_counts:
+        raise CaseFailure(
+            "rewrite_dirty_detect_equiv: missing rewrite detect logs.\n"
+            "Ensure --dumpstat output includes per-iteration detection lines."
+        )
+    if dirty_counts != full_counts:
+        raise CaseFailure(
+            "rewrite_dirty_detect_equiv: per-iteration SISO detection counts differ.\n"
+            f"dirty={dirty_counts}\nfull={full_counts}"
+        )
+
+    assert_prob_close(
+        out_dirty / "facts.prob",
+        out_full_detect / "facts.prob",
+        label="rewrite_dirty_detect_equiv facts.prob",
+    )
+
+    # Mechanism-focused scenario:
+    # a layered graph where dirty-frontier detection should be exercised at least once.
+    # This validates the mechanism itself (enabled path + forced full suppression path),
+    # independent from the small semantic-equivalence fixture above.
+    layered_edges, layered_probs = build_layered_edge_graph(num_layers=10, width=8)
+    overwrite_edge_inputs(in_dir, edges=layered_edges, probs=layered_probs)
+
+    out_mech_dirty = case_dir / "out_mech_dirty_detect"
+    mech_dirty_run = run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_mech_dirty,
+        extra_args=args,
+    )
+    out_mech_full = case_dir / "out_mech_force_full_detect"
+    mech_full_run = run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_mech_full,
+        extra_args=[*args, "--force-complete-siso-detect"],
+    )
+
+    dirty_modes = parse_siso_detect_modes(mech_dirty_run.stdout)
+    full_modes = parse_siso_detect_modes(mech_full_run.stdout)
+    if not dirty_modes or not full_modes:
+        raise CaseFailure(
+            "rewrite_dirty_detect_equiv: missing [siso-detect] mode logs in mechanism scenario.\n"
+            "Ensure --dumpstat output includes mode/fallback/seeds/frontier lines."
+        )
+
+    if not any(row[0] == "dirty-frontier" for row in dirty_modes):
+        raise CaseFailure(
+            "rewrite_dirty_detect_equiv: mechanism scenario did not exercise dirty-frontier detection.\n"
+            f"modes={dirty_modes}"
+        )
+    if any(row[0] == "dirty-frontier" for row in full_modes):
+        raise CaseFailure(
+            "rewrite_dirty_detect_equiv: force-complete detect run unexpectedly used dirty-frontier.\n"
+            f"modes={full_modes}"
+        )
+    if not any((row[2] > 0 or row[3] > 0) for row in dirty_modes):
+        raise CaseFailure(
+            "rewrite_dirty_detect_equiv: dirty-detect run never observed non-zero dirty seeds.\n"
+            f"modes={dirty_modes}"
+        )
+    if any(
+        row[1] != 0 or row[2] != 0 or row[3] != 0 or row[4] != 0 or row[5] != 0
+        for row in full_modes
+    ):
+        raise CaseFailure(
+            "rewrite_dirty_detect_equiv: force-complete detect run recorded dirty/fallback/frontier state.\n"
+            f"modes={full_modes}"
+        )
+
+
 def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("full_det_modes", work_root)
     input_dir = case_dir / "input"
@@ -542,6 +723,7 @@ CASES = {
     "detopt_inc_naive_combo_vs_full": case_detopt_inc_naive_combo_vs_full,
     "detopt_inc_regional_single_round_vs_full": case_detopt_inc_regional_single_round_vs_full,
     "rewrite_split_modes_equiv": case_rewrite_split_modes_equiv,
+    "rewrite_dirty_detect_equiv": case_rewrite_dirty_detect_equiv,
     "full_det_modes": case_full_det_modes,
     "dump_outputs_contract": case_dump_outputs_contract,
 }
