@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+"""
+Regression runner for the maintained Souffle fork test suite.
+
+Each ctest case executes one scenario end-to-end:
+- generate a small program + inputs
+- compile with the repo-built souffle binary
+- run full mode
+- assert semantic and artifact contracts
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Dict, List, Sequence, Tuple
+
+PROB_LINE_RE = re.compile(r"^\s*(.*?)\s*:\s*([+\-]?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)\s*$")
+CASES_ROOT = Path(__file__).resolve().parent / "cases"
+
+
+class CaseFailure(RuntimeError):
+    """Raised when a regression case fails."""
+
+
+def format_cmd(cmd: Sequence[str]) -> str:
+    return " ".join(cmd)
+
+
+def run_cmd(
+    cmd: Sequence[str],
+    cwd: Path,
+    *,
+    stdin_text: str | None = None,
+    timeout: int = 240,
+) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.run(
+        list(cmd),
+        cwd=str(cwd),
+        input=stdin_text,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise CaseFailure(
+            f"command failed (exit={proc.returncode})\n"
+            f"cwd: {cwd}\n"
+            f"cmd: {format_cmd(cmd)}\n"
+            f"stdout:\n{proc.stdout}\n"
+            f"stderr:\n{proc.stderr}"
+        )
+    return proc
+
+
+def reset_dir(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def prepare_case_workspace(case_id: str, work_root: Path) -> Path:
+    case_src = CASES_ROOT / case_id
+    if not case_src.exists():
+        raise CaseFailure(f"missing regression case directory: {case_src}")
+
+    case_dir = work_root / case_id
+    reset_dir(case_dir)
+
+    for entry in sorted(case_src.iterdir()):
+        if entry.name == "generate.py":
+            continue
+        dst = case_dir / entry.name
+        if entry.is_dir():
+            shutil.copytree(entry, dst)
+        elif entry.is_file():
+            shutil.copy2(entry, dst)
+
+    generator = case_src / "generate.py"
+    if generator.exists():
+        run_cmd(
+            [sys.executable, str(generator), "--out-dir", str(case_dir)],
+            cwd=case_src,
+            timeout=180,
+        )
+
+    program = case_dir / "compute.dl"
+    input_dir = case_dir / "input"
+    if not program.exists():
+        raise CaseFailure(f"case {case_id} did not provide compute.dl")
+    if not input_dir.exists():
+        raise CaseFailure(f"case {case_id} did not provide input/")
+    return case_dir
+
+
+def parse_prob_file(path: Path) -> Dict[str, float]:
+    if not path.exists():
+        raise CaseFailure(f"missing probability output: {path}")
+    results: Dict[str, float] = {}
+    with path.open("r", encoding="utf-8") as f:
+        for idx, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            m = PROB_LINE_RE.match(line)
+            if not m:
+                raise CaseFailure(f"malformed probability line at {path}:{idx}: {line}")
+            tuple_key = m.group(1)
+            prob_value = float(m.group(2))
+            results[tuple_key] = prob_value
+    return results
+
+
+def assert_prob_close(lhs: Path, rhs: Path, *, tol: float = 1e-9, label: str) -> None:
+    left = parse_prob_file(lhs)
+    right = parse_prob_file(rhs)
+    left_keys = set(left.keys())
+    right_keys = set(right.keys())
+    if left_keys != right_keys:
+        missing = sorted(left_keys - right_keys)
+        extra = sorted(right_keys - left_keys)
+        raise CaseFailure(
+            f"{label}: tuple key mismatch\n"
+            f"lhs={lhs}\nrhs={rhs}\n"
+            f"missing_in_rhs={missing[:8]}\nextra_in_rhs={extra[:8]}"
+        )
+
+    diffs: List[str] = []
+    for key in sorted(left_keys):
+        lv = left[key]
+        rv = right[key]
+        if not math.isclose(lv, rv, rel_tol=0.0, abs_tol=tol):
+            diffs.append(f"{key}: lhs={lv:.12g} rhs={rv:.12g}")
+            if len(diffs) >= 8:
+                break
+    if diffs:
+        raise CaseFailure(
+            f"{label}: probability mismatch (tol={tol})\n"
+            f"lhs={lhs}\nrhs={rhs}\n"
+            + "\n".join(diffs)
+        )
+
+
+def assert_prob_all_ones(path: Path, *, tol: float = 1e-12, label: str) -> None:
+    vals = parse_prob_file(path)
+    bad = []
+    for key, value in sorted(vals.items()):
+        if not math.isclose(value, 1.0, rel_tol=0.0, abs_tol=tol):
+            bad.append(f"{key}: {value:.12g}")
+            if len(bad) >= 8:
+                break
+    if bad:
+        raise CaseFailure(
+            f"{label}: det-force output is not all-ones\nfile={path}\n" + "\n".join(bad)
+        )
+
+
+def compile_compute(
+    *,
+    souffle_bin: Path,
+    case_dir: Path,
+    compile_args: Sequence[str] | None = None,
+) -> Tuple[Path, Path, Path]:
+    input_dir = case_dir / "input"
+    output_dir = case_dir / "output_compile"
+    build_dir = case_dir / "build"
+    build_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    compute_dl = case_dir / "compute.dl"
+    compute_bin = build_dir / "compute"
+
+    cmd = [str(souffle_bin)]
+    if compile_args:
+        cmd.extend(compile_args)
+    cmd.extend(
+        [
+            "-F",
+            str(input_dir),
+            "-D",
+            str(output_dir),
+            str(compute_dl),
+            "-o",
+            str(compute_bin),
+        ]
+    )
+    run_cmd(cmd, cwd=case_dir, timeout=300)
+    if not compute_bin.exists():
+        raise CaseFailure(f"compile did not create binary: {compute_bin}")
+    return compute_bin, input_dir, output_dir
+
+
+def run_full_once(
+    *,
+    compute_bin: Path,
+    input_dir: Path,
+    output_dir: Path,
+    extra_args: Sequence[str] | None = None,
+    timeout: int = 180,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [str(compute_bin), "-F", str(input_dir), "-D", str(output_dir)]
+    if extra_args:
+        cmd.extend(extra_args)
+    run_cmd(cmd, cwd=compute_bin.parent, timeout=timeout)
+
+
+def assert_glob_nonempty(base_dir: Path, pattern: str, *, label: str) -> None:
+    matches = sorted(base_dir.glob(pattern))
+    if not matches:
+        raise CaseFailure(f"{label}: expected files matching {base_dir / pattern}")
+
+
+def case_smoke_full_only(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("smoke_full_only", work_root)
+    input_dir = case_dir / "input"
+    output_dir = case_dir / "output_run"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=output_dir)
+
+    facts_prob = output_dir / "facts.prob"
+    vals = parse_prob_file(facts_prob)
+    if not vals:
+        raise CaseFailure(f"smoke test produced empty probability output: {facts_prob}")
+
+
+def case_rewrite_split_modes_equiv(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("rewrite_split_modes_equiv", work_root)
+    input_dir = case_dir / "input"
+
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+
+    out_base = case_dir / "out_base"
+    run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base)
+    base_prob = out_base / "facts.prob"
+
+    split_modes = ["no-split", "naive-split", "complete-split"]
+    for split_mode in split_modes:
+        out_dir = case_dir / f"out_rewrite_{split_mode}"
+        run_full_once(
+            compute_bin=compute_bin,
+            input_dir=in_dir,
+            output_dir=out_dir,
+            extra_args=["--rewrite", f"--split-mode={split_mode}"],
+        )
+        assert_prob_close(
+            out_dir / "facts.prob",
+            base_prob,
+            label=f"rewrite_split_mode={split_mode}",
+        )
+
+
+def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("full_det_modes", work_root)
+    input_dir = case_dir / "input"
+
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+
+    out_base = case_dir / "out_base"
+    out_detopt = case_dir / "out_detopt"
+    out_detforce = case_dir / "out_detforce"
+
+    run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base)
+    run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_detopt,
+        extra_args=["--det-opt"],
+    )
+    run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_detforce,
+        extra_args=["--det-force"],
+    )
+
+    base_prob = out_base / "facts.prob"
+    detopt_prob = out_detopt / "facts.prob"
+    detforce_prob = out_detforce / "facts.prob"
+    assert_prob_close(detopt_prob, base_prob, label="det-opt_full_mode_equivalence")
+    assert_prob_all_ones(detforce_prob, label="det-force_all_ones")
+
+    base_keys = set(parse_prob_file(base_prob).keys())
+    force_keys = set(parse_prob_file(detforce_prob).keys())
+    if base_keys != force_keys:
+        raise CaseFailure("det-force changed output tuple set compared to baseline")
+
+
+def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("dump_outputs_contract", work_root)
+    input_dir = case_dir / "input"
+
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    out_full = case_dir / "out_full_hard"
+
+    run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_full,
+        extra_args=["--dumpjson", "--dumpdot", "--dumpstat", "--logfile", "reglog"],
+    )
+
+    expected_dot_before = out_full / "before_prune.dot"
+    expected_dot_after = out_full / "after_prune.dot"
+    expected_prob = out_full / "facts.prob"
+    for expected in (expected_dot_before, expected_dot_after, expected_prob):
+        if not expected.exists():
+            raise CaseFailure(f"dump contract: missing expected artifact {expected}")
+
+    assert_glob_nonempty(out_full, "derivation*.json", label="dump contract json after prune")
+    assert_glob_nonempty(out_full, "reglog_*.json", label="dump contract debugger logs")
+
+
+CASES = {
+    "smoke_full_only": case_smoke_full_only,
+    "rewrite_split_modes_equiv": case_rewrite_split_modes_equiv,
+    "full_det_modes": case_full_det_modes,
+    "dump_outputs_contract": case_dump_outputs_contract,
+}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run one maintained Souffle regression case")
+    parser.add_argument("--case", required=True, choices=sorted(CASES.keys()))
+    parser.add_argument("--souffle-bin", required=True, help="Path to repo-built souffle binary")
+    parser.add_argument("--work-root", required=True, help="Directory for per-case temporary work")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    souffle_bin = Path(args.souffle_bin).resolve()
+    work_root = Path(args.work_root).resolve()
+    work_root.mkdir(parents=True, exist_ok=True)
+
+    if not souffle_bin.exists():
+        print(f"error: souffle binary does not exist: {souffle_bin}", file=sys.stderr)
+        return 2
+    if not souffle_bin.is_file():
+        print(f"error: souffle binary path is not a file: {souffle_bin}", file=sys.stderr)
+        return 2
+
+    try:
+        CASES[args.case](souffle_bin, work_root)
+    except CaseFailure as err:
+        print(f"[regression:{args.case}] FAIL\n{err}", file=sys.stderr)
+        return 1
+    except subprocess.TimeoutExpired as err:
+        print(f"[regression:{args.case}] TIMEOUT: {err}", file=sys.stderr)
+        return 1
+
+    print(f"[regression:{args.case}] PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
