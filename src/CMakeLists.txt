@@ -380,6 +380,30 @@ else ()
   message(WARNING "Skipping souffle-problog-graph-query: CUDD library not found")
 endif ()
 
+# --------------------------------------------------
+# Standalone derivation-graph -> weighted-AMC demo
+# --------------------------------------------------
+add_executable(souffle-amc-pipeline-demo
+               ../experiments/approxmc_demo/dg_wamc_pipeline_demo.cpp
+               ../experiments/approxmc_demo/weighted_conversion.cpp)
+target_link_libraries(souffle-amc-pipeline-demo PRIVATE libsouffle compiled)
+add_dependencies(souffle-amc-pipeline-demo compiled)
+install(TARGETS souffle-amc-pipeline-demo DESTINATION bin)
+
+# --------------------------------------------------
+# Standalone BDD+WMC vs AMC benchmark on synthetic derivation graph
+# --------------------------------------------------
+if (CUDD_LIBRARY)
+  add_executable(souffle-bdd-vs-amc-benchmark
+                 ../experiments/approxmc_demo/bdd_vs_amc_benchmark.cpp
+                 ../experiments/approxmc_demo/weighted_conversion.cpp)
+  target_link_libraries(souffle-bdd-vs-amc-benchmark PRIVATE libsouffle compiled ${CUDD_LIBRARY} m)
+  add_dependencies(souffle-bdd-vs-amc-benchmark compiled)
+  install(TARGETS souffle-bdd-vs-amc-benchmark DESTINATION bin)
+else ()
+  message(WARNING "Skipping souffle-bdd-vs-amc-benchmark: CUDD library not found")
+endif ()
+
 
 if (EMSCRIPTEN)
 target_link_libraries(souffle -sMODULARIZE=1

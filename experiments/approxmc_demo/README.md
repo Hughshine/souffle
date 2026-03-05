@@ -9,6 +9,8 @@ Standalone experiment directory for using ApproxMC from C++ without modifying So
 - `weighted_conversion_demo.cpp`: converter-only demo (no ApproxMC dependency).
 - `weighted_appmc_demo.cpp`: weighted counting demo through `WeightedAppMC`.
 - `unweighted_appmc_demo.cpp`: baseline unweighted AppMC demo.
+- `dg_wamc_pipeline_demo.cpp`: derivation-graph -> formula -> weighted-AMC pipeline demo (full/static).
+- `DG_WAMC_PIPELINE_DEMO.md`: detailed guide for the derivation-graph pipeline demo.
 - `toy_weighted.cnf`: minimal weighted toy input.
 - `weighted_pipeline_demo.py`: legacy Python pipeline demo kept for comparison.
 
@@ -56,6 +58,25 @@ The converter includes:
 - weight completion (`w(-x)=1-w(x)` when only one side is provided)
 - per-variable normalization with multiplier accumulation
 - tilt computation and threshold check
+
+## Important Limitation (Current WAMC Path)
+
+Current weighted counting support in this demo is reduction-based:
+- `weighted CNF -> unweighted CNF` first
+- then run ApproxMC on the converted unweighted CNF
+
+This can be significantly slower than expected on larger instances.
+
+Why it can be slow:
+- ApproxMC itself is unweighted; weighted support is simulated through CNF transformation
+- non-trivial weights are encoded by auxiliary-variable chain gadgets
+- CNF size and sampling set can grow roughly with `#weightedVars * precision`
+- larger converted CNF increases SAT conflicts/round cost inside ApproxMC
+
+In practice, this means:
+- it is functional for experiments
+- it is not yet a production-efficient weighted backend for large graphs
+- DD-based WMC may be faster/stabler on many workloads
 
 ## Build
 
@@ -110,6 +131,34 @@ APPROXMC_PREFIX=/path/to/approxmc/install/prefix
 ```
 
 `souffle-compile.template.py` already supports `-I`, `-L`, and `-l`.
+
+## Derivation Graph -> WAMC pipeline demo
+
+This demo runs an end-to-end static pipeline:
+- build a toy derivation graph in C++
+- extract query formulas (no DD compilation)
+- encode each query formula to CNF (Tseitin)
+- convert weighted CNF to unweighted CNF (in-memory preprocessing + quantization)
+- call `approxmc` on the unweighted CNF and reconstruct weighted probability
+- compare with direct graph-semantics probability
+
+Detailed walkthrough: [`DG_WAMC_PIPELINE_DEMO.md`](DG_WAMC_PIPELINE_DEMO.md).
+Conversion rationale and blow-up details: [`WEIGHTED_TO_UNWEIGHTED.md`](WEIGHTED_TO_UNWEIGHTED.md).
+
+Build and run (from repo root):
+```bash
+cmake --build build --target souffle-amc-pipeline-demo -j
+APPROXMC_BIN=/path/to/approxmc ./build/src/souffle-amc-pipeline-demo
+```
+
+Useful flags:
+```bash
+./build/src/souffle-amc-pipeline-demo --epsilon 0.1 --delta 0.05 --seed 1
+```
+
+Expected toy results in the demo output:
+- `q(1)` probability: `0.76`
+- `r(1)` probability: `0.42`
 
 ## Upstream references
 - ApproxMC: https://github.com/meelgroup/approxmc

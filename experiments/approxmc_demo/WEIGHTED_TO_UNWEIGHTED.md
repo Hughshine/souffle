@@ -82,6 +82,24 @@ unweightedEstimate = cellSolCount * 2^hashCount
 - `multiplier`, `divideExp`
 - diagnostics (`addedVars`, `addedClauses`, tilt, quantization stats, forced assignments)
 
+## Why This Can Blow Up
+
+The conversion is correct but not size-preserving.
+
+Where expansion comes from:
+- each non-trivial weighted variable is replaced by chain-encoding gadgets
+- gadgets add auxiliary variables and clauses
+- introduced auxiliaries are added to sampling set as needed
+
+Typical growth trend:
+- roughly proportional to `(#weighted variables) * (quantization precision)`
+- worse when many weights are non-dyadic (require richer encoding)
+
+Operational consequence:
+- the reduced unweighted CNF can become much larger than input
+- ApproxMC then pays higher SAT cost (more conflicts/restarts/rounds)
+- overall weighted pipeline may be slower than DD-based WMC on many instances
+
 ## Exactness vs Approximation
 
 Two approximation sources are separate:
