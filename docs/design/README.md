@@ -7,6 +7,7 @@ Design proposals and optimization ideas that are not fully implemented.
 - Elastic/dynamic mode-switching ideas.
 - Eqrel/lazy/refactor proposals.
 - Formalization and ordering design notes.
+- Approximate probabilistic pipeline design (`derivation graph -> query formula -> AMC/WAMC`).
 
 ## Status
 - Treat these files as design references, not normative runtime behavior.
@@ -16,6 +17,7 @@ Design proposals and optimization ideas that are not fully implemented.
 - [docs/INDEX.md](docs/INDEX.md)
 - [docs/design/README.inc.regional.opt.md](docs/design/README.inc.regional.opt.md)
 - [docs/design/README.rewrite.opt.md](docs/design/README.rewrite.opt.md)
+- [docs/design/README.approx.pipeline.md](docs/design/README.approx.pipeline.md)
 
 ## Related commits
 - `UNCOMMITTED` — docs(reorg): add design docs landing page and relocate root design notes

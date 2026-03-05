@@ -344,6 +344,9 @@ private:
             if (!entry || !mid) continue;
             if (entry == mid) continue;
             if (mid->hasEvidence() || mid->needOutput) continue;  // mid cannot be query/evidence
+            // Linear contraction deletes `mid`, so `mid` must be single-source from this edge.
+            auto midIn = g.getIncomingEdges(mid);
+            if (midIn.size() != 1 || midIn[0] != e1) continue;
             // mid should have exactly one outgoing edge for the chain
             auto midOut = g.getOutgoingEdges(mid);
             if (midOut.size() != 1) continue;

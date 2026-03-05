@@ -82,7 +82,7 @@ doc
 gmon.out
 stamp-h1
 .worktrees/
-experiments/
+experiments/*
 
 utilities/bash-completion
 debian/changelog
@@ -116,3 +116,15 @@ experiments/side_channel_full*/
 experiments/side_channel_inc_eval/
 experiments/side_channel_inc_mini/*/
 experiments/smokers_*/
+
+# keep a maintained ApproxMC usage demo under experiments/
+!experiments/approxmc_demo/
+!experiments/approxmc_demo/CMakeLists.txt
+!experiments/approxmc_demo/*.md
+!experiments/approxmc_demo/*.cnf
+!experiments/approxmc_demo/*.h
+!experiments/approxmc_demo/*.cpp
+!experiments/approxmc_demo/*.py
+!experiments/approxmc_demo/*.sh
+experiments/approxmc_demo/bin/
+experiments/approxmc_demo/tmp/

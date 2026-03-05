@@ -352,6 +352,35 @@ target_link_libraries(souffle libsouffle)
 add_dependencies(souffle compiled)
 install(TARGETS souffle DESTINATION bin)
 
+# --------------------------------------------------
+# Standalone derivation graph probability query tool
+# --------------------------------------------------
+find_library(CUDD_LIBRARY NAMES cudd)
+find_library(SDD_LIBRARY NAMES sdd)
+find_library(SDDXX_LIBRARY NAMES sdd++)
+
+if (CUDD_LIBRARY)
+  set(SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS ${CUDD_LIBRARY} m)
+
+  add_executable(souffle-problog-graph-query
+                 problog_graph_query.cpp)
+  if (SDD_LIBRARY)
+    target_compile_definitions(souffle-problog-graph-query PRIVATE SOUFFLE_STANDALONE_HAS_SDD=1)
+    list(APPEND SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS ${SDD_LIBRARY})
+    if (SDDXX_LIBRARY)
+      list(APPEND SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS ${SDDXX_LIBRARY})
+    endif ()
+  else ()
+    message(STATUS "Building souffle-problog-graph-query without SDD backend: SDD library not found")
+  endif ()
+  target_link_libraries(souffle-problog-graph-query PRIVATE libsouffle compiled ${SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS})
+  add_dependencies(souffle-problog-graph-query compiled)
+  install(TARGETS souffle-problog-graph-query DESTINATION bin)
+else ()
+  message(WARNING "Skipping souffle-problog-graph-query: CUDD library not found")
+endif ()
+
+
 if (EMSCRIPTEN)
 target_link_libraries(souffle -sMODULARIZE=1
                       -s'EXPORTED_RUNTIME_METHODS=["FS"]' -sEXPORT_NAME="SOUFFLE")

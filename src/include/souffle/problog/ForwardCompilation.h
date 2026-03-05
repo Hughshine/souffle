@@ -30,7 +30,7 @@
 #include "souffle/problog/RegionalIncremental.h"
 
 
-Debugger& debugger = Debugger::getInstance();
+inline Debugger& debugger = Debugger::getInstance();
 
 static inline const std::unordered_set<std::string>& fcTraceTargets() {
     static std::unordered_set<std::string> targets;

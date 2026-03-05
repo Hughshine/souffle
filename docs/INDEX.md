@@ -88,6 +88,7 @@ Legend:
 - Historical benchmark notes remain in `problog-benchmark/README.sc.original.md` and `experiments/smokers_11/Plan.md`.
 
 ## Design Notes (Not Implemented)
+- [DESIGN] `docs/design/README.approx.pipeline.md` — approximate probabilistic pipeline (DG -> query formula -> AMC/WAMC)
 - [DESIGN] `docs/design/README.inc.regional.multi.md` — multi-turn inc-regional state
 - [DESIGN] `docs/design/README.inc.regional.opt.md` — inc-regional optimizations
 - [DESIGN] `docs/design/IncRegional_PaperFormal_TechReport.md` — formalization notes
