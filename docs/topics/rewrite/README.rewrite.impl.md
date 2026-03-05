@@ -114,6 +114,46 @@ Settings:
 
 Use this as a reference before making further optimizations. Keep changes small and measure on both small (P5) and larger (P12/P1x) cases, comparing total time and BDD sizes with and without rewrite.
 
+## Taint Follow-up TODO (2026-03-05)
+
+Recent taint full-pipeline runs (sampled datasets) show strong stage asymmetry:
+- `typefilter-dlog` and `pt-obj-dlog` are often highly rewriteable (mostly all-facts regions).
+- `cipt-cg-dlog` often gets weak shrink only (typical `rv_ratio` near `0.97-0.99` in hard cases).
+- For `cipt-cg-dlog`, weak payoff is mostly semantic (mutual recursion among
+  `ci_pt`, `ci_IM`, `ci_reachable*`, `interprocAssign`, `ci_fpt`) rather than
+  a pure implementation artifact.
+
+### TODO 1: Move split toward implicit rewrite-time behavior
+
+Goal:
+- Reduce repeated full-graph traversals caused by explicit split rounds.
+
+Direction:
+- When possible, apply split-equivalent rewiring as part of local rewrite application
+  and region maintenance, instead of a separate global split pass.
+- Prioritize this path for `typefilter-dlog` and `pt-obj-dlog`, where rewrite can
+  already remove most random variables and split overhead is easier to amortize.
+- Keep semantic equivalence with existing split modes and preserve regression checks
+  (including `rewrite_split_modes_equiv`).
+
+### TODO 2: Add per-query formula/derivation rewrite path
+
+Goal:
+- Get more rewrite opportunities on cyclic programs by breaking work at
+  query/formula boundaries instead of rewriting one whole derivation graph.
+
+Direction:
+- Build per-query (or per output component) formula graphs.
+- Define sharing strictly by stratum boundary:
+  - allowed: reuse derivations of nodes from earlier strata (already fixed);
+  - disallowed: sharing inside the same stratum (must be broken for rewrite).
+- In other words, "shared substructure" means cross-stratum reuse only, not
+  intra-stratum DAG merging.
+- Run rewrite at per-query granularity, then compile rewritten formulas to DD/WMC.
+- Use this as an equivalence-preserving way to reduce whole-graph cycle pressure
+  before DD construction.
+- Ensure result parity with current pipeline (same marginals under identical inputs).
+
 ## Related commits
 - `812ea4081` — docs(repo): refine README narratives
 - `3e9b024ca` — docs(readme): refresh eval and pipeline notes
