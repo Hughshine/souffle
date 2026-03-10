@@ -64,6 +64,8 @@ See `docs/TESTING.md` for test status and alternative verification paths.
 - `docs/project/DOC_SYSTEM.md`: documentation architecture and placement rules.
 - `docs/research/README.md`: active research map, experiment protocol, and
   curated current findings.
+- `docs/research/README.bootstrap.md`: Codex/agent startup pack for new
+  sessions.
 - `docs/project/PROBLOG_EXTENSION_STACK.md`: detailed ProbLog extension implementation from driver/parser through runtime pipeline.
 - `docs/TESTING.md`: verification strategy and CI command sources.
 - `docs/RUNBOOK.md`: run/rollback/troubleshooting guide.
@@ -81,9 +83,12 @@ See `docs/TESTING.md` for test status and alternative verification paths.
 - Need rewrite or incremental details: start at `docs/INDEX.md`.
 - Need current trusted experiment conclusions or provenance rules: start at
   `docs/research/README.md`.
+- Need to bootstrap a new Codex session quickly: start at
+  `docs/research/README.bootstrap.md`.
 - Commit hygiene: see `docs/process/README.git.md` for what to include and exclude.
 
 ## Related commits
+- `UNCOMMITTED` — docs(codex): add bootstrap entry point for new agent sessions
 - `UNCOMMITTED` — docs(system): add research entry points and fix testing guidance in README
 - `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack guide and link it from README
 - `UNCOMMITTED` — docs(repo): add project-level docs and move commit hygiene guide under docs/process

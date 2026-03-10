@@ -4,6 +4,7 @@
 - [AGENTS.md](AGENTS.md)
 - [docs/INDEX.md](docs/INDEX.md)
 - [docs/project/DOC_SYSTEM.md](docs/project/DOC_SYSTEM.md)
+- [docs/research/README.bootstrap.md](docs/research/README.bootstrap.md)
 - [docs/research/README.protocol.md](docs/research/README.protocol.md)
 - [docs/research/README.rewrite.status.md](docs/research/README.rewrite.status.md)
 
@@ -31,11 +32,12 @@ repository. It is written for Codex work, not Claude tooling hooks.
 
 ## Session Open Checklist
 When resuming a long-running line of work:
-1. Read `docs/INDEX.md` for the current map.
-2. Read `docs/project/DOC_SYSTEM.md` to place any new information correctly.
-3. Read `docs/research/README.md` and the relevant status/protocol docs.
-4. Read the topic doc that owns the behavior you are changing.
-5. Read design or historical docs only if the current docs do not answer the
+1. Read `docs/research/README.bootstrap.md` for the Codex startup pack.
+2. Read `docs/INDEX.md` for the current map.
+3. Read `docs/project/DOC_SYSTEM.md` to place any new information correctly.
+4. Read `docs/research/README.md` and the relevant status/protocol docs.
+5. Read the topic doc that owns the behavior you are changing.
+6. Read design or historical docs only if the current docs do not answer the
    question.
 
 ## Session Close Checklist
@@ -55,5 +57,5 @@ Before ending a meaningful experimental session:
 - verification coverage and any missing checks
 
 ## Related commits
+- `UNCOMMITTED` — docs(codex): route session-open flow through the bootstrap pack
 - `UNCOMMITTED` — docs(research): internalize Codex-oriented research memory workflow
-

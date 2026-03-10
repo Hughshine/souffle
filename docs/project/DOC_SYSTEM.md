@@ -49,6 +49,8 @@ new information has an obvious home.
   the stable conclusion into Layers 4 or 5 and keep raw evidence local.
 
 ## Research-Specific Rules
+- `docs/research/README.bootstrap.md` owns the fast startup pack for Codex and
+  other coding agents.
 - `docs/research/README.protocol.md` owns experiment validity and provenance
   rules.
 - `docs/research/README.memory.md` owns the session-open/session-close rules for
@@ -80,5 +82,6 @@ new information has an obvious home.
 - [archive/README.md](archive/README.md)
 
 ## Related commits
+- `UNCOMMITTED` — docs(codex): assign bootstrap-pack ownership to the research layer
 - `UNCOMMITTED` — docs(system): add explicit research layer and local-artifact policy
 - `UNCOMMITTED` — docs(project): define repository-wide doc architecture and placement rules

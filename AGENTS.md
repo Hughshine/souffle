@@ -7,6 +7,16 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - This file is the source of truth for agent constraints.
 - Keep commands here aligned with CI/scripts; otherwise add a TODO.
 
+## Session Bootstrap
+- New Codex sessions should read:
+  1. `AGENTS.md`
+  2. `docs/research/README.bootstrap.md`
+  3. `docs/research/README.protocol.md`
+  4. `docs/research/README.rewrite.status.md`
+  5. the owning topic doc for the subsystem being changed
+- If the task is experiment-heavy, keep `docs/research/*` current as part of the
+  work, not as an afterthought.
+
 ## Setup Commands (from CI/scripts)
 - Install deps (Ubuntu): `sudo sh/setup/install_ubuntu_deps.sh`
 - Install deps (macOS Intel): `sh/setup/install_macos_deps.sh`
@@ -53,6 +63,7 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - `docs/INDEX.md`
 - `docs/project/DOC_SYSTEM.md`
 - `docs/research/README.md`
+- `docs/research/README.bootstrap.md`
 - `docs/topics/testing/README.regression.md`
 - `docs/project/README.md`
 - `docs/process/README.git.md`
@@ -65,6 +76,7 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - [cmake/CTestDisabled.cmake](cmake/CTestDisabled.cmake)
 
 ## Related commits
+- `UNCOMMITTED` — docs(codex): add explicit Codex session bootstrap order
 - `UNCOMMITTED` — docs(system): point agent workflow to research docs for experiment-heavy work
 - `UNCOMMITTED` — test(regression): add maintained CTest regression workflow
 - `UNCOMMITTED` — docs(testing): document regression labels and cmake targets

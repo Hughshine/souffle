@@ -23,6 +23,8 @@ logs or generated outputs.
   explicitly curated.
 
 ## Contents
+- `docs/research/README.bootstrap.md`: Codex startup pack, project-in-one-page,
+  and domain-specific reading order.
 - `docs/research/README.protocol.md`: required experiment metadata, provenance,
   and validity rules.
 - `docs/research/README.memory.md`: Codex-oriented session and memory
@@ -33,11 +35,13 @@ logs or generated outputs.
 ## How To Use
 - Start here for experiment-heavy work, rewrite tuning, or benchmark
   interpretation.
+- For a brand-new Codex session, start with
+  `docs/research/README.bootstrap.md`.
 - Update a topic doc under `docs/topics/` when implementation behavior changes.
 - Update a status doc here when trusted conclusions, pitfalls, or benchmark
   readings change.
 - Keep raw artifacts local and distill only stable findings into tracked docs.
 
 ## Related commits
+- `UNCOMMITTED` — docs(codex): add bootstrap pack to research doc map
 - `UNCOMMITTED` — docs(research): internalize experiment protocol and rewrite status into repo docs
-

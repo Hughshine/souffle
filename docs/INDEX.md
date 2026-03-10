@@ -19,6 +19,7 @@ Legend:
 - [PRIMARY] `docs/USAGE.md` — CLI/runtime options (authoritative)
 - [PRIMARY] `docs/project/README.md` — project map (modules, fork delta, maintenance)
 - [PRIMARY] `docs/research/README.md` — active research map, protocol, and curated current findings
+- [PRIMARY] `docs/research/README.bootstrap.md` — Codex startup pack and domain-specific reading order
 - [PRIMARY] `docs/topics/README.md` — topical docs map (current behavior)
 - [PRIMARY] `docs/design/README.md` — design proposals map
 - [PRIMARY] `docs/historical/README.md` — archived/historical docs map
@@ -42,6 +43,7 @@ Legend:
 
 ## Research & Active Investigations
 - [PRIMARY] `docs/research/README.md` — research-doc map and ownership rules
+- [PRIMARY] `docs/research/README.bootstrap.md` — Codex bootstrap pack for new sessions
 - [PRIMARY] `docs/research/README.protocol.md` — experiment provenance and validity rules
 - [PRIMARY] `docs/research/README.memory.md` — Codex-oriented session memory and documentation workflow
 - [LATEST] `docs/research/README.rewrite.status.md` — curated current rewrite status and trusted active results
@@ -142,6 +144,7 @@ Legend:
 - [tests/regression/CMakeLists.txt](tests/regression/CMakeLists.txt)
 
 ## Related commits
+- `UNCOMMITTED` — docs(codex): index the Codex bootstrap pack
 - `UNCOMMITTED` — docs(system): add research layer and reorganize index priorities
 - `UNCOMMITTED` — docs(rewrite): index standalone derivation analyzer guide
 - `UNCOMMITTED` — docs(testing): add topical regression workflow docs and index entries
