@@ -5,6 +5,7 @@
 #include "souffle/problog/ForwardCompilation.h"
 #include "souffle/problog/GraphAnalyzer.h"
 #include "souffle/problog/GraphRewriter.h"
+#include "souffle/problog/ImplicitSplitRewrite.h"
 #include "souffle/problog/QueryManager.h"
 #include "souffle/problog/RuleManager.h"
 #include "souffle/problog/debug/Debugger.h"
@@ -24,6 +25,8 @@
 #include <unordered_map>
 #include <utility>
 
+#include "ImplicitSplitRewrite.cpp"
+
 namespace souffle::problog {
 
 namespace {
@@ -34,20 +37,220 @@ static std::size_t countInitialInputFacts() {
 }
 
 static std::size_t estimateBddVarCount(const SubgraphView& view) {
+    auto isSemanticRandomProb = [](double p) {
+        return p > 0.0 && p < 1.0;
+    };
     std::size_t count = 0;
     for (const auto& node : view.getNodes()) {
-        if (node->isFact && node->getProbability() != 1.0) {
+        if (node->isFact && isSemanticRandomProb(node->getProbability())) {
             ++count;
         }
     }
     for (const auto& edge : view.getEdges()) {
-        if (!edge->isDeterministic()) {
+        if (isSemanticRandomProb(edge->getProbability())) {
             ++count;
         }
     }
     return count;
 }
 
+static IncSubgraphView buildFullIncViewLocal(IncrementalDerivationGraph& graph) {
+    return IncSubgraphView(graph.getNodes(), graph.getEdges(), {}, {}, {}, {});
+}
+
+static IncSubgraphView buildFullIncViewLocal(
+        const std::unordered_set<NodePtr>& nodes, const std::unordered_set<EdgePtr>& edges) {
+    return IncSubgraphView(nodes, edges, {}, {}, {}, {});
+}
+
+static std::size_t precomputeIsolatedOutputFactsLocal(IncSubgraphView& view) {
+    std::size_t count = 0;
+    for (const auto& node : view.getNodes()) {
+        if (!node || !node->needOutput || !node->isFact || node->hasEvidence()) {
+            continue;
+        }
+        if (!view.getIncomingEdges(node).empty() || !view.getOutgoingEdges(node).empty()) {
+            continue;
+        }
+        if (precomputedProbResult.count(node)) {
+            continue;
+        }
+        precomputedProbResult[node] = node->getProbability();
+        node->needOutput = false;
+        node->isQuery = false;
+        ++count;
+    }
+    return count;
+}
+
+static ImplicitSplitMode resolveImplicitSplitMode(const std::string& splitMode) {
+    if (splitMode == "no-split") {
+        return ImplicitSplitMode::None;
+    }
+    if (splitMode == "complete-split") {
+        return ImplicitSplitMode::Complete;
+    }
+    return ImplicitSplitMode::Naive;
+}
+
+struct GraphSummary {
+    std::size_t nodes = 0;
+    std::size_t edges = 0;
+    std::size_t factNodes = 0;
+    std::size_t derivedNodes = 0;
+    std::size_t queryNodes = 0;
+    std::size_t outputNodes = 0;
+    std::size_t evidenceNodes = 0;
+    std::size_t shadowNodes = 0;
+    std::size_t probabilisticFactNodes = 0;
+    std::size_t probabilisticEdges = 0;
+    std::size_t randomVariables = 0;
+    std::size_t disjunctionNodes = 0;
+    std::size_t maxInDegree = 0;
+    std::size_t maxOutDegree = 0;
+    std::size_t maxHyperedgeInputs = 0;
+};
+
+static GraphSummary summarizeGraphLight(const DerivationGraphViewInterface& view) {
+    GraphSummary s;
+    const auto& nodes = view.getNodes();
+    const auto& edges = view.getEdges();
+    s.nodes = nodes.size();
+    s.edges = edges.size();
+
+    std::unordered_map<NodePtr, std::size_t> indeg;
+    std::unordered_map<NodePtr, std::size_t> outdeg;
+    indeg.reserve(nodes.size());
+    outdeg.reserve(nodes.size());
+    for (const auto& n : nodes) {
+        indeg.emplace(n, 0);
+        outdeg.emplace(n, 0);
+    }
+
+    for (const auto& e : edges) {
+        const auto inputs = view.getInputs(e);
+        s.maxHyperedgeInputs = std::max(s.maxHyperedgeInputs, inputs.size());
+        NodePtr out = view.getOutput(e);
+        if (out) {
+            auto it = indeg.find(out);
+            if (it != indeg.end()) {
+                ++it->second;
+            }
+        }
+        for (const auto& in : inputs) {
+            auto it = outdeg.find(in);
+            if (it != outdeg.end()) {
+                ++it->second;
+            }
+        }
+        if (!e->isDeterministic()) {
+            ++s.probabilisticEdges;
+        }
+    }
+
+    for (const auto& n : nodes) {
+        if (n->isFact) {
+            ++s.factNodes;
+            if (n->getProbability() < 1.0) {
+                ++s.probabilisticFactNodes;
+            }
+        } else {
+            ++s.derivedNodes;
+        }
+        if (n->isQuery) {
+            ++s.queryNodes;
+        }
+        if (n->needOutput) {
+            ++s.outputNodes;
+        }
+        if (n->hasEvidence()) {
+            ++s.evidenceNodes;
+        }
+        if (n->isShadow) {
+            ++s.shadowNodes;
+        }
+        const auto inIt = indeg.find(n);
+        const auto outIt = outdeg.find(n);
+        const std::size_t in = (inIt == indeg.end()) ? 0 : inIt->second;
+        const std::size_t out = (outIt == outdeg.end()) ? 0 : outIt->second;
+        s.maxInDegree = std::max(s.maxInDegree, in);
+        s.maxOutDegree = std::max(s.maxOutDegree, out);
+        if ((!n->isFact && in > 1) || (n->isFact && in > 0)) {
+            ++s.disjunctionNodes;
+        }
+    }
+    s.randomVariables = s.probabilisticFactNodes + s.probabilisticEdges;
+    return s;
+}
+
+static void addGraphSummaryInfo(
+        Debugger& debugger, const std::string& prefix, const GraphSummary& s) {
+    auto add = [&](const std::string& key, const std::size_t value) {
+        debugger.addInfo(prefix + key, std::to_string(value));
+    };
+    add("nodes", s.nodes);
+    add("edges", s.edges);
+    add("fact_nodes", s.factNodes);
+    add("derived_nodes", s.derivedNodes);
+    add("query_nodes", s.queryNodes);
+    add("output_nodes", s.outputNodes);
+    add("evidence_nodes", s.evidenceNodes);
+    add("shadow_nodes", s.shadowNodes);
+    add("prob_fact_nodes", s.probabilisticFactNodes);
+    add("prob_rule_edges", s.probabilisticEdges);
+    add("random_variables", s.randomVariables);
+    add("disjunction_nodes", s.disjunctionNodes);
+    add("max_in_degree", s.maxInDegree);
+    add("max_out_degree", s.maxOutDegree);
+    add("max_hyperedge_inputs", s.maxHyperedgeInputs);
+}
+
+static void recordFcHeartbeat(
+        Debugger& debugger,
+        StageInfo* stage,
+        const FcHeartbeatSnapshot& hb,
+        const std::string& mode,
+        std::size_t slowDone = 0,
+        std::size_t slowTotal = 0,
+        std::size_t componentId = std::numeric_limits<std::size_t>::max(),
+        std::size_t liveNodes = 0) {
+    debugger.addInfo("fc_heartbeat_mode", mode);
+    debugger.addInfo("fc_heartbeat_elapsed_ms", std::to_string(hb.elapsedMs));
+    debugger.addInfo("fc_heartbeat_round", std::to_string(hb.round));
+    debugger.addInfo("fc_heartbeat_cycle_id", std::to_string(hb.currentCycleId));
+    debugger.addInfo("fc_heartbeat_cycles_done", std::to_string(hb.completedCycles));
+    debugger.addInfo("fc_heartbeat_cycles_total", std::to_string(hb.totalCycles));
+    debugger.addInfo("fc_heartbeat_worklist_size", std::to_string(hb.worklistSize));
+    debugger.addInfo("fc_heartbeat_ready_queue_size", std::to_string(hb.readyQueueSize));
+    debugger.addInfo("fc_heartbeat_node_formulas", std::to_string(hb.nodeFormulaCount));
+    debugger.addInfo("fc_heartbeat_edge_formulas", std::to_string(hb.edgeFormulaCount));
+    debugger.addInfo("fc_heartbeat_live_nodes", std::to_string(liveNodes));
+    if (slowTotal > 0) {
+        debugger.addInfo("fc_heartbeat_slow_components_done", std::to_string(slowDone));
+        debugger.addInfo("fc_heartbeat_slow_components_total", std::to_string(slowTotal));
+    }
+    if (componentId != std::numeric_limits<std::size_t>::max()) {
+        debugger.addInfo("fc_heartbeat_component_id", std::to_string(componentId));
+    }
+    if (stage) {
+        std::string msg = "heartbeat mode=" + mode + " elapsed_ms=" + std::to_string(hb.elapsedMs) +
+                " round=" + std::to_string(hb.round) + " cycle=" + std::to_string(hb.currentCycleId) +
+                " cycles=" + std::to_string(hb.completedCycles) + "/" + std::to_string(hb.totalCycles) +
+                " worklist=" + std::to_string(hb.worklistSize) +
+                " ready=" + std::to_string(hb.readyQueueSize) +
+                " node_formulas=" + std::to_string(hb.nodeFormulaCount) +
+                " edge_formulas=" + std::to_string(hb.edgeFormulaCount) +
+                " live_nodes=" + std::to_string(liveNodes);
+        if (componentId != std::numeric_limits<std::size_t>::max()) {
+            msg += " component=" + std::to_string(componentId);
+        }
+        if (slowTotal > 0) {
+            msg += " slow_components=" + std::to_string(slowDone) + "/" + std::to_string(slowTotal);
+        }
+        stage->logMessage(Level::INFO, msg);
+    }
+    debugger.dumpReportJsonToFile();
+}
 static WeightedBDDManager::InitConfig makeCuddInitConfig(std::size_t varCount) {
     WeightedBDDManager::InitConfig cfg;
     const auto maxVars = std::numeric_limits<unsigned int>::max();
@@ -166,9 +369,108 @@ struct ComponentDecision {
     std::string reason;
 };
 
+static bool evaluateZeroRandConjComponent(
+        const ComponentSubgraph& comp,
+        std::unordered_map<NodePtr, double>& nodeProbs,
+        long long* evalMs = nullptr) {
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    SubgraphView subview(comp.nodes, comp.edges);
+    std::unordered_map<NodePtr, std::size_t> indegree;
+    indegree.reserve(comp.nodes.size());
+    for (const auto& node : comp.nodes) {
+        if (node) {
+            indegree.emplace(node, 0);
+        }
+    }
+    for (const auto& edge : comp.edges) {
+        if (!edge) {
+            continue;
+        }
+        NodePtr out = subview.getOutput(edge);
+        if (out) {
+            ++indegree[out];
+        }
+    }
+
+    std::queue<NodePtr> ready;
+    std::vector<NodePtr> topo;
+    topo.reserve(comp.nodes.size());
+    for (const auto& node : comp.nodes) {
+        if (node && indegree[node] == 0) {
+            ready.push(node);
+        }
+    }
+    while (!ready.empty()) {
+        NodePtr node = ready.front();
+        ready.pop();
+        topo.push_back(node);
+        for (const auto& edge : subview.getOutgoingEdges(node)) {
+            NodePtr out = subview.getOutput(edge);
+            if (!out) {
+                continue;
+            }
+            auto it = indegree.find(out);
+            if (it == indegree.end()) {
+                continue;
+            }
+            if (it->second == 0) {
+                continue;
+            }
+            --it->second;
+            if (it->second == 0) {
+                ready.push(out);
+            }
+        }
+    }
+    if (topo.size() != comp.nodes.size()) {
+        return false;
+    }
+
+    nodeProbs.clear();
+    nodeProbs.reserve(comp.nodes.size());
+    for (const auto& node : topo) {
+        if (!node) {
+            continue;
+        }
+        const auto& incoming = subview.getIncomingEdges(node);
+        if (incoming.empty()) {
+            nodeProbs[node] = node->isFact ? node->getProbability() : 0.0;
+            continue;
+        }
+        if (incoming.size() != 1) {
+            return false;
+        }
+        const auto& edge = incoming.front();
+        double prob = edge->isDeterministic() ? 1.0 : edge->getProbability();
+        const auto& inputs = subview.getInputs(edge);
+        const auto& negs = subview.getBodyNegations(edge);
+        for (std::size_t i = 0; i < inputs.size(); ++i) {
+            auto it = nodeProbs.find(inputs[i]);
+            if (it == nodeProbs.end()) {
+                return false;
+            }
+            double inputProb = it->second;
+            if (i < negs.size() && negs[i]) {
+                inputProb = 1.0 - inputProb;
+            }
+            prob *= inputProb;
+        }
+        nodeProbs[node] = prob;
+    }
+    if (evalMs) {
+        *evalMs = static_cast<long long>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count());
+    }
+    return true;
+}
+
 static std::vector<ComponentAnalysis> analyzeComponents(
         const DerivationGraphViewInterface& view,
         std::vector<ComponentSubgraph> components) {
+    auto isSemanticRandomProb = [](double p) {
+        return p > 0.0 && p < 1.0;
+    };
     auto& depGraph = view.getCycleDependencyGraph();
     std::vector<ComponentAnalysis> analyses;
     analyses.reserve(components.size());
@@ -181,7 +483,7 @@ static std::vector<ComponentAnalysis> analyzeComponents(
         incomingCounts.reserve(analysis.comp.nodes.size());
 
         for (const auto& node : analysis.comp.nodes) {
-            if (node->isFact && node->getProbability() != 1.0) {
+            if (node->isFact && isSemanticRandomProb(node->getProbability())) {
                 analysis.randVars++;
                 if (analysis.randVars == 1) {
                     analysis.singleRand.node = node;
@@ -198,7 +500,7 @@ static std::vector<ComponentAnalysis> analyzeComponents(
         }
 
         for (const auto& edge : analysis.comp.edges) {
-            if (!edge->isDeterministic()) {
+            if (isSemanticRandomProb(edge->getProbability())) {
                 analysis.randVars++;
                 if (analysis.randVars == 1) {
                     analysis.singleRand.node.reset();
@@ -231,7 +533,8 @@ static std::vector<ComponentAnalysis> analyzeComponents(
                 if (it->second > 1) {
                     analysis.hasOr = true;
                 }
-                if (node->isFact && it->second > 0) {
+                // A fact with derived support is only an OR-source if the base fact itself is probabilistic.
+                if (node->isFact && it->second > 0 && isSemanticRandomProb(node->getProbability())) {
                     analysis.hasOr = true;
                 }
             }
@@ -352,6 +655,136 @@ static void dumpSisoRegions(const DerivationGraphViewInterface& view) {
     std::cout << "[pipeline] dumpAllRegionsAsDot took " << dotMs << " ms\n";
 }
 
+static bool tryRunScbfBdd(
+        const CmdOptions& opt,
+        SubgraphView& view,
+        const std::vector<std::pair<UntypedTuple, bool>>& evidences,
+        const std::unordered_set<NodePtr>& seedTrueNodes,
+        std::map<NodePtr, BddNodeRef>& nodeFormulas,
+        std::map<EdgePtr, BddNodeRef>& edgeFormulas,
+        std::unique_ptr<WeightedBDDManager>& bddManager,
+        StageInfo* rewriteHybridStage) {
+    if (!opt.isScbfEnabled()) {
+        return false;
+    }
+    if (!evidences.empty()) {
+        std::cout << "[pipeline] --scbf fallback: evidence-conditioned path not enabled yet; use default FC/WMC"
+                  << std::endl;
+        return false;
+    }
+
+    Debugger& debugger = Debugger::getInstance();
+    debugger.addInfo("scbf_mode", "1");
+
+    if (rewriteHybridStage == nullptr) {
+        debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+    }
+
+    const auto varEstimate = estimateBddVarCount(view);
+    debugger.addInfo("rand_vars", std::to_string(varEstimate));
+    auto initConfig = makeCuddInitConfig(varEstimate);
+    debugger.addInfo("manager_init_vars", std::to_string(initConfig.numVars));
+    debugger.addInfo("manager_init_slots", std::to_string(initConfig.numSlots));
+    debugger.addInfo("manager_init_cache", std::to_string(initConfig.cacheSize));
+    debugger.addInfo("manager_init_maxmem_mb",
+            std::to_string(initConfig.maxMemory / (1024UL * 1024UL)));
+
+    auto initStart = std::chrono::steady_clock::now();
+    bddManager = std::make_unique<WeightedBDDManager>(initConfig);
+    auto initMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - initStart)
+                          .count();
+    debugger.addInfo("manager_init_ms", std::to_string(initMs));
+
+    probResult.clear();
+    auto t0 = std::chrono::steady_clock::now();
+    ScbfCyclewiseStats scbfStats;
+    buildFormulasCyclewiseScbf(view, *bddManager, nodeFormulas, edgeFormulas, seedTrueNodes, &scbfStats);
+    auto t1 = std::chrono::steady_clock::now();
+    auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    auto wmcMs = static_cast<long long>(scbfStats.outputWmcMs);
+    auto fcMs = totalMs > wmcMs ? (totalMs - wmcMs) : 0;
+    debugger.addInfo("fc_build_ms", std::to_string(fcMs));
+    debugger.addInfo("wmc_ms", std::to_string(wmcMs));
+    std::cout << "[pipeline] SCBF(BDD) cyclewise total=" << totalMs << " ms"
+              << " (fc=" << fcMs << " ms, wmc=" << wmcMs << " ms)\n";
+
+    for (const auto& [node, prob] : precomputedProbResult) {
+        probResult.emplace(node, prob);
+    }
+
+    debugger.endStage();
+    debugger.startStage(StageKind::IO_DUMP_FULL);
+    auto tDumpStart = std::chrono::steady_clock::now();
+    dumpProbabilities(probResult, opt.getOutputFileDir());
+    auto tDumpMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - tDumpStart)
+                           .count();
+    std::cout << "[pipeline] probability dump took " << tDumpMs << " ms\n";
+    debugger.endStage();
+    return true;
+}
+
+static bool tryRunScbfSdd(
+        const CmdOptions& opt,
+        SubgraphView& view,
+        const std::vector<std::pair<UntypedTuple, bool>>& evidences,
+        const std::unordered_set<NodePtr>& seedTrueNodes,
+        std::map<NodePtr, SddNodeRef>& nodeFormulas,
+        std::map<EdgePtr, SddNodeRef>& edgeFormulas,
+        std::unique_ptr<SddFormulaManager>& sddManager,
+        StageInfo* rewriteHybridStage) {
+    if (!opt.isScbfEnabled()) {
+        return false;
+    }
+    if (!evidences.empty()) {
+        std::cout << "[pipeline] --scbf fallback: evidence-conditioned path not enabled yet; use default FC/WMC"
+                  << std::endl;
+        return false;
+    }
+
+    Debugger& debugger = Debugger::getInstance();
+    debugger.addInfo("scbf_mode", "1");
+    if (rewriteHybridStage == nullptr) {
+        debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+    }
+
+    auto initStart = std::chrono::steady_clock::now();
+    sddManager = std::make_unique<SddFormulaManager>();
+    auto initMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - initStart)
+                          .count();
+    debugger.addInfo("manager_init_ms", std::to_string(initMs));
+
+    probResult.clear();
+    auto t0 = std::chrono::steady_clock::now();
+    ScbfCyclewiseStats scbfStats;
+    buildFormulasCyclewiseScbf(view, *sddManager, nodeFormulas, edgeFormulas, seedTrueNodes, &scbfStats);
+    auto t1 = std::chrono::steady_clock::now();
+    auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    auto wmcMs = static_cast<long long>(scbfStats.outputWmcMs);
+    auto fcMs = totalMs > wmcMs ? (totalMs - wmcMs) : 0;
+    debugger.addInfo("fc_build_ms", std::to_string(fcMs));
+    debugger.addInfo("wmc_ms", std::to_string(wmcMs));
+    std::cout << "[pipeline] SCBF(SDD) cyclewise total=" << totalMs << " ms"
+              << " (fc=" << fcMs << " ms, wmc=" << wmcMs << " ms)\n";
+
+    for (const auto& [node, prob] : precomputedProbResult) {
+        probResult.emplace(node, prob);
+    }
+
+    debugger.endStage();
+    debugger.startStage(StageKind::IO_DUMP_FULL);
+    auto tDumpStart = std::chrono::steady_clock::now();
+    dumpProbabilities(probResult, opt.getOutputFileDir());
+    auto tDumpMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - tDumpStart)
+                           .count();
+    std::cout << "[pipeline] probability dump took " << tDumpMs << " ms\n";
+    debugger.endStage();
+    return true;
+}
+
 static void runBddPipeline(
         const CmdOptions& opt,
         SouffleProgram& /*program*/,
@@ -380,7 +813,11 @@ static void runBddPipeline(
     //std::cout << "[dbg] seedTrueNodes size = " << seedTrueNodes.size() << "\
 
     if (computeProbabilities) {
-        if (opt.isRewriteEnabled()) {
+        if (tryRunScbfBdd(
+                    opt, view, evidences, seedTrueNodes, nodeFormulas, edgeFormulas, bddManager,
+                    rewriteHybridStage)) {
+            // SCBF path handled FC/WMC and dump.
+        } else if (opt.isRewriteEnabled()) {
             auto* hybridStage = rewriteHybridStage;
             if (!hybridStage) {
                 hybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
@@ -575,7 +1012,11 @@ static void runBddPipeline(
 
                 if (conjCandidate) {
                     ConjComponentEval eval;
-                    if (!evaluateConjComponent(analysis.comp, eval.probabilities, &eval.evalMs)) {
+                    const bool zeroRandConj = (analysis.randVars == 0);
+                    const bool conjOk = zeroRandConj
+                            ? evaluateZeroRandConjComponent(analysis.comp, eval.probabilities, &eval.evalMs)
+                            : evaluateConjComponent(analysis.comp, eval.probabilities, &eval.evalMs);
+                    if (!conjOk) {
                         if (logFastReasons) {
                             std::cout << "[fc-component] id=" << comp.id
                                       << " conj_skip=eval_failed"
@@ -1133,7 +1574,11 @@ static void runSddPipeline(
     //std::cout << "[dbg] seedTrueNodes size = " << seedTrueNodes.size() << "\
 
     if (computeProbabilities) {
-        if (opt.isRewriteEnabled()) {
+        if (tryRunScbfSdd(
+                    opt, view, evidences, seedTrueNodes, nodeFormulas, edgeFormulas, sddManager,
+                    rewriteHybridStage)) {
+            // SCBF path handled FC/WMC and dump.
+        } else if (opt.isRewriteEnabled()) {
             auto* hybridStage = rewriteHybridStage;
             if (!hybridStage) {
                 hybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
@@ -1636,6 +2081,7 @@ void runPipeline(
     DerivationGraph::setConstFoldEnabled(opt.isConstFoldEnabled());
     DerivationGraph::setConstDumpEnabled(opt.isDumpConstEnabled());
     precomputedProbResult.clear();
+    precomputedTupleProbResult.clear();
 
     if (::detForceEnabled) {
         std::cout << "[det-force] enabled; skip derivation graph and emit prob=1.0" << std::endl;
@@ -1648,8 +2094,8 @@ void runPipeline(
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);
     debugger.addInfo("input_fact_size", std::to_string(countInitialInputFacts()));
     auto t0 = std::chrono::steady_clock::now();
-    auto graph = DerivationGraph::createFrom(
-            DerivationManager::untypedTuple2RuleApplications, ruleManager, queryManager, factProb, evidences);
+    auto graph = std::unique_ptr<IncrementalDerivationGraph>(IncrementalDerivationGraph::createFrom(
+            DerivationManager::untypedTuple2RuleApplications, ruleManager, queryManager, factProb, evidences));
     auto t1 = std::chrono::steady_clock::now();
     std::cout << "[pipeline] create graph took "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
@@ -1679,19 +2125,148 @@ void runPipeline(
     if (opt.isRewriteEnabled() && !opt.isDerivationOnly()) {
         rewriteHybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
     }
-    if (opt.isRewriteEnabled()) {
+    if (opt.isRewriteEnabled() && !opt.isDerivationOnly()) {
         auto rewriteStart = std::chrono::steady_clock::now();
-        GraphRewriter rewriter;
-        RewriteFeatureFlags rewriteFlags;
-        const auto& splitMode = opt.getSplitMode();
-        if (splitMode == "no-split") {
-            rewriteFlags.splitMode = SplitMode::None;
-        } else if (splitMode == "complete-split") {
-            rewriteFlags.splitMode = SplitMode::Complete;
+        GraphRewriteStats rewriteStats;
+        if (opt.isImplicitRewriteEnabled()) {
+            std::unordered_set<UntypedTuple> originalOutputTuples;
+            std::unordered_set<std::string> originalOutputRelations;
+            for (const auto& node : view.getNodes()) {
+                if (node && node->needOutput) {
+                    originalOutputTuples.insert(node->getTuple());
+                    originalOutputRelations.insert(node->getTuple().relation_name);
+                }
+            }
+            ImplicitSplitPipelineOptions rewriteOptions;
+            rewriteOptions.splitMode = resolveImplicitSplitMode(opt.getSplitMode());
+            rewriteOptions.runOverlayFastPaths = true;
+            rewriteOptions.runOverlaySingleHyperedge = false;
+            rewriteOptions.runOverlayAllFacts = true;
+            rewriteOptions.computeOutputMarginals = false;
+            rewriteOptions.collectPatternStats = false;
+            rewriteOptions.iterateSplitRewrite = false;
+            auto implicitResult = runImplicitSplitRewritePipeline(view, rewriteOptions);
+            rewriteStats = implicitResult.stats.graphRewriteStats;
+            precomputedTupleProbResult.clear();
+            for (const auto& [tupleStr, prob] : implicitResult.carriedPrecomputedTupleProbs) {
+                precomputedTupleProbResult[tupleStr] = prob;
+            }
+            graph = std::move(implicitResult.materialized.graph);
+            if (!graph) {
+                graph = std::make_unique<IncrementalDerivationGraph>();
+            }
+            view = buildFullIncViewLocal(
+                    implicitResult.materialized.liveNodes, implicitResult.materialized.liveEdges);
+            std::unordered_set<UntypedTuple> liveViewTuples;
+            liveViewTuples.reserve(view.getNodes().size());
+            for (const auto& node : view.getNodes()) {
+                if (node) {
+                    liveViewTuples.insert(node->getTuple());
+                }
+            }
+            std::unordered_set<UntypedTuple> precomputedTuples;
+            std::unordered_set<std::string> precomputedTupleStrings;
+            precomputedTuples.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
+            precomputedTupleStrings.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
+            for (const auto& [node, _] : precomputedProbResult) {
+                if (node) {
+                    precomputedTuples.insert(node->getTuple());
+                    precomputedTupleStrings.insert(node->getTuple().toString());
+                }
+            }
+            for (const auto& [tupleStr, _] : precomputedTupleProbResult) {
+                precomputedTupleStrings.insert(tupleStr);
+            }
+            for (const auto& node : view.getNodes()) {
+                if (node && originalOutputRelations.count(node->getTuple().relation_name) &&
+                        !precomputedTuples.count(node->getTuple()) &&
+                        !precomputedTupleStrings.count(node->getTuple().toString())) {
+                    node->setQuery();
+                }
+            }
+            const std::size_t recoveredIsolatedFacts = precomputeIsolatedOutputFactsLocal(view);
+            if (recoveredIsolatedFacts > 0) {
+                precomputedTuples.clear();
+                precomputedTupleStrings.clear();
+                precomputedTuples.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
+                precomputedTupleStrings.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
+                for (const auto& [node, _] : precomputedProbResult) {
+                    if (node) {
+                        precomputedTuples.insert(node->getTuple());
+                        precomputedTupleStrings.insert(node->getTuple().toString());
+                    }
+                }
+                for (const auto& [tupleStr, _] : precomputedTupleProbResult) {
+                    precomputedTupleStrings.insert(tupleStr);
+                }
+            }
+            std::size_t recoveredOutputFacts = 0;
+            for (const auto& tuple : originalOutputTuples) {
+                if (liveViewTuples.count(tuple) || precomputedTuples.count(tuple) ||
+                        precomputedTupleStrings.count(tuple.toString())) {
+                    continue;
+                }
+                NodePtr recovered = graph ? graph->findNode(tuple) : nullptr;
+                if (!recovered || !recovered->isFact) {
+                    continue;
+                }
+                precomputedTupleProbResult.emplace(tuple.toString(), recovered->getProbability());
+                ++recoveredOutputFacts;
+            }
+            if (recoveredIsolatedFacts > 0 || recoveredOutputFacts > 0) {
+                std::cout << "[pipeline] implicit recovered isolated_output_facts="
+                          << recoveredIsolatedFacts
+                          << " tuple_output_facts=" << recoveredOutputFacts << std::endl;
+            }
+            const GraphSummary implicitHandoffSummary = summarizeGraphLight(view);
+            std::cout << "[pipeline] implicit handoff"
+                      << " nodes=" << implicitHandoffSummary.nodes
+                      << " edges=" << implicitHandoffSummary.edges
+                      << " random_vars=" << implicitHandoffSummary.randomVariables
+                      << " output_nodes=" << implicitHandoffSummary.outputNodes
+                      << " precomputed_nodes=" << precomputedProbResult.size()
+                      << " precomputed_tuples=" << precomputedTupleProbResult.size()
+                      << std::endl;
+            std::cout << "[pipeline] implicit rewrite total_ms=" << implicitResult.stats.totalMs
+                      << " overlay_prep_ms=" << implicitResult.stats.overlayPrepMs
+                      << " overlay_split_ms=" << implicitResult.stats.overlaySplitMs
+                      << " overlay_fastpath_ms=" << implicitResult.stats.overlayFastPathMs
+                      << " materialize_ms=" << implicitResult.stats.materializeMs
+                      << " detect_ms=" << implicitResult.stats.graphDetectMs
+                      << " graph_rewrite_ms=" << implicitResult.stats.graphRewriteMs
+                      << " overlay_aliases=" << implicitResult.stats.overlayStats.aliasesCreated
+                      << " overlay_edges_aliased=" << implicitResult.stats.overlayStats.edgesAliased
+                      << " overlay_all_facts=" << implicitResult.stats.overlayStats.allFactsRewrites
+                      << " overlay_single=" << implicitResult.stats.overlayStats.singleHyperedgeRewrites
+                      << std::endl;
+            if (rewriteHybridStage) {
+                debugger.addInfo("rewrite_engine", "implicit");
+                debugger.addInfo("implicit_overlay_prep_ms",
+                        std::to_string(static_cast<long long>(implicitResult.stats.overlayPrepMs)));
+                debugger.addInfo("implicit_graph_rewrite_ms",
+                        std::to_string(static_cast<long long>(implicitResult.stats.graphRewriteMs)));
+                rewriteHybridStage->logMessage(Level::INFO, "rewrite_engine=implicit");
+                rewriteHybridStage->logMessage(Level::INFO,
+                        "implicit_overlay_prep_ms=" +
+                                std::to_string(static_cast<long long>(implicitResult.stats.overlayPrepMs)));
+                rewriteHybridStage->logMessage(Level::INFO,
+                        "implicit_graph_rewrite_ms=" +
+                                std::to_string(static_cast<long long>(implicitResult.stats.graphRewriteMs)));
+            }
         } else {
-            rewriteFlags.splitMode = SplitMode::Naive;
+            GraphRewriter rewriter;
+            RewriteFeatureFlags rewriteFlags;
+            rewriteFlags.forceCompleteSisoDetect = opt.isForceCompleteSisoDetectEnabled();
+            const auto& splitMode = opt.getSplitMode();
+            if (splitMode == "no-split") {
+                rewriteFlags.splitMode = SplitMode::None;
+            } else if (splitMode == "complete-split") {
+                rewriteFlags.splitMode = SplitMode::Complete;
+            } else {
+                rewriteFlags.splitMode = SplitMode::Naive;
+            }
+            rewriteStats = rewriter.rewriteUntilFixpoint(*graph, view, opt.isProfiling(), rewriteFlags);
         }
-        auto rewriteStats = rewriter.rewriteUntilFixpoint(*graph, view, opt.isProfiling(), rewriteFlags);
         auto rewriteMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now() - rewriteStart)
                                  .count();
@@ -1713,12 +2288,18 @@ void runPipeline(
                   << ", randomVarsRemoved=" << rewriteStats.totalRandomVars
                   << ", simpleFactRegions=" << rewriteStats.simpleFactRegions << std::endl;
         if (rewriteHybridStage) {
+            debugger.addInfo("rewrite_engine", opt.isImplicitRewriteEnabled() ? "implicit" : "legacy");
             debugger.addInfo("rewrite_ms", std::to_string(rewriteMs));
+            rewriteHybridStage->logMessage(Level::INFO,
+                    std::string("rewrite_engine=") + (opt.isImplicitRewriteEnabled() ? "implicit" : "legacy"));
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_ms=" + std::to_string(rewriteMs));
         }
         if (opt.isDumpDotEnabled()) {
             view.dumpDot(makeOutputPath(opt, "rewrite_final.dot"));
         }
+    } else if (opt.isRewriteEnabled() && opt.isDerivationOnly()) {
+        std::cout << "[pipeline] derivation-only mode; skip rewrite" << std::endl;
+    }
     }
 
     if (program.getKnowledge() == souffle::Knowledge::BDD) {

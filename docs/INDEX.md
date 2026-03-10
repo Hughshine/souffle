@@ -87,6 +87,12 @@ Legend:
 - Historical benchmark notes remain in `problog-benchmark/README.sc.original.md` and `experiments/smokers_11/Plan.md`.
 
 ## Design Notes (Not Implemented)
+- [DESIGN] `docs/design/README.scbf.pipeline.md` — SCBF pipeline (DG -> SCBF -> rewrite -> DD/WMC)
+- [DESIGN] `docs/design/README.scbf.ir.md` — independent SCBF IR/module prototype and smoke workflow
+- [DESIGN] `docs/design/README.scbf.evaluator.md` — independent SCBF evaluator prototype and smoke workflow
+- [DESIGN] `docs/design/README.scbf.formula.md` — explicit SCBF target-local formula bundle IR
+- [DESIGN] `docs/design/README.scbf.global-formula.md` — stitched global SCBF formula IR above target-local bundles
+- [DESIGN] `docs/design/README.scbf.rewrite.md` — independent SCBF formula-level rewrite prototype
 - [DESIGN] `docs/design/README.inc.regional.multi.md` — multi-turn inc-regional state
 - [DESIGN] `docs/design/README.inc.regional.opt.md` — inc-regional optimizations
 - [DESIGN] `docs/design/IncRegional_PaperFormal_TechReport.md` — formalization notes

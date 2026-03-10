@@ -1806,6 +1806,7 @@ void DerivationGraph::removeSelfLoopEdges(
 }
 
 inline std::unordered_map<NodePtr, double> precomputedProbResult;
+inline std::unordered_map<std::string, double> precomputedTupleProbResult;
 inline std::unordered_map<NodePtr, double> probResult;
 
 void dumpProbabilities(
@@ -1815,6 +1816,7 @@ void dumpProbabilities(
         outputDir + "/" + fileName + ".prob"
     );
     outputFile << std::setprecision(8);
+    std::map<std::string, double> tupleProbabilities;
     std::vector<NodePtr> sortedNodes;
     std::unordered_set<NodePtr> seen;
     for (const auto& [node, prob] : nodeProbabilities) {
@@ -1827,11 +1829,6 @@ void dumpProbabilities(
             sortedNodes.push_back(node);
         }
     }
-    std::sort(sortedNodes.begin(), sortedNodes.end(),
-              [](const NodePtr& a, const NodePtr& b) {
-                  return a->getTuple().toString() < b->getTuple().toString();
-              });
-    std::size_t outputCount = 0;
     for (auto& node: sortedNodes) {
         double prob = 0.0;
         auto it = nodeProbabilities.find(node);
@@ -1845,14 +1842,20 @@ void dumpProbabilities(
             prob = itPre->second;
         }
         if (node->needOutput || precomputedProbResult.count(node)) {
-            outputFile << node->getTuple().toString() << " : " << prob << std::endl;
-            ++outputCount;
+            tupleProbabilities.emplace(node->getTuple().toString(), prob);
         }
     }
+    for (const auto& [tupleStr, prob] : precomputedTupleProbResult) {
+        tupleProbabilities.emplace(tupleStr, prob);
+    }
+    for (const auto& [tupleStr, prob] : tupleProbabilities) {
+        outputFile << tupleStr << " : " << prob << std::endl;
+    }
     std::cout << "[pipeline] dumpProbabilities nodes=" << sortedNodes.size()
-              << " outputs=" << outputCount
+              << " outputs=" << tupleProbabilities.size()
               << " prob_nodes=" << nodeProbabilities.size()
               << " precomputed_nodes=" << precomputedProbResult.size()
+              << " precomputed_tuple_nodes=" << precomputedTupleProbResult.size()
               << std::endl;
 
 }

@@ -76,6 +76,7 @@ protected:
     bool prune_extra = false;  // enable extra prune pass (outputless components)
     bool fold_const = false;  // enable deterministic constant pre-analysis (no prune rewrite)
     bool enable_rewrite = false;  // enable SISO-based graph rewriting
+    bool enable_implicit_rewrite = false;  // enable experimental implicit-split rewrite pipeline
     std::string split_mode = "naive-split";  // split mode for rewrite: no-split/naive-split/complete-split
     bool dump_json = false;  // dump derivation graph JSON after prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
@@ -90,6 +91,8 @@ protected:
     bool det_force = false;  // force deterministic evaluation (skip derivation graph)
     bool reuse_var_index = true;  // reuse freed variable indices in CUDD (default on)
     bool single_rand_fast = true;  // enable single-randvar fast path in component FC
+    bool force_complete_siso_detect = false;  // force full-graph SISO detection (disable dirty-frontier detect)
+    bool enable_scbf = false;  // enable experimental SCBF full pipeline
 public:
     // all argument constructor
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
@@ -158,6 +161,9 @@ public:
     bool isRewriteEnabled() const {
         return enable_rewrite;
     }
+    bool isImplicitRewriteEnabled() const {
+        return enable_implicit_rewrite;
+    }
     const std::string& getSplitMode() const {
         return split_mode;
     }
@@ -209,6 +215,12 @@ public:
     bool isSingleRandFastEnabled() const {
         return single_rand_fast;
     }
+    bool isForceCompleteSisoDetectEnabled() const {
+        return force_complete_siso_detect;
+    }
+    bool isScbfEnabled() const {
+        return enable_scbf;
+    }
 
     /**
      * get filename of profile
@@ -250,6 +262,7 @@ public:
                 {"derv-only", optional_argument, nullptr, 'd'},
                 {"merge-bi-imp", false, nullptr, 'e'}, {"prune-extra", false, nullptr, 1004}, {"fold-const", false, nullptr, 'C'},
                 {"rewrite", false, nullptr, 'r'},
+                {"implicit-rewrite", false, nullptr, 1019},
                 {"split-mode", true, nullptr, 'P'},
                 {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
                 {"dumpstat", false, nullptr, 'S'},
@@ -263,6 +276,8 @@ public:
                 {"det-force", false, nullptr, 1007},
                 {"no-reuse-var-index", false, nullptr, 1008},
                 {"no-single-rand-fast", false, nullptr, 1001},
+                {"force-complete-siso-detect", false, nullptr, 1016},
+                {"scbf", false, nullptr, 1018},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -358,6 +373,10 @@ public:
                 case 'r':
                     enable_rewrite = true;
                     break;
+                case 1019:
+                    enable_rewrite = true;
+                    enable_implicit_rewrite = true;
+                    break;
                 case 'P': {
                     std::string modeArg(optarg);
                     if (modeArg == "no-split" || modeArg == "none") {
@@ -411,6 +430,12 @@ public:
                 case 1001:
                     single_rand_fast = false;
                     break;
+                case 1016:
+                    force_complete_siso_detect = true;
+                    break;
+                case 1018:
+                    enable_scbf = true;
+                    break;
                 default: printHelpPage(exec_name); return false;
             }
         }
@@ -448,6 +473,7 @@ private:
         std::cerr << "    --prune-extra                -- Enable outputless-component pruning in prune\n";
         std::cerr << "    -C, --fold-const             -- Enable deterministic constant pre-analysis (no prune rewrite; negation ignored)\n";
         std::cerr << "    -r, --rewrite                -- Enable SISO-based graph rewriting\n";
+        std::cerr << "    --implicit-rewrite           -- Enable experimental implicit-split rewrite pipeline\n";
         std::cerr << "    --split-mode=<MODE>          -- Split mode for rewrite: no-split, naive-split, complete-split\n";
         std::cerr << "    --dumpjson                   -- Dump derivation graph JSON after prune\n";
         std::cerr << "    --dumpdot                    -- Dump derivation graph DOT after prune\n";
@@ -460,6 +486,8 @@ private:
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
         std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
         std::cerr << "    --det-force                  -- Force deterministic mode (skip derivation graph; emit prob=1.0)\n";
+        std::cerr << "    --force-complete-siso-detect -- Disable dirty-frontier SISO detect and always scan full graph\n";
+        std::cerr << "    --scbf                       -- Enable experimental SCBF full pipeline (opt-in)\n";
         std::cerr << "    --no-reuse-var-index         -- Disable reuse of freed CUDD variable indices (reuse is unsafe unless deletion fully removes vars)\n";
         std::cerr << "    --no-single-rand-fast        -- Disable single-randvar fast path in component FC\n";
 #ifdef _OPENMP

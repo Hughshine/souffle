@@ -292,8 +292,27 @@ struct FcProfileStats {
     double input_literal_ms = 0.0;
 };
 
+struct FcHeartbeatSnapshot {
+    std::size_t elapsedMs = 0;
+    std::size_t totalCycles = 0;
+    std::size_t completedCycles = 0;
+    std::size_t currentCycleId = 0;
+    std::size_t round = 0;
+    std::size_t readyQueueSize = 0;
+    std::size_t worklistSize = 0;
+    std::size_t nodeFormulaCount = 0;
+    std::size_t edgeFormulaCount = 0;
+};
+
+struct ScbfCyclewiseStats {
+    std::size_t cyclesProcessed = 0;
+    std::size_t boundaryNodesKept = 0;
+    std::size_t purgedNodeFormulas = 0;
+    std::size_t purgedEdgeFormulas = 0;
+    std::size_t outputWmcMs = 0;
+};
 template<typename FormulaNodeRef>
-void buildFormulasCyclewise(
+void buildFormulasCyclewiseInternal(
     SubgraphView& view,
     FormulaManager<FormulaNodeRef>& formulaManager,
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
@@ -301,7 +320,11 @@ void buildFormulasCyclewise(
     const std::unordered_set<NodePtr>& seedTrueNodes = {},
     std::vector<double>* roundTimingsMs = nullptr,
     bool allowConst = true,
-    bool allowDumpConst = true
+    bool allowDumpConst = true,
+    const std::function<void(const FcHeartbeatSnapshot&)>& heartbeatCallback = nullptr,
+    std::size_t heartbeatIntervalMs = 5000,
+    bool breakCyclesForScbf = false,
+    ScbfCyclewiseStats* scbfStatsOut = nullptr
 ) {
      FunctionTimer timer("Build Formulas Cyclewise using DAG + Depth");
      const bool fcProfile = fcProfileEnabled;
@@ -317,6 +340,13 @@ void buildFormulasCyclewise(
      std::size_t factNodes = 0;
      std::size_t detEdges = 0;
      std::size_t nonDetEdges = 0;
+     ScbfCyclewiseStats scbfLocalStats;
+     ScbfCyclewiseStats* scbfStats = breakCyclesForScbf
+             ? (scbfStatsOut ? scbfStatsOut : &scbfLocalStats)
+             : nullptr;
+     if (scbfStats) {
+         *scbfStats = ScbfCyclewiseStats{};
+     }
      const bool useConst = allowConst && DerivationGraph::isConstFoldEnabled();
      const bool dumpConst = allowDumpConst && DerivationGraph::isConstDumpEnabled();
      ConstAnalysisResult constInfo;
@@ -587,6 +617,61 @@ void buildFormulasCyclewise(
             }
         }
 
+        if (breakCyclesForScbf) {
+            std::unordered_set<NodePtr> boundaryNodes;
+            boundaryNodes.reserve(depGraph.nodeCycles[cid].size());
+            for (auto node : depGraph.nodeCycles[cid]) {
+                bool isBoundary = false;
+                for (const auto& outEdge : view.getOutgoingEdges(node)) {
+                    auto it = depGraph.edgeToCycleIndex.find(outEdge);
+                    if (it != depGraph.edgeToCycleIndex.end() && it->second != cid) {
+                        isBoundary = true;
+                        break;
+                    }
+                }
+                if (isBoundary) {
+                    boundaryNodes.insert(node);
+                }
+            }
+            if (scbfStats) {
+                scbfStats->cyclesProcessed++;
+                scbfStats->boundaryNodesKept += boundaryNodes.size();
+            }
+
+            auto wmcStart = Clock::now();
+            for (auto node : depGraph.nodeCycles[cid]) {
+                if (!node->needOutput) {
+                    continue;
+                }
+                auto it = nodeFormulas.find(node);
+                if (it == nodeFormulas.end() || !it->second.get()) {
+                    continue;
+                }
+                probResult[node] = formulaManager.computeWeightedModelCount(it->second);
+            }
+            auto wmcMs = static_cast<std::size_t>(toMs(Clock::now() - wmcStart));
+            if (scbfStats) {
+                scbfStats->outputWmcMs += wmcMs;
+            }
+
+            std::size_t purgedEdges = 0;
+            for (auto edge : depGraph.edgeCycles[cid]) {
+                purgedEdges += edgeFormulas.erase(edge);
+            }
+            std::size_t purgedNodes = 0;
+            for (auto node : depGraph.nodeCycles[cid]) {
+                if (boundaryNodes.count(node)) {
+                    continue;
+                }
+                purgedNodes += nodeFormulas.erase(node);
+            }
+            if (scbfStats) {
+                scbfStats->purgedEdgeFormulas += purgedEdges;
+                scbfStats->purgedNodeFormulas += purgedNodes;
+            }
+            formulaManager.tryGarbageCollection();
+        }
+
         for (auto succ : depGraph.reverseDependencies[cid]) {
             if (--remainingInDegrees[succ] == 0) {
                 ready.push(succ);
@@ -645,8 +730,57 @@ void buildFormulasCyclewise(
                   << " input_literal_ms=" << stats.input_literal_ms
                   << std::endl;
     }
+    if (breakCyclesForScbf) {
+        const std::size_t cycles = scbfStats ? scbfStats->cyclesProcessed : 0;
+        const std::size_t boundaryNodes = scbfStats ? scbfStats->boundaryNodesKept : 0;
+        const std::size_t purgedNodes = scbfStats ? scbfStats->purgedNodeFormulas : 0;
+        const std::size_t purgedEdges = scbfStats ? scbfStats->purgedEdgeFormulas : 0;
+        const std::size_t outputWmcMs = scbfStats ? scbfStats->outputWmcMs : 0;
+        debugger.addInfo("scbf_cycles", std::to_string(cycles));
+        debugger.addInfo("scbf_boundary_nodes", std::to_string(boundaryNodes));
+        debugger.addInfo("scbf_purged_nodes", std::to_string(purgedNodes));
+        debugger.addInfo("scbf_purged_edges", std::to_string(purgedEdges));
+        debugger.addInfo("scbf_output_wmc_ms", std::to_string(outputWmcMs));
+        std::cout << "[scbf-cyclewise] cycles=" << cycles
+                  << " boundary_nodes=" << boundaryNodes
+                  << " purged_nodes=" << purgedNodes
+                  << " purged_edges=" << purgedEdges
+                  << " output_wmc_ms=" << outputWmcMs
+                  << std::endl;
+    }
 
 //    std::cout << "鉁?buildFormulasCyclewiseNew completed using global depth info.\n";
+}
+
+template<typename FormulaNodeRef>
+void buildFormulasCyclewise(
+    SubgraphView& view,
+    FormulaManager<FormulaNodeRef>& formulaManager,
+    std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
+    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
+    const std::unordered_set<NodePtr>& seedTrueNodes = {},
+    std::vector<double>* roundTimingsMs = nullptr,
+    bool allowConst = true,
+    bool allowDumpConst = true,
+    const std::function<void(const FcHeartbeatSnapshot&)>& heartbeatCallback = nullptr,
+    std::size_t heartbeatIntervalMs = 5000
+) {
+    buildFormulasCyclewiseInternal(view, formulaManager, nodeFormulas, edgeFormulas, seedTrueNodes,
+            roundTimingsMs, allowConst, allowDumpConst, heartbeatCallback, heartbeatIntervalMs,
+            false, nullptr);
+}
+
+template<typename FormulaNodeRef>
+void buildFormulasCyclewiseScbf(
+    SubgraphView& view,
+    FormulaManager<FormulaNodeRef>& formulaManager,
+    std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
+    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
+    const std::unordered_set<NodePtr>& seedTrueNodes = {},
+    ScbfCyclewiseStats* scbfStatsOut = nullptr
+) {
+    buildFormulasCyclewiseInternal(view, formulaManager, nodeFormulas, edgeFormulas, seedTrueNodes,
+            nullptr, true, true, nullptr, 5000, true, scbfStatsOut);
 }
 
 struct ComponentSubgraph {
@@ -1123,4 +1257,3 @@ buildFormulasCyclewiseByComponent(
 }
 
 #endif //FORWARDCOMPILATION_H
-
