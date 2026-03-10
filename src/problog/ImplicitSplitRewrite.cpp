@@ -599,50 +599,258 @@ bool ImplicitSplitOverlay::rewriteSingleHyperedgePass(ImplicitSplitOverlayStats*
 
 void ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
         bool enableSingleHyperedge, bool enableAllFacts, ImplicitSplitOverlayStats* stats) {
+    struct FastPathCandidate {
+        enum class Kind {
+            SingleHyperedge,
+            AllFacts,
+        };
+
+        Kind kind;
+        std::size_t edgeIndex = 0;
+        std::vector<SplitNodeRef> internalNodes;
+    };
+
     const auto initialRebuildStart = Clock::now();
     rebuildActiveEdgeIndices();
     if (stats) {
         ++stats->rebuildIndexCount;
         stats->rebuildIndexMs += elapsedMs(initialRebuildStart);
     }
+
+    auto collectInternalNodes = [&](std::size_t edgeIndex) {
+        std::vector<SplitNodeRef> nodes;
+        std::unordered_set<SplitNodeRef, SplitNodeRefHash> seen;
+        if (edgeIndex >= edges_.size()) {
+            return nodes;
+        }
+        const auto& edge = edges_[edgeIndex];
+        auto addNode = [&](const SplitNodeRef& ref) {
+            if (!ref.base) {
+                return;
+            }
+            if (seen.insert(ref).second) {
+                nodes.push_back(ref);
+            }
+        };
+        addNode(SplitNodeRef{edge.output, 0});
+        for (const auto& input : edge.inputs) {
+            addNode(input);
+        }
+        return nodes;
+    };
+
+    auto classifySingleHyperedge = [&](std::size_t edgeIndex, SplitNodeRef* siOut,
+                                       bool* siNegatedOut) {
+        if (edgeIndex >= edges_.size()) {
+            return false;
+        }
+        const auto& edge = edges_[edgeIndex];
+        if (!edge.active || edge.inputs.size() <= 1 || !edge.output) {
+            return false;
+        }
+        std::size_t factInputs = 0;
+        SplitNodeRef si{};
+        bool sawSi = false;
+        bool invalid = false;
+        bool siNegated = false;
+        for (std::size_t i = 0; i < edge.inputs.size(); ++i) {
+            const auto& input = edge.inputs[i];
+            if (isFactRef(input)) {
+                const auto& inputState = nodeState_.at(input.base);
+                if (activeIncomingCount(input.base) != 0 || inputState.hasEvidence || inputState.needOutput) {
+                    invalid = true;
+                    break;
+                }
+                if (activeOutgoingCount(input) != 1) {
+                    invalid = true;
+                    break;
+                }
+                ++factInputs;
+                continue;
+            }
+            if (sawSi) {
+                invalid = true;
+                break;
+            }
+            sawSi = true;
+            si = input;
+            siNegated = i < edge.negations.size() ? edge.negations[i] : false;
+        }
+        if (invalid || !sawSi || factInputs == 0 || isFactRef(si) || !si.base || si.base == edge.output) {
+            return false;
+        }
+        if (siOut) {
+            *siOut = si;
+        }
+        if (siNegatedOut) {
+            *siNegatedOut = siNegated;
+        }
+        return true;
+    };
+
+    auto isAllFactsCandidate = [&](std::size_t edgeIndex) {
+        if (edgeIndex >= edges_.size()) {
+            return false;
+        }
+        const auto& edge = edges_[edgeIndex];
+        if (!edge.active || edge.inputs.empty() || !edge.output) {
+            return false;
+        }
+        for (const auto& input : edge.inputs) {
+            if (!isFactRef(input)) {
+                return false;
+            }
+            const auto& inputState = nodeState_.at(input.base);
+            if (inputState.hasEvidence) {
+                return false;
+            }
+            if (activeOutgoingCount(input) != 1) {
+                return false;
+            }
+        }
+        return activeIncomingCount(edge.output) == 1;
+    };
+
+    auto applySingleHyperedge = [&](std::size_t edgeIndex) {
+        SplitNodeRef si{};
+        bool siNegated = false;
+        if (!classifySingleHyperedge(edgeIndex, &si, &siNegated)) {
+            return false;
+        }
+        auto& edge = edges_[edgeIndex];
+        double probability = edge.deterministic ? 1.0 : edge.probability;
+        for (std::size_t i = 0; i < edge.inputs.size(); ++i) {
+            if (edge.inputs[i] == si) {
+                continue;
+            }
+            double inputProb = factProbabilityOf(edge.inputs[i]);
+            if (i < edge.negations.size() && edge.negations[i]) {
+                inputProb = 1.0 - inputProb;
+            }
+            probability *= inputProb;
+        }
+        if (nearlyZero(probability)) {
+            edge.active = false;
+            if (stats) {
+                ++stats->singleHyperedgeRewrites;
+                ++stats->removedEdges;
+            }
+            return true;
+        }
+
+        edge.inputs = {si};
+        edge.negations = {siNegated};
+        edge.probability = std::clamp(probability, 0.0, 1.0);
+        edge.deterministic = nearlyOne(edge.probability);
+        if (stats) {
+            ++stats->singleHyperedgeRewrites;
+        }
+        return true;
+    };
+
+    auto applyAllFacts = [&](std::size_t edgeIndex) {
+        if (!isAllFactsCandidate(edgeIndex)) {
+            return false;
+        }
+        auto& edge = edges_[edgeIndex];
+        double probability = edge.deterministic ? 1.0 : edge.probability;
+        for (std::size_t i = 0; i < edge.inputs.size(); ++i) {
+            double inputProb = factProbabilityOf(edge.inputs[i]);
+            if (i < edge.negations.size() && edge.negations[i]) {
+                inputProb = 1.0 - inputProb;
+            }
+            probability *= inputProb;
+        }
+        auto& outState = nodeState_.at(edge.output);
+        outState.currentIsFact = true;
+        outState.factProbability = std::clamp(probability, 0.0, 1.0);
+        edge.active = false;
+        if (stats) {
+            ++stats->allFactsRewrites;
+            ++stats->removedEdges;
+            ++stats->factOutputsFolded;
+        }
+        return true;
+    };
+
     while (true) {
         if (stats) {
             ++stats->fastPathIterations;
         }
+        std::vector<FastPathCandidate> candidates;
+        candidates.reserve(edges_.size());
+        for (std::size_t edgeIndex = 0; edgeIndex < edges_.size(); ++edgeIndex) {
+            if (enableSingleHyperedge) {
+                if (classifySingleHyperedge(edgeIndex, nullptr, nullptr)) {
+                    candidates.push_back(FastPathCandidate{
+                            FastPathCandidate::Kind::SingleHyperedge, edgeIndex, collectInternalNodes(edgeIndex)});
+                }
+            }
+            if (enableAllFacts) {
+                if (isAllFactsCandidate(edgeIndex)) {
+                    candidates.push_back(FastPathCandidate{
+                            FastPathCandidate::Kind::AllFacts, edgeIndex, collectInternalNodes(edgeIndex)});
+                }
+            }
+        }
+
+        std::stable_sort(candidates.begin(), candidates.end(),
+                [](const FastPathCandidate& a, const FastPathCandidate& b) {
+                    return a.internalNodes.size() < b.internalNodes.size();
+                });
+
+        std::vector<FastPathCandidate> selected;
+        selected.reserve(candidates.size());
+        std::unordered_set<SplitNodeRef, SplitNodeRefHash> usedNodes;
+        for (const auto& candidate : candidates) {
+            bool overlap = false;
+            for (const auto& node : candidate.internalNodes) {
+                if (usedNodes.count(node)) {
+                    overlap = true;
+                    break;
+                }
+            }
+            if (overlap) {
+                continue;
+            }
+            for (const auto& node : candidate.internalNodes) {
+                usedNodes.insert(node);
+            }
+            selected.push_back(candidate);
+        }
+
         bool changed = false;
-        if (enableSingleHyperedge) {
-            const auto singleStart = Clock::now();
-            changed = rewriteSingleHyperedgePass(stats) || changed;
-            if (stats) {
-                stats->fastPathSingleMs += elapsedMs(singleStart);
-            }
-            if (changed) {
-                const auto rebuildStart = Clock::now();
-                rebuildActiveEdgeIndices();
-                if (stats) {
-                    ++stats->rebuildIndexCount;
-                    stats->rebuildIndexMs += elapsedMs(rebuildStart);
+        for (const auto& candidate : selected) {
+            switch (candidate.kind) {
+                case FastPathCandidate::Kind::SingleHyperedge: {
+                    const auto singleStart = Clock::now();
+                    const bool applied = applySingleHyperedge(candidate.edgeIndex);
+                    if (stats) {
+                        stats->fastPathSingleMs += elapsedMs(singleStart);
+                    }
+                    changed = applied || changed;
+                    break;
+                }
+                case FastPathCandidate::Kind::AllFacts: {
+                    const auto allFactsStart = Clock::now();
+                    const bool applied = applyAllFacts(candidate.edgeIndex);
+                    if (stats) {
+                        stats->fastPathAllFactsMs += elapsedMs(allFactsStart);
+                    }
+                    changed = applied || changed;
+                    break;
                 }
             }
         }
-        if (enableAllFacts) {
-            const auto allFactsStart = Clock::now();
-            const bool allFactsChanged = rewriteAllFactsPass(stats);
-            if (stats) {
-                stats->fastPathAllFactsMs += elapsedMs(allFactsStart);
-            }
-            changed = allFactsChanged || changed;
-            if (allFactsChanged) {
-                const auto rebuildStart = Clock::now();
-                rebuildActiveEdgeIndices();
-                if (stats) {
-                    ++stats->rebuildIndexCount;
-                    stats->rebuildIndexMs += elapsedMs(rebuildStart);
-                }
-            }
-        }
+
         if (!changed) {
             break;
+        }
+        const auto rebuildStart = Clock::now();
+        rebuildActiveEdgeIndices();
+        if (stats) {
+            ++stats->rebuildIndexCount;
+            stats->rebuildIndexMs += elapsedMs(rebuildStart);
         }
     }
 }
@@ -959,8 +1167,25 @@ MaterializedImplicitSplitGraph ImplicitSplitOverlay::materializeToGraph(
             inputs.push_back(ensureRefNode(input));
         }
         NodePtr output = ensureBaseNode(edge.output);
-        const Rule* rule = edge.baseEdge ? edge.baseEdge->getRule() : nullptr;
-        const RuleApplication ruleApp = edge.baseEdge ? edge.baseEdge->getRuleApp() : naiveRuleApplication;
+        bool preserveBaseEdge = false;
+        if (edge.baseEdge) {
+            const auto& baseInputs = edge.baseEdge->getInputs();
+            const auto& baseNegs = edge.baseEdge->getBodyNegations();
+            preserveBaseEdge = (edge.baseEdge->getOutput() == edge.output) &&
+                    (baseInputs.size() == edge.inputs.size()) && (baseNegs == edge.negations) &&
+                    (std::abs(edge.baseEdge->getProbability() - edge.probability) <= kImplicitSplitEps);
+            if (preserveBaseEdge) {
+                for (std::size_t i = 0; i < baseInputs.size(); ++i) {
+                    if (edge.inputs[i].alias != 0 || edge.inputs[i].base != baseInputs[i]) {
+                        preserveBaseEdge = false;
+                        break;
+                    }
+                }
+            }
+        }
+        const Rule* rule = preserveBaseEdge && edge.baseEdge ? edge.baseEdge->getRule() : nullptr;
+        const RuleApplication ruleApp =
+                preserveBaseEdge && edge.baseEdge ? edge.baseEdge->getRuleApp() : naiveRuleApplication;
         EdgePtr materializedEdge = out.graph->createHyperedge(inputs, output, rule, edge.negations, ruleApp);
         if (!materializedEdge) {
             throw std::runtime_error("implicit split materialization failed to create hyperedge");

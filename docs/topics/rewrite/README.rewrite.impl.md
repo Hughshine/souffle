@@ -136,6 +136,47 @@ Direction:
 - Keep semantic equivalence with existing split modes and preserve regression checks
   (including `rewrite_split_modes_equiv`).
 
+Current status (2026-03-09):
+- Runtime implicit rewrite now preserves probability semantics for the checked
+  `side_channel_full` cases (`P15`, `P19`, `P20`) and for sampled taint
+  `typefilter-dlog`.
+- The key correctness fix was in materialization: if an overlay fast path rewrites
+  an edge probability, the materialized residual edge must be synthetic
+  (`rule=nullptr`) so the new probability is not overwritten by the original rule
+  weight.
+- With that fix in place, runtime overlay `single-hyperedge` can stay enabled.
+
+Known performance issue:
+- On highly rewriteable taint stages such as `typefilter-dlog`, the remaining cost
+  is no longer legacy `GraphRewriter`; it is the implicit overlay itself.
+- A representative `typefilter-dlog` run that fully discharges to tuple-level
+  precomputed outputs still spends about:
+  - `overlay_split_ms ~= 11.2s`
+  - `overlay_fastpath_ms ~= 6.2s`
+  - `materialize_ms = 0`
+  - `graph_rewrite_ms = 0`
+- This means the dominant bottleneck is currently split partitioning / alias
+  application plus repeated overlay candidate scans, not downstream DD work.
+
+Working hypothesis:
+- `partitionFactOutgoingEdgesNaive()` is still too expensive on large fan-out
+  fact sets, even with the reachability cap, because it repeats many small BFS
+  traversals over similar subgraphs.
+- The overlay fast-path loop also rescans a very large active-edge set even when
+  almost all rewrites are simple all-facts contractions.
+
+Next optimization directions:
+1. Cache or incrementally maintain split reachability summaries for large fact
+   fan-outs, instead of re-running per-outgoing-edge BFS from scratch.
+2. Add a cheaper prefilter for facts that obviously cannot benefit from split
+   (for example, tiny out-degree or trivially overlapping successors).
+3. Separate the all-facts-heavy pipeline from the mixed-pattern pipeline so that
+   all-facts-dominated stages like `typefilter-dlog` avoid unnecessary single-edge
+   candidate bookkeeping.
+4. Keep measuring `overlay_split_ms` and `overlay_fastpath_ms` independently; those
+   numbers now reflect the true implicit overhead much better than total rewrite
+   time.
+
 ### TODO 2: Add per-query formula/derivation rewrite path
 
 Goal:

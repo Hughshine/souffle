@@ -2203,7 +2203,7 @@ void runPipeline(
             ImplicitSplitPipelineOptions rewriteOptions;
             rewriteOptions.splitMode = resolveImplicitSplitMode(opt.getSplitMode());
             rewriteOptions.runOverlayFastPaths = true;
-            rewriteOptions.runOverlaySingleHyperedge = false;
+            rewriteOptions.runOverlaySingleHyperedge = true;
             rewriteOptions.runOverlayAllFacts = true;
             rewriteOptions.computeOutputMarginals = false;
             rewriteOptions.collectPatternStats = false;
