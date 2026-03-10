@@ -135,6 +135,41 @@ Full-pipeline target-range check (`problog-benchmark/runs/taint_target_range_rep
   stage-local rewrite runs on no-rewrite inputs; the two can differ
   substantially in either direction
 
+Full-chain qualitative reading:
+- Iterative implicit rewrite does not currently change the benchmark class of
+  taint cases.
+- `v1`
+  - implicit: `13/15` complete, `8/15` in `30s-300s`
+  - iterative: `13/15` complete, `7/15` in `30s-300s`
+  - remaining failures are identical: `tuio-droid`, `video-game`
+- `v2`
+  - implicit: `15/15` complete, `7/15` in `30s-300s`
+  - iterative: `15/15` complete, `6/15` in `30s-300s`
+- reading: iterative is still a same-regime optimization, not a qualitatively
+  different evaluator. It shifts constants and wins on many cases, but it does
+  not unlock a new class of taint full-chain behavior.
+
+Implicit full-chain time composition (`v2`, `15/15` complete cases):
+- total wall time across all cases: `484.86s`
+- by analysis stage:
+  - `typefilter-dlog`: `237.32s` (`48.95%`)
+  - `pt-obj-dlog`: `173.63s` (`35.81%`)
+  - `cipt-cg-dlog`: `73.13s` (`15.08%`)
+  - `pre-dlog`: `0.25s` (`0.05%`)
+  - `taint-lim-dlog`: `0.53s` (`0.11%`)
+- implicit rewrite internals summed from stage logs:
+  - `implicit rewrite total`: `96.41s` (`19.88%` of full-chain time)
+  - `overlay_prep`: `87.34s` (`18.01%` of full-chain time, `90.59%` of rewrite time)
+  - `overlay_fastpath`: `49.18s` (`10.14%` of full-chain time, `51.02%` of rewrite time)
+  - `overlay_split`: `20.88s` (`4.31%` of full-chain time, counted inside `overlay_prep`)
+  - `materialize`: `0.093s`
+  - `graph_rewrite`: `0.073s`
+- reading:
+  - full-chain time is dominated by `typefilter` and `pt-obj`
+  - current implicit overhead is no longer residual legacy graph rewrite
+  - the dominant rewrite-side cost is now overlay preparation and its fast-path
+    bookkeeping
+
 ## Known Pitfalls
 - Taint provenance is easy to invalidate by mixing generated artifact sets.
 - A previous invalid rerun mixed
