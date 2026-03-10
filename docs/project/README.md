@@ -16,12 +16,16 @@ Project-level docs answer three questions that topic docs do not:
 - Start here when onboarding a new contributor.
 - Use `docs/INDEX.md` for doc priority and recency tags.
 - Use topic docs under `docs/topics/` for implementation details.
+- Use `docs/research/README.md` for active experiment protocol, trusted current
+  findings, and provenance pitfalls.
 
 ## Source references
 - [docs/INDEX.md](docs/INDEX.md)
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/research/README.md](docs/research/README.md)
 - [src/MainDriver.cpp](src/MainDriver.cpp)
 
 ## Related commits
+- `UNCOMMITTED` — docs(system): connect project docs to active research layer
 - `UNCOMMITTED` — docs(project): add project-level doc map for module ownership and maintenance
 - `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack implementation guide

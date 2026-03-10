@@ -19,6 +19,8 @@ checking in outputs or logs unless explicitly asked.
 Include:
 - Source changes under `src/`, `src/include/`, `cmake/`, `tools/` that implement the change.
 - Documentation updates under `docs/**/*.md` and root entry docs (`README.md`, `CONTRIBUTING.md`, `AGENTS.md`) that explain the change.
+- Distilled research-status or protocol updates under `docs/research/*` when
+  they change trusted conclusions or provenance rules.
 - Hand-written scripts needed for reproducibility (explicitly requested).
 
 Exclude (keep local):
@@ -26,6 +28,8 @@ Exclude (keep local):
 - Generated outputs/logs: `output*`, `*.prob`, `*.csv`, `*.dot`, `*.json`,
   `run_*.time`, `run_*.stdout`, `log_*.json`.
 - Build artifacts/binaries: `cmake-build-*`, `compute`, `*.o`, `*.a`, `*.so`.
+- Ad hoc benchmark run directories and profiling dumps; summarize the stable
+  takeaway in `docs/research/*` instead of committing raw evidence.
 
 If unsure, aim for `git status -s` to show only the code/docs you intended to change.
 
@@ -50,6 +54,7 @@ Examples:
 - `docs(readme): add P12 profile5 results`
 
 ## Related commits
+- `UNCOMMITTED` — docs(system): route stable experiment findings into docs/research
 - `812ea4081` — docs(repo): refine README narratives
 - `4c4bd26b2` — docs(readme): restructure online incremental docs
 - `9be703353` — perf(inc-region): add regional pipeline and profiling

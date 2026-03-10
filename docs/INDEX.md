@@ -1,6 +1,10 @@
 # Documentation Index
 
-This index is the source of truth for doc location, recency, and importance. Core Souffle docs live at the repo root and under `docs/`. Benchmark/experiment/example docs remain in their original directories.
+This index is the source of truth for doc location, recency, and importance.
+Core Souffle docs live at the repo root and under `docs/`. The system is now
+split into entry, operations, project model, current behavior, active research,
+design, and historical layers. Benchmark/example raw outputs remain local unless
+explicitly curated.
 
 Legend:
 - [LATEST] most recent canonical snapshot
@@ -11,8 +15,10 @@ Legend:
 
 ## Entry Points
 - [PRIMARY] `README.md` — project overview + quickstart
+- [PRIMARY] `docs/project/DOC_SYSTEM.md` — documentation architecture and placement rules
 - [PRIMARY] `docs/USAGE.md` — CLI/runtime options (authoritative)
 - [PRIMARY] `docs/project/README.md` — project map (modules, fork delta, maintenance)
+- [PRIMARY] `docs/research/README.md` — active research map, protocol, and curated current findings
 - [PRIMARY] `docs/topics/README.md` — topical docs map (current behavior)
 - [PRIMARY] `docs/design/README.md` — design proposals map
 - [PRIMARY] `docs/historical/README.md` — archived/historical docs map
@@ -33,6 +39,12 @@ Legend:
 - [PRIMARY] `docs/project/MAINTENANCE.md` — invariants, risks, and module-level checks
 - [PRIMARY] `docs/project/PROBLOG_EXTENSION_STACK.md` — end-to-end ProbLog extension implementation details
 - [PRIMARY] `docs/project/DOC_SYSTEM.md` — documentation architecture and placement rules
+
+## Research & Active Investigations
+- [PRIMARY] `docs/research/README.md` — research-doc map and ownership rules
+- [PRIMARY] `docs/research/README.protocol.md` — experiment provenance and validity rules
+- [PRIMARY] `docs/research/README.memory.md` — Codex-oriented session memory and documentation workflow
+- [LATEST] `docs/research/README.rewrite.status.md` — curated current rewrite status and trusted active results
 
 ## Current Pipeline & Semantics
 - [PRIMARY] `docs/topics/pipeline/README.dred.md` — online DRed semantics + performance
@@ -68,6 +80,7 @@ Legend:
 
 ## Evaluation & Results (Souffle)
 - [PRIMARY] `docs/topics/evaluation/README.md` — evaluation doc map (current vs historical)
+- [PRIMARY] `docs/research/README.rewrite.status.md` — trusted current rewrite reading and pitfalls
 - [LATEST] `docs/topics/evaluation/README.eval.final.md` — latest curated batch summary
 - [LATEST] `archive/README.md` — dated experiment archive index (batch READMEs tracked, artifacts ignored)
 - [PRIMARY] `docs/topics/evaluation/README.eval.inc.md` — incremental benchmark workflow (current)
@@ -84,6 +97,9 @@ Legend:
 
 ## Out of Scope (Benchmarks/Experiments/Examples)
 - Benchmark, experiment, and example docs remain in their original directories and are not reorganized here.
+- Raw run outputs, generated dumps, and local benchmark logs remain local; only
+  stable distilled findings belong in `docs/research/*`, `docs/topics/*`, or
+  `archive/`.
 - See `problog-benchmark/README.md` and `examples/running_example/README.md` as entry points.
 - Historical benchmark notes remain in `problog-benchmark/README.sc.original.md` and `experiments/smokers_11/Plan.md`.
 
@@ -126,6 +142,7 @@ Legend:
 - [tests/regression/CMakeLists.txt](tests/regression/CMakeLists.txt)
 
 ## Related commits
+- `UNCOMMITTED` — docs(system): add research layer and reorganize index priorities
 - `UNCOMMITTED` — docs(rewrite): index standalone derivation analyzer guide
 - `UNCOMMITTED` — docs(testing): add topical regression workflow docs and index entries
 - `UNCOMMITTED` — docs(project): add project-level module map, fork delta, and maintenance docs

@@ -59,6 +59,7 @@ struct ImplicitSplitOverlayStats {
     std::size_t factOutputsFolded = 0;
     std::size_t splitFactsConsidered = 0;
     std::size_t splitFactsAliased = 0;
+    std::size_t splitFactsCacheHits = 0;
     std::size_t splitNaiveReachabilityRuns = 0;
     std::size_t splitNaiveReachabilityVisited = 0;
     std::size_t splitNaiveCapSkips = 0;
@@ -146,8 +147,8 @@ class ImplicitSplitOverlay {
 public:
     explicit ImplicitSplitOverlay(const IncrementalDerivationGraphViewInterface& view);
 
-    void applySplit(ImplicitSplitMode mode, ImplicitSplitOverlayStats* stats = nullptr);
-    void rewriteFastPathsToFixpoint(bool enableSingleHyperedge = true, bool enableAllFacts = true,
+    bool applySplit(ImplicitSplitMode mode, ImplicitSplitOverlayStats* stats = nullptr);
+    bool rewriteFastPathsToFixpoint(bool enableSingleHyperedge = true, bool enableAllFacts = true,
             ImplicitSplitOverlayStats* stats = nullptr);
 
     std::vector<OverlayOutputProbability> computeOutputMarginalsExact() const;
@@ -180,8 +181,11 @@ private:
     std::vector<ImplicitSplitOverlayEdge> edges_;
     std::unordered_map<NodePtr, std::size_t> nextAliasIdByFact_;
     std::unordered_map<NodePtr, std::vector<std::size_t>> aliasesByFact_;
+    std::unordered_map<NodePtr, std::vector<std::size_t>> cachedBaseOutgoingEdgesByFact_;
     std::unordered_map<NodePtr, std::vector<std::size_t>> activeIncomingEdgeIdsByNode_;
     std::unordered_map<SplitNodeRef, std::vector<std::size_t>, SplitNodeRefHash> activeOutgoingEdgeIdsByRef_;
+    std::vector<std::size_t> activeEdgeIds_;
+    std::size_t activeEdgeCount_ = 0;
 
     bool isFactRef(const SplitNodeRef& ref) const;
     double factProbabilityOf(const SplitNodeRef& ref) const;

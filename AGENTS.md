@@ -25,6 +25,8 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - Follow `docs/process/README.git.md` for commit hygiene (outputs/logs stay local).
 - Avoid introducing new dependencies unless explicitly requested.
 - Keep documentation in the single source of truth and link, do not duplicate.
+- For experiment-heavy work, update `docs/research/*` when trusted conclusions,
+  provenance rules, or recurring pitfalls change.
 - Prefer repo-scoped skills: `repo-docs`, `verify-changes`, `pr-ready`, `git-commit-helper`, `souffle-test-case`.
 
 ## Verification
@@ -49,6 +51,8 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - `docs/SECURITY.md`
 - `docs/USAGE.md`
 - `docs/INDEX.md`
+- `docs/project/DOC_SYSTEM.md`
+- `docs/research/README.md`
 - `docs/topics/testing/README.regression.md`
 - `docs/project/README.md`
 - `docs/process/README.git.md`
@@ -61,6 +65,7 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - [cmake/CTestDisabled.cmake](cmake/CTestDisabled.cmake)
 
 ## Related commits
+- `UNCOMMITTED` — docs(system): point agent workflow to research docs for experiment-heavy work
 - `UNCOMMITTED` — test(regression): add maintained CTest regression workflow
 - `UNCOMMITTED` — docs(testing): document regression labels and cmake targets
 - `UNCOMMITTED` — docs(repo): move commit hygiene guidance to `docs/process/README.git.md`

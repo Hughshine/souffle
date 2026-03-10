@@ -77,6 +77,7 @@ protected:
     bool fold_const = false;  // enable deterministic constant pre-analysis (no prune rewrite)
     bool enable_rewrite = false;  // enable SISO-based graph rewriting
     bool enable_implicit_rewrite = false;  // enable experimental implicit-split rewrite pipeline
+    bool enable_implicit_iterate_split_rewrite = false;  // enable iterative split<->rewrite fixpoint for implicit rewrite
     std::string split_mode = "naive-split";  // split mode for rewrite: no-split/naive-split/complete-split
     bool dump_json = false;  // dump derivation graph JSON after prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
@@ -181,6 +182,9 @@ public:
     }
     bool isImplicitRewriteEnabled() const {
         return enable_implicit_rewrite;
+    }
+    bool isImplicitIterateSplitRewriteEnabled() const {
+        return enable_implicit_iterate_split_rewrite;
     }
     const std::string& getSplitMode() const {
         return split_mode;
@@ -299,6 +303,7 @@ public:
                 {"merge-bi-imp", false, nullptr, 'e'}, {"prune-extra", false, nullptr, 1004}, {"fold-const", false, nullptr, 'C'},
                 {"rewrite", false, nullptr, 'r'},
                 {"implicit-rewrite", false, nullptr, 1019},
+                {"implicit-iterate-split-rewrite", false, nullptr, 1020},
                 {"split-mode", true, nullptr, 'P'},
                 {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
                 {"dumpstat", false, nullptr, 'S'},
@@ -436,6 +441,11 @@ public:
                     enable_rewrite = true;
                     enable_implicit_rewrite = true;
                     break;
+                case 1020:
+                    enable_rewrite = true;
+                    enable_implicit_rewrite = true;
+                    enable_implicit_iterate_split_rewrite = true;
+                    break;
                 case 'P': {
                     std::string modeArg(optarg);
                     if (modeArg == "no-split" || modeArg == "none") {
@@ -555,6 +565,7 @@ private:
         std::cerr << "    -C, --fold-const             -- Enable deterministic constant pre-analysis (no prune rewrite; negation ignored)\n";
         std::cerr << "    -r, --rewrite                -- Enable SISO-based graph rewriting\n";
         std::cerr << "    --implicit-rewrite           -- Enable experimental implicit-split rewrite pipeline\n";
+        std::cerr << "    --implicit-iterate-split-rewrite -- Enable iterative implicit split<->rewrite fixpoint\n";
         std::cerr << "    --split-mode=<MODE>          -- Split mode for rewrite: no-split, naive-split, complete-split\n";
         std::cerr << "    --dumpjson                   -- Dump derivation graph JSON after prune\n";
         std::cerr << "    --dumpdot                    -- Dump derivation graph DOT after prune\n";

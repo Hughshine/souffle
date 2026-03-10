@@ -122,6 +122,7 @@ ImplicitSplitOverlay::ImplicitSplitOverlay(const IncrementalDerivationGraphViewI
         }
         edges_.push_back(std::move(overlayEdge));
     }
+    activeEdgeCount_ = edges_.size();
 
     rebuildActiveEdgeIndices();
 }
@@ -177,15 +178,30 @@ const std::vector<std::size_t>& ImplicitSplitOverlay::activeOutgoingEdges(const 
 void ImplicitSplitOverlay::rebuildActiveEdgeIndices() {
     activeIncomingEdgeIdsByNode_.clear();
     activeOutgoingEdgeIdsByRef_.clear();
+    activeEdgeIds_.clear();
+    if (activeEdgeCount_ == 0) {
+        return;
+    }
+    activeEdgeIds_.reserve(activeEdgeCount_);
     for (std::size_t i = 0; i < edges_.size(); ++i) {
         const auto& edge = edges_[i];
         if (!edge.active || !edge.output) {
             continue;
         }
+        activeEdgeIds_.push_back(i);
         activeIncomingEdgeIdsByNode_[edge.output].push_back(i);
-        std::unordered_set<SplitNodeRef, SplitNodeRefHash> seenInputs;
+        std::vector<SplitNodeRef> seenInputs;
+        seenInputs.reserve(edge.inputs.size());
         for (const auto& input : edge.inputs) {
-            if (seenInputs.insert(input).second) {
+            bool duplicate = false;
+            for (const auto& seen : seenInputs) {
+                if (seen == input) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                seenInputs.push_back(input);
                 activeOutgoingEdgeIdsByRef_[input].push_back(i);
             }
         }
@@ -204,6 +220,32 @@ std::vector<std::vector<std::size_t>> ImplicitSplitOverlay::partitionFactOutgoin
     const auto outs = activeOutgoingEdges(SplitNodeRef{fact, 0});
     if (outs.size() < 2) {
         return groups;
+    }
+
+    bool allImmediateSinks = true;
+    std::unordered_map<NodePtr, std::vector<std::size_t>> sinkGroups;
+    sinkGroups.reserve(outs.size());
+    for (const auto edgeIndex : outs) {
+        const auto& edge = edges_[edgeIndex];
+        if (!edge.output || !activeOutgoingEdges(SplitNodeRef{edge.output, 0}).empty()) {
+            allImmediateSinks = false;
+            break;
+        }
+        sinkGroups[edge.output].push_back(edgeIndex);
+    }
+    if (allImmediateSinks) {
+        if (sinkGroups.size() <= 1) {
+            return {};
+        }
+        std::vector<std::vector<std::size_t>> sinkResult;
+        sinkResult.reserve(sinkGroups.size());
+        for (auto& [_, edgeGroup] : sinkGroups) {
+            sinkResult.push_back(std::move(edgeGroup));
+        }
+        std::sort(sinkResult.begin(), sinkResult.end(), [](const auto& a, const auto& b) {
+            return a.size() > b.size();
+        });
+        return sinkResult;
     }
 
     std::vector<std::unordered_set<NodePtr>> reachSets;
@@ -417,16 +459,7 @@ void ImplicitSplitOverlay::applyEdgeGroupsAsAliases(const NodePtr& fact,
             bool touched = false;
             for (auto& input : edge.inputs) {
                 if (input.base == fact && input.alias == 0) {
-                    auto itBaseOut = activeOutgoingEdgeIdsByRef_.find(SplitNodeRef{fact, 0});
-                    if (itBaseOut != activeOutgoingEdgeIdsByRef_.end()) {
-                        auto& baseList = itBaseOut->second;
-                        baseList.erase(std::remove(baseList.begin(), baseList.end(), edgeIndex), baseList.end());
-                    }
                     input.alias = aliasId;
-                    auto& aliasList = activeOutgoingEdgeIdsByRef_[SplitNodeRef{fact, aliasId}];
-                    if (std::find(aliasList.begin(), aliasList.end(), edgeIndex) == aliasList.end()) {
-                        aliasList.push_back(edgeIndex);
-                    }
                     touched = true;
                 }
             }
@@ -437,23 +470,36 @@ void ImplicitSplitOverlay::applyEdgeGroupsAsAliases(const NodePtr& fact,
     }
 }
 
-void ImplicitSplitOverlay::applySplit(ImplicitSplitMode mode, ImplicitSplitOverlayStats* stats) {
+bool ImplicitSplitOverlay::applySplit(ImplicitSplitMode mode, ImplicitSplitOverlayStats* stats) {
     if (mode == ImplicitSplitMode::None) {
-        return;
+        return false;
     }
+    bool changed = false;
+    auto sameEdgeSet = [](const std::vector<std::size_t>& a, const std::vector<std::size_t>& b) {
+        return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
+    };
     std::vector<NodePtr> facts;
     for (const auto& [node, state] : nodeState_) {
-        if (state.originalIsFact && state.currentIsFact) {
+        if (state.originalIsFact && state.currentIsFact && !node->isShadow) {
             facts.push_back(node);
         }
     }
     std::sort(facts.begin(), facts.end(), [](const NodePtr& a, const NodePtr& b) {
         return a->getId() < b->getId();
     });
-    if (stats) {
-        stats->splitFactsConsidered += facts.size();
-    }
     for (const auto& fact : facts) {
+        const auto& outs = activeOutgoingEdges(SplitNodeRef{fact, 0});
+        std::vector<std::size_t> currentOuts(outs.begin(), outs.end());
+        auto itCached = cachedBaseOutgoingEdgesByFact_.find(fact);
+        if (itCached != cachedBaseOutgoingEdgesByFact_.end() && sameEdgeSet(itCached->second, currentOuts)) {
+            if (stats) {
+                ++stats->splitFactsCacheHits;
+            }
+            continue;
+        }
+        if (stats) {
+            ++stats->splitFactsConsidered;
+        }
         std::vector<std::vector<std::size_t>> groups;
         const auto partitionStart = Clock::now();
         if (mode == ImplicitSplitMode::Naive) {
@@ -469,6 +515,12 @@ void ImplicitSplitOverlay::applySplit(ImplicitSplitMode mode, ImplicitSplitOverl
         }
         const auto aliasStart = Clock::now();
         applyEdgeGroupsAsAliases(fact, groups, stats);
+        changed = changed || groups.size() > 1;
+        if (groups.size() > 1) {
+            cachedBaseOutgoingEdgesByFact_[fact] = groups.front();
+        } else {
+            cachedBaseOutgoingEdgesByFact_[fact] = std::move(currentOuts);
+        }
         if (stats) {
             stats->splitAliasApplyMs += elapsedMs(aliasStart);
             if (groups.size() > 1) {
@@ -476,11 +528,13 @@ void ImplicitSplitOverlay::applySplit(ImplicitSplitMode mode, ImplicitSplitOverl
             }
         }
     }
+    return changed;
 }
 
 bool ImplicitSplitOverlay::rewriteAllFactsPass(ImplicitSplitOverlayStats* stats) {
     bool changed = false;
-    for (auto& edge : edges_) {
+    for (const auto edgeIndex : activeEdgeIds_) {
+        auto& edge = edges_[edgeIndex];
         if (!edge.active || edge.inputs.empty() || !edge.output) {
             continue;
         }
@@ -516,6 +570,9 @@ bool ImplicitSplitOverlay::rewriteAllFactsPass(ImplicitSplitOverlayStats* stats)
         outState.currentIsFact = true;
         outState.factProbability = std::clamp(probability, 0.0, 1.0);
         edge.active = false;
+        if (activeEdgeCount_ > 0) {
+            --activeEdgeCount_;
+        }
         changed = true;
         if (stats) {
             ++stats->allFactsRewrites;
@@ -577,6 +634,9 @@ bool ImplicitSplitOverlay::rewriteSingleHyperedgePass(ImplicitSplitOverlayStats*
         }
         if (nearlyZero(probability)) {
             edge.active = false;
+            if (activeEdgeCount_ > 0) {
+                --activeEdgeCount_;
+            }
             changed = true;
             if (stats) {
                 ++stats->singleHyperedgeRewrites;
@@ -597,12 +657,11 @@ bool ImplicitSplitOverlay::rewriteSingleHyperedgePass(ImplicitSplitOverlayStats*
     return changed;
 }
 
-void ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
+bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
         bool enableSingleHyperedge, bool enableAllFacts, ImplicitSplitOverlayStats* stats) {
     struct FastPathCandidate {
         enum class Kind {
             SingleHyperedge,
-            AllFacts,
         };
 
         Kind kind;
@@ -688,29 +747,6 @@ void ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
         return true;
     };
 
-    auto isAllFactsCandidate = [&](std::size_t edgeIndex) {
-        if (edgeIndex >= edges_.size()) {
-            return false;
-        }
-        const auto& edge = edges_[edgeIndex];
-        if (!edge.active || edge.inputs.empty() || !edge.output) {
-            return false;
-        }
-        for (const auto& input : edge.inputs) {
-            if (!isFactRef(input)) {
-                return false;
-            }
-            const auto& inputState = nodeState_.at(input.base);
-            if (inputState.hasEvidence) {
-                return false;
-            }
-            if (activeOutgoingCount(input) != 1) {
-                return false;
-            }
-        }
-        return activeIncomingCount(edge.output) == 1;
-    };
-
     auto applySingleHyperedge = [&](std::size_t edgeIndex) {
         SplitNodeRef si{};
         bool siNegated = false;
@@ -731,6 +767,9 @@ void ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
         }
         if (nearlyZero(probability)) {
             edge.active = false;
+            if (activeEdgeCount_ > 0) {
+                --activeEdgeCount_;
+            }
             if (stats) {
                 ++stats->singleHyperedgeRewrites;
                 ++stats->removedEdges;
@@ -748,48 +787,18 @@ void ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
         return true;
     };
 
-    auto applyAllFacts = [&](std::size_t edgeIndex) {
-        if (!isAllFactsCandidate(edgeIndex)) {
-            return false;
-        }
-        auto& edge = edges_[edgeIndex];
-        double probability = edge.deterministic ? 1.0 : edge.probability;
-        for (std::size_t i = 0; i < edge.inputs.size(); ++i) {
-            double inputProb = factProbabilityOf(edge.inputs[i]);
-            if (i < edge.negations.size() && edge.negations[i]) {
-                inputProb = 1.0 - inputProb;
-            }
-            probability *= inputProb;
-        }
-        auto& outState = nodeState_.at(edge.output);
-        outState.currentIsFact = true;
-        outState.factProbability = std::clamp(probability, 0.0, 1.0);
-        edge.active = false;
-        if (stats) {
-            ++stats->allFactsRewrites;
-            ++stats->removedEdges;
-            ++stats->factOutputsFolded;
-        }
-        return true;
-    };
-
+    bool changedAny = false;
     while (true) {
         if (stats) {
             ++stats->fastPathIterations;
         }
         std::vector<FastPathCandidate> candidates;
-        candidates.reserve(edges_.size());
-        for (std::size_t edgeIndex = 0; edgeIndex < edges_.size(); ++edgeIndex) {
-            if (enableSingleHyperedge) {
+        if (enableSingleHyperedge) {
+            candidates.reserve(activeEdgeIds_.size());
+            for (const auto edgeIndex : activeEdgeIds_) {
                 if (classifySingleHyperedge(edgeIndex, nullptr, nullptr)) {
                     candidates.push_back(FastPathCandidate{
                             FastPathCandidate::Kind::SingleHyperedge, edgeIndex, collectInternalNodes(edgeIndex)});
-                }
-            }
-            if (enableAllFacts) {
-                if (isAllFactsCandidate(edgeIndex)) {
-                    candidates.push_back(FastPathCandidate{
-                            FastPathCandidate::Kind::AllFacts, edgeIndex, collectInternalNodes(edgeIndex)});
                 }
             }
         }
@@ -820,6 +829,7 @@ void ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
         }
 
         bool changed = false;
+        bool rebuiltBeforeAllFacts = false;
         for (const auto& candidate : selected) {
             switch (candidate.kind) {
                 case FastPathCandidate::Kind::SingleHyperedge: {
@@ -831,20 +841,38 @@ void ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
                     changed = applied || changed;
                     break;
                 }
-                case FastPathCandidate::Kind::AllFacts: {
-                    const auto allFactsStart = Clock::now();
-                    const bool applied = applyAllFacts(candidate.edgeIndex);
-                    if (stats) {
-                        stats->fastPathAllFactsMs += elapsedMs(allFactsStart);
-                    }
-                    changed = applied || changed;
-                    break;
-                }
             }
+        }
+
+        if (changed) {
+            const auto rebuildStart = Clock::now();
+            rebuildActiveEdgeIndices();
+            rebuiltBeforeAllFacts = true;
+            if (stats) {
+                ++stats->rebuildIndexCount;
+                stats->rebuildIndexMs += elapsedMs(rebuildStart);
+            }
+        }
+
+        bool allFactsChanged = false;
+        if (enableAllFacts) {
+            const auto allFactsStart = Clock::now();
+            allFactsChanged = rewriteAllFactsPass(stats);
+            if (stats) {
+                stats->fastPathAllFactsMs += elapsedMs(allFactsStart);
+            }
+            changed = allFactsChanged || changed;
         }
 
         if (!changed) {
             break;
+        }
+        changedAny = true;
+        if (activeEdgeCount_ == 0) {
+            break;
+        }
+        if (rebuiltBeforeAllFacts && !allFactsChanged) {
+            continue;
         }
         const auto rebuildStart = Clock::now();
         rebuildActiveEdgeIndices();
@@ -853,6 +881,7 @@ void ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
             stats->rebuildIndexMs += elapsedMs(rebuildStart);
         }
     }
+    return changedAny;
 }
 
 std::vector<SplitNodeRef> ImplicitSplitOverlay::enumerateActiveFactRefs() const {
@@ -894,10 +923,9 @@ std::vector<SplitNodeRef> ImplicitSplitOverlay::enumerateActiveFactRefs() const 
 
 std::vector<const ImplicitSplitOverlayEdge*> ImplicitSplitOverlay::activeEdgesSorted() const {
     std::vector<const ImplicitSplitOverlayEdge*> result;
-    for (const auto& edge : edges_) {
-        if (edge.active) {
-            result.push_back(&edge);
-        }
+    result.reserve(activeEdgeIds_.size());
+    for (const auto edgeIndex : activeEdgeIds_) {
+        result.push_back(&edges_[edgeIndex]);
     }
     std::sort(result.begin(), result.end(), [](const auto* a, const auto* b) {
         const std::size_t aid = a->baseEdge ? a->baseEdge->getId() : 0;
@@ -1074,11 +1102,7 @@ std::vector<OverlayOutputProbability> ImplicitSplitOverlay::collectDirectOutputP
 
 OverlayGraphStats ImplicitSplitOverlay::computeStats() const {
     OverlayGraphStats stats;
-    for (const auto& edge : edges_) {
-        if (edge.active) {
-            ++stats.activeEdges;
-        }
-    }
+    stats.activeEdges = activeEdgeCount_;
     for (const auto& [_, aliases] : aliasesByFact_) {
         stats.activeAliases += aliases.size();
     }
@@ -1416,7 +1440,61 @@ std::string summarizeRewritePatternCounts(const RewritePatternCounts& counts) {
     return oss.str();
 }
 
-static ImplicitSplitPipelineResult runImplicitSplitRewritePipelineSinglePass(
+void accumulateOverlayStats(ImplicitSplitOverlayStats& total, const ImplicitSplitOverlayStats& iter) {
+    total.aliasesCreated += iter.aliasesCreated;
+    total.edgesAliased += iter.edgesAliased;
+    total.allFactsRewrites += iter.allFactsRewrites;
+    total.singleHyperedgeRewrites += iter.singleHyperedgeRewrites;
+    total.removedEdges += iter.removedEdges;
+    total.factOutputsFolded += iter.factOutputsFolded;
+    total.splitFactsConsidered += iter.splitFactsConsidered;
+    total.splitFactsAliased += iter.splitFactsAliased;
+    total.splitFactsCacheHits += iter.splitFactsCacheHits;
+    total.splitNaiveReachabilityRuns += iter.splitNaiveReachabilityRuns;
+    total.splitNaiveReachabilityVisited += iter.splitNaiveReachabilityVisited;
+    total.splitNaiveCapSkips += iter.splitNaiveCapSkips;
+    total.rebuildIndexCount += iter.rebuildIndexCount;
+    total.fastPathIterations += iter.fastPathIterations;
+    total.splitNaiveMs += iter.splitNaiveMs;
+    total.splitCompleteMs += iter.splitCompleteMs;
+    total.splitAliasApplyMs += iter.splitAliasApplyMs;
+    total.rebuildIndexMs += iter.rebuildIndexMs;
+    total.fastPathSingleMs += iter.fastPathSingleMs;
+    total.fastPathAllFactsMs += iter.fastPathAllFactsMs;
+}
+
+void runOverlayRounds(ImplicitSplitOverlay& overlay, const ImplicitSplitPipelineOptions& options,
+        ImplicitSplitPipelineStats& stats) {
+    const std::size_t maxRounds =
+            options.iterateSplitRewrite ? std::max<std::size_t>(1, options.maxOuterIterations) : 1;
+    for (std::size_t round = 0; round < maxRounds; ++round) {
+        ++stats.outerIterations;
+        ImplicitSplitOverlayStats roundStats;
+
+        const auto splitStart = Clock::now();
+        const bool splitChanged = overlay.applySplit(options.splitMode, &roundStats);
+        const auto splitMs = elapsedMs(splitStart);
+
+        const auto fastPathStart = Clock::now();
+        bool fastPathChanged = false;
+        if (options.runOverlayFastPaths) {
+            fastPathChanged = overlay.rewriteFastPathsToFixpoint(
+                    options.runOverlaySingleHyperedge, options.runOverlayAllFacts, &roundStats);
+        }
+        const auto fastPathMs = elapsedMs(fastPathStart);
+
+        stats.overlaySplitMs += splitMs;
+        stats.overlayFastPathMs += fastPathMs;
+        stats.overlayPrepMs += splitMs + fastPathMs;
+        accumulateOverlayStats(stats.overlayStats, roundStats);
+
+        if (!options.iterateSplitRewrite || !splitChanged) {
+            break;
+        }
+    }
+}
+
+ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
         const IncrementalDerivationGraphViewInterface& view,
         const ImplicitSplitPipelineOptions& options) {
     ImplicitSplitPipelineResult result;
@@ -1424,19 +1502,9 @@ static ImplicitSplitPipelineResult runImplicitSplitRewritePipelineSinglePass(
 
     const auto overlayCreateStart = Clock::now();
     ImplicitSplitOverlay overlay(view);
-    const auto overlayCreateMs = elapsedMs(overlayCreateStart);
+    result.stats.overlayPrepMs = elapsedMs(overlayCreateStart);
 
-    const auto splitStart = Clock::now();
-    overlay.applySplit(options.splitMode, &result.stats.overlayStats);
-    result.stats.overlaySplitMs = elapsedMs(splitStart);
-
-    const auto fastPathStart = Clock::now();
-    if (options.runOverlayFastPaths) {
-        overlay.rewriteFastPathsToFixpoint(
-                options.runOverlaySingleHyperedge, options.runOverlayAllFacts, &result.stats.overlayStats);
-    }
-    result.stats.overlayFastPathMs = elapsedMs(fastPathStart);
-    result.stats.overlayPrepMs = overlayCreateMs + result.stats.overlaySplitMs + result.stats.overlayFastPathMs;
+    runOverlayRounds(overlay, options, result.stats);
 
     const auto directOutputs = overlay.collectDirectOutputProbabilities();
     const auto overlayGraphStats = overlay.computeStats();
@@ -1453,16 +1521,27 @@ static ImplicitSplitPipelineResult runImplicitSplitRewritePipelineSinglePass(
             precomputedTupleProbResult.emplace(tupleStr, prob);
         }
         result.outputProbabilities = directOutputs;
-        result.stats.outerIterations = 1;
         result.stats.totalMs = elapsedMs(totalStart);
         return result;
     }
 
+    std::unordered_set<NodePtr> skippedDirectOutputs;
+    skippedDirectOutputs.reserve(directOutputs.size());
+    result.carriedPrecomputedTupleProbs.reserve(directOutputs.size());
+    precomputedTupleProbResult.clear();
+    for (const auto& output : directOutputs) {
+        skippedDirectOutputs.insert(output.output);
+        result.carriedPrecomputedTupleProbs.emplace_back(output.output->getTuple().toString(), output.probability);
+    }
+    for (const auto& [tupleStr, prob] : result.carriedPrecomputedTupleProbs) {
+        precomputedTupleProbResult.emplace(tupleStr, prob);
+    }
+
     const auto materializeStart = Clock::now();
-    result.materialized = overlay.materializeToGraph();
+    result.materialized = overlay.materializeToGraph(
+            skippedDirectOutputs.empty() ? nullptr : &skippedDirectOutputs);
     result.stats.materializeMs = elapsedMs(materializeStart);
     result.stats.materializedAliasNodes = result.materialized.aliasNodes;
-    result.stats.outerIterations = 1;
 
     auto viewMaterialized = buildFullIncView(*result.materialized.graph);
     result.stats.materializedNodesBefore = viewMaterialized.getNodes().size();
@@ -1523,211 +1602,6 @@ static ImplicitSplitPipelineResult runImplicitSplitRewritePipelineSinglePass(
     return result;
 }
 
-ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
-        const IncrementalDerivationGraphViewInterface& view,
-        const ImplicitSplitPipelineOptions& options) {
-    if (!options.iterateSplitRewrite) {
-        return runImplicitSplitRewritePipelineSinglePass(view, options);
-    }
-
-    ImplicitSplitPipelineResult result;
-    const auto totalStart = Clock::now();
-    const IncrementalDerivationGraphViewInterface* currentView = &view;
-    std::unique_ptr<IncrementalDerivationGraph> currentGraph;
-    std::unique_ptr<IncSubgraphView> currentOwnedView;
-    std::unordered_map<std::string, double> carriedPrecomputedTupleProbs;
-    bool sawRewriteStats = false;
-
-    auto accumulateOverlayStats = [&](const ImplicitSplitOverlayStats& iterStats) {
-        auto& total = result.stats.overlayStats;
-        total.aliasesCreated += iterStats.aliasesCreated;
-        total.edgesAliased += iterStats.edgesAliased;
-        total.allFactsRewrites += iterStats.allFactsRewrites;
-        total.singleHyperedgeRewrites += iterStats.singleHyperedgeRewrites;
-        total.removedEdges += iterStats.removedEdges;
-        total.factOutputsFolded += iterStats.factOutputsFolded;
-        total.splitFactsConsidered += iterStats.splitFactsConsidered;
-        total.splitFactsAliased += iterStats.splitFactsAliased;
-        total.splitNaiveReachabilityRuns += iterStats.splitNaiveReachabilityRuns;
-        total.splitNaiveReachabilityVisited += iterStats.splitNaiveReachabilityVisited;
-        total.splitNaiveCapSkips += iterStats.splitNaiveCapSkips;
-        total.rebuildIndexCount += iterStats.rebuildIndexCount;
-        total.fastPathIterations += iterStats.fastPathIterations;
-        total.splitNaiveMs += iterStats.splitNaiveMs;
-        total.splitCompleteMs += iterStats.splitCompleteMs;
-        total.splitAliasApplyMs += iterStats.splitAliasApplyMs;
-        total.rebuildIndexMs += iterStats.rebuildIndexMs;
-        total.fastPathSingleMs += iterStats.fastPathSingleMs;
-        total.fastPathAllFactsMs += iterStats.fastPathAllFactsMs;
-    };
-
-    auto accumulateRewriteStats = [&](const GraphRewriteStats& iterStats) {
-        auto& total = result.stats.graphRewriteStats;
-        if (!sawRewriteStats) {
-            total.randomVarsBefore = iterStats.randomVarsBefore;
-            total.maxRandomVars = iterStats.maxRandomVars;
-            sawRewriteStats = true;
-        } else {
-            total.maxRandomVars = std::max(total.maxRandomVars, iterStats.maxRandomVars);
-        }
-        total.numIterations += iterStats.numIterations;
-        total.numRegionsRewritten += iterStats.numRegionsRewritten;
-        total.numNodesRemoved += iterStats.numNodesRemoved;
-        total.numEdgesRemoved += iterStats.numEdgesRemoved;
-        total.numEdgesAdded += iterStats.numEdgesAdded;
-        total.simpleFactRegions += iterStats.simpleFactRegions;
-        total.totalRandomVars += iterStats.totalRandomVars;
-        total.randomVarsAfter = iterStats.randomVarsAfter;
-    };
-
-    auto carryPrecomputedTuples = [&]() {
-        for (const auto& [node, prob] : precomputedProbResult) {
-            if (!node) {
-                continue;
-            }
-            carriedPrecomputedTupleProbs[node->getTuple().toString()] = prob;
-        }
-    };
-
-    const std::size_t maxOuterIterations = std::max<std::size_t>(1, options.maxOuterIterations);
-    while (result.stats.outerIterations < maxOuterIterations) {
-        ++result.stats.outerIterations;
-
-        const auto overlayCreateStart = Clock::now();
-        ImplicitSplitOverlay overlay(*currentView);
-        const auto overlayCreateMs = elapsedMs(overlayCreateStart);
-
-        ImplicitSplitOverlayStats iterOverlayStats;
-        const auto splitStart = Clock::now();
-        overlay.applySplit(options.splitMode, &iterOverlayStats);
-        const auto splitMs = elapsedMs(splitStart);
-
-        const auto fastPathStart = Clock::now();
-        if (options.runOverlayFastPaths) {
-            overlay.rewriteFastPathsToFixpoint(
-                    options.runOverlaySingleHyperedge, options.runOverlayAllFacts, &iterOverlayStats);
-        }
-        const auto fastPathMs = elapsedMs(fastPathStart);
-
-        result.stats.overlaySplitMs += splitMs;
-        result.stats.overlayFastPathMs += fastPathMs;
-        result.stats.overlayPrepMs += overlayCreateMs + splitMs + fastPathMs;
-        accumulateOverlayStats(iterOverlayStats);
-
-        const auto overlayGraphStats = overlay.computeStats();
-        const auto directOutputs = overlay.collectDirectOutputProbabilities();
-        const bool allOutputsDirect = directOutputs.size() == overlay.getOutputs().size();
-        const bool needsResidualGraph = overlayGraphStats.activeEdges > 0 || !allOutputsDirect;
-        if (!needsResidualGraph) {
-            result.materialized = {};
-            precomputedProbResult.clear();
-            if (options.computeOutputMarginals) {
-                result.outputProbabilities = directOutputs;
-            }
-            for (const auto& output : directOutputs) {
-                carriedPrecomputedTupleProbs[output.output->getTuple().toString()] = output.probability;
-            }
-            break;
-        }
-
-        const auto materializeStart = Clock::now();
-        auto materialized = overlay.materializeToGraph();
-        result.stats.materializeMs += elapsedMs(materializeStart);
-        result.stats.materializedAliasNodes = materialized.aliasNodes;
-
-        auto viewMaterialized = buildFullIncView(*materialized.graph);
-        result.stats.materializedNodesBefore = viewMaterialized.getNodes().size();
-        result.stats.materializedEdgesBefore = viewMaterialized.getEdges().size();
-
-        if (options.collectPatternStats) {
-            const auto detectBeforeStart = Clock::now();
-            std::vector<SISORegionInfo> regionsBefore;
-            {
-                ScopedCoutSilencer silence;
-                regionsBefore = GraphAnalyzer::detectAllSISOStrictFromExit(viewMaterialized);
-            }
-            result.stats.graphDetectMs += elapsedMs(detectBeforeStart);
-            result.stats.materializedDetectedBefore = countRewritePatterns(regionsBefore);
-        }
-
-        GraphRewriteStats iterRewriteStats;
-        if (options.runMaterializedGraphRewrite) {
-            GraphRewriter rewriter;
-            RewriteFeatureFlags flags;
-            flags.splitMode = SplitMode::None;
-            const auto rewriteStart = Clock::now();
-            precomputedProbResult.clear();
-            {
-                ScopedCoutSilencer silence;
-                iterRewriteStats = rewriter.rewriteUntilFixpoint(
-                        *materialized.graph, viewMaterialized, false, flags);
-            }
-            result.stats.graphRewriteMs += elapsedMs(rewriteStart);
-            carryPrecomputedTuples();
-            accumulateRewriteStats(iterRewriteStats);
-        } else {
-            precomputedProbResult.clear();
-        }
-
-        result.stats.materializedNodesAfter = viewMaterialized.getNodes().size();
-        result.stats.materializedEdgesAfter = viewMaterialized.getEdges().size();
-        materialized.liveNodes = viewMaterialized.getNodes();
-        materialized.liveEdges = viewMaterialized.getEdges();
-
-        if (options.collectPatternStats) {
-            std::vector<SISORegionInfo> regionsAfter;
-            {
-                ScopedCoutSilencer silence;
-                regionsAfter = GraphAnalyzer::detectAllSISOStrictFromExit(viewMaterialized);
-            }
-            result.stats.materializedDetectedAfter = countRewritePatterns(regionsAfter);
-        }
-
-        materialized.outputs.clear();
-        for (const auto& node : viewMaterialized.getNodes()) {
-            if (node && node->needOutput) {
-                materialized.outputs.push_back(node);
-            }
-        }
-        for (const auto& [node, _] : precomputedProbResult) {
-            if (node) {
-                materialized.outputs.push_back(node);
-            }
-        }
-
-        result.materialized = std::move(materialized);
-        const bool splitChanged = iterOverlayStats.aliasesCreated > 0 || iterOverlayStats.edgesAliased > 0;
-        const bool rewriteChanged = iterRewriteStats.numRegionsRewritten > 0;
-        if (!options.iterateSplitRewrite || (!splitChanged && !rewriteChanged)) {
-            break;
-        }
-
-        currentGraph = std::move(result.materialized.graph);
-        currentOwnedView = std::make_unique<IncSubgraphView>(buildFullIncView(*currentGraph));
-        currentView = currentOwnedView.get();
-        result.materialized.graph = nullptr;
-        result.materialized.outputs.clear();
-    }
-
-    precomputedTupleProbResult = carriedPrecomputedTupleProbs;
-    result.carriedPrecomputedTupleProbs.reserve(carriedPrecomputedTupleProbs.size());
-    for (const auto& [tupleStr, prob] : carriedPrecomputedTupleProbs) {
-        result.carriedPrecomputedTupleProbs.emplace_back(tupleStr, prob);
-    }
-
-    if (options.computeOutputMarginals && result.materialized.graph) {
-        auto finalView = buildFullIncView(*result.materialized.graph);
-        auto unresolvedProbabilities = computeGraphOutputMarginalsExact(
-                finalView, result.materialized.outputs, &precomputedProbResult);
-        result.outputProbabilities.insert(result.outputProbabilities.end(), unresolvedProbabilities.begin(),
-                unresolvedProbabilities.end());
-        std::sort(result.outputProbabilities.begin(), result.outputProbabilities.end(),
-                [](const auto& a, const auto& b) { return a.output->getId() < b.output->getId(); });
-    }
-    result.stats.totalMs = elapsedMs(totalStart);
-    return result;
-}
-
 }  // namespace souffle::problog
 
 namespace souffle::problog {
@@ -1739,6 +1613,7 @@ struct JsonBenchmarkOptions {
     bool skipLegacySplit = false;
     bool skipImplicit = false;
     bool runtimeLikeImplicit = false;
+    bool iterateSplitRewrite = false;
     ImplicitSplitMode splitMode = ImplicitSplitMode::Naive;
 };
 
@@ -1762,6 +1637,7 @@ double benchmarkElapsedMs(const std::chrono::steady_clock::time_point& start) {
     std::cerr << "usage: " << argv0 << " --json <derivation.json>"
               << " [--skip-legacy-no-split] [--skip-legacy-split] [--skip-implicit]"
               << " [--runtime-like-implicit]"
+              << " [--iterate-split-rewrite]"
               << " [--split-complete]\n";
     throw std::runtime_error("invalid arguments");
 }
@@ -1780,6 +1656,8 @@ JsonBenchmarkOptions parseBenchmarkArgs(int argc, char** argv) {
             opt.skipImplicit = true;
         } else if (arg == "--runtime-like-implicit") {
             opt.runtimeLikeImplicit = true;
+        } else if (arg == "--iterate-split-rewrite") {
+            opt.iterateSplitRewrite = true;
         } else if (arg == "--split-complete") {
             opt.splitMode = ImplicitSplitMode::Complete;
         } else {
@@ -1892,7 +1770,8 @@ BenchmarkLegacyRunResult runBenchmarkLegacyRewrite(const std::string& jsonPath, 
 }
 
 ImplicitSplitPipelineResult runBenchmarkImplicitRewrite(
-        const std::string& jsonPath, ImplicitSplitMode splitMode, bool runtimeLike, double* loadMsOut) {
+        const std::string& jsonPath, ImplicitSplitMode splitMode, bool runtimeLike,
+        bool iterateSplitRewrite, double* loadMsOut) {
     const auto loadStart = std::chrono::steady_clock::now();
     auto graph = std::unique_ptr<IncrementalDerivationGraph>(
             IncrementalDerivationGraph::loadFromJsonInc(jsonPath));
@@ -1904,10 +1783,10 @@ ImplicitSplitPipelineResult runBenchmarkImplicitRewrite(
     ImplicitSplitPipelineOptions options;
     options.splitMode = splitMode;
     options.computeOutputMarginals = false;
+    options.iterateSplitRewrite = iterateSplitRewrite;
     if (runtimeLike) {
         options.runOverlayFastPaths = false;
         options.collectPatternStats = false;
-        options.iterateSplitRewrite = false;
     }
     return runImplicitSplitRewritePipeline(view, options);
 }
@@ -1948,6 +1827,7 @@ void printBenchmarkImplicitSummary(const ImplicitSplitPipelineResult& run, doubl
               << " overlay_single=" << stats.overlayStats.singleHyperedgeRewrites
               << " split_facts=" << stats.overlayStats.splitFactsConsidered
               << " split_facts_aliased=" << stats.overlayStats.splitFactsAliased
+              << " split_cache_hits=" << stats.overlayStats.splitFactsCacheHits
               << " split_naive_ms=" << stats.overlayStats.splitNaiveMs
               << " split_complete_ms=" << stats.overlayStats.splitCompleteMs
               << " split_alias_apply_ms=" << stats.overlayStats.splitAliasApplyMs
@@ -2092,7 +1972,7 @@ int runImplicitSplitJsonBenchmarkMain(int argc, char** argv) {
         if (!opt.skipImplicit) {
             double loadMs = 0.0;
             const auto result = runBenchmarkImplicitRewrite(
-                    opt.jsonPath, opt.splitMode, opt.runtimeLikeImplicit, &loadMs);
+                    opt.jsonPath, opt.splitMode, opt.runtimeLikeImplicit, opt.iterateSplitRewrite, &loadMs);
             printBenchmarkImplicitSummary(result, loadMs);
         }
 

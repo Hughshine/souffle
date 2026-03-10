@@ -4,6 +4,9 @@
 - [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
 - [src/include/souffle/problog/GraphRewriter.h](src/include/souffle/problog/GraphRewriter.h)
 - [src/include/souffle/problog/GraphAnalyzer.h](src/include/souffle/problog/GraphAnalyzer.h)
+- [src/include/souffle/problog/ImplicitSplitRewrite.h](src/include/souffle/problog/ImplicitSplitRewrite.h)
+- [src/problog/ImplicitSplitRewrite.cpp](src/problog/ImplicitSplitRewrite.cpp)
+- [problog-benchmark/.worktree/full-artifact/taint_full.py](problog-benchmark/.worktree/full-artifact/taint_full.py)
 
 
 This file summarizes the SISO rewrite pipeline: design, current state (post revert), observed behavior, and near‑term plans.
@@ -14,6 +17,11 @@ This file summarizes the SISO rewrite pipeline: design, current state (post reve
 ## Scope
 - Full-mode pipeline only; if rewrite runs, the incremental CLI is skipped for that run.
 - Online compilation is default; `--online` is optional (kept in commands when shown).
+
+## Companion Docs
+- Use `docs/research/README.rewrite.status.md` for the compact trusted reading of
+  current rewrite results, rankings, and provenance pitfalls.
+- Use this file for implementation behavior and detailed optimization notes.
 
 ## Goal
 - Iteratively find SISO regions (single entry/exit) in the derivation graph, summarize each region into a single probabilistic edge, then run the usual forward compilation on the smaller view.
@@ -148,34 +156,177 @@ Current status (2026-03-09):
 
 Known performance issue:
 - On highly rewriteable taint stages such as `typefilter-dlog`, the remaining cost
-  is no longer legacy `GraphRewriter`; it is the implicit overlay itself.
-- A representative `typefilter-dlog` run that fully discharges to tuple-level
-  precomputed outputs still spends about:
-  - `overlay_split_ms ~= 11.2s`
-  - `overlay_fastpath_ms ~= 6.2s`
-  - `materialize_ms = 0`
-  - `graph_rewrite_ms = 0`
-- This means the dominant bottleneck is currently split partitioning / alias
-  application plus repeated overlay candidate scans, not downstream DD work.
+  is no longer legacy `GraphRewriter`; it is the implicit overlay plus the
+  runtime handoff around fully precomputed outputs.
+- Recent optimization passes improved the representative sampled
+  `and-roc/typefilter-dlog` benchmark substantially:
+  - standalone implicit benchmark:
+    - before split-side fixes: `total_ms ~= 16.78s`
+    - after removing per-edge alias index maintenance: `total_ms ~= 10.33s`
+    - after all-facts specialized fast path + skip-empty rebuild: `total_ms ~= 5.48s`
+  - key sub-metrics moved as follows:
+    - `split_alias_apply_ms`: `~8.63s -> ~0.48s`
+    - `overlay_fastpath_ms`: `~6.06s -> ~2.41s`
+    - `rebuild_index_ms`: `~1.92s -> ~1.43s`
+    - `fastpath_iterations`: `2 -> 1`
+  - full stage runtime on a fresh compiled binary:
+    - earlier implicit: `real ~= 39.10s`
+    - current implicit: `real ~= 24.68s`
+    - no-rewrite baseline artifact: `real ~= 68.25s`
+    - output check: `facts.prob` exact match (`968463` lines, diff `0`)
+- The residual overhead in the full stage is now mostly:
+  - derivation graph creation (`~5.1s`)
+  - pruning (`~3.4s`)
+  - implicit rewrite + handoff (`~9.5s`, of which pure overlay work is `~6.5s`)
+  - probability dump (`~3.4s`)
+- This means the dominant rewrite-time bottleneck is currently index rebuilds and
+  all-facts handling on very large output sets, not downstream DD work.
 
 Working hypothesis:
-- `partitionFactOutgoingEdgesNaive()` is still too expensive on large fan-out
-  fact sets, even with the reachability cap, because it repeats many small BFS
-  traversals over similar subgraphs.
-- The overlay fast-path loop also rescans a very large active-edge set even when
-  almost all rewrites are simple all-facts contractions.
+- `partitionFactOutgoingEdgesNaive()` was previously too expensive because alias
+  application updated outgoing-edge indices incrementally. That issue is now
+  largely fixed; for all-facts-heavy stages the bigger remaining cost is
+  rebuilding those indices and moving large precomputed output maps through the
+  pipeline.
+- The overlay fast-path loop was previously paying region-selection costs for
+  all-facts candidates. A specialized all-facts pass now avoids most of that
+  work, but mixed-pattern graphs can still spend noticeable time on residual
+  materialized rewrite.
 
 Next optimization directions:
-1. Cache or incrementally maintain split reachability summaries for large fact
-   fan-outs, instead of re-running per-outgoing-edge BFS from scratch.
-2. Add a cheaper prefilter for facts that obviously cannot benefit from split
-   (for example, tiny out-degree or trivially overlapping successors).
-3. Separate the all-facts-heavy pipeline from the mixed-pattern pipeline so that
-   all-facts-dominated stages like `typefilter-dlog` avoid unnecessary single-edge
-   candidate bookkeeping.
-4. Keep measuring `overlay_split_ms` and `overlay_fastpath_ms` independently; those
-   numbers now reflect the true implicit overhead much better than total rewrite
-   time.
+1. Reduce `rebuildActiveEdgeIndices()` cost further; this is now a first-class
+   hotspot on all-facts-heavy taint stages.
+2. Avoid large precomputed-output bookkeeping in the pipeline when the residual
+   graph is empty and outputs are already fully covered by tuple-level results.
+3. Add more mixed-pattern benchmarks (for example side-channel `P19/P20`) before
+   changing `single-hyperedge` scheduling again; the current all-facts
+   specialization helps taint strongly but can slightly shift mixed-case costs.
+4. Keep measuring `overlay_split_ms`, `overlay_fastpath_ms`, and
+   `rebuild_index_ms` independently; those numbers now reflect the true implicit
+   overhead much better than total rewrite time.
+
+Iterative implicit rewrite status (2026-03-10):
+- The first working iterative prototype was correct but slower because it still
+  paid repeated whole-graph work:
+  - re-splitting after every outer round
+  - rebuilding overlay indices from materialized shadow facts
+  - running extra legacy graph-rewrite rounds on already-small residual graphs
+- Two targeted fixes helped substantially on mixed-pattern side-channel cases:
+  1. cache per-base-fact split work by the current base outgoing active edge set
+  2. do not split materialized shadow facts again when rebuilding an overlay
+- Representative mixed case: `side_channel_full/P20/output/derivation.json`
+  - iterative standalone before these fixes:
+    - `total_ms ~= 5.50s`
+    - `overlay_prep_ms ~= 2.72s`
+    - `graph_rewrite_ms ~= 1.93s`
+  - iterative standalone after these fixes:
+    - `total_ms ~= 3.71s`
+    - `overlay_prep_ms ~= 1.85s`
+    - `graph_rewrite_ms ~= 1.21s`
+  - final residual still matches explicit rewrite:
+    - `nodes_after = 6529`
+    - `edges_after = 6319`
+    - `graph_rv_after = 3606`
+- Fresh compiled full runtime on `P20` now shows the same ordering, with exact
+  output agreement across all variants:
+  - `no rewrite`: `real ~= 6.82s`
+  - legacy `--rewrite`: `real ~= 5.17s`
+  - `--implicit-rewrite`: `real ~= 4.03s`
+  - `--implicit-iterate-split-rewrite`: `real ~= 3.89s`
+- Current mixed-case bottlenecks are no longer split BFS itself:
+  - `rebuild_index_ms` inside overlay fast paths
+  - residual `graph_rewrite_ms` after the overlay phase
+  - detecting when an extra iterative outer round will not buy further shrink
+
+Persistent-overlay redesign status (2026-03-10, later update):
+- The iterative path now keeps one `ImplicitSplitOverlay` alive across rounds.
+  The new structure is:
+  1. build overlay once
+  2. run `applySplit(...)` and overlay fast paths on that same overlay for one
+     or more rounds
+  3. materialize the residual graph at most once
+  4. run legacy `GraphRewriter` on the residual graph at most once
+- This removes the earlier overlay/graph/overlay round-trip from iterative
+  mode. In other words, iterative is now a true persistent-overlay variant, not
+  “multi-round single-pass”.
+- Correctness checks after the redesign:
+  - `souffle-implicit-split-smoke`: pass
+  - `SOUFFLE_BIN=./build/src/souffle examples/running_example/run.sh`: pass
+  - `ctest --test-dir build -L regression`: pass (`10/10`)
+  - fresh `side_channel_full` outputs for `P15/P19/P20`:
+    - legacy vs implicit vs iterative: exact `facts.prob` match for all three cases
+- Fresh compiled `side_channel_full` runtime after the persistent-overlay redesign:
+  - `P15`
+    - legacy `--rewrite`: `0.939s`
+    - `--implicit-rewrite`: `1.050s`
+    - `--implicit-iterate-split-rewrite`: `0.980s`
+  - `P19`
+    - legacy `--rewrite`: `5.931s`
+    - `--implicit-rewrite`: `6.315s`
+    - `--implicit-iterate-split-rewrite`: `6.304s`
+  - `P20`
+    - legacy `--rewrite`: `6.631s`
+    - `--implicit-rewrite`: `5.232s`
+    - `--implicit-iterate-split-rewrite`: `5.838s`
+- Internal `FC_WMC_HYBRID` timings on those same fresh runs:
+  - `P15`
+    - legacy: `rewrite_ms=316`
+    - implicit: `rewrite_ms=403`, `implicit_overlay_prep_ms=62`, `implicit_graph_rewrite_ms=212`
+    - iterative: `rewrite_ms=369`, `implicit_overlay_prep_ms=61`, `implicit_graph_rewrite_ms=190`
+  - `P19`
+    - legacy: `rewrite_ms=2778`
+    - implicit: `rewrite_ms=3222`, `implicit_overlay_prep_ms=877`, `implicit_graph_rewrite_ms=1602`
+    - iterative: `rewrite_ms=3158`, `implicit_overlay_prep_ms=917`, `implicit_graph_rewrite_ms=1552`
+  - `P20`
+    - legacy: `rewrite_ms=3920`
+    - implicit: `rewrite_ms=2634`, `implicit_overlay_prep_ms=1138`, `implicit_graph_rewrite_ms=925`
+    - iterative: `rewrite_ms=3245`, `implicit_overlay_prep_ms=1452`, `implicit_graph_rewrite_ms=1146`
+- Current conclusion:
+  - The persistent-overlay redesign fixed the architectural issue that made
+    iterative pay repeated overlay<->graph handoff costs.
+  - However, iterative is still not consistently better than single-pass
+    implicit on fresh mixed-pattern cases.
+  - The remaining issue is semantic/payoff, not basic architecture: under the
+    current `naive-split` definition, a second split round often finds no new
+    profitable aliases, so extra overlay work becomes pure overhead.
+  - `P20` is the representative case to watch: even there, the fresh residual
+    random-variable count after rewrite stayed the same for implicit and
+    iterative (`rand_vars=4472`), which explains why the extra round did not
+    pay for itself.
+- Near-term implication:
+  - Further iterative tuning should focus on deciding whether another split
+    round can create new aliases before paying its bookkeeping cost. Without
+    that signal, the persistent-overlay implementation is correct but will not
+    reliably beat the single-pass path.
+
+Taint rerun pitfall (2026-03-10):
+- A direct rerun of `and-roc / typefilter-dlog` can silently become
+  incomparable if the dataset/binary pair is mixed.
+- The validated comparison used the previously generated v2 sampled artifact
+  pair under:
+  - `problog-benchmark/runs/taint_v2_androc_typefilter_compare_20260309`
+  - corresponding sampled v2 bundle metadata under
+    `problog-benchmark/taint_datasets/final-bundles/v2_semantic_subsetprob_noderv0`
+- That checked run produced:
+  - `facts.prob` lines: `968463`
+  - `typeFilter.csv` lines: `968463`
+  - implicit handoff: `precomputed_nodes=968463`
+- A later quick rerun accidentally used:
+  - source: `problog-benchmark/.worktree/full-artifact/taint_full/shared_build/typefilter-dlog/compute.souffle.dl`
+  - input: `problog-benchmark/.worktree/full-artifact/taint_full/and-roc/stages/typefilter-dlog/input`
+- That is a different generated artifact set. On this pair:
+  - `typeFilter.csv` had only `8477` rows
+  - `ipFilter.csv` had `8187856` rows
+  - pruning saw `output_nodes=0`
+  - `facts.prob` was empty
+- Therefore that rerun is not evidence about rewrite performance. It is only a
+  path-mismatch pitfall.
+- Rule going forward:
+  - for taint rewrite comparisons, always record and reuse the exact generated
+    `compute` binary and matching stage input directory from the same sampled
+    bundle/run directory
+  - do not mix them with `.worktree/full-artifact/taint_full/*` unless the run
+    is being regenerated from scratch for that exact artifact set
 
 ### TODO 2: Add per-query formula/derivation rewrite path
 
@@ -196,6 +347,7 @@ Direction:
 - Ensure result parity with current pipeline (same marginals under identical inputs).
 
 ## Related commits
+- `UNCOMMITTED` — perf(problog): redesign iterative implicit rewrite around a persistent overlay
 - `812ea4081` — docs(repo): refine README narratives
 - `3e9b024ca` — docs(readme): refresh eval and pipeline notes
 - `4dd403de4` — Translate Chinese comments and docs to English

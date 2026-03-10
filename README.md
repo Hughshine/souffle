@@ -61,6 +61,9 @@ See `docs/TESTING.md` for test status and alternative verification paths.
 - `AGENTS.md`: Codex constraints and verification expectations.
 - `docs/ARCHITECTURE.md`: high-level system design.
 - `docs/project/README.md`: project-level module map, fork delta, and maintenance invariants.
+- `docs/project/DOC_SYSTEM.md`: documentation architecture and placement rules.
+- `docs/research/README.md`: active research map, experiment protocol, and
+  curated current findings.
 - `docs/project/PROBLOG_EXTENSION_STACK.md`: detailed ProbLog extension implementation from driver/parser through runtime pipeline.
 - `docs/TESTING.md`: verification strategy and CI command sources.
 - `docs/RUNBOOK.md`: run/rollback/troubleshooting guide.
@@ -73,11 +76,15 @@ See `docs/TESTING.md` for test status and alternative verification paths.
 - `docs/historical/README.md`: archived historical notes.
 
 ## FAQ / Common Issues
-- ctest fails: this fork intentionally disables `ctest`; see `docs/TESTING.md`.
+- Need regression tests: use `ctest --test-dir build -L regression`; see
+  `docs/TESTING.md`.
 - Need rewrite or incremental details: start at `docs/INDEX.md`.
+- Need current trusted experiment conclusions or provenance rules: start at
+  `docs/research/README.md`.
 - Commit hygiene: see `docs/process/README.git.md` for what to include and exclude.
 
 ## Related commits
+- `UNCOMMITTED` — docs(system): add research entry points and fix testing guidance in README
 - `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack guide and link it from README
 - `UNCOMMITTED` — docs(repo): add project-level docs and move commit hygiene guide under docs/process
 - `812ea4081` — docs(repo): refine README narratives

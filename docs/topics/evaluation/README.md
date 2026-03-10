@@ -2,6 +2,10 @@
 
 Current evaluation docs are split by workflow and by lifecycle stage (current vs historical).
 
+Workflow docs live here. Trusted current benchmark readings and provenance
+pitfalls now live in `docs/research/*`, especially
+`docs/research/README.rewrite.status.md`.
+
 ## Current Workflows
 - `docs/topics/evaluation/README.eval.inc.md`: incremental side-channel workflow (`side_channel_inc.py`).
 - `docs/topics/evaluation/README.eval.md`: full-only side-channel workflow (`side_channel_full.py`).
@@ -21,7 +25,9 @@ For dated run artifacts and TSV/plot outputs, use `archive/`.
 ## Source references
 - [problog-benchmark/README.side-channel-inc.md](problog-benchmark/README.side-channel-inc.md)
 - [problog-benchmark/README.side-channel-full.md](problog-benchmark/README.side-channel-full.md)
+- [docs/research/README.rewrite.status.md](docs/research/README.rewrite.status.md)
 - [archive/README.md](archive/README.md)
 
 ## Related commits
+- `UNCOMMITTED` — docs(system): separate evaluation workflow docs from active research status
 - `UNCOMMITTED` — docs(evaluation): split current workflow docs from historical run logs

@@ -2,6 +2,10 @@
 
 Topical docs for currently supported behavior and workflows.
 
+Use `docs/research/README.md` for active measurements, current rankings, and
+experiment protocol. Topic docs should describe behavior, not act as raw
+research notebooks.
+
 ## Subfolders
 - `docs/topics/runtime/`: flags, dump/debug output references.
 - `docs/topics/pipeline/`: online/incremental semantics and pruning behavior.
@@ -13,13 +17,17 @@ Topical docs for currently supported behavior and workflows.
 
 ## Entry Point
 - Use `docs/INDEX.md` for canonical priority and recency tags.
+- Use `docs/research/README.md` when you need current trusted conclusions rather
+  than implementation details.
 
 ## Source references
 - [docs/INDEX.md](docs/INDEX.md)
+- [docs/research/README.md](docs/research/README.md)
 - [docs/topics/pipeline/README.inc.region.md](docs/topics/pipeline/README.inc.region.md)
 - [docs/topics/evaluation/README.md](docs/topics/evaluation/README.md)
 - [docs/topics/testing/README.regression.md](docs/topics/testing/README.regression.md)
 
 ## Related commits
+- `UNCOMMITTED` — docs(system): separate topic behavior docs from active research docs
 - `UNCOMMITTED` — docs(testing): add topical regression workflow reference
 - `UNCOMMITTED` — docs(evaluation): add topical evaluation map and current/historical split

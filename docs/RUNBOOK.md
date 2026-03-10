@@ -30,7 +30,8 @@
 - `-p <file>` enables profiling output when compiled with profiling.
 
 ## Troubleshooting
-- `ctest` fails: see `docs/TESTING.md` for status and alternatives.
+- Need regression coverage: run `ctest --test-dir build -L regression`; see
+  `docs/TESTING.md` for the maintained test entry points.
 - `souffle` not found: set `SOUFFLE_BIN` or add the built binary to `PATH`.
 - Missing BDD/SDD backend: ensure CUDD is installed (SDD optional for `-k sdd`).
 - `--inc` not recognized: the legacy backend is removed; use online incremental modes.
@@ -41,5 +42,6 @@
 - Inspect stdout timing lines and JSON logs for hot stages before tuning.
 
 ## Related commits
+- `UNCOMMITTED` — docs(system): align runbook troubleshooting with maintained regression workflow
 - `UNCOMMITTED` — docs(process): update artifact-commit hygiene reference path
 - `812ea4081` — docs(repo): refine README narratives
