@@ -380,6 +380,14 @@ else ()
   message(WARNING "Skipping souffle-problog-graph-query: CUDD library not found")
 endif ()
 
+set(SOUFFLE_PROBLOG_PIPELINE_LIBS ${CUDD_LIBRARY} m readline)
+if (SDD_LIBRARY)
+  list(APPEND SOUFFLE_PROBLOG_PIPELINE_LIBS ${SDD_LIBRARY})
+endif ()
+if (SDDXX_LIBRARY)
+  list(APPEND SOUFFLE_PROBLOG_PIPELINE_LIBS ${SDDXX_LIBRARY})
+endif ()
+
 # --------------------------------------------------
 # Standalone derivation-graph -> weighted-AMC demo
 # --------------------------------------------------
@@ -389,6 +397,123 @@ add_executable(souffle-amc-pipeline-demo
 target_link_libraries(souffle-amc-pipeline-demo PRIVATE libsouffle compiled)
 add_dependencies(souffle-amc-pipeline-demo compiled)
 install(TARGETS souffle-amc-pipeline-demo DESTINATION bin)
+
+# --------------------------------------------------
+# Standalone SCBF IR smoke test (independent from runtime pipeline)
+# --------------------------------------------------
+add_executable(souffle-scbf-ir-smoke
+               problog/scbf/ScbfIr.cpp)
+target_compile_definitions(souffle-scbf-ir-smoke PRIVATE SOUFFLE_SCBF_IR_SMOKE_MAIN=1)
+target_link_libraries(souffle-scbf-ir-smoke PRIVATE libsouffle compiled)
+add_dependencies(souffle-scbf-ir-smoke compiled)
+install(TARGETS souffle-scbf-ir-smoke DESTINATION bin)
+
+# --------------------------------------------------
+# Standalone SCBF evaluator smoke (independent from runtime pipeline)
+# --------------------------------------------------
+add_executable(souffle-scbf-evaluator-smoke
+               problog/scbf/ScbfEvaluator.cpp)
+if (CUDD_LIBRARY)
+  target_compile_definitions(souffle-scbf-evaluator-smoke PRIVATE
+                             SOUFFLE_SCBF_EVAL_BUNDLE_REWRITE=1
+                             SOUFFLE_SCBF_EVAL_HAS_REWRITE=1
+                             SOUFFLE_SCBF_EVAL_SMOKE_MAIN=1)
+  target_link_libraries(souffle-scbf-evaluator-smoke PRIVATE libsouffle compiled ${CUDD_LIBRARY} m)
+else ()
+  target_compile_definitions(souffle-scbf-evaluator-smoke PRIVATE
+                             SOUFFLE_SCBF_EVAL_BUNDLE_FORMULA=1
+                             SOUFFLE_SCBF_EVAL_SMOKE_MAIN=1)
+  target_link_libraries(souffle-scbf-evaluator-smoke PRIVATE libsouffle compiled)
+endif ()
+add_dependencies(souffle-scbf-evaluator-smoke compiled)
+install(TARGETS souffle-scbf-evaluator-smoke DESTINATION bin)
+
+# --------------------------------------------------
+# Standalone SCBF formula bundle smoke (independent from runtime pipeline)
+# --------------------------------------------------
+add_executable(souffle-scbf-formula-smoke
+               problog/scbf/ScbfFormula.cpp)
+target_compile_definitions(souffle-scbf-formula-smoke PRIVATE
+                           SOUFFLE_SCBF_FORMULA_BUNDLE_IR=1
+                           SOUFFLE_SCBF_FORMULA_SMOKE_MAIN=1)
+target_link_libraries(souffle-scbf-formula-smoke PRIVATE libsouffle compiled)
+add_dependencies(souffle-scbf-formula-smoke compiled)
+install(TARGETS souffle-scbf-formula-smoke DESTINATION bin)
+
+# --------------------------------------------------
+# Standalone SCBF global stitched formula smoke (independent from runtime pipeline)
+# --------------------------------------------------
+add_executable(souffle-scbf-global-formula-smoke
+               problog/scbf/ScbfGlobalFormula.cpp)
+target_compile_definitions(souffle-scbf-global-formula-smoke PRIVATE
+                           SOUFFLE_SCBF_GLOBAL_FORMULA_BUNDLE_FORMULA=1
+                           SOUFFLE_SCBF_GLOBAL_FORMULA_SMOKE_MAIN=1)
+target_link_libraries(souffle-scbf-global-formula-smoke PRIVATE libsouffle compiled)
+add_dependencies(souffle-scbf-global-formula-smoke compiled)
+install(TARGETS souffle-scbf-global-formula-smoke DESTINATION bin)
+
+# --------------------------------------------------
+# Standalone SCBF global rewrite smoke (independent from runtime pipeline)
+# --------------------------------------------------
+if (CUDD_LIBRARY)
+  add_executable(souffle-scbf-global-rewrite-smoke
+                 problog/scbf/ScbfGlobalFormulaRewriter.cpp)
+  target_compile_definitions(souffle-scbf-global-rewrite-smoke PRIVATE
+                             SOUFFLE_SCBF_GLOBAL_REWRITE_GLOBAL_FORMULA=1
+                             SOUFFLE_SCBF_GLOBAL_REWRITE_SMOKE_MAIN=1)
+  target_link_libraries(souffle-scbf-global-rewrite-smoke PRIVATE libsouffle compiled ${CUDD_LIBRARY} m)
+  add_dependencies(souffle-scbf-global-rewrite-smoke compiled)
+  install(TARGETS souffle-scbf-global-rewrite-smoke DESTINATION bin)
+else ()
+  message(WARNING "Skipping souffle-scbf-global-rewrite-smoke: CUDD library not found")
+endif ()
+
+# --------------------------------------------------
+# Standalone SCBF formula rewrite smoke (independent from runtime pipeline)
+# --------------------------------------------------
+if (CUDD_LIBRARY)
+  add_executable(souffle-scbf-rewrite-smoke
+                 problog/scbf/ScbfFormulaRewriter.cpp)
+  target_compile_definitions(souffle-scbf-rewrite-smoke PRIVATE
+                             SOUFFLE_SCBF_REWRITE_BUNDLE_FORMULA=1
+                             SOUFFLE_SCBF_REWRITE_SMOKE_MAIN=1)
+  target_link_libraries(souffle-scbf-rewrite-smoke PRIVATE libsouffle compiled ${CUDD_LIBRARY} m)
+  add_dependencies(souffle-scbf-rewrite-smoke compiled)
+  install(TARGETS souffle-scbf-rewrite-smoke DESTINATION bin)
+else ()
+  message(WARNING "Skipping souffle-scbf-rewrite-smoke: CUDD library not found")
+endif ()
+
+# --------------------------------------------------
+# Standalone SCBF derivation.json benchmark
+# --------------------------------------------------
+if (CUDD_LIBRARY)
+  add_executable(souffle-scbf-json-benchmark
+                 problog/scbf/ScbfJsonBenchmark.cpp)
+  target_link_libraries(souffle-scbf-json-benchmark PRIVATE libsouffle compiled ${CUDD_LIBRARY} m)
+  add_dependencies(souffle-scbf-json-benchmark compiled)
+  install(TARGETS souffle-scbf-json-benchmark DESTINATION bin)
+else ()
+  message(WARNING "Skipping souffle-scbf-json-benchmark: CUDD library not found")
+endif ()
+
+# --------------------------------------------------
+# Standalone implicit split overlay smoke (experimental, does not affect runtime pipeline)
+# --------------------------------------------------
+add_executable(souffle-implicit-split-smoke
+               problog/ImplicitSplitSmokeMain.cpp)
+target_link_libraries(souffle-implicit-split-smoke PRIVATE libsouffle compiled ${SOUFFLE_PROBLOG_PIPELINE_LIBS})
+add_dependencies(souffle-implicit-split-smoke compiled)
+install(TARGETS souffle-implicit-split-smoke DESTINATION bin)
+
+# --------------------------------------------------
+# Standalone implicit split derivation.json benchmark (experimental, does not affect runtime pipeline)
+# --------------------------------------------------
+add_executable(souffle-implicit-split-json-benchmark
+               problog/ImplicitSplitJsonBenchmarkMain.cpp)
+target_link_libraries(souffle-implicit-split-json-benchmark PRIVATE libsouffle compiled ${SOUFFLE_PROBLOG_PIPELINE_LIBS})
+add_dependencies(souffle-implicit-split-json-benchmark compiled)
+install(TARGETS souffle-implicit-split-json-benchmark DESTINATION bin)
 
 # --------------------------------------------------
 # Standalone BDD+WMC vs AMC benchmark on synthetic derivation graph
