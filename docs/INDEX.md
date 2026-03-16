@@ -59,6 +59,7 @@ Legend:
 
 ## Rewrite & Graph Transforms
 - [PRIMARY] `docs/topics/rewrite/README.rewrite.impl.md` — current rewrite behavior
+- [PRIMARY] `docs/topics/rewrite/README.implicit.md` — implicit rewrite purpose, design, and implementation
 - [PRIMARY] `docs/topics/rewrite/README.derivation.analyzer.md` — standalone derivation JSON analyzer and interactive viewer
 - [SECONDARY] `docs/topics/rewrite/README.split.md` — split behavior + design notes
 - [SECONDARY] `docs/topics/rewrite/README.siso.md` — SISO detection details
@@ -102,7 +103,11 @@ Legend:
 - Raw run outputs, generated dumps, and local benchmark logs remain local; only
   stable distilled findings belong in `docs/research/*`, `docs/topics/*`, or
   `archive/`.
-- See `problog-benchmark/README.md` and `examples/running_example/README.md` as entry points.
+- Local-heavy-workspace overlay: `work/README.md`.
+- Stable checked-in benchmark entry points remain `problog-benchmark/README.md`,
+  `problog-benchmark/runs/README.md`, and `examples/running_example/README.md`.
+- Local `work/benchmarks/problog-benchmark/` overlays may exist for convenience,
+  but checked-in docs should not require them.
 - Historical benchmark notes remain in `problog-benchmark/README.sc.original.md` and `experiments/smokers_11/Plan.md`.
 
 ## Design Notes (Not Implemented)
@@ -117,8 +122,10 @@ Legend:
 - [DESIGN] `docs/design/README.inc.regional.opt.md` — inc-regional optimizations
 - [DESIGN] `docs/design/IncRegional_PaperFormal_TechReport.md` — formalization notes
 - [DESIGN] `docs/design/README.elastic.md` — elastic switch ideas
+- [DESIGN] `docs/design/README.flag.unification.md` — unified canonical flag model across compiler/runtime/CLI/tooling
 - [DESIGN] `docs/design/README.eqrel.md` — eqrel pruning concept
 - [DESIGN] `docs/design/README.lazy.md` — lazy DD plan
+- [DESIGN] `docs/design/README.refactor.scope.md` — full refactor scope, staged roadmap, acceptance, and rationale
 - [DESIGN] `docs/design/README.refactor.md` — refactor opportunities
 
 ## Archive
@@ -144,6 +151,8 @@ Legend:
 - [tests/regression/CMakeLists.txt](tests/regression/CMakeLists.txt)
 
 ## Related commits
+- `UNCOMMITTED` — docs(design): index the formal refactor scope document
+- `UNCOMMITTED` — docs(rewrite): add dedicated implicit rewrite implementation guide
 - `UNCOMMITTED` — docs(codex): index the Codex bootstrap pack
 - `UNCOMMITTED` — docs(system): add research layer and reorganize index priorities
 - `UNCOMMITTED` — docs(rewrite): index standalone derivation analyzer guide

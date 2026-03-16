@@ -1,7 +1,8 @@
 # Incremental Artifact (Side-Channel)
 
 ## Source references
-- [problog-benchmark/side_channel_inc.py](problog-benchmark/side_channel_inc.py)
+- [problog-benchmark/benchmarks/side_channel/cli/side_channel_inc.py](problog-benchmark/benchmarks/side_channel/cli/side_channel_inc.py)
+- [problog-benchmark/benchmarks/side_channel/docs/README.side-channel-inc.md](problog-benchmark/benchmarks/side_channel/docs/README.side-channel-inc.md)
 - [sh/run_artifact_inc.sh](sh/run_artifact_inc.sh)
 - [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
 - [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
@@ -14,7 +15,7 @@ artifact experiments for the side-channel benchmark:
 - INC_NAIVE delete/insert performance (setmode `inc`)
 
 For full script details, see:
-`problog-benchmark/README.side-channel-inc.md`.
+`problog-benchmark/benchmarks/side_channel/docs/README.side-channel-inc.md`.
 
 ## Prereqs
 

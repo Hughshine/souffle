@@ -8,16 +8,16 @@ Detailed historical timing dumps were moved to `docs/historical/OPT.md`.
 ```bash
 export PATH="$(pwd)/build/src:$PATH"
 
-python3 problog-benchmark/side_channel_inc.py \
-  --base-dir problog-benchmark/side_channel_inc_opt \
+python3 problog-benchmark/benchmarks/side_channel/cli/side_channel_inc.py \
+  --base-dir problog-benchmark/benchmarks/side_channel/runs/inc_opt \
   compile --cases 1-20 --timeout 600 --jobs 4
 
-python3 problog-benchmark/side_channel_inc.py \
-  --base-dir problog-benchmark/side_channel_inc_opt \
+python3 problog-benchmark/benchmarks/side_channel/cli/side_channel_inc.py \
+  --base-dir problog-benchmark/benchmarks/side_channel/runs/inc_opt \
   run --cases 1-20 --timeout 900 --compare-all
 
-python3 problog-benchmark/side_channel_inc.py \
-  --base-dir problog-benchmark/side_channel_inc_opt \
+python3 problog-benchmark/benchmarks/side_channel/cli/side_channel_inc.py \
+  --base-dir problog-benchmark/benchmarks/side_channel/runs/inc_opt \
   collect --cases 1-20
 ```
 
@@ -36,7 +36,7 @@ From `delta-*.json` and `log_*.json`:
 For archived aggregate TSV outputs, use `archive/2026-02-11/tsv/`.
 
 ## Source references
-- [problog-benchmark/side_channel_inc.py](problog-benchmark/side_channel_inc.py)
+- [problog-benchmark/benchmarks/side_channel/cli/side_channel_inc.py](problog-benchmark/benchmarks/side_channel/cli/side_channel_inc.py)
 - [src/include/souffle/problog/RegionalIncremental.h](src/include/souffle/problog/RegionalIncremental.h)
 - [archive/2026-02-11/tsv/inc_regional_vs_naive_fc_wmc_per_case_delta.tsv](archive/2026-02-11/tsv/inc_regional_vs_naive_fc_wmc_per_case_delta.tsv)
 

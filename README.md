@@ -56,6 +56,22 @@ See `docs/TESTING.md` for test status and alternative verification paths.
 - `SOUFFLE_BIN`, `SOUFFLE_COMPILE_OPTS`, and `SOUFFLE_RUN_OPTS` are used by
   example scripts.
 
+## Local Workspaces
+- Large local-only assets now belong under `work/`:
+  - `work/benchmarks/` for benchmark repos and run workspaces
+  - `work/archive/` for bulky archived batches
+  - `work/build/` for auxiliary build trees
+  - `work/experiments/` for large experiment workspaces
+  - `work/deps-src/` for dependency source caches
+- The `work/` tree is the canonical local-heavy-workspace surface; top-level
+  paths such as `problog-benchmark/`, `archive/`, and large `experiments/*`
+  remain only for compatibility or because the underlying payload already lives
+  there.
+- Top-level compatibility paths may remain as symlinks so frozen docs and older
+  commands continue to resolve.
+- The canonical source tree stays at the repo root; `work/` is for convenience,
+  not long-term source of truth.
+
 ## Documentation
 - `CONTRIBUTING.md`: contributor workflow and review checklist.
 - `AGENTS.md`: Codex constraints and verification expectations.
@@ -76,6 +92,7 @@ See `docs/TESTING.md` for test status and alternative verification paths.
 - `docs/topics/README.md`: map of current topic docs (pipeline/rewrite/backends/profiling/eval).
 - `docs/design/README.md`: design proposals not fully implemented.
 - `docs/historical/README.md`: archived historical notes.
+- `work/README.md`: local-heavy-workspace layout and policy.
 
 ## FAQ / Common Issues
 - Need regression tests: use `ctest --test-dir build -L regression`; see

@@ -18,7 +18,7 @@ or an upstream area extended by this fork.
 | Incremental command interface | `src/include/souffle/cli/Cli.h` | Fork extension | Interactive/batch `insert/delete/commit`, mode switching, output naming | `docs/USAGE.md`<br>`docs/topics/pipeline/README.inc.region.md`<br>`docs/project/PROBLOG_EXTENSION_STACK.md` |
 | Reporting and debug output | `src/reports/*`<br>`src/problog/debug/*` | Upstream + fork extension | JSON/DOT/stats dumps, runtime logs, diagnostics | `docs/topics/runtime/README.dump.md` |
 | Tests and validation artifacts | `tests/regression/*`<br>`src/tests/*` | Mixed (regression + unit) | Maintained regression checks and runtime/unit validation helpers | `docs/TESTING.md` |
-| Benchmarks and experiment tooling | `problog-benchmark/*`<br>`examples/*` | Fork extension | Reproducible benchmark generation, run orchestration, artifact collection | `docs/topics/evaluation/README.md`<br>`archive/README.md` |
+| Benchmarks and experiment tooling | `problog-benchmark/*`<br>`examples/*` | Fork extension | Reproducible benchmark generation, run orchestration, artifact collection | `docs/topics/evaluation/README.md`<br>`archive/README.md`<br>`work/README.md` |
 
 ## Source references
 - [src/MainDriver.cpp](src/MainDriver.cpp)

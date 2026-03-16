@@ -22,7 +22,8 @@ new information has an obvious home.
   - `docs/historical/*`, `archive/*`
 - Layer 8: local-only raw artifacts
   - run directories, generated dumps, raw TSV/JSON outputs under local ignored
-    locations such as `problog-benchmark/runs/` and `/tmp`
+    locations such as `problog-benchmark/runs/`, local `work/` overlays,
+    and `/tmp`
 
 ## What Each Layer Owns
 - Entry surfaces tell readers where to start.
@@ -34,6 +35,8 @@ new information has an obvious home.
 - Design docs hold proposals that are not yet current behavior.
 - Historical and archive docs hold superseded notes or curated dated snapshots.
 - Local artifacts are evidence, not source of truth.
+- Nested repos and source caches under `work/` are convenience surfaces, not
+  ownership boundaries for the main repo.
 
 ## Placement Rules
 - If a change affects how users run the binary, update Layer 2.
@@ -80,6 +83,7 @@ new information has an obvious home.
 - [docs/INDEX.md](docs/INDEX.md)
 - [docs/research/README.md](docs/research/README.md)
 - [archive/README.md](archive/README.md)
+- [work/README.md](work/README.md)
 
 ## Related commits
 - `UNCOMMITTED` — docs(codex): assign bootstrap-pack ownership to the research layer

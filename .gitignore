@@ -37,6 +37,12 @@ doc
 .idea/
 *build*/
 
+# local heavy workspaces live under work/
+/work/*
+!/work/README.md
+/research/
+/.deps-src/
+
 # local problog benchmark clone
 /problog-benchmark/
 # local side-channel experiment workspace

@@ -5,7 +5,9 @@ Design proposals and optimization ideas that are not fully implemented.
 ## Scope
 - Multi-turn inc-regional state and optimizations.
 - Elastic/dynamic mode-switching ideas.
+- Unified flag surface and compatibility design.
 - Eqrel/lazy/refactor proposals.
+- Refactor scope, staging, and acceptance planning.
 - Formalization and ordering design notes.
 - Approximate probabilistic pipeline design (`derivation graph -> query formula -> AMC/WAMC`).
 
@@ -16,7 +18,9 @@ Design proposals and optimization ideas that are not fully implemented.
 ## Source references
 - [docs/INDEX.md](docs/INDEX.md)
 - [docs/design/README.inc.regional.opt.md](docs/design/README.inc.regional.opt.md)
+- [docs/design/README.flag.unification.md](docs/design/README.flag.unification.md)
 - [docs/design/README.rewrite.opt.md](docs/design/README.rewrite.opt.md)
+- [docs/design/README.refactor.scope.md](docs/design/README.refactor.scope.md)
 - [docs/design/README.approx.pipeline.md](docs/design/README.approx.pipeline.md)
 - [docs/design/README.scbf.pipeline.md](docs/design/README.scbf.pipeline.md)
 - [docs/design/README.scbf.ir.md](docs/design/README.scbf.ir.md)
@@ -26,4 +30,6 @@ Design proposals and optimization ideas that are not fully implemented.
 - [docs/design/README.scbf.rewrite.md](docs/design/README.scbf.rewrite.md)
 
 ## Related commits
+- `UNCOMMITTED` — docs(design): add unified flag surface proposal
+- `UNCOMMITTED` — docs(design): add formal refactor scope and roadmap entry
 - `UNCOMMITTED` — docs(reorg): add design docs landing page and relocate root design notes

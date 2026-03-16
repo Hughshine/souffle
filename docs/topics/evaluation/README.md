@@ -13,6 +13,12 @@ pitfalls now live in `docs/research/*`, especially
 - `docs/topics/evaluation/OPT.md`: optimization-oriented inc-regional run checklist.
 - `docs/topics/evaluation/README.eval.final.md`: latest curated batch summary.
 
+Benchmark workspace entry points live outside `docs/`:
+- `problog-benchmark/README.md`: current benchmark drivers and quick starts.
+- `problog-benchmark/runs/README.md`: committed run-directory families and provenance recovery.
+- Local `work/benchmarks/problog-benchmark/` overlays may exist for convenience,
+  but the stable checked-in path remains `problog-benchmark/`.
+
 ## Historical Logs
 Large experiment logs and old snapshots are archived under `docs/historical/`:
 - `docs/historical/README.eval.inc.log.md`
@@ -23,8 +29,10 @@ Large experiment logs and old snapshots are archived under `docs/historical/`:
 For dated run artifacts and TSV/plot outputs, use `archive/`.
 
 ## Source references
-- [problog-benchmark/README.side-channel-inc.md](problog-benchmark/README.side-channel-inc.md)
-- [problog-benchmark/README.side-channel-full.md](problog-benchmark/README.side-channel-full.md)
+- [problog-benchmark/README.md](problog-benchmark/README.md)
+- [problog-benchmark/runs/README.md](problog-benchmark/runs/README.md)
+- [problog-benchmark/benchmarks/side_channel/docs/README.side-channel-inc.md](problog-benchmark/benchmarks/side_channel/docs/README.side-channel-inc.md)
+- [problog-benchmark/benchmarks/side_channel/docs/README.side-channel-full.md](problog-benchmark/benchmarks/side_channel/docs/README.side-channel-full.md)
 - [docs/research/README.rewrite.status.md](docs/research/README.rewrite.status.md)
 - [archive/README.md](archive/README.md)
 

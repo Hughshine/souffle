@@ -7,6 +7,16 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - This file is the source of truth for agent constraints.
 - Keep commands here aligned with CI/scripts; otherwise add a TODO.
 
+## Local Research Workspace
+- `research/` at the repo root is a separate, local-only co-research workspace
+  for papers, reading notes, deliverables, and local experiment artifacts.
+- It is independently maintained from the main repo source tree. Do not move,
+  rename, delete, reformat, or "clean up" `research/` unless the user
+  explicitly asks.
+- When a task explicitly targets `research/`, read `research/AGENTS.md` after
+  this file. For tracked repo-facing protocol/status, keep using
+  `docs/research/*`.
+
 ## Session Bootstrap
 - New Codex sessions should read:
   1. `AGENTS.md`
@@ -35,6 +45,9 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - Follow `docs/process/README.git.md` for commit hygiene (outputs/logs stay local).
 - Avoid introducing new dependencies unless explicitly requested.
 - Keep documentation in the single source of truth and link, do not duplicate.
+- Keep `research/` separate from tracked repo docs: use `research/` for local
+  co-research materials and `docs/research/*` for repo-facing protocol and
+  trusted conclusions.
 - For experiment-heavy work, update `docs/research/*` when trusted conclusions,
   provenance rules, or recurring pitfalls change.
 - Prefer repo-scoped skills: `repo-docs`, `verify-changes`, `pr-ready`, `git-commit-helper`, `souffle-test-case`.

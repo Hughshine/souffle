@@ -16,32 +16,32 @@ export PATH="$(pwd)/build/src:$PATH"
 
 ## Generate / Compile / Run / Collect
 ```bash
-python3 problog-benchmark/side_channel_full.py \
-  --base-dir problog-benchmark/side_channel_full_eval \
+python3 problog-benchmark/benchmarks/side_channel/cli/side_channel_full.py \
+  --base-dir problog-benchmark/benchmarks/side_channel/runs/full_eval \
   generate --cases 1,3-20 --cleanup --rule-set full
 
-python3 problog-benchmark/side_channel_full.py \
-  --base-dir problog-benchmark/side_channel_full_eval \
+python3 problog-benchmark/benchmarks/side_channel/cli/side_channel_full.py \
+  --base-dir problog-benchmark/benchmarks/side_channel/runs/full_eval \
   compile --cases 1,3-20 --timeout 600
 
-python3 problog-benchmark/side_channel_full.py \
-  --base-dir problog-benchmark/side_channel_full_eval \
+python3 problog-benchmark/benchmarks/side_channel/cli/side_channel_full.py \
+  --base-dir problog-benchmark/benchmarks/side_channel/runs/full_eval \
   run --cases 1,3-20 --timeout 1200
 
-python3 problog-benchmark/side_channel_full.py \
-  --base-dir problog-benchmark/side_channel_full_eval \
+python3 problog-benchmark/benchmarks/side_channel/cli/side_channel_full.py \
+  --base-dir problog-benchmark/benchmarks/side_channel/runs/full_eval \
   collect --cases 1,3-20
 ```
 
 ## Rewrite vs No-Rewrite
 Run in two separate base directories to avoid output collisions:
 ```bash
-python3 problog-benchmark/side_channel_full.py \
-  --base-dir problog-benchmark/side_channel_full_norewrite \
+python3 problog-benchmark/benchmarks/side_channel/cli/side_channel_full.py \
+  --base-dir problog-benchmark/benchmarks/side_channel/runs/full_norewrite \
   run --cases 1,3-20 --timeout 1200 --souffle-only
 
-python3 problog-benchmark/side_channel_full.py \
-  --base-dir problog-benchmark/side_channel_full_rewrite \
+python3 problog-benchmark/benchmarks/side_channel/cli/side_channel_full.py \
+  --base-dir problog-benchmark/benchmarks/side_channel/runs/full_rewrite \
   run --cases 1,3-20 --timeout 1200 --souffle-only --souffle-arg=--rewrite
 ```
 
@@ -55,8 +55,8 @@ ablation runs.
 - `<base-dir>/P*/output/log_*.json`
 
 ## Source references
-- [problog-benchmark/side_channel_full.py](problog-benchmark/side_channel_full.py)
-- [problog-benchmark/README.side-channel-full.md](problog-benchmark/README.side-channel-full.md)
+- [problog-benchmark/benchmarks/side_channel/cli/side_channel_full.py](problog-benchmark/benchmarks/side_channel/cli/side_channel_full.py)
+- [problog-benchmark/benchmarks/side_channel/docs/README.side-channel-full.md](problog-benchmark/benchmarks/side_channel/docs/README.side-channel-full.md)
 - [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
 
 ## Related commits

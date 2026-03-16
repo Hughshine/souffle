@@ -19,15 +19,19 @@ research notebooks.
 - Use `docs/INDEX.md` for canonical priority and recency tags.
 - Use `docs/research/README.md` when you need current trusted conclusions rather
   than implementation details.
+- For implicit rewrite implementation details specifically, use
+  `docs/topics/rewrite/README.implicit.md`.
 
 ## Source references
 - [docs/INDEX.md](docs/INDEX.md)
 - [docs/research/README.md](docs/research/README.md)
+- [docs/topics/rewrite/README.implicit.md](docs/topics/rewrite/README.implicit.md)
 - [docs/topics/pipeline/README.inc.region.md](docs/topics/pipeline/README.inc.region.md)
 - [docs/topics/evaluation/README.md](docs/topics/evaluation/README.md)
 - [docs/topics/testing/README.regression.md](docs/topics/testing/README.regression.md)
 
 ## Related commits
+- `UNCOMMITTED` — docs(rewrite): route implicit rewrite readers to the dedicated implementation doc
 - `UNCOMMITTED` — docs(system): separate topic behavior docs from active research docs
 - `UNCOMMITTED` — docs(testing): add topical regression workflow reference
 - `UNCOMMITTED` — docs(evaluation): add topical evaluation map and current/historical split
