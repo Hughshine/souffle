@@ -6,7 +6,8 @@
 - [src/include/souffle/problog/GraphAnalyzer.h](src/include/souffle/problog/GraphAnalyzer.h)
 - [src/include/souffle/problog/ImplicitSplitRewrite.h](src/include/souffle/problog/ImplicitSplitRewrite.h)
 - [src/problog/ImplicitSplitRewrite.cpp](src/problog/ImplicitSplitRewrite.cpp)
-- [problog-benchmark/.worktree/full-artifact/taint_full.py](problog-benchmark/.worktree/full-artifact/taint_full.py)
+- [problog-benchmark/taint_inc.py](problog-benchmark/taint_inc.py)
+- [problog-benchmark/runs/README.md](problog-benchmark/runs/README.md)
 
 
 This file summarizes the SISO rewrite pipeline: design, current state (post revert), observed behavior, and near‑term plans.
@@ -21,6 +22,8 @@ This file summarizes the SISO rewrite pipeline: design, current state (post reve
 ## Companion Docs
 - Use `docs/research/README.rewrite.status.md` for the compact trusted reading of
   current rewrite results, rankings, and provenance pitfalls.
+- Use `docs/topics/rewrite/README.implicit.md` for the detailed purpose,
+  architecture, invariants, and pipeline integration of implicit rewrite.
 - Use this file for implementation behavior and detailed optimization notes.
 
 ## Goal
@@ -148,6 +151,13 @@ Current status (2026-03-09):
 - Runtime implicit rewrite now preserves probability semantics for the checked
   `side_channel_full` cases (`P15`, `P19`, `P20`) and for sampled taint
   `typefilter-dlog`.
+- The overlay fast-path layer now covers all fast-path region kinds that are
+  currently active in the legacy detector:
+  - `single-hyperedge`
+  - `linear-two-edge`
+  - `parallel-edge`
+  - `fan-out-converge`
+  - `all-facts`
 - The key correctness fix was in materialization: if an overlay fast path rewrites
   an edge probability, the materialized residual edge must be synthetic
   (`rule=nullptr`) so the new probability is not overwritten by the original rule

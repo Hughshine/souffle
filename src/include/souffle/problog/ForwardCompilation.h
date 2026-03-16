@@ -422,6 +422,52 @@ struct PrioritizedEdge {
     }
 };
 
+static inline bool stableNodeOrder(const NodePtr& lhs, const NodePtr& rhs) {
+    if (lhs == rhs) {
+        return false;
+    }
+    if (!lhs) {
+        return true;
+    }
+    if (!rhs) {
+        return false;
+    }
+    if (lhs->getId() != rhs->getId()) {
+        return lhs->getId() < rhs->getId();
+    }
+    return lhs->getTuple().toString() < rhs->getTuple().toString();
+}
+
+static inline bool stableEdgeOrder(const EdgePtr& lhs, const EdgePtr& rhs) {
+    if (lhs == rhs) {
+        return false;
+    }
+    if (!lhs) {
+        return true;
+    }
+    if (!rhs) {
+        return false;
+    }
+    if (lhs->getId() != rhs->getId()) {
+        return lhs->getId() < rhs->getId();
+    }
+    return lhs->toString() < rhs->toString();
+}
+
+template <typename NodeRange>
+static inline std::vector<NodePtr> collectSortedNodes(const NodeRange& nodes) {
+    std::vector<NodePtr> ordered(nodes.begin(), nodes.end());
+    std::sort(ordered.begin(), ordered.end(), stableNodeOrder);
+    return ordered;
+}
+
+template <typename EdgeRange>
+static inline std::vector<EdgePtr> collectSortedEdges(const EdgeRange& edges) {
+    std::vector<EdgePtr> ordered(edges.begin(), edges.end());
+    std::sort(ordered.begin(), ordered.end(), stableEdgeOrder);
+    return ordered;
+}
+
 struct FcProfileStats {
     std::size_t edge_processed = 0;
     std::size_t edge_requeued = 0;
@@ -544,7 +590,7 @@ void buildFormulasCyclewiseInternal(
     };
 
     // 1. Initialize formulas
-    for (const auto& node : view.getNodes()) {
+    for (const auto& node : collectSortedNodes(view.getNodes())) {
         if (seedTrueNodes.count(node)) {
             FormulaNodeRef var = formulaManager.getTrue();
             nodeFormulas[node] = var;
@@ -564,7 +610,7 @@ void buildFormulasCyclewiseInternal(
 
     }
 
-    for (const auto& edge : view.getEdges()) {
+    for (const auto& edge : collectSortedEdges(view.getEdges())) {
         int idx = edge->isDeterministic() ? -1 : formulaManager.getVarIndex(*edge);
         if (edge->isDeterministic()) {
             ++detEdges;
@@ -632,9 +678,8 @@ void buildFormulasCyclewiseInternal(
         std::set<EdgePtr> inWorklist;
 //        std::cout << "Processing cycle " << cid << ", edges: ";
 
-        int _seqId = 0;
-        for (auto edge : cycleEdges) {
-            worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
+        for (auto edge : collectSortedEdges(cycleEdges)) {
+            worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), static_cast<int>(edge->getId())});
         //    std::cout << "Adding edge " << edge->getId() << " " << edge->toString()
         //              << " with depth " << depGraph.edgeDepthsGlobal.at(edge) << " to worklist.\n";
             inWorklist.insert(edge);
@@ -718,7 +763,7 @@ void buildFormulasCyclewiseInternal(
 
                 if (!allAvailable) {
 //                std::cout << "Not all inputs available for edge " << edge->getId() << ", re-adding to worklist.\n";
-                    worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
+                    worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), static_cast<int>(edge->getId())});
                     inWorklist.insert(edge);
                     if (fcProfile) {
                         stats.edge_requeued++;
@@ -751,7 +796,7 @@ void buildFormulasCyclewiseInternal(
                 }
                 if (!hasNewNodeF) {
                     std::vector<FormulaNodeRef> inFs;
-                    for (auto& inEdge : view.getIncomingEdges(out)) {
+                    for (auto& inEdge : collectSortedEdges(view.getIncomingEdges(out))) {
                         auto it = edgeFormulas.find(inEdge);
                         if (it != edgeFormulas.end() && it->second.get()) {
                             inFs.push_back(it->second);
@@ -783,10 +828,11 @@ void buildFormulasCyclewiseInternal(
                             stats.node_updated++;
                         }
 
-                        for (auto& outEdge : view.getOutgoingEdges(out)) {
+                        for (auto& outEdge : collectSortedEdges(view.getOutgoingEdges(out))) {
                             auto it = depGraph.edgeToCycleIndex.find(outEdge);
                             if (it != depGraph.edgeToCycleIndex.end() && it->second == cid && !inWorklist.count(outEdge)) {
-                                worklist.push({outEdge, depGraph.edgeDepthsGlobal.at(outEdge), _seqId++});
+                                worklist.push({outEdge, depGraph.edgeDepthsGlobal.at(outEdge),
+                                        static_cast<int>(outEdge->getId())});
                                 inWorklist.insert(outEdge);
                             }
                         }
@@ -1246,8 +1292,18 @@ public:
     int getVarIndex(const Node& node) override {
         auto it = nodeIndex_.find(&node);
         if (it != nodeIndex_.end()) return it->second;
+        if (node.isFact) {
+            auto itSemantic = factSemanticIndex_.find(node.getSemanticFactId());
+            if (itSemantic != factSemanticIndex_.end()) {
+                nodeIndex_[&node] = itSemantic->second;
+                return itSemantic->second;
+            }
+        }
         int idx = nextVarIndex_++;
         nodeIndex_[&node] = idx;
+        if (node.isFact) {
+            factSemanticIndex_[node.getSemanticFactId()] = idx;
+        }
         registerVar(idx, node.getProbability());
         return idx;
     }
@@ -1306,6 +1362,7 @@ private:
     std::vector<double> varProb_;
     int nextVarIndex_ = 0;
     std::unordered_map<const Node*, int> nodeIndex_;
+    std::unordered_map<std::size_t, int> factSemanticIndex_;
     std::unordered_map<const Hyperedge*, int> edgeIndex_;
     bool invalid = false;
 };
@@ -3621,6 +3678,7 @@ void buildFormulasIncRegionalCyclewise(
         logConstAnalysis(constInfo, view, "inc-regional");
     }
     ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager};
+    const CycleDependencyGraph* regionalInsertDepGraph = nullptr;
 
     if (!deltaDeletedEdges.empty() || !deltaDeletedNodes.empty()) {
         if (!incReorderEnabled) {
@@ -3629,6 +3687,7 @@ void buildFormulasIncRegionalCyclewise(
         }
         auto start = high_resolution_clock::now();
         auto& depGraph = view.getCycleDependencyGraph();  // includes SCC/dependencies/depths
+        regionalInsertDepGraph = &depGraph;
         auto end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Finished building dependency graph and preparation. Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
@@ -4126,7 +4185,8 @@ void buildFormulasIncRegionalCyclewise(
     using FMType = std::remove_reference_t<decltype(formulaManager)>;
     RegionalIncrementalForwardCompilation<FMType, FormulaNodeRef> orchestrator;
     auto updateStart = std::chrono::steady_clock::now();
-    orchestrator.applyUpdate(view, formulaManager, nodeFormulas, edgeFormulas, changedNodes, constInfoPtr);
+    orchestrator.applyUpdate(
+        view, formulaManager, nodeFormulas, edgeFormulas, changedNodes, constInfoPtr, regionalInsertDepGraph);
     auto updateEnd = std::chrono::steady_clock::now();
     const auto& timing = orchestrator.getTiming();
     debugger.addInfo("inc_regional_analyze_ms", std::to_string(timing.analyzeMs));

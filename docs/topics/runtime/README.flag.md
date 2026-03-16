@@ -13,6 +13,34 @@
 - Some flags exist in both layers (e.g., `-F`, `-D`, `-p`, `-m`, `-d`); compile-time values
   seed defaults in the generated binary and runtime flags override them.
 
+## Canonical Flag Surface
+The fork now exposes one preferred vocabulary across compiler defaults, compiled
+runtime flags, the online CLI, and standalone graph-query tooling:
+
+- Execution: `--sem-mode`, `--fc-mode`, `--full-evaluator`, `--dd-backend`,
+  `--approx-backend`
+- Rewrite: `--rewrite-engine`, `--rewrite-split`, `--rewrite-detect`
+- Determinism/simplification: `--det-mode`, `--merge-bi-imp`,
+  `--no-merge-bi-imp`, `--prune-extra`, `--no-prune-extra`, `--fold-const`,
+  `--no-fold-const`
+- IO/profile/dumps: `--input-dir`, `--output-dir`, `--profile-file`,
+  `--log-file`, `--dump`, `--profile-stage`, `--trace-inc-regional`
+
+Legacy spellings remain accepted where they already existed. The important
+aliases are:
+
+- `--setmode=inc|inc-regional|full|full-soft` -> `--sem-mode` + `--fc-mode`
+- `--knowledge` -> `--dd-backend`
+- `--rewrite`, `--implicit-rewrite`, `--implicit-iterate-split-rewrite` ->
+  `--rewrite-engine`
+- `--split-mode` -> `--rewrite-split`
+- `--force-complete-siso-detect` -> `--rewrite-detect=complete`
+- `--det-opt`, `--no-det-opt`, `--det-force` -> `--det-mode`
+- `--dumpjson`, `--dumpdot`, `--dumpstat`, `--dumpconst` -> `--dump`
+- `--dred-profile`, `--inc-profile`, `--fc-profile`, `--profile-wmc`,
+  `--profile-inc-delete`, `--profile-inc-regional`,
+  `--profile-inc-regional-heavy`, `--profile-dep-graph` -> `--profile-stage`
+
 ## Compiler flags (`souffle`)
 
 ### Code generation & execution
@@ -51,7 +79,18 @@
 - `-O`, `--online`: enable online compilation (incremental CLI support).
 - `-x`, `--full-only`: generate full-only code (disable incremental CLI paths).
 - `--setmode <MODE>`: default runtime mode (`inc-naive`, `inc-regional`, `full`, `elastic`).
+- `--sem-mode <full|inc>` / `--fc-mode <...>`: canonical generated-runtime defaults.
+- `--full-evaluator <exact|scbf|approx>`: canonical full evaluator default
+  (`approx` is rejected for generated runtimes).
+- `--dd-backend <bdd|sdd>`: canonical DD backend default.
+- `--rewrite-engine`, `--rewrite-split`, `--rewrite-detect`: canonical rewrite defaults.
+- `--det-mode <auto|off|force>`: canonical determinism default.
+- `--dump <...>` / `--profile-stage <...>` / `--trace-inc-regional <LIST>`:
+  canonical dump/profile defaults baked into the generated binary.
 - `-d`, `--derv-only`: default runtime “derivation-only” mode.
+- `--derivation-only`: canonical alias for `--derv-only`.
+- `--input-dir`, `--profile-file`, `--log-file`: canonical aliases for
+  generated-runtime defaults.
 
 ### Diagnostics, warnings, and metadata
 - `-r`, `--debug-report <FILE>`: HTML debug report.
@@ -72,40 +111,59 @@
 
 ### IO, logging, and scheduling
 - `-F`, `--facts <DIR>`: input facts directory.
+- `--input-dir <DIR>`: canonical alias for `--facts`.
 - `-D`, `--output <DIR>`: output directory (`-` for stdout).
 - `-l`, `--logfile <FILE>`: debugger JSON base name (emits `<name>.json` in output dir).
+- `--log-file <FILE>`: canonical alias for `--logfile`.
 - `-j`, `--jobs <N|auto>`: threads (OpenMP only).
   Note: treat as **not allowed** in current workflows; keep `1` unless OpenMP is enabled
   (without OpenMP, non-`1` only emits a warning and runs serially).
 - `-p`, `--profile <FILE>`: profiling output (requires compile-time `--profile`).
+- `--profile-file <FILE>`: canonical alias for `--profile`.
 
 ### Help
 - `-h`: show usage.
 
 ### Mode selection
 - `-m`, `--setmode <MODE>`: `inc-naive` (aliases: `inc`, `incr`, `incremental`),
-  `inc-regional`, `full-hard` (alias: `full`), `full-soft`, `elastic` (accepted but asserts).
+  `inc-regional`, `full-hard` (alias: `full`), `full-soft`, `elastic`
+  (compatibility mode; currently falls back to `inc-naive`).
 - `-d`, `--derv-only[=<true|false>]`: derivation graph only.
+- `--derivation-only[=<true|false>]`: canonical alias for `--derv-only`.
+- `--sem-mode <full|inc>` / `--fc-mode <...>`: canonical mode selectors.
+- `--full-evaluator <exact|scbf|approx>`: canonical evaluator selector
+  (`approx` is currently rejected in compiled runtimes).
+- `--approx-backend <none|amc>`: reserved canonical approx selector; compiled
+  runtimes reject non-`none`.
 
 ### Semantics / graph transforms
 - `-e`, `--merge-bi-imp`: merge mutually implying deterministic nodes (full-only safe).
+- `--no-merge-bi-imp`: canonical disable override.
 - `--prune-extra`: drop outputless components during prune.
+- `--no-prune-extra`: canonical disable override.
 - `-C`, `--fold-const`: constant pre-analysis (negation ignored).
+- `--no-fold-const`: canonical disable override.
 - `-r`, `--rewrite`: enable SISO-based rewrite.
+- `--rewrite-engine <off|legacy|implicit|implicit-iter>`: canonical rewrite selector.
 - `-P`, `--split-mode <no-split|naive-split|complete-split>`: split mode for rewrite (default `naive-split`; aliases `none|naive|complete`).
+- `--rewrite-split <off|naive|complete>`: canonical split selector.
 - `--force-complete-siso-detect`: disable dirty-frontier SISO detection and force full-graph detection each rewrite iteration (for rewrite diff/validation runs).
+- `--rewrite-detect <dirty-frontier|complete>`: canonical detect selector.
 - `-k`, `--knowledge <bdd|sdd>`: choose DD backend.
+- `--dd-backend <bdd|sdd>`: canonical alias for `--knowledge`.
 
 ### Determinism controls
 - `--det-opt`: enable deterministic-relation analysis (default on).
 - `--no-det-opt`: disable deterministic-relation analysis.
 - `--det-force`: skip derivation graph and force probabilities to 1.0.
+- `--det-mode <auto|off|force>`: canonical determinism selector.
 
 ### Dumps & debugging
 - `--dumpjson`: dump derivation graph JSON after prune.
 - `--dumpdot`: dump derivation graph DOT after prune.
 - `--dumpstat`: dump derivation graph stats after prune.
 - `--dumpconst`: dump constant pre-analysis details.
+- `--dump <json,dot,stat,const>`: canonical dump selector (repeat or comma-separated).
 
 ### Profiling toggles
 - `--dred-profile`: detailed DRed profiling (requires compile-time profiling).
@@ -116,7 +174,10 @@
 - `--profile-inc-regional`: inc-regional diagnostics (analyze/plan/rebuild/calibrate + region stats).
 - `--profile-inc-regional-heavy`: heavy inc-regional diagnostics (very large output).
 - `--inc-regional-trace-tuples=<LIST>`: comma-separated tuples to trace.
+- `--trace-inc-regional=<LIST>`: canonical alias for `--inc-regional-trace-tuples`.
 - `--profile-dep-graph`: dependency-graph profiling.
+- `--profile-stage=<dred,inc,fc,wmc,inc-delete,inc-regional,inc-regional-heavy,dep-graph>`:
+  canonical profile selector (repeat or comma-separated).
 
 ### Profiling flags: what they measure and cost
 The table below focuses on runtime profiling flags used by probabilistic full/inc pipelines.

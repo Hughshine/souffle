@@ -217,6 +217,56 @@ private:
         return frontier;
     }
 
+    struct SemanticFactUseStats {
+        std::unordered_map<std::size_t, std::size_t> inputOccurrences;
+        std::unordered_map<std::size_t, std::size_t> pinnedNodes;
+    };
+
+    static bool isProbabilisticFact(const NodePtr& node) {
+        return node && node->isFact && node->getProbability() > 0.0 && node->getProbability() < 1.0;
+    }
+
+    static SemanticFactUseStats buildSemanticFactUseStats(const DerivationGraphViewInterface& g) {
+        SemanticFactUseStats stats;
+        for (auto node : g.getNodes()) {
+            if (!isProbabilisticFact(node)) continue;
+            if (node->needOutput || node->hasEvidence()) {
+                ++stats.pinnedNodes[node->getSemanticFactId()];
+            }
+        }
+        for (auto edge : g.getEdges()) {
+            if (!isEdgeInView(g, edge)) continue;
+            for (auto input : g.getInputs(edge)) {
+                if (!isProbabilisticFact(input)) continue;
+                ++stats.inputOccurrences[input->getSemanticFactId()];
+            }
+        }
+        return stats;
+    }
+
+    static bool canAbsorbFactLiteral(const DerivationGraphViewInterface& g, NodePtr node,
+            const SemanticFactUseStats& semanticStats, std::size_t localOccurrences = 1) {
+        if (!node || !node->isFact || node->hasEvidence() || node->needOutput) {
+            return false;
+        }
+        if (!g.getIncomingEdges(node).empty()) {
+            return false;
+        }
+        if (!isProbabilisticFact(node)) {
+            return true;
+        }
+        if (!node->isOriginalFactNode()) {
+            return false;
+        }
+        const auto semanticId = node->getSemanticFactId();
+        auto pinnedIt = semanticStats.pinnedNodes.find(semanticId);
+        if (pinnedIt != semanticStats.pinnedNodes.end() && pinnedIt->second > 0) {
+            return false;
+        }
+        auto occIt = semanticStats.inputOccurrences.find(semanticId);
+        return occIt != semanticStats.inputOccurrences.end() && occIt->second == localOccurrences;
+    }
+
     // Fast-path detectors (<=2 edges).
     // If candidate sets are provided, scanning is restricted to that local frontier.
     static std::vector<SISORegionInfo> detectFastPathRegions(
@@ -250,6 +300,7 @@ private:
                 if (n) nodeScan.push_back(n);
             }
         }
+        const auto semanticFactStats = buildSemanticFactUseStats(g);
 
         // 1) Single hyperedge: one edge exit, inputs.size()>=1, exactly one non-fact (SI), others are input facts
         auto tSingleStart = std::chrono::steady_clock::now();
@@ -273,19 +324,42 @@ private:
                 std::cout << "[siso-fast] edge " << e->getId() << " -> " << (exit ? exit->toString() : "null")
                           << " as single-hyperedge candidate" << std::endl;
             }
-            for (auto n : inputs) {
+            for (size_t idx = 0; idx < inputs.size(); ++idx) {
+                auto n = inputs[idx];
                 if (!n) {
                     invalid = true;
                     if (debug) std::cout << "  skip: null input\n";
                     break;
                 }
-                if (n->isFact && g.getIncomingEdges(n).empty() && !n->hasEvidence() && !n->needOutput) {
-                    auto outs = g.getOutgoingEdges(n);
-                    if (outs.size() != 1) {
+                if (n->isFact) {
+                    // Legacy single-hyperedge rewrite collapses absorbed literals into a
+                    // synthetic edge weight. That is semantics-preserving for deterministic
+                    // literals, but not for probabilistic literals under the current
+                    // edge-variable FC/WMC encoding, because shared support would be hidden
+                    // inside an edge weight rather than represented explicitly in the graph.
+                    if (isProbabilisticFact(n)) {
                         invalid = true;
                         if (debug) {
-                            std::cout << "  skip: fact input has " << outs.size()
-                                      << " outgoing edges (must be exactly 1)" << std::endl;
+                            std::cout << "  skip: probabilistic fact input cannot be absorbed into "
+                                         "single-hyperedge edge weight"
+                                      << std::endl;
+                        }
+                        break;
+                    }
+                    if (!canAbsorbFactLiteral(g, n, semanticFactStats, 1)) {
+                        invalid = true;
+                        if (debug) {
+                            std::cout << "  skip: fact input is not a semantic singleton literal"
+                                      << std::endl;
+                        }
+                        break;
+                    }
+                    const auto& support = n->getProbabilisticSupportTokens();
+                    if (!support.empty() && edgeInputHasSupportOverlap(g, e, idx, support)) {
+                        invalid = true;
+                        if (debug) {
+                            std::cout << "  skip: fact input has probabilistic support overlap"
+                                      << std::endl;
                         }
                         break;
                     }
@@ -460,6 +534,7 @@ private:
             }
             std::unordered_set<NodePtr> convInSet(convInputs.begin(), convInputs.end());
             if (convInSet != xiSet) continue;
+            if (!canAbsorbFactLiteral(g, si, semanticFactStats, fanEdges.size())) continue;
             NodePtr so = g.getOutput(conv);
             if (!so || so == si) continue;
             // build region: all fan edges + conv edge
@@ -488,19 +563,27 @@ private:
                           << " as all-facts candidate" << std::endl;
             }
             bool allFacts = true;
-            for (auto n : inputs) {
-                if (!n || !n->isFact || n->hasEvidence()) {
+            for (size_t idx = 0; idx < inputs.size(); ++idx) {
+                auto n = inputs[idx];
+                if (!n || !n->isFact) {
                     allFacts = false;
                     if (debug) {
-                        std::cout << "  skip: input not pure fact or evidence" << std::endl;
+                        std::cout << "  skip: input is not a fact" << std::endl;
                     }
                     break;
                 }
-                auto outs = g.getOutgoingEdges(n);
-                if (outs.size() != 1 || outs[0] != e) {
+                if (!canAbsorbFactLiteral(g, n, semanticFactStats, 1)) {
                     allFacts = false;
                     if (debug) {
-                        std::cout << "  skip: input fact has outgoing edges not limited to this region" << std::endl;
+                        std::cout << "  skip: input fact is not a semantic singleton literal" << std::endl;
+                    }
+                    break;
+                }
+                const auto& support = n->getProbabilisticSupportTokens();
+                if (!support.empty() && edgeInputHasSupportOverlap(g, e, idx, support)) {
+                    allFacts = false;
+                    if (debug) {
+                        std::cout << "  skip: input fact overlaps with other support" << std::endl;
                     }
                     break;
                 }
@@ -1299,6 +1382,7 @@ public:
         FastPathDetectStats fastStats;
         std::vector<SISORegionInfo> regions;
         bool usedDirtyFrontier = false;
+        bool attemptedDirtyFrontier = false;
         bool fallbackToFull = false;
         size_t seedNodes = 0;
         size_t seedEdges = 0;
@@ -1306,6 +1390,7 @@ public:
         size_t frontierEdges = 0;
 
         if (dirtyNodes && dirtyEdges && (!dirtyNodes->empty() || !dirtyEdges->empty())) {
+            attemptedDirtyFrontier = true;
             seedNodes = dirtyNodes->size();
             seedEdges = dirtyEdges->size();
             auto frontier = buildDetectionFrontier(g, *dirtyNodes, *dirtyEdges);
@@ -1394,7 +1479,7 @@ public:
         auto filterMs = std::chrono::duration_cast<std::chrono::milliseconds>(tFilterEnd - tFilterStart).count();
 
         std::cout << "[siso-detect] mode="
-                  << (usedDirtyFrontier ? "dirty-frontier" : "full")
+                  << (attemptedDirtyFrontier ? "dirty-frontier" : "full")
                   << " fallback=" << (fallbackToFull ? 1 : 0)
                   << " seeds(nodes=" << seedNodes << ",edges=" << seedEdges << ")"
                   << " frontier(nodes=" << frontierNodes << ",edges=" << frontierEdges << ")"

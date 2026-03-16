@@ -1,7 +1,8 @@
 # Elastic Mode Notes (Design)
 
 ## Status
-- Design note only; `--setmode elastic` is accepted but asserts at runtime (not implemented).
+- Design note only; `--setmode elastic` is accepted and currently falls back to
+  `inc-naive`. A true elastic scheduler is still not implemented.
 
 ## Source references
 - [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)

@@ -18,6 +18,8 @@ Use this suite for correctness regression checks before merging changes to:
 - DRed / apply-delta behavior
 - det-opt/no-det-opt and related mixed-mode options
 - rewrite split-mode behavior
+- canonical compiler/runtime/online-CLI flag surfaces
+- standalone graph-query exact replay flag surfaces
 - dump/log output contracts
 
 ## Canonical Entry Points
@@ -53,6 +55,38 @@ Current maintained cases:
   - det-opt (default-on) equivalence to baseline and `det-force` all-ones contract.
 - `regression.dump_contract` (`dump_outputs_contract`):
   - verifies dump/log/stats artifact creation contracts.
+- `regression.canonical_compile` (`canonical_compile_defaults_contract`):
+  - canonical compiler-surface defaults (`--sem-mode`, `--fc-mode`,
+    `--rewrite-engine`, `--det-mode`, `--dd-backend`, `--dump`,
+    `--profile-stage`) propagate into the generated binary and preserve
+    `facts.prob`.
+- `regression.canonical_cli` (`canonical_online_cli_surface`):
+  - canonical online CLI surface (`show config`, `set sem-mode`, `set fc-mode`,
+    `set/unset dump`, `set/unset profile-stage`) plus startup-only guardrails
+    and `elastic -> inc-naive` fallback coverage.
+- `regression.graph_query_canonical` (`graph_query_canonical_surface`):
+  - standalone `souffle-problog-graph-query` accepts canonical exact/rewrite
+    flags, reproduces a small exact replay result, and rejects unsupported
+    canonical combinations like `--full-evaluator=scbf`.
+- `regression.side_channel_full_pipeline` (`side_channel_full_pipeline_rewrite`):
+  - benchmark-derived side-channel full case (`P1`, trimmed ruleset) generated
+    on the fly, then checked across no-rewrite / legacy rewrite / implicit /
+    iterative implicit full runs for both `facts.prob` and emitted `.csv`
+    relation outputs.
+- `regression.scbf_rewrite_lane` (`scbf_rewrite_runtime_lane`):
+  - small full-only smoke that keeps `--scbf --rewrite` on the maintained path
+    and checks runtime-lane telemetry against the actual combined execution path.
+- `regression.side_channel_inc_pipeline` (`side_channel_incremental_pipeline_modes`):
+  - benchmark-derived side-channel incremental case (`P1`, trimmed ruleset)
+    with generated deltas; compares `inc-naive` and single-round
+    `inc-regional` against `full-hard`.
+- `regression.taint_pipeline` (`taint_stage_pipeline_compile_smoke`):
+  - benchmark-derived taint stage chain (`andors-trail`, bundle v2) compiled
+    and run stage-by-stage with reduced stage inputs to guard compile/runtime
+    reliability of the staged taint workflow.
+- `regression.datarace_pipeline` (`datarace_stage_pipeline_smoke`):
+  - reduced multi-stage data-race pipeline smoke inspired by the
+    `checkExcludedM -> parallel -> escaping -> datarace` stage sequence.
 
 ## Case Asset Model
 - Case data now lives under `tests/regression/cases/<case-id>/`.
@@ -73,6 +107,10 @@ The runner enforces:
   - Multi-round cases are intentionally deferred until runtime support is ready.
 - The suite is a correctness gate, not a performance benchmark.
   - Heavy `problog-benchmark` workflows remain separate.
+- Benchmark-derived regression cases intentionally use reduced inputs/sample
+  counts so they stay CI-sized while still preserving semantically rich stage
+  sequencing, rewrite/query-output contracts, and the same compile/runtime
+  surfaces as the larger benchmark families.
 
 ## When To Run
 - Always run before committing runtime/compiler changes that can affect semantics.
@@ -82,4 +120,6 @@ The runner enforces:
 ## Related commits
 - `UNCOMMITTED` — test(regression): add maintained ctest workflow and cases
 - `UNCOMMITTED` — docs(testing): document maintained regression runbook
+- `UNCOMMITTED` — test(regression): cover canonical flag surfaces and graph-query replay
+- `UNCOMMITTED` — test(regression): add benchmark-derived side-channel, taint, and data-race pipeline cases
 - `668298ef8` — fix(inc-region): update regional WMC routing and profiling

@@ -294,11 +294,11 @@ Goal: explain why delete is much slower than insert in SEMINAIVE, even when the 
 
 ### How to run (example: P12 inc1)
 ```
-PATH=./build/src:$PATH python3 problog-benchmark/side_channel_inc.py \
-  --base-dir experiments/side_channel_inc_eval \
+PATH=./build/src:$PATH python3 problog-benchmark/benchmarks/side_channel/cli/side_channel_inc.py \
+  --base-dir problog-benchmark/benchmarks/side_channel/runs/inc_dred_eval \
   compile --cases 12 --souffle-arg=--profile=profile.log --souffle-arg=--dred-profile
 
-cd experiments/side_channel_inc_eval/P12
+cd problog-benchmark/benchmarks/side_channel/runs/inc_dred_eval/P12
 ./compute -F input -D output --setmode inc --derv-only --dumpstat --dred-profile -p profile_inc1.json \
   --logfile log_P12_inc1_dred < delta/inc1_1.txt > run_inc1_dred.stdout 2>&1
 ```

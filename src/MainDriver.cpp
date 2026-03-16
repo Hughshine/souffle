@@ -93,6 +93,7 @@
 #include "ram/transform/TupleId.h"
 #include "reports/DebugReport.h"
 #include "reports/ErrorReport.h"
+#include "souffle/CompiledOptions.h"
 #include "souffle/RamTypes.h"
 #include "souffle/utility/ContainerUtil.h"
 #include "souffle/utility/FileUtil.h"
@@ -628,6 +629,8 @@ std::vector<MainOption> getMainOptions() {
           "Enable collection of statistics for auto-scheduling"},
       {"fact-dir", 'F', "DIR", ".", false,
           "Specify directory for fact files."},
+      {"input-dir", nextOptChar++, "DIR", "", false,
+          "Canonical alias for --fact-dir when baking runtime defaults."},
       {"generate", 'g', "FILE", "", false,
           "Generate C++ source code for the given Datalog program and write it to "
           "<FILE>. If <FILE> is `-` then stdout is used."},
@@ -673,13 +676,55 @@ std::vector<MainOption> getMainOptions() {
           "C preprocessor to use."},
       {"profile", 'p', "FILE", "", false,
           "Enable profiling, and write profile data to <FILE>."},
+      {"profile-file", nextOptChar++, "FILE", "", false,
+          "Canonical alias for --profile when baking runtime defaults."},
       {"dred-profile", nextOptChar++, "", "", false,
           "Enable detailed DRed profiling (requires --profile to emit data)."},
       {"profile-frequency", nextOptChar++, "", "", false,
           "Enable the frequency counter in the profiler."},
-      {"setmode", 0, "[ full | inc-naive | inc-regional | elastic ]", "inc-naive", false,
+      {"setmode", 0, incrementalModeOptionSyntax(), "inc-naive", false,
           "Set the incremental mode (default: inc-naive)."},
+      {"sem-mode", nextOptChar++, semModeOptionSyntax(), "", false,
+          "Canonical semantic mode for generated runtime defaults."},
+      {"fc-mode", nextOptChar++, fcModeOptionSyntax(), "", false,
+          "Canonical forward-compilation mode for generated runtime defaults."},
+      {"full-evaluator", nextOptChar++, fullEvaluatorOptionSyntax(), "", false,
+          "Canonical full evaluator for generated runtime defaults."},
+      {"dd-backend", nextOptChar++, ddBackendOptionSyntax(), "", false,
+          "Canonical DD backend for generated runtime defaults."},
+      {"approx-backend", nextOptChar++, approxBackendOptionSyntax(), "", false,
+          "Canonical approximate backend for generated runtime defaults."},
+      {"rewrite-engine", nextOptChar++, rewriteEngineOptionSyntax(), "", false,
+          "Canonical rewrite engine for generated runtime defaults."},
+      {"rewrite-split", nextOptChar++, rewriteSplitOptionSyntax(), "", false,
+          "Canonical rewrite split mode for generated runtime defaults."},
+      {"rewrite-detect", nextOptChar++, rewriteDetectOptionSyntax(), "", false,
+          "Canonical rewrite detection policy for generated runtime defaults."},
+      {"det-mode", nextOptChar++, detModeOptionSyntax(), "", false,
+          "Canonical determinism mode for generated runtime defaults."},
+      {"dump", nextOptChar++, dumpKindsOptionSyntax(), "", false,
+          "Canonical dump selector for generated runtime defaults."},
+      {"profile-stage", nextOptChar++, profileStageOptionSyntax(), "", false,
+          "Canonical profile selector for generated runtime defaults."},
+      {"trace-inc-regional", nextOptChar++, "LIST", "", false,
+          "Canonical alias for inc-regional tuple tracing defaults."},
       {"derv-only", 'd', "", "", false, "Only compute the derivation graph."}, // TODO
+      {"derivation-only", nextOptChar++, "", "", false,
+          "Canonical alias for --derv-only."},
+      {"log-file", nextOptChar++, "FILE", "", false,
+          "Default debugger log filename for generated runtimes."},
+      {"merge-bi-imp", nextOptChar++, "", "", false,
+          "Enable merge-bi-imp by default in the generated runtime."},
+      {"no-merge-bi-imp", nextOptChar++, "", "", false,
+          "Disable merge-bi-imp in the generated runtime."},
+      {"prune-extra", nextOptChar++, "", "", false,
+          "Enable extra prune pass by default in the generated runtime."},
+      {"no-prune-extra", nextOptChar++, "", "", false,
+          "Disable extra prune pass in the generated runtime."},
+      {"fold-const", nextOptChar++, "", "", false,
+          "Enable deterministic constant pre-analysis by default in the generated runtime."},
+      {"no-fold-const", nextOptChar++, "", "", false,
+          "Disable deterministic constant pre-analysis in the generated runtime."},
     {"online", 'O', "", "", false,
           "Enable online compilation that allows interactive incremental updates"}, // TODO
     {"full-only", 'x', "", "", false,
@@ -714,6 +759,216 @@ std::vector<MainOption> getMainOptions() {
   // clang-format off
   return options;
 }
+
+namespace {
+
+bool isExplicitlySet(const MainConfig& config, std::string_view key) {
+    return config.state(key) == MainConfig::State::set;
+}
+
+void requireNoConflict(const MainConfig& config, std::string_view onKey, std::string_view offKey,
+        const std::string& label) {
+    if (isExplicitlySet(config, onKey) && isExplicitlySet(config, offKey)) {
+        throw std::runtime_error("Conflicting " + label + " flags: --" + std::string(onKey) +
+                                 " and --" + std::string(offKey));
+    }
+}
+
+void setConfigBool(MainConfig& config, std::string_view key, bool enabled) {
+    if (enabled) {
+        config.set(std::string(key));
+    } else {
+        config.unset(key);
+    }
+}
+
+void applyListAliasToLegacyFlags(MainConfig& config, std::string_view key,
+        const std::vector<std::pair<std::string, std::string>>& tokenToLegacyKey) {
+    if (!isExplicitlySet(config, key)) {
+        return;
+    }
+    std::vector<std::string> specs;
+    appendSplitModeSpecs(specs, config.get(key));
+    if (specs.empty()) {
+        throw std::runtime_error("Empty value for --" + std::string(key));
+    }
+    for (const auto& [_, legacy] : tokenToLegacyKey) {
+        config.unset(legacy);
+    }
+    for (const auto& spec : specs) {
+        bool matched = false;
+        for (const auto& [token, legacy] : tokenToLegacyKey) {
+            if (normalizeFlagToken(spec) == token) {
+                config.set(legacy);
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            throw std::runtime_error("Unsupported value for --" + std::string(key) + ": " + spec);
+        }
+    }
+}
+
+void canonicalizeForkRuntimeDefaults(MainConfig& config) {
+    if (isExplicitlySet(config, "input-dir")) {
+        config.set("fact-dir", config.get("input-dir"));
+    }
+    if (isExplicitlySet(config, "profile-file")) {
+        config.set("profile", config.get("profile-file"));
+    }
+    if (isExplicitlySet(config, "derivation-only")) {
+        config.set("derv-only");
+    }
+    if (isExplicitlySet(config, "log-file")) {
+        config.set("logfile", config.get("log-file"));
+    }
+    if (isExplicitlySet(config, "trace-inc-regional")) {
+        config.set("inc-regional-trace-tuples", config.get("trace-inc-regional"));
+    }
+
+    requireNoConflict(config, "merge-bi-imp", "no-merge-bi-imp", "merge-bi-imp");
+    requireNoConflict(config, "prune-extra", "no-prune-extra", "prune-extra");
+    requireNoConflict(config, "fold-const", "no-fold-const", "fold-const");
+    setConfigBool(config, "merge-bi-imp", isExplicitlySet(config, "merge-bi-imp"));
+    if (isExplicitlySet(config, "no-merge-bi-imp")) {
+        config.unset("merge-bi-imp");
+    }
+    setConfigBool(config, "prune-extra", isExplicitlySet(config, "prune-extra"));
+    if (isExplicitlySet(config, "no-prune-extra")) {
+        config.unset("prune-extra");
+    }
+    setConfigBool(config, "fold-const", isExplicitlySet(config, "fold-const"));
+    if (isExplicitlySet(config, "no-fold-const")) {
+        config.unset("fold-const");
+    }
+
+    IncrementalModeSpec mode;
+    std::string canonicalMode;
+    if (!parseLegacyModeToken(config.get("setmode"), mode, &canonicalMode)) {
+        throw std::runtime_error(
+                "--setmode expects a legacy mode (" + std::string(incrementalLegacyModeHelpText()) + ")");
+    }
+    config.set("setmode", canonicalMode);
+
+    if (isExplicitlySet(config, "sem-mode")) {
+        SemMode sem = mode.sem;
+        if (!parseSemModeToken(config.get("sem-mode"), sem)) {
+            throw std::runtime_error("--sem-mode expects " + std::string(semModeOptionSyntax()));
+        }
+        mode.sem = sem;
+        if (!isExplicitlySet(config, "fc-mode")) {
+            mode.fc = reconcileFcModeForSem(mode.sem, mode.fc);
+        }
+    }
+    if (isExplicitlySet(config, "fc-mode")) {
+        FcMode fc = mode.fc;
+        if (!parseFcModeToken(config.get("fc-mode"), fc)) {
+            throw std::runtime_error("--fc-mode expects " + std::string(fcModeOptionSyntax()));
+        }
+        mode.fc = fc;
+    }
+    config.set("sem-mode", semModeTokenLabel(mode.sem));
+    config.set("fc-mode", fcModeTokenLabel(mode.fc));
+
+    FullEvaluator evaluator = FullEvaluator::EXACT;
+    if (isExplicitlySet(config, "full-evaluator")) {
+        if (!parseFullEvaluatorToken(config.get("full-evaluator"), evaluator)) {
+            throw std::runtime_error("--full-evaluator expects " + std::string(fullEvaluatorOptionSyntax()));
+        }
+        if (evaluator == FullEvaluator::APPROX) {
+            throw std::runtime_error(
+                    "--full-evaluator=approx is not supported for generated runtimes yet");
+        }
+    }
+    config.set("full-evaluator", fullEvaluatorLabel(evaluator));
+    setConfigBool(config, "scbf", evaluator == FullEvaluator::SCBF);
+
+    if (isExplicitlySet(config, "approx-backend")) {
+        ApproxBackend backend = ApproxBackend::NONE;
+        if (!parseApproxBackendToken(config.get("approx-backend"), backend)) {
+            throw std::runtime_error("--approx-backend expects " + std::string(approxBackendOptionSyntax()));
+        }
+        if (backend != ApproxBackend::NONE) {
+            throw std::runtime_error(
+                    "--approx-backend is not supported for generated runtimes yet");
+        }
+        config.set("approx-backend", approxBackendLabel(backend));
+    } else {
+        config.set("approx-backend", approxBackendLabel(ApproxBackend::NONE));
+    }
+
+    std::string ddBackend = "bdd";
+    if (isExplicitlySet(config, "dd-backend")) {
+        if (!parseDdBackendToken(config.get("dd-backend"), ddBackend)) {
+            throw std::runtime_error("--dd-backend expects " + std::string(ddBackendOptionSyntax()));
+        }
+    }
+    config.set("dd-backend", ddBackend);
+    config.set("knowledge", ddBackend);
+
+    RewriteEngine rewriteEngine = RewriteEngine::OFF;
+    if (isExplicitlySet(config, "rewrite-engine")) {
+        if (!parseRewriteEngineToken(config.get("rewrite-engine"), rewriteEngine)) {
+            throw std::runtime_error("--rewrite-engine expects " + std::string(rewriteEngineOptionSyntax()));
+        }
+    }
+    config.set("rewrite-engine", rewriteEngineLabel(rewriteEngine));
+    setConfigBool(config, "rewrite", rewriteEngine == RewriteEngine::LEGACY);
+    setConfigBool(config, "implicit-rewrite", rewriteEngine == RewriteEngine::IMPLICIT ||
+                                               rewriteEngine == RewriteEngine::IMPLICIT_ITER);
+    setConfigBool(config, "implicit-iterate-split-rewrite", rewriteEngine == RewriteEngine::IMPLICIT_ITER);
+
+    RewriteSplitMode splitMode = RewriteSplitMode::NAIVE;
+    if (isExplicitlySet(config, "rewrite-split")) {
+        if (!parseRewriteSplitModeToken(config.get("rewrite-split"), splitMode)) {
+            throw std::runtime_error("--rewrite-split expects " + std::string(rewriteSplitOptionSyntax()));
+        }
+    }
+    config.set("rewrite-split", rewriteSplitModeLabel(splitMode));
+    switch (splitMode) {
+        case RewriteSplitMode::OFF:
+            config.set("split-mode", "no-split");
+            break;
+        case RewriteSplitMode::NAIVE:
+            config.set("split-mode", "naive-split");
+            break;
+        case RewriteSplitMode::COMPLETE:
+            config.set("split-mode", "complete-split");
+            break;
+    }
+
+    RewriteDetectMode detectMode = RewriteDetectMode::DIRTY_FRONTIER;
+    if (isExplicitlySet(config, "rewrite-detect")) {
+        if (!parseRewriteDetectModeToken(config.get("rewrite-detect"), detectMode)) {
+            throw std::runtime_error("--rewrite-detect expects " + std::string(rewriteDetectOptionSyntax()));
+        }
+    }
+    config.set("rewrite-detect", rewriteDetectModeLabel(detectMode));
+    setConfigBool(config, "force-complete-siso-detect", detectMode == RewriteDetectMode::COMPLETE);
+
+    DetMode detMode = DetMode::AUTO;
+    if (isExplicitlySet(config, "det-mode")) {
+        if (!parseDetModeToken(config.get("det-mode"), detMode)) {
+            throw std::runtime_error("--det-mode expects " + std::string(detModeOptionSyntax()));
+        }
+    }
+    config.set("det-mode", detModeLabel(detMode));
+    setConfigBool(config, "det-opt", detMode == DetMode::AUTO);
+    setConfigBool(config, "no-det-opt", detMode == DetMode::OFF);
+    setConfigBool(config, "det-force", detMode == DetMode::FORCE);
+
+    applyListAliasToLegacyFlags(config, "dump",
+            {{"json", "dumpjson"}, {"dot", "dumpdot"}, {"stat", "dumpstat"}, {"const", "dumpconst"}});
+    applyListAliasToLegacyFlags(config, "profile-stage",
+            {{"dred", "dred-profile"}, {"inc", "inc-profile"}, {"fc", "fc-profile"},
+                    {"wmc", "profile-wmc"}, {"inc-delete", "profile-inc-delete"},
+                    {"inc-regional", "profile-inc-regional"},
+                    {"inc-regional-heavy", "profile-inc-regional-heavy"},
+                    {"dep-graph", "profile-dep-graph"}});
+}
+
+}  // namespace
 
 int main(Global& glb, const char* souffle_executable) {
     /* Time taking for overall runtime */
@@ -773,6 +1028,7 @@ int main(Global& glb, const char* souffle_executable) {
             glb.config().set("online");
             std::cout << "Defaulting to --online" << std::endl;
         }
+        canonicalizeForkRuntimeDefaults(glb.config());
 
         /* for the jobs option, to determine the number of threads used */
         if (isNumber(glb.config().get("jobs").c_str())) {

@@ -7,7 +7,7 @@ This file records the invariants most likely to cause regressions if violated.
 - Rewrite is full-mode only; rewrite-enabled full run disables subsequent incremental CLI flow in that execution.
 - `full-only` compile mode disables incremental code paths and changes merge behavior expectations.
 - `setmode full` maps to `full-hard`; aliases `inc/incr/incremental` map to `inc-naive`.
-- `elastic` mode is accepted by option parsing but not implemented in runtime CLI.
+- `elastic` mode remains parser-visible, but runtime execution currently falls back to `inc-naive`.
 - `.prob` files are line-aligned with `.facts`; mismatches corrupt probabilistic semantics.
 - DRed/profile details require compile-time and runtime flags to match (`--profile`, `--dred-profile`, runtime profile flags).
 

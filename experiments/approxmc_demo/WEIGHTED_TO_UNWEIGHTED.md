@@ -115,7 +115,7 @@ So `epsilon/delta` do not fully describe total weighted error when quantization 
 
 ## Key Data Structures
 
-- `WeightedCNFInput` / `UnweightedCNFResult`: [weighted_conversion.h](/home/hugh/research/datalog/souffle/experiments/approxmc_demo/weighted_conversion.h)
-- conversion implementation: [weighted_conversion.cpp](/home/hugh/research/datalog/souffle/experiments/approxmc_demo/weighted_conversion.cpp)
+- `WeightedCNFInput` / `UnweightedCNFResult`: [WeightedConversion.h](/home/hugh/research/datalog/souffle/src/include/souffle/problog/approx/WeightedConversion.h)
+- conversion implementation: [WeightedConversion.cpp](/home/hugh/research/datalog/souffle/src/problog/approx/WeightedConversion.cpp)
 - wrapper using ApproxMC + reconstruction:
   [weighted_appmc.cpp](/home/hugh/research/datalog/souffle/experiments/approxmc_demo/weighted_appmc.cpp)

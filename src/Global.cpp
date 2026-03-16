@@ -305,8 +305,12 @@ void MainConfig::set(std::string key, Many value) {
 
 /* Erase the entry in the table for the specified key. */
 void MainConfig::unset(std::string_view key) {
-    _map.erase(_map.find(key));
-    _explicitly_set.erase(_explicitly_set.find(key));
+    if (auto it = _map.find(key); it != _map.end()) {
+        _map.erase(it);
+    }
+    if (auto it = _explicitly_set.find(key); it != _explicitly_set.end()) {
+        _explicitly_set.erase(it);
+    }
 }
 
 MainConfig::State MainConfig::state(std::string_view key) const {

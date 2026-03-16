@@ -1,8 +1,60 @@
 # Approx Pipeline Design (Derivation Graph -> Query Formula -> AMC)
 
 ## Status
-- Design proposal only.
-- Not implemented in runtime pipeline yet.
+- Experimental standalone implementation exists in
+  [src/problog_graph_query.cpp](/home/hugh/research/datalog/souffle/src/problog_graph_query.cpp):
+  offline `derivation.json` replay supports `--backend amc` with query slicing,
+  query-local formula extraction, weighted-to-unweighted conversion, and an
+  external ApproxMC-compatible CLI.
+- Not implemented in the main runtime pipeline yet
+  ([src/problog/Pipeline.cpp](/home/hugh/research/datalog/souffle/src/problog/Pipeline.cpp)).
+- Side-channel full usage currently goes through the standalone replay path after
+  generating `output/derivation.json`; it is not wired into the benchmark CLI as
+  a first-class backend.
+- Standalone AMC replay now extracts each query formula with a query-local
+  backward traversal plus path-local cycle cutting, instead of using
+  `buildFormulasCyclewise(...)` over a symbolic DAG manager. This avoids relying
+  on semantic fixpoint equality that holds for DD managers but was too weak for
+  the symbolic AMC front-end on recursive taint queries.
+- Standalone AMC replay also exposes basic progress instrumentation:
+  `--amc-verb <n>` passes ApproxMC verbosity through to the child process, and
+  `--amc-stream-output` streams child output plus local AMC stage markers so
+  long-running queries can be distinguished from front-end stalls.
+- AMC per-query diagnostics now include weighted/unweighted CNF sizes,
+  projection-set size, added vars/clauses from weighted conversion, tilt, and
+  quantization error. These are emitted in `[amc-run]` / `[amc-query]` so
+  stalled ApproxMC runs can be distinguished from front-end or conversion blowup.
+- When the build can resolve `approxmc` via `find_package(approxmc)`,
+  `souffle-problog-graph-query` now prefers the direct C++ library path
+  (`ApproxMC::AppMC`) over the external CLI shim. Without that package it falls
+  back to the existing CLI contract.
+- On formal sampled taint bundles
+  `problog-benchmark/runs/taint_inc_eval_final/v1_allrules0999_noderv0` and
+  `problog-benchmark/runs/taint_inc_eval_final/v2_semantic_subsetprob_noderv0`,
+  `no rewrite + --query-all` on `andors-trail / pt-obj-dlog` is currently
+  relation-dependent:
+  - `reachableCI` completes in about `2.0s` to `2.3s`, but all completed AMC
+    queries still collapse to `unweighted_cnf_clauses=0`.
+  - `CIC` completes for all `829` tuples in about `16.9s` to `19.0s`, again
+    with `unweighted_cnf_clauses=0` for every query.
+  - `pt`, `reachableCM`, and `reachableT` can stall in
+    `buildFormulasCyclewise(...)` before AMC runs, so query-all suitability is
+    not uniform across relations.
+  - `--amc-no-preprocess` fails quickly on these bundles with
+    `Zero literal weight remains after preprocessing`; deterministic facts leave
+    zero-weight polarities that the current converter still requires
+    preprocessing to eliminate.
+  - After switching to query-local backward cycle cutting, recursive taint heads
+    such as `reachableT(8)` no longer pseudo-diverge in symbolic extraction;
+    they reach weighted conversion immediately. Low precision now quantizes
+    near-1 weights into forced assignments instead of failing, which can collapse
+    the whole query to a deterministic answer (for example `reachableT(8)` goes
+    to `1` at precision `2`). Higher precision keeps more weighted structure and
+    can push the same query through to ApproxMC, so the remaining issue is
+    conversion fidelity and SAT cost, not symbolic fixed-point non-convergence.
+  - On the same query-all sets, the current exact BDD replay path is still much
+    faster than AMC, so the standalone AMC path is useful for backend probing
+    but is not yet a competitive default on these natural taint outputs.
 
 ## Motivation
 - Current full pipeline computes probabilities via DD backends (BDD/SDD) after forward compilation.
@@ -48,7 +100,7 @@ Out of scope for phase-1:
 - Query slicing/evaluation prototype:
   [src/problog_graph_query.cpp](/home/hugh/research/datalog/souffle/src/problog_graph_query.cpp)
 - Weighted conversion experiment:
-  [experiments/approxmc_demo/weighted_conversion.cpp](/home/hugh/research/datalog/souffle/experiments/approxmc_demo/weighted_conversion.cpp)
+  [src/problog/approx/WeightedConversion.cpp](/home/hugh/research/datalog/souffle/src/problog/approx/WeightedConversion.cpp)
   and
   [experiments/approxmc_demo/weighted_appmc.cpp](/home/hugh/research/datalog/souffle/experiments/approxmc_demo/weighted_appmc.cpp)
 

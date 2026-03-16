@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -32,6 +33,15 @@ namespace souffle::problog {
 
 namespace {
 bool fullOnlyMode = false;
+
+static bool envFlagDisabled(const char* name) {
+    const char* value = std::getenv(name);
+    if (!value) {
+        return false;
+    }
+    return std::string(value) == "1" || std::string(value) == "true" ||
+            std::string(value) == "TRUE";
+}
 
 static std::size_t countInitialInputFacts() {
     return inputFactSet.size();
@@ -559,14 +569,7 @@ bool isFullOnlyMode() {
 }
 
 std::string makeOutputPath(const CmdOptions& opt, const std::string& filename) {
-    const std::string& dir = opt.getOutputFileDir();
-    if (dir.empty()) {
-        return filename;
-    }
-    if (dir.back() == '/') {
-        return dir + filename;
-    }
-    return dir + "/" + filename;
+    return joinOutputPath(opt.getOutputFileDir(), filename);
 }
 
 static void dumpDeterministicProbabilities(const CmdOptions& opt, SouffleProgram& program) {
@@ -2098,16 +2101,47 @@ static void runSddPipeline(
     }
 }
 
-void runPipeline(
-        const CmdOptions& opt,
-        SouffleProgram& program,
-        RuleManager& ruleManager,
-        QueryManager& queryManager,
-        const std::unordered_map<UntypedTuple, double>& factProb,
-        const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        bool enableOnlineCli) {
-    std::cout << std::fixed << std::setprecision(8);
-    Debugger& debugger = Debugger::getInstance();
+struct RewriteLaneResult {
+    StageInfo* hybridStage = nullptr;
+    bool rewritePerformed = false;
+};
+
+static bool fullRuntimeWillRunRewrite(const CmdOptions& opt) {
+    return opt.isRewriteEnabled() && !opt.isDerivationOnly();
+}
+
+static const char* fullRuntimeLaneLabel(const CmdOptions& opt) {
+    const bool rewriteEnabled = fullRuntimeWillRunRewrite(opt);
+    if (opt.isScbfEnabled()) {
+        if (opt.isImplicitRewriteEnabled() && rewriteEnabled) {
+            return "experimental-scbf+rewrite-implicit";
+        }
+        if (rewriteEnabled) {
+            return "experimental-scbf+rewrite-legacy";
+        }
+        return "experimental-scbf";
+    }
+    if (opt.isImplicitRewriteEnabled() && rewriteEnabled) {
+        return "exact-rewrite-implicit";
+    }
+    if (rewriteEnabled) {
+        return "exact-rewrite-legacy";
+    }
+    return "exact";
+}
+
+static const char* knowledgeBackendLabel(Knowledge knowledge) {
+    switch (knowledge) {
+        case Knowledge::BDD:
+            return "bdd";
+        case Knowledge::SDD:
+            return "sdd";
+        default:
+            return "unknown";
+    }
+}
+
+static void configureRuntimeFromOptions(const CmdOptions& opt) {
     fcProfileEnabled = opt.isFcProfileEnabled();
     incDeleteProfileEnabled = opt.isIncDeleteProfileEnabled();
     wmcProfileEnabled = opt.isWmcProfileEnabled();
@@ -2125,9 +2159,288 @@ void runPipeline(
     DerivationGraph::setPruneExtraEnabled(opt.isPruneExtraEnabled());
     DerivationGraph::setConstFoldEnabled(opt.isConstFoldEnabled());
     DerivationGraph::setConstDumpEnabled(opt.isDumpConstEnabled());
+}
+
+static StageInfo* beginRewriteHybridStage(const CmdOptions& opt, Debugger& debugger) {
+    if (!opt.isRewriteEnabled() || opt.isDerivationOnly()) {
+        return nullptr;
+    }
+    return debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
+}
+
+static RewriteLaneResult runFullRewriteLane(const CmdOptions& opt, Debugger& debugger,
+        std::unique_ptr<IncrementalDerivationGraph>& graph, IncSubgraphView& view) {
+    RewriteLaneResult result;
+    result.hybridStage = beginRewriteHybridStage(opt, debugger);
+    if (!opt.isRewriteEnabled()) {
+        return result;
+    }
+    if (opt.isDerivationOnly()) {
+        std::cout << "[pipeline] derivation-only mode; skip rewrite" << std::endl;
+        return result;
+    }
+
+    auto rewriteStart = std::chrono::steady_clock::now();
+    GraphRewriteStats rewriteStats;
+    if (opt.isImplicitRewriteEnabled()) {
+        std::size_t originalOutputCount = 0;
+        std::unordered_set<std::string> originalOutputRelations;
+        for (const auto& node : view.getNodes()) {
+            if (node && node->needOutput) {
+                ++originalOutputCount;
+                originalOutputRelations.insert(node->getTuple().relation_name);
+            }
+        }
+        ImplicitSplitPipelineOptions rewriteOptions;
+        rewriteOptions.splitMode = resolveImplicitSplitMode(opt.getSplitMode());
+        rewriteOptions.runOverlayFastPaths = true;
+        rewriteOptions.runOverlaySingleHyperedge =
+                !envFlagDisabled("SOUFFLE_IMPLICIT_DISABLE_SINGLE");
+        rewriteOptions.runOverlayAllFacts =
+                !envFlagDisabled("SOUFFLE_IMPLICIT_DISABLE_ALL_FACTS");
+        rewriteOptions.runOverlayLinearTwoEdge =
+                !envFlagDisabled("SOUFFLE_IMPLICIT_DISABLE_LINEAR");
+        rewriteOptions.runOverlayParallelEdge =
+                !envFlagDisabled("SOUFFLE_IMPLICIT_DISABLE_PARALLEL");
+        rewriteOptions.runOverlayFanOutConverge =
+                !envFlagDisabled("SOUFFLE_IMPLICIT_DISABLE_FAN_OUT");
+        rewriteOptions.runMaterializedGraphRewrite = true;
+        rewriteOptions.computeOutputMarginals = false;
+        rewriteOptions.collectPatternStats = false;
+        rewriteOptions.iterateSplitRewrite = opt.isImplicitIterateSplitRewriteEnabled();
+        auto implicitResult = runImplicitSplitRewritePipeline(view, rewriteOptions);
+        rewriteStats = implicitResult.stats.graphRewriteStats;
+        const bool allOutputsAlreadyPrecomputed =
+                implicitResult.materialized.liveNodes.empty() && precomputedProbResult.empty() &&
+                precomputedTupleProbResult.size() == originalOutputCount;
+        std::unordered_set<UntypedTuple> originalOutputTuples;
+        if (!allOutputsAlreadyPrecomputed) {
+            originalOutputTuples.reserve(originalOutputCount);
+            for (const auto& node : view.getNodes()) {
+                if (node && node->needOutput) {
+                    originalOutputTuples.insert(node->getTuple());
+                }
+            }
+        }
+        graph = std::move(implicitResult.materialized.graph);
+        if (!graph) {
+            graph = std::make_unique<IncrementalDerivationGraph>();
+        }
+        view = buildFullIncViewLocal(
+                implicitResult.materialized.liveNodes, implicitResult.materialized.liveEdges);
+        std::size_t recoveredIsolatedFacts = 0;
+        std::size_t recoveredOutputFacts = 0;
+        if (!allOutputsAlreadyPrecomputed) {
+            std::unordered_set<UntypedTuple> liveViewTuples;
+            liveViewTuples.reserve(view.getNodes().size());
+            for (const auto& node : view.getNodes()) {
+                if (node) {
+                    liveViewTuples.insert(node->getTuple());
+                }
+            }
+            std::unordered_set<UntypedTuple> precomputedTuples;
+            std::unordered_set<std::string> precomputedTupleStrings;
+            precomputedTuples.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
+            precomputedTupleStrings.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
+            for (const auto& [node, _] : precomputedProbResult) {
+                if (node) {
+                    precomputedTuples.insert(node->getTuple());
+                    precomputedTupleStrings.insert(node->getTuple().toString());
+                }
+            }
+            for (const auto& [tupleStr, _] : precomputedTupleProbResult) {
+                precomputedTupleStrings.insert(tupleStr);
+            }
+            for (const auto& node : view.getNodes()) {
+                if (node && originalOutputRelations.count(node->getTuple().relation_name) &&
+                        !precomputedTuples.count(node->getTuple()) &&
+                        !precomputedTupleStrings.count(node->getTuple().toString())) {
+                    node->setQuery();
+                }
+            }
+            recoveredIsolatedFacts = precomputeIsolatedOutputFactsLocal(view);
+            if (recoveredIsolatedFacts > 0) {
+                precomputedTuples.clear();
+                precomputedTupleStrings.clear();
+                precomputedTuples.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
+                precomputedTupleStrings.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
+                for (const auto& [node, _] : precomputedProbResult) {
+                    if (node) {
+                        precomputedTuples.insert(node->getTuple());
+                        precomputedTupleStrings.insert(node->getTuple().toString());
+                    }
+                }
+                for (const auto& [tupleStr, _] : precomputedTupleProbResult) {
+                    precomputedTupleStrings.insert(tupleStr);
+                }
+            }
+            for (const auto& tuple : originalOutputTuples) {
+                if (liveViewTuples.count(tuple) || precomputedTuples.count(tuple) ||
+                        precomputedTupleStrings.count(tuple.toString())) {
+                    continue;
+                }
+                NodePtr recovered = graph ? graph->findNode(tuple) : nullptr;
+                if (!recovered || !recovered->isFact) {
+                    continue;
+                }
+                precomputedTupleProbResult.emplace(tuple.toString(), recovered->getProbability());
+                ++recoveredOutputFacts;
+            }
+        }
+        if (recoveredIsolatedFacts > 0 || recoveredOutputFacts > 0) {
+            std::cout << "[pipeline] implicit recovered isolated_output_facts="
+                      << recoveredIsolatedFacts
+                      << " tuple_output_facts=" << recoveredOutputFacts << std::endl;
+        }
+        const GraphSummary implicitHandoffSummary = summarizeGraphLight(view);
+        std::cout << "[pipeline] implicit handoff"
+                  << " nodes=" << implicitHandoffSummary.nodes
+                  << " edges=" << implicitHandoffSummary.edges
+                  << " random_vars=" << implicitHandoffSummary.randomVariables
+                  << " output_nodes=" << implicitHandoffSummary.outputNodes
+                  << " precomputed_nodes=" << precomputedProbResult.size()
+                  << " precomputed_tuples=" << precomputedTupleProbResult.size()
+                  << std::endl;
+        std::cout << "[pipeline] implicit rewrite total_ms=" << implicitResult.stats.totalMs
+                  << " overlay_prep_ms=" << implicitResult.stats.overlayPrepMs
+                  << " overlay_split_ms=" << implicitResult.stats.overlaySplitMs
+                  << " overlay_fastpath_ms=" << implicitResult.stats.overlayFastPathMs
+                  << " materialize_ms=" << implicitResult.stats.materializeMs
+                  << " detect_ms=" << implicitResult.stats.graphDetectMs
+                  << " graph_rewrite_ms=" << implicitResult.stats.graphRewriteMs
+                  << " overlay_aliases=" << implicitResult.stats.overlayStats.aliasesCreated
+                  << " overlay_edges_aliased=" << implicitResult.stats.overlayStats.edgesAliased
+                  << " overlay_all_facts=" << implicitResult.stats.overlayStats.allFactsRewrites
+                  << " overlay_single=" << implicitResult.stats.overlayStats.singleHyperedgeRewrites
+                  << " overlay_linear=" << implicitResult.stats.overlayStats.linearTwoEdgeRewrites
+                  << " overlay_parallel=" << implicitResult.stats.overlayStats.parallelEdgeRewrites
+                  << " overlay_fan_out=" << implicitResult.stats.overlayStats.fanOutConvergeRewrites
+                  << std::endl;
+        if (result.hybridStage) {
+            debugger.addInfo("rewrite_engine", "implicit");
+            debugger.addInfo("implicit_overlay_prep_ms",
+                    std::to_string(static_cast<long long>(implicitResult.stats.overlayPrepMs)));
+            debugger.addInfo("implicit_graph_rewrite_ms",
+                    std::to_string(static_cast<long long>(implicitResult.stats.graphRewriteMs)));
+            result.hybridStage->logMessage(Level::INFO, "rewrite_engine=implicit");
+            result.hybridStage->logMessage(Level::INFO,
+                    "implicit_overlay_prep_ms=" +
+                            std::to_string(static_cast<long long>(implicitResult.stats.overlayPrepMs)));
+            result.hybridStage->logMessage(Level::INFO,
+                    "implicit_graph_rewrite_ms=" +
+                            std::to_string(static_cast<long long>(implicitResult.stats.graphRewriteMs)));
+        }
+    } else {
+        GraphRewriter rewriter;
+        RewriteFeatureFlags rewriteFlags;
+        rewriteFlags.forceCompleteSisoDetect = opt.isForceCompleteSisoDetectEnabled();
+        rewriteFlags.enableSingleHyperedge =
+                !envFlagDisabled("SOUFFLE_REWRITE_DISABLE_SINGLE");
+        rewriteFlags.enableAllFactsToSO = !envFlagDisabled("SOUFFLE_REWRITE_DISABLE_ALL_FACTS");
+        rewriteFlags.enableLinearTwoEdge =
+                !envFlagDisabled("SOUFFLE_REWRITE_DISABLE_LINEAR");
+        rewriteFlags.enableParallelEdge =
+                !envFlagDisabled("SOUFFLE_REWRITE_DISABLE_PARALLEL");
+        rewriteFlags.enableFanOutConverge =
+                !envFlagDisabled("SOUFFLE_REWRITE_DISABLE_FAN_OUT");
+        rewriteFlags.enableCompaction =
+                !envFlagDisabled("SOUFFLE_REWRITE_DISABLE_COMPACTION");
+        const auto& splitMode = opt.getSplitMode();
+        if (splitMode == "no-split") {
+            rewriteFlags.splitMode = SplitMode::None;
+        } else if (splitMode == "complete-split") {
+            rewriteFlags.splitMode = SplitMode::Complete;
+        } else {
+            rewriteFlags.splitMode = SplitMode::Naive;
+        }
+        rewriteStats = rewriter.rewriteUntilFixpoint(*graph, view, opt.isProfiling(), rewriteFlags);
+    }
+
+    const auto rewriteMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now() - rewriteStart)
+                                   .count();
+    const auto randomVarsDelta = static_cast<long long>(rewriteStats.randomVarsBefore) -
+            static_cast<long long>(rewriteStats.randomVarsAfter);
+    const double randomVarsRatio = rewriteStats.randomVarsBefore == 0
+            ? 0.0
+            : static_cast<double>(rewriteStats.randomVarsAfter) /
+                    static_cast<double>(rewriteStats.randomVarsBefore);
+    std::cout << "[pipeline] rewrite took " << rewriteMs << " ms; iterations="
+              << rewriteStats.numIterations << ", regions=" << rewriteStats.numRegionsRewritten
+              << ", nodesRemoved=" << rewriteStats.numNodesRemoved
+              << ", edgesRemoved=" << rewriteStats.numEdgesRemoved
+              << ", edgesAdded=" << rewriteStats.numEdgesAdded
+              << ", randomVarsBefore=" << rewriteStats.randomVarsBefore
+              << ", randomVarsAfter=" << rewriteStats.randomVarsAfter
+              << ", randomVarsDelta=" << randomVarsDelta
+              << ", randomVarsRatio=" << randomVarsRatio
+              << ", randomVarsRemoved=" << rewriteStats.totalRandomVars
+              << ", simpleFactRegions=" << rewriteStats.simpleFactRegions << std::endl;
+    if (result.hybridStage) {
+        debugger.addInfo("rewrite_engine", opt.isImplicitRewriteEnabled() ? "implicit" : "legacy");
+        debugger.addInfo("rewrite_ms", std::to_string(rewriteMs));
+        result.hybridStage->logMessage(Level::INFO,
+                std::string("rewrite_engine=") + (opt.isImplicitRewriteEnabled() ? "implicit" : "legacy"));
+        result.hybridStage->logMessage(Level::INFO, "rewrite_ms=" + std::to_string(rewriteMs));
+    }
+    if (opt.isDumpDotEnabled()) {
+        view.dumpDot(makeOutputPath(opt, "rewrite_final.dot"));
+    }
+    result.rewritePerformed = true;
+    return result;
+}
+
+static bool resolveOnlineCliAvailability(
+        const CmdOptions& opt, bool requested, bool rewritePerformed) {
+    bool allowOnlineCli = requested;
+    if (allowOnlineCli && rewritePerformed) {
+        std::cout << "[pipeline] rewrite performed in full run; skip incremental CLI" << std::endl;
+        allowOnlineCli = false;
+    }
+    if (allowOnlineCli && opt.isScbfEnabled()) {
+        std::cout << "[pipeline] --scbf enabled; skip incremental CLI" << std::endl;
+        allowOnlineCli = false;
+    }
+    return allowOnlineCli;
+}
+
+static void runKnowledgeRuntimeLane(const CmdOptions& opt, SouffleProgram& program,
+        RuleManager& ruleManager, QueryManager& queryManager,
+        IncrementalDerivationGraph& graph, IncSubgraphView& view,
+        const std::vector<std::pair<UntypedTuple, bool>>& evidences, bool allowOnlineCli,
+        StageInfo* rewriteHybridStage) {
+    switch (program.getKnowledge()) {
+        case souffle::Knowledge::BDD:
+            runBddPipeline(
+                    opt, program, ruleManager, queryManager, graph, view, evidences, allowOnlineCli,
+                    rewriteHybridStage);
+            return;
+        case souffle::Knowledge::SDD:
+            runSddPipeline(
+                    opt, program, ruleManager, queryManager, graph, view, evidences, allowOnlineCli,
+                    rewriteHybridStage);
+            return;
+        default:
+            std::cerr << "Unknown knowledge representation" << std::endl;
+            return;
+    }
+}
+
+void runPipeline(
+        const CmdOptions& opt,
+        SouffleProgram& program,
+        RuleManager& ruleManager,
+        QueryManager& queryManager,
+        const std::unordered_map<UntypedTuple, double>& factProb,
+        const std::vector<std::pair<UntypedTuple, bool>>& evidences,
+        bool enableOnlineCli) {
+    std::cout << std::fixed << std::setprecision(8);
+    Debugger& debugger = Debugger::getInstance();
+    configureRuntimeFromOptions(opt);
     precomputedProbResult.clear();
     precomputedTupleProbResult.clear();
-    bool rewritePerformed = false;
+    debugger.addInfo("full_runtime_lane", fullRuntimeLaneLabel(opt));
+    debugger.addInfo("knowledge_backend", knowledgeBackendLabel(program.getKnowledge()));
 
     if (::detForceEnabled) {
         std::cout << "[det-force] enabled; skip derivation graph and emit prob=1.0" << std::endl;
@@ -2184,217 +2497,14 @@ void runPipeline(
     if (opt.isDumpJsonEnabled()) {
         view.dumpJson(makeOutputPath(opt, "derivation.json"));
     }
-    StageInfo* rewriteHybridStage = nullptr;
-    if (opt.isRewriteEnabled() && !opt.isDerivationOnly()) {
-        rewriteHybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
-    }
-    if (opt.isRewriteEnabled() && !opt.isDerivationOnly()) {
-        auto rewriteStart = std::chrono::steady_clock::now();
-        GraphRewriteStats rewriteStats;
-        if (opt.isImplicitRewriteEnabled()) {
-            std::size_t originalOutputCount = 0;
-            std::unordered_set<std::string> originalOutputRelations;
-            for (const auto& node : view.getNodes()) {
-                if (node && node->needOutput) {
-                    ++originalOutputCount;
-                    originalOutputRelations.insert(node->getTuple().relation_name);
-                }
-            }
-            ImplicitSplitPipelineOptions rewriteOptions;
-            rewriteOptions.splitMode = resolveImplicitSplitMode(opt.getSplitMode());
-            rewriteOptions.runOverlayFastPaths = true;
-            rewriteOptions.runOverlaySingleHyperedge = true;
-            rewriteOptions.runOverlayAllFacts = true;
-            rewriteOptions.computeOutputMarginals = false;
-            rewriteOptions.collectPatternStats = false;
-            rewriteOptions.iterateSplitRewrite = opt.isImplicitIterateSplitRewriteEnabled();
-            auto implicitResult = runImplicitSplitRewritePipeline(view, rewriteOptions);
-            rewriteStats = implicitResult.stats.graphRewriteStats;
-            const bool allOutputsAlreadyPrecomputed =
-                    implicitResult.materialized.liveNodes.empty() && precomputedProbResult.empty() &&
-                    precomputedTupleProbResult.size() == originalOutputCount;
-            std::unordered_set<UntypedTuple> originalOutputTuples;
-            if (!allOutputsAlreadyPrecomputed) {
-                originalOutputTuples.reserve(originalOutputCount);
-                for (const auto& node : view.getNodes()) {
-                    if (node && node->needOutput) {
-                        originalOutputTuples.insert(node->getTuple());
-                    }
-                }
-            }
-            graph = std::move(implicitResult.materialized.graph);
-            if (!graph) {
-                graph = std::make_unique<IncrementalDerivationGraph>();
-            }
-            view = buildFullIncViewLocal(
-                    implicitResult.materialized.liveNodes, implicitResult.materialized.liveEdges);
-            std::size_t recoveredIsolatedFacts = 0;
-            std::size_t recoveredOutputFacts = 0;
-            if (!allOutputsAlreadyPrecomputed) {
-                std::unordered_set<UntypedTuple> liveViewTuples;
-                liveViewTuples.reserve(view.getNodes().size());
-                for (const auto& node : view.getNodes()) {
-                    if (node) {
-                        liveViewTuples.insert(node->getTuple());
-                    }
-                }
-                std::unordered_set<UntypedTuple> precomputedTuples;
-                std::unordered_set<std::string> precomputedTupleStrings;
-                precomputedTuples.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
-                precomputedTupleStrings.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
-                for (const auto& [node, _] : precomputedProbResult) {
-                    if (node) {
-                        precomputedTuples.insert(node->getTuple());
-                        precomputedTupleStrings.insert(node->getTuple().toString());
-                    }
-                }
-                for (const auto& [tupleStr, _] : precomputedTupleProbResult) {
-                    precomputedTupleStrings.insert(tupleStr);
-                }
-                for (const auto& node : view.getNodes()) {
-                    if (node && originalOutputRelations.count(node->getTuple().relation_name) &&
-                            !precomputedTuples.count(node->getTuple()) &&
-                            !precomputedTupleStrings.count(node->getTuple().toString())) {
-                        node->setQuery();
-                    }
-                }
-                recoveredIsolatedFacts = precomputeIsolatedOutputFactsLocal(view);
-                if (recoveredIsolatedFacts > 0) {
-                    precomputedTuples.clear();
-                    precomputedTupleStrings.clear();
-                    precomputedTuples.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
-                    precomputedTupleStrings.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
-                    for (const auto& [node, _] : precomputedProbResult) {
-                        if (node) {
-                            precomputedTuples.insert(node->getTuple());
-                            precomputedTupleStrings.insert(node->getTuple().toString());
-                        }
-                    }
-                    for (const auto& [tupleStr, _] : precomputedTupleProbResult) {
-                        precomputedTupleStrings.insert(tupleStr);
-                    }
-                }
-                for (const auto& tuple : originalOutputTuples) {
-                    if (liveViewTuples.count(tuple) || precomputedTuples.count(tuple) ||
-                            precomputedTupleStrings.count(tuple.toString())) {
-                        continue;
-                    }
-                    NodePtr recovered = graph ? graph->findNode(tuple) : nullptr;
-                    if (!recovered || !recovered->isFact) {
-                        continue;
-                    }
-                    precomputedTupleProbResult.emplace(tuple.toString(), recovered->getProbability());
-                    ++recoveredOutputFacts;
-                }
-            }
-            if (recoveredIsolatedFacts > 0 || recoveredOutputFacts > 0) {
-                std::cout << "[pipeline] implicit recovered isolated_output_facts="
-                          << recoveredIsolatedFacts
-                          << " tuple_output_facts=" << recoveredOutputFacts << std::endl;
-            }
-            const GraphSummary implicitHandoffSummary = summarizeGraphLight(view);
-            std::cout << "[pipeline] implicit handoff"
-                      << " nodes=" << implicitHandoffSummary.nodes
-                      << " edges=" << implicitHandoffSummary.edges
-                      << " random_vars=" << implicitHandoffSummary.randomVariables
-                      << " output_nodes=" << implicitHandoffSummary.outputNodes
-                      << " precomputed_nodes=" << precomputedProbResult.size()
-                      << " precomputed_tuples=" << precomputedTupleProbResult.size()
-                      << std::endl;
-            std::cout << "[pipeline] implicit rewrite total_ms=" << implicitResult.stats.totalMs
-                      << " overlay_prep_ms=" << implicitResult.stats.overlayPrepMs
-                      << " overlay_split_ms=" << implicitResult.stats.overlaySplitMs
-                      << " overlay_fastpath_ms=" << implicitResult.stats.overlayFastPathMs
-                      << " materialize_ms=" << implicitResult.stats.materializeMs
-                      << " detect_ms=" << implicitResult.stats.graphDetectMs
-                      << " graph_rewrite_ms=" << implicitResult.stats.graphRewriteMs
-                      << " overlay_aliases=" << implicitResult.stats.overlayStats.aliasesCreated
-                      << " overlay_edges_aliased=" << implicitResult.stats.overlayStats.edgesAliased
-                      << " overlay_all_facts=" << implicitResult.stats.overlayStats.allFactsRewrites
-                      << " overlay_single=" << implicitResult.stats.overlayStats.singleHyperedgeRewrites
-                      << std::endl;
-            if (rewriteHybridStage) {
-                debugger.addInfo("rewrite_engine", "implicit");
-                debugger.addInfo("implicit_overlay_prep_ms",
-                        std::to_string(static_cast<long long>(implicitResult.stats.overlayPrepMs)));
-                debugger.addInfo("implicit_graph_rewrite_ms",
-                        std::to_string(static_cast<long long>(implicitResult.stats.graphRewriteMs)));
-                rewriteHybridStage->logMessage(Level::INFO, "rewrite_engine=implicit");
-                rewriteHybridStage->logMessage(Level::INFO,
-                        "implicit_overlay_prep_ms=" +
-                                std::to_string(static_cast<long long>(implicitResult.stats.overlayPrepMs)));
-                rewriteHybridStage->logMessage(Level::INFO,
-                        "implicit_graph_rewrite_ms=" +
-                                std::to_string(static_cast<long long>(implicitResult.stats.graphRewriteMs)));
-            }
-        } else {
-            GraphRewriter rewriter;
-            RewriteFeatureFlags rewriteFlags;
-            rewriteFlags.forceCompleteSisoDetect = opt.isForceCompleteSisoDetectEnabled();
-            const auto& splitMode = opt.getSplitMode();
-            if (splitMode == "no-split") {
-                rewriteFlags.splitMode = SplitMode::None;
-            } else if (splitMode == "complete-split") {
-                rewriteFlags.splitMode = SplitMode::Complete;
-            } else {
-                rewriteFlags.splitMode = SplitMode::Naive;
-            }
-            rewriteStats = rewriter.rewriteUntilFixpoint(*graph, view, opt.isProfiling(), rewriteFlags);
-        }
-        auto rewriteMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                 std::chrono::steady_clock::now() - rewriteStart)
-                                 .count();
-        auto randomVarsDelta = static_cast<long long>(rewriteStats.randomVarsBefore) -
-                static_cast<long long>(rewriteStats.randomVarsAfter);
-        double randomVarsRatio = rewriteStats.randomVarsBefore == 0
-                                         ? 0.0
-                                         : static_cast<double>(rewriteStats.randomVarsAfter) /
-                                                   static_cast<double>(rewriteStats.randomVarsBefore);
-        std::cout << "[pipeline] rewrite took " << rewriteMs << " ms; iterations="
-                  << rewriteStats.numIterations << ", regions=" << rewriteStats.numRegionsRewritten
-                  << ", nodesRemoved=" << rewriteStats.numNodesRemoved
-                  << ", edgesRemoved=" << rewriteStats.numEdgesRemoved
-                  << ", edgesAdded=" << rewriteStats.numEdgesAdded
-                  << ", randomVarsBefore=" << rewriteStats.randomVarsBefore
-                  << ", randomVarsAfter=" << rewriteStats.randomVarsAfter
-                  << ", randomVarsDelta=" << randomVarsDelta
-                  << ", randomVarsRatio=" << randomVarsRatio
-                  << ", randomVarsRemoved=" << rewriteStats.totalRandomVars
-                  << ", simpleFactRegions=" << rewriteStats.simpleFactRegions << std::endl;
-        if (rewriteHybridStage) {
-            debugger.addInfo("rewrite_engine", opt.isImplicitRewriteEnabled() ? "implicit" : "legacy");
-            debugger.addInfo("rewrite_ms", std::to_string(rewriteMs));
-            rewriteHybridStage->logMessage(Level::INFO,
-                    std::string("rewrite_engine=") + (opt.isImplicitRewriteEnabled() ? "implicit" : "legacy"));
-            rewriteHybridStage->logMessage(Level::INFO, "rewrite_ms=" + std::to_string(rewriteMs));
-        }
-        if (opt.isDumpDotEnabled()) {
-            view.dumpDot(makeOutputPath(opt, "rewrite_final.dot"));
-        }
-        rewritePerformed = true;
-    } else if (opt.isRewriteEnabled() && opt.isDerivationOnly()) {
-        std::cout << "[pipeline] derivation-only mode; skip rewrite" << std::endl;
-    }
+    std::cout << "[pipeline] selected runtime lane=" << fullRuntimeLaneLabel(opt) << std::endl;
 
-    bool allowOnlineCli = enableOnlineCli;
-    if (allowOnlineCli && rewritePerformed) {
-        std::cout << "[pipeline] rewrite performed in full run; skip incremental CLI" << std::endl;
-        allowOnlineCli = false;
-    }
-    if (allowOnlineCli && opt.isScbfEnabled()) {
-        std::cout << "[pipeline] --scbf enabled; skip incremental CLI" << std::endl;
-        allowOnlineCli = false;
-    }
-
-    if (program.getKnowledge() == souffle::Knowledge::BDD) {
-        runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, allowOnlineCli,
-                rewriteHybridStage);
-    } else if (program.getKnowledge() == souffle::Knowledge::SDD) {
-        runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, allowOnlineCli,
-                rewriteHybridStage);
-    } else {
-        std::cerr << "Unknown knowledge representation" << std::endl;
-    }
+    const RewriteLaneResult rewriteLane = runFullRewriteLane(opt, debugger, graph, view);
+    const bool allowOnlineCli =
+            resolveOnlineCliAvailability(opt, enableOnlineCli, rewriteLane.rewritePerformed);
+    runKnowledgeRuntimeLane(
+            opt, program, ruleManager, queryManager, *graph, view, evidences, allowOnlineCli,
+            rewriteLane.hybridStage);
 }
 
 }  // namespace souffle::problog

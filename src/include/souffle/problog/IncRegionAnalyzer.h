@@ -294,6 +294,32 @@ public:
         for (const auto& n : region.nodes) if (!n->isFact) stats.optimized_recomputed++;
         for (const auto& n : dr.nodes)     if (!n->isFact) stats.naive_recomputed++;
 
+        auto emitRelationHistogram = [&](const char* tag, const auto& nodes) {
+            if (!incRegionalProfileEnabled || nodes.empty()) return;
+            std::unordered_map<std::string, size_t> counts;
+            counts.reserve(nodes.size());
+            for (const auto& n : nodes) {
+                if (!n) continue;
+                counts[n->getTuple().relation_name]++;
+            }
+            std::vector<std::pair<std::string, size_t>> items(counts.begin(), counts.end());
+            std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) {
+                if (a.second != b.second) return a.second > b.second;
+                return a.first < b.first;
+            });
+            std::cout << "[inc-analyze-relations] tag=" << tag
+                      << " total_nodes=" << nodes.size()
+                      << " distinct_relations=" << items.size();
+            const size_t limit = std::min<size_t>(items.size(), 12);
+            for (size_t i = 0; i < limit; ++i) {
+                std::cout << " " << items[i].first << "=" << items[i].second;
+            }
+            if (items.size() > limit) {
+                std::cout << " ...";
+            }
+            std::cout << "\n";
+        };
+
         // Emit
         auto joinMs = [](const std::vector<double>& vals) {
             if (vals.empty()) return std::string();
@@ -354,6 +380,9 @@ public:
         }
         std::cout
                   << "\n";
+        emitRelationHistogram("delta_insert_nodes", last_delta_nodes_);
+        emitRelationHistogram("delta_reachable_nodes", dr.nodes);
+        emitRelationHistogram("region_nodes", region.nodes);
         emitConsole_(stats, region, wantVerboseConsole);
         if (!json_out_path.empty()) emitJSON_(stats, region, json_out_path);
         if (!csv_out_path.empty())  emitCSV_(stats, region, csv_out_path);

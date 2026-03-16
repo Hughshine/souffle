@@ -21,12 +21,25 @@
 #include <readline/history.h>
 #include "souffle/SouffleInterface.h"
 #include "souffle/Derivation.h" // TODO: should change timer to Misc header
+#include "souffle/cli/Command.h"
+#include "souffle/cli/PendingOperation.h"
+#include "souffle/cli/PendingOperationStager.h"
 #include "souffle/problog/DerivationGraph.h"
 #include "souffle/problog/RuleManager.h"
 #include "souffle/problog/formula/CuddManager.h"
 #include "souffle/problog/ForwardCompilation.h"
 #include "souffle/CompiledOptions.h"
 #include <unistd.h> // Required for isatty()
+
+namespace souffle::cli {
+template <typename NodeRef>
+class IncrementalCommandExecutor;
+}
+
+using SemMode = souffle::SemMode;
+using FcMode = souffle::FcMode;
+using WmcMode = souffle::WmcMode;
+using IncrementalModeSpec = souffle::IncrementalModeSpec;
 
 inline std::string makeTimestampLabel() {
     const auto now = std::chrono::system_clock::now();
@@ -49,63 +62,14 @@ inline std::string makeTimestampedFilename(const std::string& prefix, size_t ite
     return prefix + std::to_string(iteration) + "-" + makeTimestampLabel() + extension;
 }
 
-std::string getConcreteRelationName(const std::string& name, const std::string prefix) {
-    return prefix + name;
-}
-
-std::string getIncDeltaTupleDeleteRelationName(const std::string& name) {
-    return getConcreteRelationName(name, "$inc_delta_tuple_delete_");
-}
-
-std::string getIncDeltaTupleInsertRelationName(const std::string& name) {
-    return getConcreteRelationName(name, "$inc_delta_tuple_insert_");
-}
-
-enum class SemMode {
-    INC,
-    FULL
-};
-
-enum class FcMode {
-    FULL_HARD,
-    FULL_SOFT,
-    INC_NAIVE,
-    INC_REGIONAL,
-    ELASTIC
-};
-
-enum class WmcMode {
-    FULL,
-    INC_NAIVE,
-    INC_REGIONAL
-};
-
 template<typename NodeRef>
 class IncrementalCLI {
 private:
-    // Structure to represent a pending operation
-    struct Operation {
-        enum Type { INSERT, DELETE } type;
-        bool valid = true;
-        std::string relationName;
-        std::vector<std::string> values;
-        double probability;
+    template <typename>
+    friend class souffle::cli::IncrementalCommandExecutor;
 
-        std::string toString() const {
-            std::stringstream ss;
-            ss << (type == INSERT ? "insert " : "delete ");
-            if (type == INSERT) {
-                ss << probability << "::";
-            }
-            ss << relationName << "(";
-            for (size_t i = 0; i < values.size(); i++) {
-                if (i > 0) ss << ", ";
-                ss << values[i];
-            }
-            ss << ")";
-            return ss.str();
-        }
-    };
+    using ParsedCommand = souffle::cli::ParsedCommand;
+    using Operation = souffle::cli::PendingOperation;
 
     // Store all pending operations
     std::vector<Operation> pendingOperations;
@@ -114,110 +78,117 @@ private:
         std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel << std::endl;
     }
 
+    IncrementalModeSpec currentModeSpec() const {
+        return modeSpec;
+    }
+
     bool isIncrementalSemMode() const {
-        return semMode == SemMode::INC;
+        return souffle::isIncrementalSemMode(modeSpec.sem);
     }
 
     bool isFullSemMode() const {
-        return semMode == SemMode::FULL;
+        return souffle::isFullSemMode(modeSpec.sem);
     }
 
     bool isIncrementalFcMode() const {
-        return fcMode == FcMode::INC_NAIVE || fcMode == FcMode::INC_REGIONAL;
+        return souffle::isIncrementalFcMode(modeSpec.fc);
     }
 
     bool isFullFcMode() const {
-        return fcMode == FcMode::FULL_HARD || fcMode == FcMode::FULL_SOFT;
+        return souffle::isFullFcMode(modeSpec.fc);
     }
 
     bool isRegionalFcMode() const {
-        return fcMode == FcMode::INC_REGIONAL;
+        return souffle::isRegionalFcMode(modeSpec.fc);
     }
 
     bool isElasticFcMode() const {
-        return fcMode == FcMode::ELASTIC;
+        return souffle::isElasticFcMode(modeSpec.fc);
     }
 
     const char* semModeLabel() const {
-        return semMode == SemMode::FULL ? "SEM-FULL" : "SEM-INC";
+        return souffle::semModeLabel(modeSpec.sem);
     }
 
     const char* fcModeLabel() const {
-        switch (fcMode) {
-            case FcMode::FULL_HARD:
-                return "FULL-HARD";
-            case FcMode::FULL_SOFT:
-                return "FULL-SOFT";
-            case FcMode::INC_NAIVE:
-                return "INC-NAIVE";
-            case FcMode::INC_REGIONAL:
-                return "INC-REGIONAL";
-            case FcMode::ELASTIC:
-                return "ELASTIC";
-        }
-        return "UNKNOWN";
+        return souffle::fcModeLabel(modeSpec.fc);
     }
 
     WmcMode getWmcMode() const {
-        switch (fcMode) {
-            case FcMode::FULL_HARD:
-            case FcMode::FULL_SOFT:
-                return WmcMode::FULL;
-            case FcMode::INC_NAIVE:
-                return WmcMode::INC_NAIVE;
-            case FcMode::INC_REGIONAL:
-                return WmcMode::INC_REGIONAL;
-            case FcMode::ELASTIC:
-                return WmcMode::FULL;
-        }
-        return WmcMode::FULL;
+        return souffle::getWmcMode(modeSpec.fc);
     }
 
     const char* wmcModeLabel() const {
-        switch (getWmcMode()) {
-            case WmcMode::FULL:
-                return "WMC-FULL";
-            case WmcMode::INC_NAIVE:
-                return "WMC-INC-NAIVE";
-            case WmcMode::INC_REGIONAL:
-                return "WMC-INC-REGIONAL";
-        }
-        return "WMC-UNKNOWN";
+        return souffle::wmcModeLabel(getWmcMode());
     }
 
     std::string modeSummaryLabel() const {
-        std::ostringstream oss;
-        oss << semModeLabel() << "+" << fcModeLabel() << "+" << wmcModeLabel();
-        return oss.str();
+        return souffle::modeSummaryLabel(currentModeSpec());
     }
 
     const char* debuggerTurnModeLabel() const {
-        if (isFullSemMode()) {
-            if (fcMode == FcMode::FULL_SOFT) {
-                return "FULL-SOFT";
-            }
-            if (fcMode == FcMode::FULL_HARD) {
-                return "FULL-HARD";
-            }
-            return "FULL";
-        }
-        return "INC";
+        return souffle::debuggerTurnModeLabel(currentModeSpec());
+    }
+
+    bool currentModeUsesIncrementalState() const {
+        return souffle::modeUsesIncrementalState(currentModeSpec());
     }
 
     std::string outputPath(const std::string& filename) const {
-        const std::string& dir = opt.getOutputFileDir();
-        if (dir.empty()) {
-            return filename;
-        }
-        if (dir.back() == '/') {
-            return dir + filename;
-        }
-        return dir + "/" + filename;
+        return souffle::joinOutputPath(opt.getOutputFileDir(), filename);
     }
 
     std::string outputTimestampedPath(const std::string& prefix, size_t iter,
             const std::string& extension) const {
         return outputPath(makeTimestampedFilename(prefix, iter, extension));
+    }
+
+    std::string currentTurnProbabilityPrefix() const {
+        return souffle::makeOnlineTurnProbabilityPrefix(iteration, currentModeSpec());
+    }
+
+    void collectGarbageIfNeeded() {
+        if (ddManager != nullptr) {
+            ddManager->tryGarbageCollection();
+        }
+    }
+
+    void beginTurnTrace() {
+        debugger.startTurn(debuggerTurnModeLabel());
+        DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
+        logTurnMode(modeSummaryLabel());
+    }
+
+    void finishTurn() {
+        collectGarbageIfNeeded();
+        debugger.endTurn();
+        iteration++;
+    }
+
+    void dumpCurrentTurnProbabilities() {
+        dumpProbabilities(probResult, opt.getOutputFileDir(), currentTurnProbabilityPrefix());
+    }
+
+    void dumpCurrentTurnProbabilitiesWithStage(StageKind stageKind) {
+        debugger.startStage(stageKind);
+        dumpCurrentTurnProbabilities();
+        debugger.endStage();
+    }
+
+    void assertModeCompatibleWithGraphState(const IncrementalModeSpec& mode) const {
+        if (!souffle::modeUsesIncrementalState(mode) || graph == nullptr) {
+            return;
+        }
+        if (graph->isBiImpMerged()) {
+            assert(false && "bi-imp merged graph cannot use incremental state");
+        }
+        if (graph->isConstFolded()) {
+            assert(false && "const-folded graph cannot use incremental state");
+        }
+    }
+
+    void assertCurrentModeCompatibleWithGraphState() const {
+        assertModeCompatibleWithGraphState(currentModeSpec());
     }
 
     static std::string formatRatio(size_t part, size_t total) {
@@ -503,88 +474,42 @@ private:
                   << std::endl;
     }
 
-    // Parse a tuple with potential probability
-    // Returns: relation name, values, probability, success flag
-    std::tuple<std::string, std::vector<std::string>, double, bool>
-    parseInsertCommand(const std::string& str) {
-        std::string relName;
-        std::vector<std::string> values;
-        double probability = 1.0; // Default probability
-        bool success = false;
-
-        // Pattern for prefix probability format: probability::relation_name(...)
-        std::regex prefixProbRegex("(0?\\.[0-9]+)\\s*::\\s*([a-zA-Z][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)");
-
-        // Pattern for suffix probability format: relation_name(...) probability
-        std::regex suffixProbRegex("([a-zA-Z][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)\\s*(0?\\.[0-9]+)");
-
-        // Pattern for standard format without explicit probability: relation_name(...)
-        std::regex standardRegex("([a-zA-Z][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)");
-
-        std::smatch matches;
-
-        // Try matching prefix probability pattern
-        if (std::regex_search(str, matches, prefixProbRegex) && matches.size() > 3) {
-            try {
-                probability = std::stod(matches[1].str());
-                if (probability < 0.0 || probability > 1.0) {
-                    return std::make_tuple("", std::vector<std::string>(), 0.0, false);
-                }
-                relName = matches[2].str();
-                std::string valuesStr = matches[3].str();
-                values = parseValues(valuesStr);
-                success = true;
-            } catch (const std::exception&) {
-                return std::make_tuple("", std::vector<std::string>(), 0.0, false);
-            }
+    static std::vector<std::string> collectModeSpecs(const std::vector<std::string>& tokens) {
+        std::vector<std::string> specs;
+        for (const auto& token : tokens) {
+            souffle::appendSplitModeSpecs(specs, token);
         }
-        // Try matching suffix probability pattern
-        else if (std::regex_search(str, matches, suffixProbRegex) && matches.size() > 3) {
-            try {
-                relName = matches[1].str();
-                std::string valuesStr = matches[2].str();
-                values = parseValues(valuesStr);
-
-                probability = std::stod(matches[3].str());
-                if (probability < 0.0 || probability > 1.0) {
-                    return std::make_tuple("", std::vector<std::string>(), 0.0, false);
-                }
-                success = true;
-            } catch (const std::exception&) {
-                return std::make_tuple("", std::vector<std::string>(), 0.0, false);
-            }
-        }
-        // Try matching standard pattern (default probability = 1.0)
-        else if (std::regex_search(str, matches, standardRegex) && matches.size() > 2) {
-            relName = matches[1].str();
-            std::string valuesStr = matches[2].str();
-            values = parseValues(valuesStr);
-            success = true;
-        }
-
-        return std::make_tuple(relName, values, probability, success);
+        return specs;
     }
 
-    // Helper function to parse values from a comma-separated string
-    std::vector<std::string> parseValues(const std::string& valuesStr) {
-        std::vector<std::string> values;
-
-        // Split values by comma
-        std::regex valueRegex("\\s*([^,]+)\\s*,?");
-        std::string::const_iterator searchStart(valuesStr.cbegin());
-        std::smatch valueMatch;
-
-        while (std::regex_search(searchStart, valuesStr.cend(), valueMatch, valueRegex)) {
-            std::string value = valueMatch[1].str();
-            // Trim whitespace
-            value.erase(0, value.find_first_not_of(" \t"));
-            value.erase(value.find_last_not_of(" \t") + 1);
-            values.push_back(value);
-            searchStart = valueMatch.suffix().first;
+    void handleSetModeCommand(const ParsedCommand& command) {
+        const std::vector<std::string> specs = collectModeSpecs(command.args);
+        if (specs.empty()) {
+            std::cout << "Usage: " << souffle::incrementalSetModeUsageText() << std::endl;
+            std::cout << "Current mode: " << modeSummaryLabel() << std::endl;
+            return;
+        }
+        if (specs.size() == 1 && specs[0].find('=') == std::string::npos) {
+            if (!setLegacyMode(specs[0], true)) {
+                std::cout << "Unknown mode: " << specs[0] << std::endl;
+                std::cout << "Available legacy modes: " << souffle::incrementalLegacyModeHelpText() << std::endl;
+                std::cout << "Current mode unchanged: " << modeSummaryLabel() << std::endl;
+            }
+            return;
         }
 
-        return values;
+        IncrementalModeSpec parsed;
+        std::string error;
+        if (souffle::parseIncrementalModeSpecs(specs, currentModeSpec(), parsed, &error)) {
+            setModeSpec(parsed);
+            std::cout << "Set mode to " << modeSummaryLabel() << std::endl;
+            return;
+        }
+
+        std::cout << error << std::endl;
+        std::cout << "Current mode unchanged: " << modeSummaryLabel() << std::endl;
     }
+
     souffle::SouffleProgram* program;
     IncrementalDerivationGraph* graph;
     RuleManager* ruleManager;
@@ -595,10 +520,27 @@ private:
     std::map<EdgePtr, NodeRef>* edgeFormulas;
     std::set<NodePtr> changedNodes;
 
-
-    SemMode semMode = SemMode::INC;
-    FcMode fcMode = FcMode::INC_NAIVE;
+    IncrementalModeSpec modeSpec{};
     bool derivationOnly = false;
+    void syncRuntimeTogglesFromOptions() {
+        DerivationGraph::setConstFoldEnabled(opt.isConstFoldEnabled());
+        DerivationGraph::setConstDumpEnabled(opt.isDumpConstEnabled());
+        DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
+        DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());
+        DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());
+        DerivationManager::setSemStatsEnabled(opt.isDumpStatEnabled());
+        incProfileEnabled = opt.isIncProfileEnabled();
+        fcProfileEnabled = opt.isFcProfileEnabled();
+        incDeleteProfileEnabled = opt.isIncDeleteProfileEnabled();
+        wmcProfileEnabled = opt.isWmcProfileEnabled();
+        incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();
+        incRegionalProfileHeavyEnabled = opt.isIncRegionalProfileHeavyEnabled();
+        incRegionalTraceTuples = opt.getIncRegionalTraceTuples();
+        depGraphProfileEnabled = opt.isDepGraphProfileEnabled();
+        postDelEnabled = opt.isPostDelEnabled();
+        reuseVarIndexEnabled = opt.isReuseVarIndexEnabled();
+        incReorderEnabled = opt.isIncReorderEnabled();
+    }
 public:
     IncrementalCLI(souffle::SouffleProgram* prog = nullptr,
             IncrementalDerivationGraph* graph = nullptr,
@@ -633,116 +575,25 @@ public:
         opt = options;
         setDerivationOnly(options.isDerivationOnly());
         DerivationGraph::setMergeBiImpEnabled(false);
-        DerivationGraph::setConstFoldEnabled(options.isConstFoldEnabled());
-        DerivationGraph::setConstDumpEnabled(options.isDumpConstEnabled());
-        DerivationGraphViewInterface::setDumpDotEnabled(options.isDumpDotEnabled());
-        DerivationGraphViewInterface::setDumpJsonEnabled(options.isDumpJsonEnabled());
-        DerivationGraphViewInterface::setDumpStatsEnabled(options.isDumpStatEnabled());
-        DerivationManager::setSemStatsEnabled(options.isDumpStatEnabled());
-        incProfileEnabled = options.isIncProfileEnabled();
-        fcProfileEnabled = options.isFcProfileEnabled();
-        incDeleteProfileEnabled = options.isIncDeleteProfileEnabled();
-        wmcProfileEnabled = options.isWmcProfileEnabled();
-        incRegionalProfileEnabled = options.isIncRegionalProfileEnabled();
-        incRegionalProfileHeavyEnabled = options.isIncRegionalProfileHeavyEnabled();
-        incRegionalTraceTuples = options.getIncRegionalTraceTuples();
-        depGraphProfileEnabled = options.isDepGraphProfileEnabled();
-        postDelEnabled = options.isPostDelEnabled();
-        reuseVarIndexEnabled = options.isReuseVarIndexEnabled();
-        incReorderEnabled = options.isIncReorderEnabled();
-        auto& mode = options.getIncMode();
-        if (!setLegacyMode(mode, false)) {
-            std::cerr << "Unknown incremental mode: " << mode << ", defaulting to inc." << std::endl;
-            setLegacyMode("inc", false);
-        }
+        syncRuntimeTogglesFromOptions();
+        setModeSpec(options.getIncrementalModeSpec());
     }
 
-    static bool parseLegacyModeSpec(const std::string& token, SemMode& sem, FcMode& fc) {
-        if (token == "inc" || token == "incremental" || token == "incr" || token == "inc-naive") {
-            sem = SemMode::INC;
-            fc = FcMode::INC_NAIVE;
-            return true;
-        }
-        if (token == "inc-regional" || token == "regional") {
-            sem = SemMode::INC;
-            fc = FcMode::INC_REGIONAL;
-            return true;
-        }
-        if (token == "full" || token == "full-hard") {
-            sem = SemMode::FULL;
-            fc = FcMode::FULL_HARD;
-            return true;
-        }
-        if (token == "full-soft") {
-            sem = SemMode::FULL;
-            fc = FcMode::FULL_SOFT;
-            return true;
-        }
-        if (token == "elastic") {
-            sem = SemMode::INC;
-            fc = FcMode::ELASTIC;
-            return true;
-        }
-        return false;
-    }
-
-    static bool parseSemModeSpec(const std::string& token, SemMode& sem) {
-        if (token == "inc" || token == "incremental" || token == "incr" || token == "inc-naive" ||
-                token == "inc-regional" || token == "regional") {
-            sem = SemMode::INC;
-            return true;
-        }
-        if (token == "full" || token == "full-hard" || token == "full-soft") {
-            sem = SemMode::FULL;
-            return true;
-        }
-        return false;
-    }
-
-    static bool parseFcModeSpec(const std::string& token, FcMode& fc) {
-        if (token == "full" || token == "full-hard") {
-            fc = FcMode::FULL_HARD;
-            return true;
-        }
-        if (token == "full-soft") {
-            fc = FcMode::FULL_SOFT;
-            return true;
-        }
-        if (token == "inc" || token == "incremental" || token == "incr" || token == "inc-naive") {
-            fc = FcMode::INC_NAIVE;
-            return true;
-        }
-        if (token == "inc-regional" || token == "regional") {
-            fc = FcMode::INC_REGIONAL;
-            return true;
-        }
-        if (token == "elastic") {
-            fc = FcMode::ELASTIC;
-            return true;
-        }
-        return false;
+    void setModeSpec(const IncrementalModeSpec& nextMode) {
+        assertModeCompatibleWithGraphState(nextMode);
+        modeSpec = nextMode;
     }
 
     void setModes(SemMode sem, FcMode fc) {
-        if ((sem == SemMode::INC || fc == FcMode::INC_NAIVE || fc == FcMode::INC_REGIONAL) &&
-                graph != nullptr && graph->isBiImpMerged()) {
-            assert(false && "bi-imp merged graph cannot switch to incremental mode");
-        }
-        if ((sem == SemMode::INC || fc == FcMode::INC_NAIVE || fc == FcMode::INC_REGIONAL) &&
-                graph != nullptr && graph->isConstFolded()) {
-            assert(false && "const-folded graph cannot switch to incremental mode");
-        }
-        semMode = sem;
-        fcMode = fc;
+        setModeSpec(IncrementalModeSpec{sem, fc});
     }
 
     bool setLegacyMode(const std::string& token, bool print = true) {
-        SemMode sem = semMode;
-        FcMode fc = fcMode;
-        if (!parseLegacyModeSpec(token, sem, fc)) {
+        IncrementalModeSpec mode = currentModeSpec();
+        if (!souffle::parseLegacyModeToken(token, mode)) {
             return false;
         }
-        setModes(sem, fc);
+        setModeSpec(mode);
         if (print) {
             std::cout << "Set mode to " << modeSummaryLabel() << std::endl;
         }
@@ -754,6 +605,12 @@ public:
     }
 
 private:
+    using OperationStager = souffle::cli::PendingOperationStager<Operation>;
+
+    OperationStager makeOperationStager() {
+        return OperationStager(program, initialInputRelations, fact_prob);
+    }
+
     std::vector<std::pair<NodePtr, bool>> resolveEvidenceNodes() const {
         if (!graph) {
             throw std::runtime_error("IncrementalCLI: graph is null for evidence resolution");
@@ -777,290 +634,283 @@ private:
         return evidenceNode;
     }
 
-public:
-    bool processCommand(const std::string& command) {
-        // Skip empty commands
-        if (command.empty()) {
-            return true;
+    static void printCommandValues(const std::vector<std::string>& values) {
+        for (size_t i = 0; i < values.size(); i++) {
+            if (i > 0) {
+                std::cout << ", ";
+            }
+            std::cout << values[i];
+        }
+    }
+
+    void printHelp() const {
+        std::cout << "Incremental Souffle CLI Commands:\n"
+                  << "--------------------------------\n"
+                  << "insert [probability::]relation_name(val1, val2, ...) [probability]\n"
+                  << "       Queue a tuple for insertion with optional probability (0-1)\n"
+                  << "delete/remove relation_name(val1, val2, ...)\n"
+                  << "       Queue a tuple for deletion\n"
+                  << "list   List all pending operations\n"
+                  << "show config\n"
+                  << "       Show current online mode and mutable runtime toggles\n"
+                  << "set sem-mode <full|inc>\n"
+                  << "set fc-mode <full-hard|full-soft|inc-naive|inc-regional|elastic>\n"
+                  << "set dump <json|dot|stat|const>\n"
+                  << "unset dump <json|dot|stat|const>\n"
+                  << "set profile-stage <dred|inc|fc|wmc|inc-delete|inc-regional|inc-regional-heavy|dep-graph>\n"
+                  << "unset profile-stage <...>\n"
+                  << "set dumpjson|dumpdot|dumpstat\n"
+                  << "unset dumpjson|dumpdot|dumpstat\n"
+                  << "commit Apply queued changes and run incremental computation\n"
+                  << "help, h Display this help message\n"
+                  << "exit, quit, q Exit the CLI\n"
+                  << std::endl;
+    }
+
+    void handleInsertCommand(const ParsedCommand& command) {
+        auto [relName, values, probability, success] =
+                souffle::cli::parseTupleWithOptionalProbability(command.remainder);
+        if (!success || relName.empty()) {
+            std::cout << "Error: Invalid format. Use: [probability::]relation_name(val1, val2, ...) [probability]"
+                      << std::endl;
+            return;
         }
 
-        // Split command into parts
-        std::istringstream iss(command);
-        std::string cmd;
-        iss >> cmd;
+        Operation op;
+        op.type = Operation::INSERT;
+        op.relationName = relName;
+        op.values = values;
+        op.probability = probability;
+        pendingOperations.push_back(op);
 
-        if (cmd == "help" || cmd == "h") {
-            std::cout << "Incremental Souffle CLI Commands:\n"
-                      << "--------------------------------\n"
-                      << "insert [probability::]relation_name(val1, val2, ...) [probability]\n"
-                      << "       Queue a tuple for insertion with optional probability (0-1)\n"
-                      << "delete/remove relation_name(val1, val2, ...)\n"
-                      << "       Queue a tuple for deletion\n"
-                      << "list   List all pending operations\n"
-                      << "commit Apply queued changes and run incremental computation\n"
-                      << "help, h Display this help message\n"
-                      << "exit, quit, q Exit the CLI\n"
+        std::cout << "PARSED INSERT: Relation = " << relName << ", Values = [";
+        printCommandValues(values);
+        std::cout << "], Probability = " << std::setprecision(8) << probability << std::endl;
+    }
+
+    void handleDeleteCommand(const ParsedCommand& command) {
+        auto [relName, values, probability, success] =
+                souffle::cli::parseTupleWithOptionalProbability(command.remainder);
+        static_cast<void>(probability);
+        if (!success || relName.empty()) {
+            std::cout << "Error: Invalid format. Use: relation_name(val1, val2, ...)" << std::endl;
+            return;
+        }
+
+        Operation op;
+        op.type = Operation::DELETE;
+        op.relationName = relName;
+        op.values = values;
+        op.probability = 1.0;
+
+        bool overlap = false;
+        for (size_t i = 0; i < pendingOperations.size(); i++) {
+            if (pendingOperations[i].type == Operation::INSERT &&
+                    pendingOperations[i].relationName == relName) {
+                bool same = true;
+                for (size_t j = 0; j < pendingOperations[i].values.size(); j++) {
+                    if (pendingOperations[i].values[j] != values[j]) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (same) {
+                    std::cout << "Overlapped insertion and deletion removed." << std::endl;
+                    overlap = true;
+                    pendingOperations.erase(pendingOperations.begin() + i);
+                    break;
+                }
+            }
+        }
+        if (!overlap) {
+            pendingOperations.push_back(op);
+        }
+
+        std::cout << "PARSED DELETE: Relation = " << relName << ", Values = [";
+        printCommandValues(values);
+        std::cout << "]" << std::endl;
+    }
+
+    void handleListCommand() const {
+        if (pendingOperations.empty()) {
+            std::cout << "No pending operations." << std::endl;
+            return;
+        }
+
+        std::cout << "Pending operations:" << std::endl;
+        for (size_t i = 0; i < pendingOperations.size(); i++) {
+            const Operation& op = pendingOperations[i];
+            std::cout << i + 1 << ". " << op.toString() << std::endl;
+        }
+    }
+
+    static std::string joinTokens(const std::vector<std::string>& values) {
+        if (values.empty()) {
+            return "(none)";
+        }
+        std::ostringstream oss;
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i > 0) {
+                oss << ",";
+            }
+            oss << values[i];
+        }
+        return oss.str();
+    }
+
+    void handleShowCommand(const ParsedCommand& command) const {
+        const std::string topic = command.args.empty() ? std::string() : command.args.front();
+        if (topic.empty() || topic == "config") {
+            std::cout << "sem-mode=" << souffle::semModeTokenLabel(modeSpec.sem)
+                      << " fc-mode=" << souffle::fcModeTokenLabel(modeSpec.fc)
+                      << " full-evaluator=" << souffle::fullEvaluatorLabel(opt.getFullEvaluator())
+                      << " rewrite-engine=" << souffle::rewriteEngineLabel(opt.getRewriteEngine())
+                      << " rewrite-split=" << souffle::rewriteSplitModeLabel(opt.getRewriteSplitMode())
+                      << " rewrite-detect=" << souffle::rewriteDetectModeLabel(opt.getRewriteDetectMode())
+                      << " det-mode=" << souffle::detModeLabel(opt.getDetMode())
+                      << " dd-backend=" << opt.getKnowledgeRepresentation()
+                      << " dumps=" << joinTokens(opt.getEnabledDumpKinds())
+                      << " profile-stages=" << joinTokens(opt.getEnabledProfileStages())
+                      << std::endl;
+            return;
+        }
+        std::cout << "Unknown show topic: " << topic << std::endl;
+    }
+
+    bool setDumpOption(const std::string& key, bool enabled) {
+        if (key == "dumpjson") {
+            opt.setDumpJsonEnabled(enabled);
+            syncRuntimeTogglesFromOptions();
+            std::cout << "Set dumpjson to " << (enabled ? "true" : "false") << std::endl;
+            return true;
+        }
+        if (key == "dumpdot") {
+            opt.setDumpDotEnabled(enabled);
+            syncRuntimeTogglesFromOptions();
+            std::cout << "Set dumpdot to " << (enabled ? "true" : "false") << std::endl;
+            return true;
+        }
+        if (key == "dumpstat") {
+            opt.setDumpStatEnabled(enabled);
+            syncRuntimeTogglesFromOptions();
+            std::cout << "Set dumpstat to " << (enabled ? "true" : "false") << std::endl;
+            return true;
+        }
+        if (key == "dumpconst") {
+            opt.setDumpConstEnabled(enabled);
+            syncRuntimeTogglesFromOptions();
+            std::cout << "Set dumpconst to " << (enabled ? "true" : "false") << std::endl;
+            return true;
+        }
+        return false;
+    }
+
+    bool setMutableConfigOption(
+            const std::string& key, const std::vector<std::string>& args, bool enabled) {
+        if (key == "sem-mode") {
+            if (!enabled) {
+                std::cout << "sem-mode cannot be unset; use `set sem-mode <value>`" << std::endl;
+                return true;
+            }
+            const std::string value = args.size() > 1 ? args[1] : std::string();
+            SemMode sem = modeSpec.sem;
+            if (value.empty() || !souffle::parseSemModeToken(value, sem)) {
+                std::cout << "Usage: set sem-mode " << souffle::semModeOptionSyntax() << std::endl;
+                return true;
+            }
+            setModeSpec(IncrementalModeSpec{sem, souffle::reconcileFcModeForSem(sem, modeSpec.fc)});
+            std::cout << "Set mode to " << modeSummaryLabel() << std::endl;
+            return true;
+        }
+        if (key == "fc-mode") {
+            if (!enabled) {
+                std::cout << "fc-mode cannot be unset; use `set fc-mode <value>`" << std::endl;
+                return true;
+            }
+            const std::string value = args.size() > 1 ? args[1] : std::string();
+            FcMode fc = modeSpec.fc;
+            if (value.empty() || !souffle::parseFcModeToken(value, fc)) {
+                std::cout << "Usage: set fc-mode " << souffle::fcModeOptionSyntax() << std::endl;
+                return true;
+            }
+            setModeSpec(IncrementalModeSpec{modeSpec.sem, fc});
+            std::cout << "Set mode to " << modeSummaryLabel() << std::endl;
+            return true;
+        }
+        if (key == "dump") {
+            const std::string value = args.size() > 1 ? args[1] : std::string();
+            if (value.empty() || !opt.setDumpKindToken(value, enabled)) {
+                std::cout << "Usage: " << (enabled ? "set" : "unset") << " dump "
+                          << souffle::dumpKindsOptionSyntax() << std::endl;
+                return true;
+            }
+            syncRuntimeTogglesFromOptions();
+            std::cout << (enabled ? "Enabled" : "Disabled") << " dump " << souffle::normalizeFlagToken(value)
                       << std::endl;
             return true;
         }
-        else if (cmd == "insert") {
-            // Get the rest of the line
-            std::string tupleSpec;
-            std::getline(iss >> std::ws, tupleSpec);
-
-            // Parse tuple with probability
-            auto [relName, values, probability, success] = parseInsertCommand(tupleSpec);
-
-            if (!success || relName.empty()) {
-                std::cout << "Error: Invalid format. Use: [probability::]relation_name(val1, val2, ...) [probability]" << std::endl;
+        if (key == "profile-stage") {
+            const std::string value = args.size() > 1 ? args[1] : std::string();
+            if (value.empty() || !opt.setProfileStageToken(value, enabled)) {
+                std::cout << "Usage: " << (enabled ? "set" : "unset") << " profile-stage "
+                          << souffle::profileStageOptionSyntax() << std::endl;
                 return true;
             }
-
-            // Add to pending operations
-            Operation op;
-            op.type = Operation::INSERT;
-            op.relationName = relName;
-            op.values = values;
-            op.probability = probability;
-            pendingOperations.push_back(op);
-
-            // Output parsed information
-            std::cout << "PARSED INSERT: Relation = " << relName
-                      << ", Values = [";
-            for (size_t i = 0; i < values.size(); i++) {
-                if (i > 0) std::cout << ", ";
-                std::cout << values[i];
-            }
-            std::cout << "], Probability = " << std::setprecision(8) << probability << std::endl;
-
-        } else if (cmd == "delete" || cmd == "remove") {
-            // Get the rest of the line
-            std::string tupleSpec;
-            std::getline(iss >> std::ws, tupleSpec);
-
-            // For deletion we use the same parser but ignore probability
-            auto [relName, values, probability, success] = parseInsertCommand(tupleSpec);
-
-            if (!success || relName.empty()) {
-                std::cout << "Error: Invalid format. Use: relation_name(val1, val2, ...)" << std::endl;
-                return true;
-            }
-
-            // Add to pending operations
-            Operation op;
-            op.type = Operation::DELETE;
-            op.relationName = relName;
-            op.values = values;
-            op.probability = 1.0;  // Deletion always has probability 1.0
-
-            bool overlap = false;
-            for (size_t i = 0; i < pendingOperations.size(); i++) {
-                // if overlapped insertion, remove that insertion
-                if (pendingOperations[i].type == Operation::INSERT && pendingOperations[i].relationName == relName) {
-                    bool same = true;
-                    for (size_t j = 0; j < pendingOperations[i].values.size(); j++) {  // TODO: optimize
-                        if (pendingOperations[i].values[j] != values[j]) {
-                            same = false;
-                            break;
-                        }
-                    }
-                    if (same) {
-                        std::cout << "Overlapped insertion and deletion removed." << std::endl;
-                        overlap = true;
-                        pendingOperations.erase(pendingOperations.begin() + i);
-                        break;
-                    }
-                }
-            }
-            if (!overlap) {
-                pendingOperations.push_back(op);
-            }
-
-            // Output parsed information
-            std::cout << "PARSED DELETE: Relation = " << relName
-                      << ", Values = [";
-            for (size_t i = 0; i < values.size(); i++) {
-                if (i > 0) std::cout << ", ";
-                std::cout << values[i];
-            }
-            std::cout << "]" << std::endl;
-
-        } else if (cmd == "list") {
-            // List all pending operations
-            if (pendingOperations.empty()) {
-                std::cout << "No pending operations." << std::endl;
-            } else {
-                std::cout << "Pending operations:" << std::endl;
-                for (size_t i = 0; i < pendingOperations.size(); i++) {
-                    const Operation& op = pendingOperations[i];
-                    std::cout << i+1 << ". " << op.toString() << std::endl;
-                }
-            }
-        } else if (cmd == "setmode") {
-            std::vector<std::string> specs;
-            std::string token;
-            while (iss >> token) {
-                size_t begin = 0;
-                while (begin <= token.size()) {
-                    size_t comma = token.find(',', begin);
-                    const size_t end = (comma == std::string::npos) ? token.size() : comma;
-                    if (end > begin) {
-                        specs.push_back(token.substr(begin, end - begin));
-                    }
-                    if (comma == std::string::npos) {
-                        break;
-                    }
-                    begin = comma + 1;
-                }
-            }
-            if (specs.empty()) {
-                std::cout << "Usage: setmode <legacy-mode> OR setmode sem=<inc|full> fc=<full-hard|full-soft|inc-naive|inc-regional>" << std::endl;
-                std::cout << "Current mode: " << modeSummaryLabel() << std::endl;
-                return true;
-            }
-            if (specs.size() == 1 && specs[0].find('=') == std::string::npos) {
-                if (!setLegacyMode(specs[0], true)) {
-                    std::cout << "Unknown mode: " << specs[0] << std::endl;
-                    std::cout << "Available legacy modes: inc-naive (inc/incr), inc-regional, full (full-hard), full-soft, elastic" << std::endl;
-                    std::cout << "Current mode unchanged: " << modeSummaryLabel() << std::endl;
-                }
-                return true;
-            }
-            auto trim = [](std::string s) {
-                const auto first = s.find_first_not_of(" \t\r\n");
-                if (first == std::string::npos) {
-                    return std::string();
-                }
-                const auto last = s.find_last_not_of(" \t\r\n");
-                return s.substr(first, last - first + 1);
-            };
-            SemMode nextSem = semMode;
-            FcMode nextFc = fcMode;
-            bool hasSem = false;
-            bool hasFc = false;
-            bool ok = true;
-            for (const auto& specRaw : specs) {
-                const std::string spec = trim(specRaw);
-                const auto eq = spec.find('=');
-                if (eq == std::string::npos) {
-                    std::cout << "Invalid setmode item: " << spec << " (expected key=value)" << std::endl;
-                    ok = false;
-                    break;
-                }
-                const std::string key = trim(spec.substr(0, eq));
-                const std::string value = trim(spec.substr(eq + 1));
-                if (key == "sem") {
-                    SemMode semTmp = nextSem;
-                    if (!parseSemModeSpec(value, semTmp)) {
-                        std::cout << "Unknown sem mode: " << value << std::endl;
-                        ok = false;
-                        break;
-                    }
-                    nextSem = semTmp;
-                    hasSem = true;
-                } else if (key == "fc") {
-                    FcMode fcTmp = nextFc;
-                    if (!parseFcModeSpec(value, fcTmp)) {
-                        std::cout << "Unknown fc mode: " << value << std::endl;
-                        ok = false;
-                        break;
-                    }
-                    nextFc = fcTmp;
-                    hasFc = true;
-                } else if (key == "wmc") {
-                    if (value != "follow" && value != "fc" && value != "auto") {
-                        std::cout << "Unsupported wmc mode: " << value << " (wmc follows fc in current design)" << std::endl;
-                        ok = false;
-                        break;
-                    }
-                } else {
-                    std::cout << "Unknown setmode key: " << key << std::endl;
-                    ok = false;
-                    break;
-                }
-            }
-            if (ok && hasSem && !hasFc) {
-                if (nextSem == SemMode::FULL) {
-                    if (!isFullFcMode()) {
-                        nextFc = FcMode::FULL_HARD;
-                    }
-                } else {
-                    if (!isIncrementalFcMode()) {
-                        nextFc = FcMode::INC_NAIVE;
-                    }
-                }
-            }
-            if (ok) {
-                setModes(nextSem, nextFc);
-                std::cout << "Set mode to " << modeSummaryLabel() << std::endl;
-            } else {
-                std::cout << "Current mode unchanged: " << modeSummaryLabel() << std::endl;
-            }
-        } else if (cmd == "set") {
-            std::string key;
-            iss >> key;
-            if (key == "dumpjson") {
-                opt.setDumpJsonEnabled(true);
-                DerivationGraphViewInterface::setDumpJsonEnabled(true);
-                std::cout << "Set dumpjson to true" << std::endl;
-            } else if (key == "dumpdot") {
-                opt.setDumpDotEnabled(true);
-                DerivationGraphViewInterface::setDumpDotEnabled(true);
-                std::cout << "Set dumpdot to true" << std::endl;
-            } else if (key == "dumpstat") {
-                opt.setDumpStatEnabled(true);
-                DerivationGraphViewInterface::setDumpStatsEnabled(true);
-                DerivationManager::setSemStatsEnabled(true);
-                std::cout << "Set dumpstat to true" << std::endl;
-            } else {
-                std::cout << "Unknown option: " << key << std::endl;
-            }
-        } else if (cmd == "unset") {
-            std::string key;
-            iss >> key;
-            if (key == "dumpjson") {
-                opt.setDumpJsonEnabled(false);
-                DerivationGraphViewInterface::setDumpJsonEnabled(false);
-                std::cout << "Set dumpjson to false" << std::endl;
-            } else if (key == "dumpdot") {
-                opt.setDumpDotEnabled(false);
-                DerivationGraphViewInterface::setDumpDotEnabled(false);
-                std::cout << "Set dumpdot to false" << std::endl;
-            } else if (key == "dumpstat") {
-                opt.setDumpStatEnabled(false);
-                DerivationGraphViewInterface::setDumpStatsEnabled(false);
-                DerivationManager::setSemStatsEnabled(false);
-                std::cout << "Set dumpstat to false" << std::endl;
-            } else {
-                std::cout << "Unknown option: " << key << std::endl;
-            }
-        } else if (cmd == "commit") {
-            std::cout << "PARSED COMMIT: Would apply " << pendingOperations.size()
-                      << " pending changes and run incremental computation" << std::endl;
-
-            // In a real implementation, we would actually apply the changes here
-            commit();
-            // Clear pending operations after commit
-            pendingOperations.clear();
-
-        } else if (cmd == "dump") {
-            assert(this->program != nullptr);
-            for (auto rel : this->program->getAllRelations()) {
-                std::cout << rel->getName() << std::endl;
-                for (auto ele : *rel) {
-                    std::cout << ele.toString() << std::endl;
-                }
-            }
-        } else if (cmd == "exit" || cmd == "quit" || cmd == "q") {
-            std::cout << "PARSED EXIT: Exiting CLI" << std::endl;
-            return false;
-
-        } else {
-            std::cout << "Unknown command: " << cmd << std::endl;
-            std::cout << "Use 'help' to see available commands" << std::endl;
+            syncRuntimeTogglesFromOptions();
+            std::cout << (enabled ? "Enabled" : "Disabled") << " profile-stage "
+                      << souffle::normalizeFlagToken(value) << std::endl;
+            return true;
         }
+        if (key == "rewrite-engine" || key == "rewrite-split" || key == "rewrite-detect" ||
+                key == "full-evaluator" || key == "dd-backend" || key == "approx-backend" ||
+                key == "det-mode") {
+            std::cout << key << " is fixed at startup and cannot be changed in the online CLI" << std::endl;
+            return true;
+        }
+        return false;
+    }
 
-        return true;
+    void handleSetCommand(const ParsedCommand& command) {
+        const std::string key = command.args.empty() ? std::string() : command.args.front();
+        if (key.empty()) {
+            std::cout << "Usage: set <option> <value>" << std::endl;
+            return;
+        }
+        if (!setMutableConfigOption(key, command.args, true) && !setDumpOption(key, true)) {
+            std::cout << "Unknown option: " << key << std::endl;
+        }
+    }
+
+    void handleUnsetCommand(const ParsedCommand& command) {
+        const std::string key = command.args.empty() ? std::string() : command.args.front();
+        if (key.empty()) {
+            std::cout << "Usage: unset <option> <value>" << std::endl;
+            return;
+        }
+        if (!setMutableConfigOption(key, command.args, false) && !setDumpOption(key, false)) {
+            std::cout << "Unknown option: " << key << std::endl;
+        }
+    }
+
+    void handleDumpCommand() const {
+        assert(this->program != nullptr);
+        for (auto rel : this->program->getAllRelations()) {
+            std::cout << rel->getName() << std::endl;
+            for (auto ele : *rel) {
+                std::cout << ele.toString() << std::endl;
+            }
+        }
+    }
+
+    bool dispatchCommand(const ParsedCommand& command);
+
+public:
+    bool processCommand(const std::string& command) {
+        const ParsedCommand parsed = souffle::cli::parseCommandLine(command);
+        if (parsed.verb.empty()) {
+            return true;
+        }
+        return dispatchCommand(parsed);
     }
 
     UntypedTuple getTuple(const Operation& op) {
@@ -1160,39 +1010,29 @@ public:
         return out;
     }
 
+    void stagePendingOperationsForProgram() {
+        auto stager = makeOperationStager();
+        stager.stageAll(pendingOperations);
+    }
+
     void purgeAllIncDeltaRelations() {
-        for (auto* rel : program->getAllRelations()) {
-             if (rel->getName()[0] == '$') {
-//                std::cout << "Purging relation: " << rel->getName() << std::endl;
-                rel->purge();
-             }
-        }
+        auto stager = makeOperationStager();
+        stager.purgeAllIncDeltaRelations();
     }
 
     void purgeAllNonIncDeltaRelations() {
-        for (auto* rel : program->getAllRelations()) {
-             if (rel->getName()[0] != '$') {
-                rel->purge();
-             }
-        }
+        auto stager = makeOperationStager();
+        stager.purgeAllNonIncDeltaRelations();
     }
 
     void purgeAllRelations() {
-        for (auto* rel : program->getAllRelations()) {
-            rel->purge();
-        }
+        auto stager = makeOperationStager();
+        stager.purgeAllRelations();
     }
 
     void loadInitialInputRelations() {
-        for (auto* rel : program->getInputRelations()) {
-            for (auto& tuple: initialInputRelations[rel->getName()]) {
-                souffle::tuple relTuple = souffle::tuple(rel);
-                for (const auto& field : tuple.fields) {
-                    relTuple << field;
-                }
-                rel->insert(relTuple);
-            }
-        }
+        auto stager = makeOperationStager();
+        stager.loadInitialInputRelations();
     }
 
 
@@ -1898,7 +1738,8 @@ public:
                 }
             }
             std::cout << "[wmc-profile] stage=INC"
-                      << " mode=" << (useRegional ? "inc-regional" : "inc-naive")
+                      << " mode=" << souffle::incrementalFcProfileModeLabel(
+                              useRegional ? FcMode::INC_REGIONAL : FcMode::INC_NAIVE)
                       << " total_ms=" << totalMs
                       << " components=" << componentCount
                       << " components_ev=" << componentWithEvidence
@@ -1938,654 +1779,151 @@ public:
         this->outputRelations = outputRelationNames;
     }
 
-    size_t iteration = 1;
-    void commit() {
-        DerivationManager::untypedTuple2DeltaInsertRuleApplications.clear();
-        DerivationManager::untypedTuple2DeltaDeleteRuleApplications.clear();
-        DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();
-        DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();
-        static size_t commitCount = 0;
-        // TODO: should clean all delta relations after each commit
-        if (program) {  // for non-ground program ...
-            if ((isIncrementalSemMode() || isIncrementalFcMode()) &&
-                    graph != nullptr && graph->isBiImpMerged()) {
-                assert(false && "bi-imp merged graph cannot run incremental mode");
+    void runFullWeightedModelCounting(const IncSubgraphView& view, const char* profileModeLabel) {
+        probResult.clear();
+        const bool wmcProfile = wmcProfileEnabled;
+        using Clock = std::chrono::steady_clock;
+        auto toMs = [](Clock::time_point start) {
+            return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+        };
+        auto stageStart = Clock::now();
+        double evidenceBuildMs = 0.0;
+        double evidenceMakeAndMs = 0.0;
+        double evidenceWmcComputeMs = 0.0;
+        double nodeMakeAndMs = 0.0;
+        double nodeWmcComputeMs = 0.0;
+        std::size_t evidenceWmcCalls = 0;
+        std::size_t nodeWmcCalls = 0;
+        std::size_t evidenceMakeAndCalls = 0;
+        std::size_t nodeMakeAndCalls = 0;
+        auto makeAndProfile = [&](const NodeRef& lhs, const NodeRef& rhs,
+                                  double& ms, std::size_t& calls) {
+            if (!wmcProfile) {
+                return ddManager->makeAnd(lhs, rhs);
             }
-            if ((isIncrementalSemMode() || isIncrementalFcMode()) &&
-                    graph != nullptr && graph->isConstFolded()) {
-                assert(false && "const-folded graph cannot run incremental mode");
+            auto andStart = Clock::now();
+            auto res = ddManager->makeAnd(lhs, rhs);
+            ms += toMs(andStart);
+            calls++;
+            return res;
+        };
+        auto computeWmcProfile = [&](const NodeRef& node, double& ms, std::size_t& calls) {
+            calls++;
+            if (!wmcProfile) {
+                return ddManager->computeWeightedModelCount(node);
             }
-            {
-                purgeAllIncDeltaRelations();
-                // insert delta into relations for real
-                for (auto& op : pendingOperations) {
-                    if (op.type == Operation::INSERT) {
-                        auto* origRel = program->getRelation(op.relationName);
-                        auto* rel = program->getRelation(getIncDeltaTupleInsertRelationName(op.relationName));
-                        if (rel == nullptr) {
-                            std::cout << "Relation not found, omitted: " << op.relationName << std::endl;
-                            op.valid = false;
-                            continue;
-                        }
-                        if (op.values.size() != rel->getArity()) {
-                            std::cout << "Relation arity mismatch, omitted: " << op.relationName << std::endl;
-                            op.valid = false;
-                            continue;
-                        }
-                        souffle::tuple relTuple = souffle::tuple(rel);
-                        souffle::tuple origTuple = souffle::tuple{origRel};
+            auto wmcStart = Clock::now();
+            double res = ddManager->computeWeightedModelCount(node);
+            ms += toMs(wmcStart);
+            return res;
+        };
 
-                        for (size_t i = 0; i < op.values.size(); i++) {
-                            relTuple << std::stoi(op.values[i]);  // TODO optimize
-                            origTuple << std::stoi(op.values[i]);
-                        }
-                        const auto untypedTuple = UntypedTuple::fromSouffleTuple(origTuple);
-                        auto& currentInputs = initialInputRelations[op.relationName];
-                        if (currentInputs.count(untypedTuple)) {
-                            std::cout << "Relation already contains the tuple to insert, omitted: " << relTuple.toString() << std::endl;
-                            op.valid = false;
-                            continue;
-                        } else {
-                            std::cout << "Inserting tuple: " << origTuple.toString() << std::endl;
-                        }
-                        rel->insert(relTuple);
-                        currentInputs.insert(untypedTuple);
-                        fact_prob[untypedTuple] = op.probability;
-                    } else if (op.type == Operation::DELETE) {
-                        auto* origRel = program->getRelation(op.relationName);
-                        auto* rel = program->getRelation(getIncDeltaTupleDeleteRelationName(op.relationName));
-                        auto insRel = program->getRelation(getIncDeltaTupleInsertRelationName(op.relationName));
-                        // TODO: filter out pending deletions
-                        if (rel == nullptr) {
-                            std::cout << "Relation not found, omitted: " << op.relationName << std::endl;
-                            op.valid = false;
-                            continue;
-                        }
-                        if (op.values.size() != rel->getArity()) {
-                            std::cout << "Relation arity mismatch, omitted: " << op.relationName << std::endl;
-                            op.valid = false;
-                            continue;
-                        }
-                        souffle::tuple relTuple = souffle::tuple(rel);
-                        souffle::tuple origTuple = souffle::tuple{origRel};
-                        souffle::tuple insTuple = souffle::tuple{insRel};
-                        for (size_t i = 0; i < op.values.size(); i++) {
-                            relTuple << std::stoi(op.values[i]);  // TODO optimize
-                            origTuple << std::stoi(op.values[i]);
-                            insTuple << std::stoi(op.values[i]);
-                        }
-                        const auto untypedTuple = UntypedTuple::fromSouffleTuple(origTuple);
-                        auto& currentInputs = initialInputRelations[op.relationName];
-                        if (!currentInputs.count(untypedTuple)) {
-                            std::cout << "Relation does not contains the tuple to delete, omitted: " << origTuple.toString() << std::endl;
-                            op.valid = false;
-                            continue;
-                        }
-                        if (rel->contains(relTuple)) {
-                            std::cout << "Already deleted the tuple, omitted: " << relTuple.toString() << std::endl;
-                            op.valid = false;
-                            continue;
-                        }
-                        rel->insert(relTuple);
-                        currentInputs.erase(untypedTuple);
-                        fact_prob.erase(untypedTuple);
-                        // should also delete all its derivations...
-                        // input fact is possibly derivable
-                        auto& deletedFactRuleAppSet = DerivationManager::untypedTuple2RuleApplications[UntypedTuple::fromSouffleTuple(origTuple)];
-                        if (deletedFactRuleAppSet != nullptr && !deletedFactRuleAppSet->empty()) {
-//                            std::cout << "Deleted tuple: " << origTuple.toString() << std::endl;
-                            auto& deltaDeletedFactRuleAppSet =
-                                DerivationManager::untypedTuple2DeltaDeleteRuleApplications[UntypedTuple::fromSouffleTuple(origTuple)];
-                            if (deltaDeletedFactRuleAppSet == nullptr) {
-                                deltaDeletedFactRuleAppSet = new std::unordered_set<RuleApplication>();
-                            }
-                            for (auto& ruleApp: *deletedFactRuleAppSet) {
-//                                std::cout << "Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
-                                deltaDeletedFactRuleAppSet->insert(ruleApp);
-                            }
-                            deletedFactRuleAppSet->clear();
-                            DerivationManager::untypedTuple2RuleApplications.erase(UntypedTuple::fromSouffleTuple(origTuple));
-                        }
-                    }
-                }
+        auto& depGraph = view.getCycleDependencyGraph();
+        size_t componentCount = depGraph.getComponentCount();
+        std::vector<NodeRef> componentEvidence(componentCount, ddManager->getTrue());
+        std::vector<double> componentEvidenceWeight(componentCount, 1.0);
+        std::vector<bool> componentHasEvidence(componentCount, false);
+
+        auto evidenceBuildStart = Clock::now();
+        for (size_t cid = 0; cid < componentCount; ++cid) {
+            const auto& evidences = depGraph.getComponentEvidences(cid);
+            if (evidences.empty()) {
+                continue;
             }
-            dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter" + std::to_string(iteration) + ".txt");
-            bool useRegional = isRegionalFcMode();
-            if (isIncrementalSemMode()) {
-                {
-                    bool hasDelete = false;
-                    bool hasInsert = false;
-                    for (const auto& op : pendingOperations) {
-                        if (!op.valid) {
-                            continue;
-                        }
-                        if (op.type == Operation::DELETE) {
-                            hasDelete = true;
-                        } else if (op.type == Operation::INSERT) {
-                            hasInsert = true;
-                        }
-                    }
-                    std::string phaseLabel = "mixed";
-                    if (hasDelete && !hasInsert) {
-                        phaseLabel = "delete";
-                    } else if (hasInsert && !hasDelete) {
-                        phaseLabel = "insert";
-                    }
-                    if (DerivationManager::isSemStatsEnabled()) {
-                        DerivationManager::resetDredStats();
-                    }
-                    DerivationManager::clearDetDeltaTuples();
-                    debugger.startTurn(debuggerTurnModeLabel());
-                    debugger.startStage(StageKind::SEMINAIVE_INC);
-                    program->runAllInc(program->getInputDirectory(), program->getOutputDirectory(), true);
-                    debugger.endStage();
-                    if (DerivationManager::isSemStatsEnabled()) {
-                        std::ostringstream label;
-                        label << "iter=" << iteration << " phase=" << phaseLabel;
-                        DerivationManager::dumpDredStats(std::cout, label.str());
-                    }
-                    if (opt.isDredProfileEnabled()) {
-                        std::cout << "[dred-debug] relation sizes after SEMINAIVE_INC:\n";
-                        const std::array<std::string, 4> prefixes = {
-                                "$inc_delta_derv_delete_",
-                                "$inc_delta_tuple_delete_",
-                                "$inc_derv_overdelete_",
-                                "$inc_tuple_overdelete_",
-                        };
-                        for (auto* rel : program->getAllRelations()) {
-                            const std::string& name = rel->getName();
-                            for (const auto& prefix : prefixes) {
-                                if (name.rfind(prefix, 0) == 0) {
-                                    std::cout << "  " << name << " size=" << rel->size() << "\n";
-                                    break;
-                                }
-                            }
-                        }
-                    }
+            componentHasEvidence[cid] = true;
+            NodeRef evidenceNode = ddManager->getTrue();
+            for (const auto& [node, val] : evidences) {
+                auto it = nodeFormulas->find(node);
+                if (it == nodeFormulas->end()) {
+                    throw std::runtime_error(
+                            "Evidence node has no formula: " + node->getTuple().toString());
                 }
-                DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
-                debugger.startStage(StageKind::PRUNING_INC);
-                if (opt.isDumpStatEnabled()) {
-                    std::cout << "[prune-inc] pre-applyDelta statistics:\n";
-                    graph->dumpStatisticsInc(std::cout);
+                NodeRef lit = it->second;
+                if (!val) {
+                    lit = ddManager->makeNot(lit);
                 }
-                auto factProbInc = getFactProbInc();
-                auto deletedFacts = getDeletedFacts(&factProbInc);
-                {
-                    FunctionTimer timer("PRUNING_INC: applyDelta");
-                    graph->applyDelta(
-                        DerivationManager::untypedTuple2DeltaInsertRuleApplications,
-                        DerivationManager::untypedTuple2DeltaDeleteRuleApplications,
-                        *ruleManager,
-                        factProbInc,
-                        deletedFacts
-                    );
-                }
-                DerivationManager::clearDetDeltaTuples();
-                logApplyDeltaOpsSummary(
-                    DerivationManager::untypedTuple2DeltaInsertRuleApplications,
-                    DerivationManager::untypedTuple2DeltaDeleteRuleApplications,
-                    factProbInc,
-                    deletedFacts,
-                    useRegional ? "INC_REGIONAL" : "INC_NAIVE");
-                logApplyDeltaSummary(*graph, useRegional ? "INC_REGIONAL" : "INC_NAIVE");
-                logApplyDeltaGraphSummary(*graph, useRegional ? "INC_REGIONAL" : "INC_NAIVE");
-                {
-                    if (opt.isDumpDotEnabled()) {
-                        FunctionTimer timer("PRUNING_INC: dumpDot-before-prune");
-                        graph->dumpDotInc(outputPath("derivation-inc-before-prune" + std::to_string(iteration) + ".dot"));
-                    }
-                }
-                IncSubgraphView view = [&] {
-                    FunctionTimer timer("PRUNING_INC: prune");
-                    DerivationGraph::setMergeBiImpEnabled(false);
-                    graph->setBuildInsertImpacts(useRegional);
-                    return graph->prune(program->getOutputRelations());
-                }();  // will be assigned below
-                {
-                    if (opt.isDumpDotEnabled()) {
-                        FunctionTimer timer("PRUNING_INC: dumpDot-after-prune");
-                        view.dumpDotInc(outputPath("derivation-inc-after-prune" + std::to_string(iteration) + ".dot"));
-                    }
-                }
-                {
-                    if (opt.isDumpJsonEnabled()) {
-                        FunctionTimer timer("PRUNING_INC: dumpJson-after-prune");
-                        view.dumpJsonInc(outputTimestampedPath("derivation-inc-after-prune", iteration, ".json"));
-                    }
-                }
-                debugger.endStage();
-                logPrunedDeltaSummary(view, useRegional ? "INC_REGIONAL" : "INC_NAIVE");
-                changedNodes.clear();
-                if (derivationOnly) {
-                    if (ddManager != nullptr) {
-                        ddManager->tryGarbageCollection();
-                    }
-                    debugger.endTurn();
-                    iteration++;
-                    pendingOperations.clear();
-                    return;
-                }
-                if (isIncrementalFcMode()) {
-                    debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
-                    if (useRegional) {
-                        buildFormulasIncRegionalCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);
-                    } else {
-                        buildFormulasIncCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);  // TODO: should only update the changed ones.
-                    }
-                    debugger.endStage();
-                    runIncrementalWmc(view, useRegional);
-                    std::string incTag = useRegional ? "-inc-regional" : "-inc-naive";
-                    std::string incPrefix = "fact-iter" + std::to_string(iteration) + incTag;
-                    dumpProbabilities(probResult, opt.getOutputFileDir() + "/", incPrefix);
-                } else if (isFullFcMode()) {
-                    debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
-                    nodeFormulas->clear();
-                    edgeFormulas->clear();
-                    if (fcMode == FcMode::FULL_HARD) {
-                        ddManager->resetHard();
-                    } else {
-                        ddManager->reset();
-                    }
-                    buildFormulasCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas);
-                    debugger.endStage();
-
-                    debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
-                    probResult.clear();
-                    {
-                        const bool wmcProfile = wmcProfileEnabled;
-                        using Clock = std::chrono::steady_clock;
-                        auto toMs = [](Clock::time_point start) {
-                            return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
-                        };
-                        auto stageStart = Clock::now();
-                        double evidenceBuildMs = 0.0;
-                        double evidenceMakeAndMs = 0.0;
-                        double evidenceWmcComputeMs = 0.0;
-                        double nodeMakeAndMs = 0.0;
-                        double nodeWmcComputeMs = 0.0;
-                        std::size_t evidenceWmcCalls = 0;
-                        std::size_t nodeWmcCalls = 0;
-                        std::size_t evidenceMakeAndCalls = 0;
-                        std::size_t nodeMakeAndCalls = 0;
-                        auto makeAndProfile = [&](const NodeRef& lhs, const NodeRef& rhs,
-                                                  double& ms, std::size_t& calls) {
-                            if (!wmcProfile) {
-                                return ddManager->makeAnd(lhs, rhs);
-                            }
-                            auto andStart = Clock::now();
-                            auto res = ddManager->makeAnd(lhs, rhs);
-                            ms += toMs(andStart);
-                            calls++;
-                            return res;
-                        };
-                        auto computeWmcProfile = [&](const NodeRef& node, double& ms, std::size_t& calls) {
-                            calls++;
-                            if (!wmcProfile) {
-                                return ddManager->computeWeightedModelCount(node);
-                            }
-                            auto wmcStart = Clock::now();
-                            double res = ddManager->computeWeightedModelCount(node);
-                            ms += toMs(wmcStart);
-                            return res;
-                        };
-
-                        auto& depGraph = view.getCycleDependencyGraph();
-                        size_t componentCount = depGraph.getComponentCount();
-                        std::vector<NodeRef> componentEvidence(componentCount, ddManager->getTrue());
-                        std::vector<double> componentEvidenceWeight(componentCount, 1.0);
-                        std::vector<bool> componentHasEvidence(componentCount, false);
-
-                        auto evidenceBuildStart = Clock::now();
-                        for (size_t cid = 0; cid < componentCount; ++cid) {
-                            const auto& evidences = depGraph.getComponentEvidences(cid);
-                            if (evidences.empty()) {
-                                continue;
-                            }
-                            componentHasEvidence[cid] = true;
-                            NodeRef evidenceNode = ddManager->getTrue();
-                            for (const auto& [node, val] : evidences) {
-                                auto it = nodeFormulas->find(node);
-                                if (it == nodeFormulas->end()) {
-                                    throw std::runtime_error("Evidence node has no formula: " + node->getTuple().toString());
-                                }
-                                NodeRef lit = it->second;
-                                if (!val) {
-                                    lit = ddManager->makeNot(lit);
-                                }
-                                evidenceNode = makeAndProfile(evidenceNode, lit, evidenceMakeAndMs, evidenceMakeAndCalls);
-                            }
-                            componentEvidence[cid] = evidenceNode;
-                        }
-                        evidenceBuildMs = toMs(evidenceBuildStart);
-
-                        for (size_t cid = 0; cid < componentCount; ++cid) {
-                            if (componentHasEvidence[cid]) {
-                                componentEvidenceWeight[cid] = computeWmcProfile(
-                                        componentEvidence[cid], evidenceWmcComputeMs, evidenceWmcCalls);
-                            }
-                        }
-
-                        for (auto& [node, formula] : *nodeFormulas) {
-                            if (!node->needOutput) {
-                                continue;
-                            }
-                            size_t cid = depGraph.getComponentId(node);
-                            if (!componentHasEvidence[cid]) {
-                                probResult[node] = computeWmcProfile(formula, nodeWmcComputeMs, nodeWmcCalls);
-                                continue;
-                            }
-                            if (componentEvidenceWeight[cid] == 0.0) {
-                                probResult[node] = 0.0;
-                                continue;
-                            }
-                            auto joint = makeAndProfile(formula, componentEvidence[cid],
-                                                        nodeMakeAndMs, nodeMakeAndCalls);
-                            double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
-                            probResult[node] = jointW / componentEvidenceWeight[cid];
-                        }
-                        for (const auto& [node, prob] : precomputedProbResult) {
-                            probResult.emplace(node, prob);
-                        }
-                        if (wmcProfile) {
-                            std::size_t componentWithEvidence = 0;
-                            for (bool hasEv : componentHasEvidence) {
-                                if (hasEv) {
-                                    componentWithEvidence++;
-                                }
-                            }
-                            std::cout << "[wmc-profile] stage=FULL"
-                                      << " mode=" << (fcMode == FcMode::FULL_SOFT ? "inc-full-soft" : "inc-full-hard")
-                                      << " total_ms=" << toMs(stageStart)
-                                      << " components=" << componentCount
-                                      << " components_ev=" << componentWithEvidence
-                                      << " nodes=" << view.getValidNodes().size()
-                                      << " evidence_build_ms=" << evidenceBuildMs
-                                      << " evidence_make_and_calls=" << evidenceMakeAndCalls
-                                      << " evidence_make_and_ms=" << evidenceMakeAndMs
-                                      << " evidence_wmc_calls=" << evidenceWmcCalls
-                                      << " evidence_wmc_compute_ms=" << evidenceWmcComputeMs
-                                      << " node_make_and_calls=" << nodeMakeAndCalls
-                                      << " node_make_and_ms=" << nodeMakeAndMs
-                                      << " node_wmc_calls=" << nodeWmcCalls
-                                      << " node_wmc_compute_ms=" << nodeWmcComputeMs
-                                      << " live_nodes=" << ddManager->getLiveNodeCount()
-                                      << std::endl;
-                        }
-                    }
-                    debugger.endStage();
-                    debugger.startStage(StageKind::IO_DUMP_FULL);
-                    const std::string fullTag = (fcMode == FcMode::FULL_SOFT) ? "-inc-full-soft" : "-inc-full-hard";
-                    const std::string outPrefix = "fact-iter" + std::to_string(iteration) + fullTag;
-                    dumpProbabilities(probResult, opt.getOutputFileDir() + "/", outPrefix);
-                    debugger.endStage();
-                } else {
-                    assert(false && "Unsupported fc mode for sem=inc");
-                }
-                if (ddManager != nullptr) {
-                    ddManager->tryGarbageCollection();
-                }
-                debugger.endTurn();
-                iteration++;
-            } else if (isFullSemMode()) {
-                const bool useIncFc = isIncrementalFcMode();
-                const bool useRegionalFc = (fcMode == FcMode::INC_REGIONAL);
-                std::unique_ptr<IncSubgraphView> oldPrunedView;
-                if (useIncFc && graph != nullptr) {
-                    DerivationGraph::setMergeBiImpEnabled(false);
-                    oldPrunedView = std::make_unique<IncSubgraphView>(graph->prune(program->getOutputRelations()));
-                }
-
-                debugger.startTurn(debuggerTurnModeLabel());
-                DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
-                logTurnMode(modeSummaryLabel());
-                if (ddManager != nullptr && !useIncFc) {
-                    nodeFormulas->clear();
-                    edgeFormulas->clear();
-                    if (fcMode == FcMode::FULL_HARD) {
-                        ddManager->resetHard();
-                    } else {
-                        ddManager->reset();
-                    }
-                }
-
-                purgeAllRelations();
-                loadInitialInputRelations();
-                DerivationManager::untypedTuple2RuleApplications.clear();
-                debugger.startStage(StageKind::SEMINAIVE_FULL);
-                program->runAll(opt.getInputFileDir(), opt.getOutputFileDir(), false);
-                std::vector<std::pair<UntypedTuple, bool>> evidenceList;
-                if (graph) {
-                    evidenceList = graph->getEvidences();
-                }
-                graph = IncrementalDerivationGraph::createFrom(
-                        DerivationManager::untypedTuple2RuleApplications, *ruleManager, *queryManager,
-                        fact_prob, evidenceList);
-                debugger.endStage();
-                {
-                    if (opt.isDumpDotEnabled()) {
-                        FunctionTimer timer("PRUNING_FULL: dumpDot-before-prune");
-                        graph->dumpDotInc(outputPath("derivation-full-before-prune" + std::to_string(iteration) + ".dot"));
-                    }
-                }
-                debugger.startStage(StageKind::PRUNING_FULL);
-                IncSubgraphView view = [&] {
-                    FunctionTimer timer("PRUNING_FULL: prune");
-                    DerivationGraph::setMergeBiImpEnabled(false);
-                    return graph->prune(program->getOutputRelations());
-                }();
-                {
-                    if (opt.isDumpDotEnabled()) {
-                        FunctionTimer timer("PRUNING_FULL: dumpDot-after-prune");
-                        view.dumpDotInc(outputPath("derivation-full-after-prune" + std::to_string(iteration) + ".dot"));
-                    }
-                }
-                {
-                    if (opt.isDumpJsonEnabled()) {
-                        FunctionTimer timer("PRUNING_FULL: dumpJson-after-prune");
-                        view.dumpJsonInc(outputTimestampedPath("derivation-full-after-prune", iteration, ".json"));
-                    }
-                }
-                debugger.endStage();
-                if (derivationOnly) {
-                    if (ddManager != nullptr) {
-                        ddManager->tryGarbageCollection();
-                    }
-                    debugger.endTurn();
-                    iteration++;
-                    pendingOperations.clear();
-                    return;
-                }
-
-                std::unique_ptr<IncSubgraphView> diffView;
-                IncSubgraphView* activeView = &view;
-                if (useIncFc) {
-                    if (!oldPrunedView) {
-                        assert(false && "sem=full with fc=inc-* requires existing previous pruned view");
-                    }
-                    std::unordered_map<NodePtr, NodePtr> oldToNewNodes;
-                    std::unordered_map<EdgePtr, EdgePtr> oldToNewEdges;
-                    {
-                        FunctionTimer timer("PRUNING_FULL: post-prune-diff");
-                        diffView = std::make_unique<IncSubgraphView>(
-                                buildPostPruneDiffView(*oldPrunedView, view, oldToNewNodes, oldToNewEdges));
-                        remapStateForPostPruneDiff(oldToNewNodes, oldToNewEdges);
-                    }
-                    changedNodes.clear();
-                    debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
-                    if (useRegionalFc) {
-                        buildFormulasIncRegionalCyclewise(
-                                *diffView, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);
-                    } else {
-                        buildFormulasIncCyclewise(*diffView, *ddManager, *nodeFormulas, *edgeFormulas, changedNodes);
-                    }
-                    debugger.endStage();
-                    activeView = diffView.get();
-                    logPrunedDeltaSummary(*diffView, useRegionalFc ? "INC_REGIONAL" : "INC_NAIVE");
-                } else {
-                    debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
-                    nodeFormulas->clear(), edgeFormulas->clear();
-                    buildFormulasCyclewise(view, *ddManager, *nodeFormulas, *edgeFormulas);
-                    debugger.endStage();
-                }
-
-                if (useIncFc) {
-                    runIncrementalWmc(*activeView, useRegionalFc);
-                } else {
-                    debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
-                    probResult.clear();
-                    {
-                    const bool wmcProfile = wmcProfileEnabled;
-                    using Clock = std::chrono::steady_clock;
-                    auto toMs = [](Clock::time_point start) {
-                        return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
-                    };
-                    auto stageStart = Clock::now();
-                    double evidenceBuildMs = 0.0;
-                    double evidenceMakeAndMs = 0.0;
-                    double evidenceWmcComputeMs = 0.0;
-                    double nodeMakeAndMs = 0.0;
-                    double nodeWmcComputeMs = 0.0;
-                    std::size_t evidenceWmcCalls = 0;
-                    std::size_t nodeWmcCalls = 0;
-                    std::size_t evidenceMakeAndCalls = 0;
-                    std::size_t nodeMakeAndCalls = 0;
-                    auto makeAndProfile = [&](const NodeRef& lhs, const NodeRef& rhs,
-                                              double& ms, std::size_t& calls) {
-                        if (!wmcProfile) {
-                            return ddManager->makeAnd(lhs, rhs);
-                        }
-                        auto andStart = Clock::now();
-                        auto res = ddManager->makeAnd(lhs, rhs);
-                        ms += toMs(andStart);
-                        calls++;
-                        return res;
-                    };
-                    auto computeWmcProfile = [&](const NodeRef& node, double& ms, std::size_t& calls) {
-                        calls++;
-                        if (!wmcProfile) {
-                            return ddManager->computeWeightedModelCount(node);
-                        }
-                        auto wmcStart = Clock::now();
-                        double res = ddManager->computeWeightedModelCount(node);
-                        ms += toMs(wmcStart);
-                        return res;
-                    };
-
-                    auto& depGraph = activeView->getCycleDependencyGraph();
-                    size_t componentCount = depGraph.getComponentCount();
-                    std::vector<NodeRef> componentEvidence(componentCount, ddManager->getTrue());
-                    std::vector<double> componentEvidenceWeight(componentCount, 1.0);
-                    std::vector<bool> componentHasEvidence(componentCount, false);
-
-                    auto evidenceBuildStart = Clock::now();
-                    for (size_t cid = 0; cid < componentCount; ++cid) {
-                        const auto& evidences = depGraph.getComponentEvidences(cid);
-                        if (evidences.empty()) {
-                            continue;
-                        }
-                        componentHasEvidence[cid] = true;
-                        NodeRef evidenceNode = ddManager->getTrue();
-                        for (const auto& [node, val] : evidences) {
-                            auto it = nodeFormulas->find(node);
-                            if (it == nodeFormulas->end()) {
-                                throw std::runtime_error("Evidence node has no formula: " + node->getTuple().toString());
-                            }
-                            NodeRef lit = it->second;
-                            if (!val) {
-                                lit = ddManager->makeNot(lit);
-                            }
-                            evidenceNode = makeAndProfile(evidenceNode, lit, evidenceMakeAndMs, evidenceMakeAndCalls);
-                        }
-                        componentEvidence[cid] = evidenceNode;
-                    }
-                    evidenceBuildMs = toMs(evidenceBuildStart);
-
-                    for (size_t cid = 0; cid < componentCount; ++cid) {
-                        if (componentHasEvidence[cid]) {
-                            componentEvidenceWeight[cid] = computeWmcProfile(
-                                    componentEvidence[cid], evidenceWmcComputeMs, evidenceWmcCalls);
-                        }
-                    }
-
-                    for (auto& [node, formula] : *nodeFormulas) {
-                        if (!node->needOutput) {
-                            continue;
-                        }
-                        size_t cid = depGraph.getComponentId(node);
-                        if (!componentHasEvidence[cid]) {
-                            probResult[node] = computeWmcProfile(formula, nodeWmcComputeMs, nodeWmcCalls);
-                            continue;
-                        }
-                        if (componentEvidenceWeight[cid] == 0.0) {
-                            probResult[node] = 0.0;
-                            continue;
-                        }
-                        auto joint = makeAndProfile(formula, componentEvidence[cid],
-                                                    nodeMakeAndMs, nodeMakeAndCalls);
-                        double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
-                        probResult[node] = jointW / componentEvidenceWeight[cid];
-                    }
-                    for (const auto& [node, prob] : precomputedProbResult) {
-                        probResult.emplace(node, prob);
-                    }
-                    if (wmcProfile) {
-                        std::size_t componentWithEvidence = 0;
-                        for (bool hasEv : componentHasEvidence) {
-                            if (hasEv) {
-                                componentWithEvidence++;
-                            }
-                        }
-                        std::cout << "[wmc-profile] stage=FULL"
-                                  << " mode=" << (useIncFc ? (useRegionalFc ? "cli-full-inc-regional" : "cli-full-inc-naive") : "cli-full")
-                                  << " total_ms=" << toMs(stageStart)
-                                  << " components=" << componentCount
-                                  << " components_ev=" << componentWithEvidence
-                                  << " nodes=" << activeView->getValidNodes().size()
-                                  << " evidence_build_ms=" << evidenceBuildMs
-                                  << " evidence_make_and_calls=" << evidenceMakeAndCalls
-                                  << " evidence_make_and_ms=" << evidenceMakeAndMs
-                                  << " evidence_wmc_calls=" << evidenceWmcCalls
-                                  << " evidence_wmc_compute_ms=" << evidenceWmcComputeMs
-                                  << " node_make_and_calls=" << nodeMakeAndCalls
-                                  << " node_make_and_ms=" << nodeMakeAndMs
-                                  << " node_wmc_calls=" << nodeWmcCalls
-                                  << " node_wmc_compute_ms=" << nodeWmcComputeMs
-                                  << " live_nodes=" << ddManager->getLiveNodeCount()
-                                  << std::endl;
-                    }
-                }
-                    debugger.endStage();
-                }
-                debugger.startStage(StageKind::IO_DUMP_FULL);
-                std::string basePrefix = "fact-iter" + std::to_string(iteration);
-                if (useIncFc) {
-                    const std::string incTag = useRegionalFc ? "-inc-regional" : "-inc-naive";
-                    dumpProbabilities(probResult, opt.getOutputFileDir() + "/", basePrefix + incTag);
-                } else {
-                    dumpProbabilities(probResult, opt.getOutputFileDir() + "/", basePrefix + "-full");
-                }
-                debugger.endStage();
-                if (ddManager != nullptr) {
-                    ddManager->tryGarbageCollection();
-                }
-                debugger.endTurn();
-                iteration++;
-            } else if (isElasticFcMode()) {
-                // try to decide whether to do incremental or full
-                // by approximating the cost of both, etc, TODO
-                assert (false);
-            } else {
-                assert (false);
+                evidenceNode = makeAndProfile(
+                        evidenceNode, lit, evidenceMakeAndMs, evidenceMakeAndCalls);
             }
-        } else {
-            assert(false && "No program loaded.");
+            componentEvidence[cid] = evidenceNode;
         }
-        pendingOperations.clear();
+        evidenceBuildMs = toMs(evidenceBuildStart);
+
+        for (size_t cid = 0; cid < componentCount; ++cid) {
+            if (componentHasEvidence[cid]) {
+                componentEvidenceWeight[cid] = computeWmcProfile(
+                        componentEvidence[cid], evidenceWmcComputeMs, evidenceWmcCalls);
+            }
+        }
+
+        for (auto& [node, formula] : *nodeFormulas) {
+            if (!node->needOutput) {
+                continue;
+            }
+            size_t cid = depGraph.getComponentId(node);
+            if (!componentHasEvidence[cid]) {
+                probResult[node] = computeWmcProfile(formula, nodeWmcComputeMs, nodeWmcCalls);
+                continue;
+            }
+            if (componentEvidenceWeight[cid] == 0.0) {
+                probResult[node] = 0.0;
+                continue;
+            }
+            auto joint = makeAndProfile(
+                    formula, componentEvidence[cid], nodeMakeAndMs, nodeMakeAndCalls);
+            double jointW = computeWmcProfile(joint, nodeWmcComputeMs, nodeWmcCalls);
+            probResult[node] = jointW / componentEvidenceWeight[cid];
+        }
+        for (const auto& [node, prob] : precomputedProbResult) {
+            probResult.emplace(node, prob);
+        }
+        if (wmcProfile) {
+            std::size_t componentWithEvidence = 0;
+            for (bool hasEv : componentHasEvidence) {
+                if (hasEv) {
+                    componentWithEvidence++;
+                }
+            }
+            std::cout << "[wmc-profile] stage=FULL"
+                      << " mode=" << profileModeLabel
+                      << " total_ms=" << toMs(stageStart)
+                      << " components=" << componentCount
+                      << " components_ev=" << componentWithEvidence
+                      << " nodes=" << view.getValidNodes().size()
+                      << " evidence_build_ms=" << evidenceBuildMs
+                      << " evidence_make_and_calls=" << evidenceMakeAndCalls
+                      << " evidence_make_and_ms=" << evidenceMakeAndMs
+                      << " evidence_wmc_calls=" << evidenceWmcCalls
+                      << " evidence_wmc_compute_ms=" << evidenceWmcComputeMs
+                      << " node_make_and_calls=" << nodeMakeAndCalls
+                      << " node_make_and_ms=" << nodeMakeAndMs
+                      << " node_wmc_calls=" << nodeWmcCalls
+                      << " node_wmc_compute_ms=" << nodeWmcComputeMs
+                      << " live_nodes=" << ddManager->getLiveNodeCount()
+                      << std::endl;
+        }
     }
+    size_t iteration = 1;
+    void commit();
 
     static IncrementalCLI* instance;
     bool running;
+
+    bool processInputLine(std::string line) {
+        line = souffle::cli::normalizeInputLine(std::move(line));
+        if (line.empty()) {
+            return true;
+        }
+        return processCommand(line);
+    }
+
+    void processCommandStream(std::istream& input) {
+        std::string singleCommand;
+        while (running && std::getline(input, singleCommand)) {
+            running = processInputLine(std::move(singleCommand));
+        }
+    }
+
     static void line_handler(char* line) {
         if (!line) {
             instance->running = false;
@@ -2599,39 +1937,14 @@ public:
         // Convert C string to a C++ stringstream for line splitting.
         std::stringstream ss(line);
         free(line); // Free memory immediately after conversion.
-
-        std::string single_command;
-        // Use std::getline to split lines.
-        while (instance->running && std::getline(ss, single_command)) {
-            // Line endings may include '\r'; trim it.
-            if (!single_command.empty() && single_command.back() == '\r') {
-                single_command.pop_back();
-            }
-
-            if (!single_command.empty()) {
-                // Process each split command line.
-                instance->running = instance->processCommand(single_command);
-            }
-        }
+        instance->processCommandStream(ss);
     }
 
+    void runNonInteractiveShell() {
+        processCommandStream(std::cin);
+    }
 
-    void run() {
-        std::cout << "Incremental Souffle CLI (Callback Version)" << std::endl;
-        std::cout << "Type 'help' for a list of available commands" << std::endl;
-        IncrementalCLI::instance = this;
-        if (!isatty(STDIN_FILENO)) {
-            std::string line;
-            while (this->running && std::getline(std::cin, line)) {
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
-                }
-                if (!line.empty()) {
-                    this->running = this->processCommand(line);
-                }
-            }
-            return;
-        }
+    void runInteractiveShell() {
         // 1. Install the callback handler.
         //    Arg 1: interactive prompt
         //    Arg 2: pointer to the line_handler defined above
@@ -2659,8 +1972,32 @@ public:
         rl_callback_handler_remove();
     }
 
+    void run() {
+        std::cout << "Incremental Souffle CLI (Callback Version)" << std::endl;
+        std::cout << "Type 'help' for a list of available commands" << std::endl;
+        IncrementalCLI::instance = this;
+        if (!isatty(STDIN_FILENO)) {
+            runNonInteractiveShell();
+            return;
+        }
+        runInteractiveShell();
+    }
+
 };
 
 template <typename T>
 IncrementalCLI<T>* IncrementalCLI<T>::instance = nullptr;
+
+#include "souffle/cli/Executor.h"
+
+template <typename NodeRef>
+bool IncrementalCLI<NodeRef>::dispatchCommand(const ParsedCommand& command) {
+    return souffle::cli::IncrementalCommandExecutor<NodeRef>(*this).execute(command);
+}
+
+template <typename NodeRef>
+void IncrementalCLI<NodeRef>::commit() {
+    souffle::cli::IncrementalCommandExecutor<NodeRef>(*this).commit();
+}
+
 #endif //CLI_H

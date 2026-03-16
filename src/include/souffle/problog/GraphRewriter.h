@@ -192,6 +192,17 @@ public:
                     markDirtyEdgeEndpoints(e);
                 }
             };
+            auto markDirtyAllFactsResult = [&](NodePtr exitNode) {
+                if (exitNode && view.getNodes().count(exitNode) > 0) {
+                    markDirtyNode(exitNode);
+                    for (auto inEdge : view.getIncomingEdges(exitNode)) {
+                        markDirtyEdgeEndpoints(inEdge);
+                    }
+                    for (auto outEdge : view.getOutgoingEdges(exitNode)) {
+                        markDirtyEdgeEndpoints(outEdge);
+                    }
+                }
+            };
 
             view.cachedSortedIncomingEdges.clear();
             double dumpBeforeDotMs = 0.0;
@@ -334,6 +345,7 @@ public:
                         double p = edge->getProbability();
                         if (p < 0.0) p = 0.0;
                         if (p > 1.0) p = 1.0;
+                        std::vector<SupportToken> exitSupport = edge->getProbabilisticSupportTokens();
                         size_t regionRandomVars = 0;
                         if (p > 0.0 && p < 1.0) ++regionRandomVars;
                         for (size_t i = 0; i < inputs.size(); ++i) {
@@ -344,10 +356,13 @@ public:
                             if (np < 0.0) np = 0.0;
                             if (np > 1.0) np = 1.0;
                             p *= isNegated ? (1.0 - np) : np;
+                            exitSupport = mergeSupportTokenLists(
+                                    {&exitSupport, &n->getProbabilisticSupportTokens()});
                             if (np > 0.0 && np < 1.0) ++regionRandomVars;
                         }
                         exit->isFact = true;
                         exit->setProbability(p);
+                        exit->setProbabilisticSupportTokens(std::move(exitSupport));
 
                         auto& edges = view.mutableEdges();
                         auto& nodes = view.mutableNodes();
@@ -396,7 +411,7 @@ public:
                         if (dumpStats) {
                             // Fast-path all-facts debug logging elided to reduce overhead.
                         }
-                        markDirtyRegion(region);
+                        markDirtyAllFactsResult(exit);
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
                         continue;
@@ -412,6 +427,8 @@ public:
                         double p = edge->getProbability();
                         if (p < 0.0) p = 0.0;
                         if (p > 1.0) p = 1.0;
+                        std::vector<SupportToken> newEdgeSupport =
+                                edge->getProbabilisticSupportTokens();
                         size_t regionRandomVars = 0;
                         if (p > 0.0 && p < 1.0) ++regionRandomVars;
                         for (size_t i = 0; i < inputs.size(); ++i) {
@@ -423,6 +440,8 @@ public:
                             if (np < 0.0) np = 0.0;
                             if (np > 1.0) np = 1.0;
                             p *= isNegated ? (1.0 - np) : np;
+                            newEdgeSupport = mergeSupportTokenLists(
+                                    {&newEdgeSupport, &n->getProbabilisticSupportTokens()});
                             if (np > 0.0 && np < 1.0) ++regionRandomVars;
                         }
                         std::vector<NodePtr> siInput = {region.entry};
@@ -440,6 +459,7 @@ public:
                             continue;
                         }
                         newEdge->setProbability(p);
+                        newEdge->setProbabilisticSupportTokens(std::move(newEdgeSupport));
 
                         auto& edges = view.mutableEdges();
                         auto& nodes = view.mutableNodes();
@@ -511,6 +531,9 @@ public:
                         if (p2 < 0.0) p2 = 0.0;
                         if (p2 > 1.0) p2 = 1.0;
                         double p = p1 * p2;
+                        std::vector<SupportToken> newEdgeSupport = mergeSupportTokenLists(
+                                {&intoMid->getProbabilisticSupportTokens(),
+                                        &outMid->getProbabilisticSupportTokens()});
                         size_t regionRandomVars = 0;
                         if (p1 > 0.0 && p1 < 1.0) ++regionRandomVars;
                         if (p2 > 0.0 && p2 < 1.0) ++regionRandomVars;
@@ -520,6 +543,7 @@ public:
                         EdgePtr newEdge = graph.createHyperedge(inputsNew, region.exit, nullptr, negsNew);
                         if (!newEdge) continue;
                         newEdge->setProbability(p);
+                        newEdge->setProbabilisticSupportTokens(std::move(newEdgeSupport));
 
                         auto& edges = view.mutableEdges();
                         auto& nodes = view.mutableNodes();
@@ -594,12 +618,19 @@ public:
                         double pEff = 1.0 - prod;
                         if (pEff < 0.0) pEff = 0.0;
                         if (pEff > 1.0) pEff = 1.0;
+                        std::vector<SupportToken> newEdgeSupport;
+                        for (auto e : region.internalEdges) {
+                            if (!e) continue;
+                            newEdgeSupport = mergeSupportTokenLists(
+                                    {&newEdgeSupport, &e->getProbabilisticSupportTokens()});
+                        }
 
                         std::vector<NodePtr> newInputs = {entryNode};
                         std::vector<bool> newNegs = {negFlag};
                         EdgePtr newEdge = graph.createHyperedge(newInputs, exitNode, nullptr, newNegs);
                         if (!newEdge) continue;
                         newEdge->setProbability(pEff);
+                        newEdge->setProbabilisticSupportTokens(std::move(newEdgeSupport));
 
                         auto& edges = view.mutableEdges();
                         size_t removedEdges = 0;
@@ -715,6 +746,15 @@ public:
                         if (pc > 1.0) pc = 1.0;
                         p *= pc;
                         if (pc > 0.0 && pc < 1.0) ++regionRandomVars;
+                        std::vector<SupportToken> entrySupport =
+                                entryNode->getProbabilisticSupportTokens();
+                        for (auto fe : fanEdges) {
+                            if (!fe) continue;
+                            entrySupport = mergeSupportTokenLists(
+                                    {&entrySupport, &fe->getProbabilisticSupportTokens()});
+                        }
+                        entrySupport = mergeSupportTokenLists(
+                                {&entrySupport, &convEdge->getProbabilisticSupportTokens()});
 
                         removeFanAndConv();
 
@@ -723,11 +763,13 @@ public:
                         EdgePtr newEdge = graph.createHyperedge(newInputs, exitNode, nullptr, newNeg);
                         if (newEdge) {
                             newEdge->setProbability(1.0);
+                            newEdge->clearProbabilisticSupportTokens();
                             edges.insert(newEdge);
                             stats.numEdgesAdded += 1;
                         }
                         entryNode->isFact = true;
                         entryNode->setProbability(p);
+                        entryNode->setProbabilisticSupportTokens(std::move(entrySupport));
 
                         stats.totalRandomVars += regionRandomVars;
                         stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
@@ -895,41 +937,46 @@ public:
                 auto edgeListStart = std::chrono::steady_clock::now();
                 auto edgeList = view.getEdges();
                 edgeListMs = toMs(std::chrono::steady_clock::now() - edgeListStart);
+                const auto semanticFactStats = buildSemanticFactUseStats(view);
                 for (auto edge : edgeList) {
                     if (!edge) continue;
                     auto inputs = view.getInputs(edge);
                     if (inputs.empty()) continue;
                     std::vector<NodePtr> keepInputs;
+                    std::vector<bool> keepNegs;
                     auto negs = view.getBodyNegations(edge);
                     double p = edge->getProbability();
+                    std::vector<SupportToken> compactSupport =
+                            edge->getProbabilisticSupportTokens();
                     assertRewriteProbability(p, "edge compaction base edge id=" + std::to_string(edge->getId()));
                     bool changed = false;
                     for (size_t idx = 0; idx < inputs.size(); ++idx) {
                         auto n = inputs[idx];
                         if (!n) continue;
-                        if (n->isFact && !n->hasEvidence() && !n->needOutput) {
-                            // absorb only if fact has exactly one outgoing edge (this edge)
-                            const auto& outs = view.getOutgoingEdges(n);
-                            if (outs.size() != 1 || outs[0] != edge) {
-                                keepInputs.push_back(n);
-                                continue;
-                            }
+                        if (n->isFact && !isProbabilisticFactNode(n) &&
+                                canAbsorbFactLiteral(view, n, semanticFactStats, 1) &&
+                                !edgeInputHasSupportOverlap(view, edge, idx, n->getProbabilisticSupportTokens())) {
                             double np = n->getProbability();
                             assertRewriteProbability(np, "edge compaction input fact id=" + std::to_string(n->getId()));
                             bool isNeg = (idx < negs.size() ? negs[idx] : false);
                             p *= isNeg ? (1.0 - np) : np;
+                            compactSupport = mergeSupportTokenLists(
+                                    {&compactSupport, &n->getProbabilisticSupportTokens()});
                             changed = true;
                         } else {
                             keepInputs.push_back(n);
+                            keepNegs.push_back(idx < negs.size() ? negs[idx] : false);
                         }
                     }
                     // If nothing to absorb or no non-fact inputs remain, skip.
                     if (!changed || keepInputs.empty()) continue;
 
-                    EdgePtr newEdge = graph.createHyperedge(keepInputs, edge->getOutput());
+                    EdgePtr newEdge = graph.createHyperedge(
+                            keepInputs, edge->getOutput(), nullptr, keepNegs, edge->getRuleApp());
                     if (!newEdge) continue;
                     assertRewriteProbability(p, "edge compaction new edge id=" + std::to_string(newEdge->getId()));
                     newEdge->setProbability(p);
+                    newEdge->setProbabilisticSupportTokens(std::move(compactSupport));
 
                     auto& edges = view.mutableEdges();
                     if (edges.erase(edge) > 0) {
@@ -1205,7 +1252,60 @@ private:
         shadow->isFact = true;
         shadow->needOutput = false;
         shadow->isShadow = true;
+        shadow->setOriginalFact(fact->isOriginalFactNode());
+        shadow->setSemanticFactId(fact->getSemanticFactId());
+        shadow->setProbabilisticSupportTokens(fact->getProbabilisticSupportTokens());
         return shadow;
+    }
+
+    struct SemanticFactUseStats {
+        std::unordered_map<std::size_t, std::size_t> inputOccurrences;
+        std::unordered_map<std::size_t, std::size_t> pinnedNodes;
+    };
+
+    static bool isProbabilisticFactNode(const NodePtr& node) {
+        return node && node->isFact && node->getProbability() > 0.0 && node->getProbability() < 1.0;
+    }
+
+    static SemanticFactUseStats buildSemanticFactUseStats(const IncSubgraphView& view) {
+        SemanticFactUseStats stats;
+        for (auto node : view.getNodes()) {
+            if (!isProbabilisticFactNode(node)) continue;
+            if (node->needOutput || node->hasEvidence()) {
+                ++stats.pinnedNodes[node->getSemanticFactId()];
+            }
+        }
+        for (auto edge : view.getEdges()) {
+            if (!edge) continue;
+            for (auto input : view.getInputs(edge)) {
+                if (!isProbabilisticFactNode(input)) continue;
+                ++stats.inputOccurrences[input->getSemanticFactId()];
+            }
+        }
+        return stats;
+    }
+
+    static bool canAbsorbFactLiteral(const IncSubgraphView& view, const NodePtr& node,
+            const SemanticFactUseStats& semanticStats, std::size_t localOccurrences = 1) {
+        if (!node || !node->isFact || node->hasEvidence() || node->needOutput) {
+            return false;
+        }
+        if (!view.getIncomingEdges(node).empty()) {
+            return false;
+        }
+        if (!isProbabilisticFactNode(node)) {
+            return true;
+        }
+        if (!node->isOriginalFactNode()) {
+            return false;
+        }
+        const auto semanticId = node->getSemanticFactId();
+        auto pinnedIt = semanticStats.pinnedNodes.find(semanticId);
+        if (pinnedIt != semanticStats.pinnedNodes.end() && pinnedIt->second > 0) {
+            return false;
+        }
+        auto occIt = semanticStats.inputOccurrences.find(semanticId);
+        return occIt != semanticStats.inputOccurrences.end() && occIt->second == localOccurrences;
     }
 
     static bool canPrecomputeOutputFact(const IncSubgraphView& view, const NodePtr& node,

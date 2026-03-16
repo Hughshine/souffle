@@ -1410,7 +1410,8 @@ public:
         std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
         std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
         std::set<NodePtr>& changedNodes,
-        const ConstAnalysisResult* constInfo = nullptr) {
+        const ConstAnalysisResult* constInfo = nullptr,
+        const CycleDependencyGraph* existingDepGraph = nullptr) {
         Debugger& debugger = Debugger::getInstance();
         const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
         const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
@@ -1696,15 +1697,28 @@ public:
         };
 
         std::unique_ptr<LocalDepGraph> localDepGraph;
-        CycleDependencyGraph* depGraphPtr = nullptr;
+        const CycleDependencyGraph* depGraphPtr = nullptr;
         const char* depGraphScope = nullptr;
-        auto depGraphForReachable = [&](const char* stage, const incra::Region& reach) -> CycleDependencyGraph& {
+        auto depGraphForReachable = [&](const char* stage, const incra::Region& reach) -> const CycleDependencyGraph& {
             const bool cached = depGraphPtr != nullptr;
             if (depGraphPtr) {
                 if (incRegionalProfileEnabled) {
                     std::cout << "[inc-regional] dep_graph_use stage=" << stage
                               << " scope=" << (depGraphScope ? depGraphScope : "unknown")
                               << " cached=1"
+                              << " reach_nodes=" << reach.nodes.size()
+                              << " reach_edges=" << reach.edges.size()
+                              << "\n";
+                }
+                return *depGraphPtr;
+            }
+            if (existingDepGraph) {
+                depGraphPtr = existingDepGraph;
+                depGraphScope = "full-shared";
+                if (incRegionalProfileEnabled) {
+                    std::cout << "[inc-regional] dep_graph_use stage=" << stage
+                              << " scope=full-shared"
+                              << " cached=" << (cached ? 1 : 0)
                               << " reach_nodes=" << reach.nodes.size()
                               << " reach_edges=" << reach.edges.size()
                               << "\n";
@@ -1927,8 +1941,8 @@ public:
             std::set<std::pair<std::uintptr_t, std::uintptr_t>> loggedOverlapPairs;
             bool sccAdjReady = false;
             std::vector<std::vector<size_t>> sccAdj;
-            CycleDependencyGraph* sccGraph = nullptr;
-            auto ensureSccAdj = [&]() -> CycleDependencyGraph& {
+            const CycleDependencyGraph* sccGraph = nullptr;
+            auto ensureSccAdj = [&]() -> const CycleDependencyGraph& {
                 if (sccAdjReady) {
                     return *sccGraph;
                 }
@@ -2998,10 +3012,11 @@ public:
 
         while (true) {
             if (needRebuild) {
-                if (rebuiltOnce && opt_.enableFallbackToClassicInsertion) {
+                const bool needSnapshot = opt_.enableFallbackToClassicInsertion && !plan.boundaryNodes.empty();
+                if (rebuiltOnce && needSnapshot) {
                     restoreSnapshot();
                 }
-                if (opt_.enableFallbackToClassicInsertion) {
+                if (needSnapshot) {
                     takeSnapshot();
                 }
 

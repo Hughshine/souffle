@@ -55,6 +55,9 @@ struct ImplicitSplitOverlayStats {
     std::size_t edgesAliased = 0;
     std::size_t allFactsRewrites = 0;
     std::size_t singleHyperedgeRewrites = 0;
+    std::size_t linearTwoEdgeRewrites = 0;
+    std::size_t parallelEdgeRewrites = 0;
+    std::size_t fanOutConvergeRewrites = 0;
     std::size_t removedEdges = 0;
     std::size_t factOutputsFolded = 0;
     std::size_t splitFactsConsidered = 0;
@@ -70,6 +73,9 @@ struct ImplicitSplitOverlayStats {
     double splitAliasApplyMs = 0.0;
     double rebuildIndexMs = 0.0;
     double fastPathSingleMs = 0.0;
+    double fastPathLinearMs = 0.0;
+    double fastPathParallelMs = 0.0;
+    double fastPathFanOutMs = 0.0;
     double fastPathAllFactsMs = 0.0;
 };
 
@@ -108,6 +114,9 @@ struct ImplicitSplitPipelineOptions {
     ImplicitSplitMode splitMode = ImplicitSplitMode::Naive;
     bool runOverlayFastPaths = true;
     bool runOverlaySingleHyperedge = true;
+    bool runOverlayLinearTwoEdge = true;
+    bool runOverlayParallelEdge = true;
+    bool runOverlayFanOutConverge = true;
     bool runOverlayAllFacts = true;
     bool runMaterializedGraphRewrite = true;
     bool computeOutputMarginals = true;
@@ -148,7 +157,8 @@ public:
     explicit ImplicitSplitOverlay(const IncrementalDerivationGraphViewInterface& view);
 
     bool applySplit(ImplicitSplitMode mode, ImplicitSplitOverlayStats* stats = nullptr);
-    bool rewriteFastPathsToFixpoint(bool enableSingleHyperedge = true, bool enableAllFacts = true,
+    bool rewriteFastPathsToFixpoint(bool enableSingleHyperedge = true, bool enableLinearTwoEdge = true,
+            bool enableParallelEdge = true, bool enableFanOutConverge = true, bool enableAllFacts = true,
             ImplicitSplitOverlayStats* stats = nullptr);
 
     std::vector<OverlayOutputProbability> computeOutputMarginalsExact() const;
@@ -184,6 +194,7 @@ private:
     std::unordered_map<NodePtr, std::vector<std::size_t>> cachedBaseOutgoingEdgesByFact_;
     std::unordered_map<NodePtr, std::vector<std::size_t>> activeIncomingEdgeIdsByNode_;
     std::unordered_map<SplitNodeRef, std::vector<std::size_t>, SplitNodeRefHash> activeOutgoingEdgeIdsByRef_;
+    std::unordered_map<NodePtr, std::size_t> activeSemanticInputOccurrencesByFact_;
     std::vector<std::size_t> activeEdgeIds_;
     std::size_t activeEdgeCount_ = 0;
 
@@ -191,6 +202,7 @@ private:
     double factProbabilityOf(const SplitNodeRef& ref) const;
     std::size_t activeIncomingCount(const NodePtr& node) const;
     std::size_t activeOutgoingCount(const SplitNodeRef& ref) const;
+    std::size_t activeSemanticInputCount(const NodePtr& fact) const;
     const std::vector<std::size_t>& activeIncomingEdges(const NodePtr& node) const;
     const std::vector<std::size_t>& activeOutgoingEdges(const SplitNodeRef& ref) const;
     void rebuildActiveEdgeIndices();

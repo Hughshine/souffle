@@ -3,7 +3,8 @@
 Standalone experiment directory for using ApproxMC from C++ without modifying Souffle internals.
 
 ## Files
-- `weighted_conversion.h/.cpp`: in-memory weighted->unweighted converter with preprocessing.
+- `weighted_conversion.h/.cpp`: local demo wrappers around the shared
+  weighted->unweighted converter implementation in `src/problog/approx/`.
 - `WEIGHTED_TO_UNWEIGHTED.md`: conversion algorithm notes and reconstruction formula.
 - `weighted_appmc.h/.cpp`: AppMC-like weighted wrapper API (`set_lit_weight`, `count`).
 - `weighted_conversion_demo.cpp`: converter-only demo (no ApproxMC dependency).

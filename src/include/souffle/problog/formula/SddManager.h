@@ -289,6 +289,8 @@ private:
     // rawId -> internalId mapping
     std::unordered_map<int,int> rawToInternal;
     std::unordered_map<const Node*, int> nodeToRawIndex_;
+    std::unordered_map<std::size_t, int> factSemanticToRawIndex_;
+    std::unordered_map<std::size_t, std::size_t> factSemanticRefCount_;
     std::unordered_map<const Hyperedge*, int> edgeToRawIndex_;
 
     int nextRawVar = 1;
@@ -536,8 +538,21 @@ inline SddNodeRef SddFormulaManager::createVar(int rawIndex, const Hyperedge& ed
 inline int SddFormulaManager::getVarIndex(const Node& node) {
     auto it = nodeToRawIndex_.find(&node);
     if (it != nodeToRawIndex_.end()) return it->second;
+    const auto semanticId = node.getSemanticFactId();
+    if (node.isFact) {
+        auto itSemantic = factSemanticToRawIndex_.find(semanticId);
+        if (itSemantic != factSemanticToRawIndex_.end()) {
+            nodeToRawIndex_[&node] = itSemantic->second;
+            ++factSemanticRefCount_[semanticId];
+            return itSemantic->second;
+        }
+    }
     int idx = nextRawVar++;
     nodeToRawIndex_[&node] = idx;
+    if (node.isFact) {
+        factSemanticToRawIndex_[semanticId] = idx;
+        ++factSemanticRefCount_[semanticId];
+    }
     return idx;
 }
 
@@ -551,10 +566,18 @@ inline int SddFormulaManager::getVarIndex(const Hyperedge& edge) {
 
 inline bool SddFormulaManager::peekVarIndex(const Node& node, int& idx) const {
     auto it = nodeToRawIndex_.find(&node);
-    if (it == nodeToRawIndex_.end()) {
+    if (it != nodeToRawIndex_.end()) {
+        idx = it->second;
+        return true;
+    }
+    if (!node.isFact) {
         return false;
     }
-    idx = it->second;
+    auto itSemantic = factSemanticToRawIndex_.find(node.getSemanticFactId());
+    if (itSemantic == factSemanticToRawIndex_.end()) {
+        return false;
+    }
+    idx = itSemantic->second;
     return true;
 }
 
@@ -574,6 +597,11 @@ inline void SddFormulaManager::bindVarIndex(const Node& node, int idx) {
     auto it = nodeToRawIndex_.find(&node);
     if (it != nodeToRawIndex_.end() && it->second == idx) {
         return;
+    }
+    if (node.isFact && it == nodeToRawIndex_.end()) {
+        const auto semanticId = node.getSemanticFactId();
+        factSemanticToRawIndex_[semanticId] = idx;
+        ++factSemanticRefCount_[semanticId];
     }
     nodeToRawIndex_[&node] = idx;
     if (idx >= nextRawVar) {
@@ -890,6 +918,18 @@ inline void SddFormulaManager::releaseVarIndex(const Node& node) {
     }
     int raw = it->second;
     nodeToRawIndex_.erase(it);
+    if (node.isFact) {
+        const auto semanticId = node.getSemanticFactId();
+        auto refIt = factSemanticRefCount_.find(semanticId);
+        if (refIt != factSemanticRefCount_.end()) {
+            if (refIt->second > 1) {
+                --refIt->second;
+                return;
+            }
+            factSemanticRefCount_.erase(refIt);
+            factSemanticToRawIndex_.erase(semanticId);
+        }
+    }
 
     auto internalIt = rawToInternal.find(raw);
     if (internalIt == rawToInternal.end()) {
@@ -908,8 +948,10 @@ inline void SddFormulaManager::releaseVarIndex(const Node& node) {
     variableRegistry.erase(internal);
     dropFreeIndex(internal);
     freeIndices_.insert(internal);
-    freeNodeIndexByTuple_[node.getTuple()] = internal;
-    freeIndexToTuple_[internal] = node.getTuple();
+    if (!node.isShadow) {
+        freeNodeIndexByTuple_[node.getTuple()] = internal;
+        freeIndexToTuple_[internal] = node.getTuple();
+    }
 }
 
 inline void SddFormulaManager::releaseVarIndex(const Hyperedge& edge) {
@@ -956,6 +998,8 @@ inline void SddFormulaManager::tryGarbageCollection() {
 
 inline void SddFormulaManager::reset() {
     nodeToRawIndex_.clear();
+    factSemanticToRawIndex_.clear();
+    factSemanticRefCount_.clear();
     edgeToRawIndex_.clear();
     rawToInternal.clear();
     nextRawVar = 1;

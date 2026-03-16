@@ -5,6 +5,7 @@
 #pragma once
 
 #include "souffle/Derivation.h"
+#include "souffle/CompiledOptions.h"
 #include "souffle/RamTypes.h"
 #include "souffle/SouffleInterface.h"
 #include "souffle/problog/Rule.h"
@@ -26,6 +27,7 @@
 #include "souffle/utility/json11.h"
 #include <cassert>
 #include <chrono>
+#include <cstdint>
 
 int nextFormulaNodeId = 0;
 std::unordered_map<size_t, int> nodeIdMap;
@@ -71,6 +73,59 @@ struct CycleDependencyGraph;
 
 using NodePtr = std::shared_ptr<Node>;
 using EdgePtr = std::shared_ptr<Hyperedge>;
+using SupportToken = std::uint64_t;
+
+inline constexpr SupportToken kEdgeSupportTokenMask = SupportToken{1} << 63;
+
+inline SupportToken makeFactSupportToken(size_t semanticId) {
+    return static_cast<SupportToken>(semanticId) & ~kEdgeSupportTokenMask;
+}
+
+inline SupportToken makeEdgeSupportToken(size_t edgeId) {
+    return kEdgeSupportTokenMask | (static_cast<SupportToken>(edgeId) & ~kEdgeSupportTokenMask);
+}
+
+inline void sortUniqueSupportTokens(std::vector<SupportToken>& tokens) {
+    std::sort(tokens.begin(), tokens.end());
+    tokens.erase(std::unique(tokens.begin(), tokens.end()), tokens.end());
+}
+
+inline bool supportTokensIntersect(
+        const std::vector<SupportToken>& lhs, const std::vector<SupportToken>& rhs) {
+    size_t i = 0;
+    size_t j = 0;
+    while (i < lhs.size() && j < rhs.size()) {
+        if (lhs[i] == rhs[j]) {
+            return true;
+        }
+        if (lhs[i] < rhs[j]) {
+            ++i;
+        } else {
+            ++j;
+        }
+    }
+    return false;
+}
+
+inline std::vector<SupportToken> mergeSupportTokenLists(
+        std::initializer_list<const std::vector<SupportToken>*> parts) {
+    std::vector<SupportToken> merged;
+    size_t total = 0;
+    for (const auto* part : parts) {
+        if (part) {
+            total += part->size();
+        }
+    }
+    merged.reserve(total);
+    for (const auto* part : parts) {
+        if (!part) {
+            continue;
+        }
+        merged.insert(merged.end(), part->begin(), part->end());
+    }
+    sortUniqueSupportTokens(merged);
+    return merged;
+}
 // TODO: derivation graph now does not support negation...
 // TODO: MST GRAPH FUSE
 /** class Evidence {
@@ -105,6 +160,24 @@ public:
     const std::vector<EdgePtr>& getOutgoingEdges() const { return outgoingEdges; }
     std::vector<EdgePtr>& getOutgoingEdges() { return outgoingEdges; }
     size_t getId() const { return id; }
+    size_t getSemanticFactId() const { return semanticFactId; }
+    void setSemanticFactId(size_t semanticId) {
+        semanticFactId = semanticId;
+        syncOriginalFactSupport();
+    }
+    bool isOriginalFactNode() const { return originalFact; }
+    void setOriginalFact(bool value = true) {
+        originalFact = value;
+        syncOriginalFactSupport();
+    }
+    const std::vector<SupportToken>& getProbabilisticSupportTokens() const {
+        return probabilisticSupportTokens;
+    }
+    void setProbabilisticSupportTokens(std::vector<SupportToken> tokens) {
+        sortUniqueSupportTokens(tokens);
+        probabilisticSupportTokens = std::move(tokens);
+    }
+    void clearProbabilisticSupportTokens() { probabilisticSupportTokens.clear(); }
     void setProbability(double prob) {
         if (prob < 0.0 || prob > 1.0) {
             std::cerr << "[DerivationGraph] Node probability out of range: " << prob
@@ -112,6 +185,7 @@ public:
             assert(false && "Node probability out of [0,1]");
         }
         probability = prob;
+        syncOriginalFactSupport();
     }
     double getProbability() const { return probability; }
     std::string toString() const {
@@ -138,25 +212,38 @@ public:
     }
 
     bool isFact = false;
+    bool originalFact = false;
     bool pruned = false;
     bool needOutput = false;
     bool isQuery = false;
 
 private:
     explicit Node(const UntypedTuple& t, size_t nodeId, double prob = 1.0)
-        : tuple(t), id(nodeId), probability(prob) {}
+        : tuple(t), id(nodeId), probability(prob), semanticFactId(nodeId) {}
 
     UntypedTuple tuple;
     std::vector<EdgePtr> incomingEdges;
     std::vector<EdgePtr> outgoingEdges;
     size_t id;
     double probability;
+    size_t semanticFactId;
 
     bool has_evidence = false;
     bool evidenceValue = false;
+    std::vector<SupportToken> probabilisticSupportTokens;
 
     void addIncomingEdge(EdgePtr edge);
     void addOutgoingEdge(EdgePtr edge);
+    void syncOriginalFactSupport() {
+        if (!originalFact) {
+            return;
+        }
+        if (probability > 0.0 && probability < 1.0) {
+            probabilisticSupportTokens = {makeFactSupportToken(semanticFactId)};
+        } else {
+            probabilisticSupportTokens.clear();
+        }
+    }
 };
 
 using EdgeKey = std::tuple<
@@ -189,6 +276,14 @@ public:
     size_t getId() const { return id; }
     const Rule* getRule() const { return rule; }
     const std::vector<bool>& getBodyNegations() const { return bodyNegations; }
+    const std::vector<SupportToken>& getProbabilisticSupportTokens() const {
+        return probabilisticSupportTokens;
+    }
+    void setProbabilisticSupportTokens(std::vector<SupportToken> tokens) {
+        sortUniqueSupportTokens(tokens);
+        probabilisticSupportTokens = std::move(tokens);
+    }
+    void clearProbabilisticSupportTokens() { probabilisticSupportTokens.clear(); }
     const std::vector<bool>& getBodyNegationsStable() const {
         if (cachedSortedBodyNegations.has_value()) {
             return *cachedSortedBodyNegations;
@@ -218,6 +313,13 @@ public:
                 assert(false && "Edge probability out of [0,1]");
             }
             this->probability = probability;
+            if (this->probability > 0.0 && this->probability < 1.0) {
+                if (probabilisticSupportTokens.empty()) {
+                    probabilisticSupportTokens = {makeEdgeSupportToken(id)};
+                }
+            } else {
+                probabilisticSupportTokens.clear();
+            }
         }
     }
 
@@ -331,6 +433,9 @@ private:
         } else {
             this->bodyNegations = std::vector<bool>(inputs.size(), false);
         }
+        if (probability > 0.0 && probability < 1.0) {
+            probabilisticSupportTokens = {makeEdgeSupportToken(id)};
+        }
 //        for (size_t i = 0; i < inputs.size(); ++i) {
 //            std::cout << "input: " << inputs[i]->toString() << std::endl;
 //            std::cout << "isNegated: " << bodyNegations[i] << std::endl;
@@ -345,6 +450,7 @@ private:
     double probability;
     const Rule* rule;
     const RuleApplication ruleApp;
+    std::vector<SupportToken> probabilisticSupportTokens;
 };
 
 class DerivationGraphViewInterface {
@@ -415,6 +521,69 @@ protected:
     static inline bool dumpStatsEnabled = false;
     static inline std::string dumpOutputDir = "";
 };
+
+inline bool nodeMayDependOnSupportTokens(const DerivationGraphViewInterface& g, NodePtr start,
+        const std::vector<SupportToken>& targetTokens) {
+    if (!start || targetTokens.empty()) {
+        return false;
+    }
+    std::queue<NodePtr> work;
+    std::unordered_set<size_t> seenNodes;
+    std::unordered_set<size_t> seenEdges;
+    work.push(start);
+    seenNodes.insert(start->getId());
+    while (!work.empty()) {
+        NodePtr node = work.front();
+        work.pop();
+        if (!node) {
+            continue;
+        }
+        if (supportTokensIntersect(node->getProbabilisticSupportTokens(), targetTokens)) {
+            return true;
+        }
+        for (auto edge : g.getIncomingEdges(node)) {
+            if (!edge || !seenEdges.insert(edge->getId()).second) {
+                continue;
+            }
+            if (supportTokensIntersect(edge->getProbabilisticSupportTokens(), targetTokens)) {
+                return true;
+            }
+            for (auto input : g.getInputs(edge)) {
+                if (input && seenNodes.insert(input->getId()).second) {
+                    work.push(input);
+                }
+            }
+        }
+    }
+    return false;
+}
+
+inline bool edgeInputHasSupportOverlap(const DerivationGraphViewInterface& g, EdgePtr edge,
+        size_t inputIndex, const std::vector<SupportToken>& targetTokens) {
+    if (!edge || targetTokens.empty()) {
+        return false;
+    }
+    if (supportTokensIntersect(edge->getProbabilisticSupportTokens(), targetTokens)) {
+        return true;
+    }
+    const auto inputs = g.getInputs(edge);
+    for (size_t i = 0; i < inputs.size(); ++i) {
+        if (i == inputIndex) {
+            continue;
+        }
+        NodePtr other = inputs[i];
+        if (!other) {
+            continue;
+        }
+        if (supportTokensIntersect(other->getProbabilisticSupportTokens(), targetTokens)) {
+            return true;
+        }
+        if (!other->isFact && nodeMayDependOnSupportTokens(g, other, targetTokens)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 const std::vector<EdgePtr>& DerivationGraphViewInterface::getIncomingEdges(NodePtr node) const {
     static const std::vector<EdgePtr> empty;
@@ -1048,6 +1217,7 @@ public:
         node->setProbability(weight);
         if (detOptEnabled && isDetRelation(tuple.relation_name)) {
             node->isFact = true;
+            node->setOriginalFact(true);
         }
 
         // Add to the map.
@@ -1141,6 +1311,7 @@ public:
                 // Fact rules are represented as fact nodes (no hyperedge is created for empty-body rules).
                 headNode->isFact = true;
                 headNode->setProbability(rule->getProbability());
+                headNode->setOriginalFact(true);
             }
 
             // Create input nodes.
@@ -1198,6 +1369,7 @@ public:
             // Fact rules are represented as fact nodes (no hyperedge is created for empty-body rules).
             headNode->isFact = true;
             headNode->setProbability(rule->getProbability());
+            headNode->setOriginalFact(true);
         }
 
         // Create input nodes.
@@ -1316,8 +1488,9 @@ public:
             FunctionTimer scopeTimer("create graph: init fact nodes");
             for (const auto& [tuple, prob] : fact_prob) {
                 auto node = graph->createNode(tuple);  // actually "find node" here
-                node->probability = prob;
+                node->setProbability(prob);
                 node->isFact = true;
+                node->setOriginalFact(true);
             }
         }
         {
@@ -1731,6 +1904,7 @@ public:
                 auto node = graph->createNode(tuple);  // actually "find node" here
                 node->setProbability(prob);
                 node->isFact = true;
+                node->setOriginalFact(true);
             }
         }
         {
@@ -2007,6 +2181,7 @@ void IncrementalDerivationGraph::applyDeltaInserts(
             }
             node->setProbability(prob);
             node->isFact = true;
+            node->setOriginalFact(true);
             deltaInsertFactNodes.insert(node);
         }
     }
@@ -3307,9 +3482,7 @@ inline std::unordered_map<NodePtr, double> probResult;
 void dumpProbabilities(
     std::unordered_map<NodePtr, double>& nodeProbabilities, const std::string& outputDir = "./output/",
           const std::string& fileName = "facts") {
-    std::ofstream outputFile(
-        outputDir + "/" + fileName + ".prob"
-    );
+    std::ofstream outputFile(souffle::joinOutputPath(outputDir, fileName + ".prob"));
     outputFile << std::setprecision(8);
     std::map<std::string, double> tupleProbabilities;
     std::vector<NodePtr> sortedNodes;
@@ -4160,6 +4333,7 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
         NodePtr n = g->createNode(t);
         n->isFact = true;
         n->setProbability(p);
+        n->setOriginalFact(true);
     }
 
     // ---------- 2) Baseline: rules ----------
@@ -4190,6 +4364,7 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
         double p = jf["probability"].number_value();
         NodePtr n = g->createNode(t);
         n->isFact = true; n->setProbability(p);
+        n->setOriginalFact(true);
         g->deltaInsertNodes.insert(n);
     }
     for (const auto& jn : arr_or(jins["nodes"])) {
@@ -4227,6 +4402,7 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
         double p = jf["probability"].number_value();
         NodePtr n = g->createNode(t);
         n->isFact = true; n->setProbability(p);
+        n->setOriginalFact(true);
         g->deltaDeleteNodes.insert(n);
         g->explicitDeletedFacts_.insert(n);
     }

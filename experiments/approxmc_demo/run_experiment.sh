@@ -9,6 +9,7 @@ mkdir -p "${BIN_DIR}" "${TMP_DIR}"
 
 echo "[build] weighted_conversion_demo (no CMake)"
 g++ -std=c++20 -O2 \
+  -I"${ROOT_DIR}/../../src/include" \
   "${ROOT_DIR}/weighted_conversion.cpp" \
   "${ROOT_DIR}/weighted_conversion_demo.cpp" \
   -o "${BIN_DIR}/weighted_conversion_demo"
@@ -53,6 +54,7 @@ echo "[done] converter experiment passed."
 if [[ -n "${APPROXMC_PREFIX:-}" ]]; then
   echo "[build] weighted_appmc_demo (with approxmc from APPROXMC_PREFIX=${APPROXMC_PREFIX})"
   g++ -std=c++20 -O2 \
+    -I"${ROOT_DIR}/../../src/include" \
     "${ROOT_DIR}/weighted_conversion.cpp" \
     "${ROOT_DIR}/weighted_appmc.cpp" \
     "${ROOT_DIR}/weighted_appmc_demo.cpp" \

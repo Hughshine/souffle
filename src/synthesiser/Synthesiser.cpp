@@ -4595,12 +4595,55 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << "R\"()\",\n";
     }
     hook << std::stoi(glb.config().get("jobs"));
-    hook << ", \"log.txt\"";
-    hook << ", " << (glb.config().has("derv-only") ? "true" : "false");
-    hook << ",\"" << glb.config().get("setmode") << "\"";
-    hook << "," << (glb.config().has("merge-bi-imp") ? "true" : "false");
-    hook << "," << (glb.config().has("rewrite") ? "true" : "false");
     hook << ");\n";
+    hook << "opt.setLogFileName(R\"("
+         << (glb.config().has("logfile") ? glb.config().get("logfile") : std::string("log.txt"))
+         << ")\");\n";
+    hook << "opt.setDerivationOnly(" << (glb.config().has("derv-only") ? "true" : "false") << ");\n";
+    hook << "opt.setMergeBiImpEnabled(" << (glb.config().has("merge-bi-imp") ? "true" : "false")
+         << ");\n";
+    hook << "opt.setPruneExtraEnabled(" << (glb.config().has("prune-extra") ? "true" : "false")
+         << ");\n";
+    hook << "opt.setConstFoldEnabled(" << (glb.config().has("fold-const") ? "true" : "false")
+         << ");\n";
+    hook << "opt.setSemModeToken(\"" << glb.config().get("sem-mode") << "\");\n";
+    hook << "opt.setFcModeToken(\"" << glb.config().get("fc-mode") << "\");\n";
+    hook << "opt.setKnowledgeRepresentationToken(\"" << glb.config().get("dd-backend", "bdd")
+         << "\");\n";
+    hook << "opt.setFullEvaluatorToken(\"" << glb.config().get("full-evaluator", "exact")
+         << "\");\n";
+    hook << "opt.setRewriteEngineToken(\"" << glb.config().get("rewrite-engine", "off")
+         << "\");\n";
+    hook << "opt.setRewriteSplitModeToken(\"" << glb.config().get("rewrite-split", "naive")
+         << "\");\n";
+    hook << "opt.setRewriteDetectModeToken(\"" << glb.config().get("rewrite-detect", "dirty-frontier")
+         << "\");\n";
+    hook << "opt.setDetModeToken(\"" << glb.config().get("det-mode", "auto") << "\");\n";
+    hook << "opt.setDumpJsonEnabled(" << (glb.config().has("dumpjson") ? "true" : "false") << ");\n";
+    hook << "opt.setDumpDotEnabled(" << (glb.config().has("dumpdot") ? "true" : "false") << ");\n";
+    hook << "opt.setDumpStatEnabled(" << (glb.config().has("dumpstat") ? "true" : "false") << ");\n";
+    hook << "opt.setDumpConstEnabled(" << (glb.config().has("dumpconst") ? "true" : "false")
+         << ");\n";
+    hook << "opt.setProfileStageToken(\"dred\", "
+         << (glb.config().has("dred-profile") ? "true" : "false") << ");\n";
+    hook << "opt.setProfileStageToken(\"inc\", "
+         << (glb.config().has("inc-profile") ? "true" : "false") << ");\n";
+    hook << "opt.setProfileStageToken(\"fc\", "
+         << (glb.config().has("fc-profile") ? "true" : "false") << ");\n";
+    hook << "opt.setProfileStageToken(\"wmc\", "
+         << (glb.config().has("profile-wmc") ? "true" : "false") << ");\n";
+    hook << "opt.setProfileStageToken(\"inc-delete\", "
+         << (glb.config().has("profile-inc-delete") ? "true" : "false") << ");\n";
+    hook << "opt.setProfileStageToken(\"inc-regional\", "
+         << (glb.config().has("profile-inc-regional") ? "true" : "false") << ");\n";
+    hook << "opt.setProfileStageToken(\"inc-regional-heavy\", "
+         << (glb.config().has("profile-inc-regional-heavy") ? "true" : "false") << ");\n";
+    hook << "opt.setProfileStageToken(\"dep-graph\", "
+         << (glb.config().has("profile-dep-graph") ? "true" : "false") << ");\n";
+    hook << "opt.setApproxBackendToken(\"" << glb.config().get("approx-backend", "none") << "\");\n";
+    hook << "opt.setIncRegionalTraceTuples(R\"("
+         << glb.config().get("inc-regional-trace-tuples", "")
+         << ")\");\n";
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";
     hook << "detOptEnabled = opt.isDetOptEnabled();\n";

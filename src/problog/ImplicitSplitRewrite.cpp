@@ -47,23 +47,7 @@ std::size_t canonicalFactIdForGraphNode(const NodePtr& node) {
     if (!node) {
         return 0;
     }
-    if (!node->isShadow) {
-        return node->getId();
-    }
-    const auto& tuple = node->getTuple();
-    if (tuple.relation_name.rfind(kSplitShadowPrefix, 0) != 0) {
-        return node->getId();
-    }
-    const std::string suffix = tuple.relation_name.substr(std::char_traits<char>::length(kSplitShadowPrefix));
-    const auto pos = suffix.find('_');
-    if (pos == std::string::npos) {
-        return node->getId();
-    }
-    try {
-        return static_cast<std::size_t>(std::stoull(suffix.substr(0, pos)));
-    } catch (...) {
-        return node->getId();
-    }
+    return node->getSemanticFactId();
 }
 
 using Clock = std::chrono::steady_clock;
@@ -96,7 +80,7 @@ ImplicitSplitOverlay::ImplicitSplitOverlay(const IncrementalDerivationGraphViewI
             continue;
         }
         BaseNodeState state;
-        state.originalIsFact = node->isFact;
+        state.originalIsFact = node->isOriginalFactNode();
         state.currentIsFact = node->isFact;
         state.factProbability = node->getProbability();
         state.needOutput = node->needOutput;
@@ -157,6 +141,14 @@ std::size_t ImplicitSplitOverlay::activeOutgoingCount(const SplitNodeRef& ref) c
     return activeOutgoingEdges(ref).size();
 }
 
+std::size_t ImplicitSplitOverlay::activeSemanticInputCount(const NodePtr& fact) const {
+    auto it = activeSemanticInputOccurrencesByFact_.find(fact);
+    if (it == activeSemanticInputOccurrencesByFact_.end()) {
+        return 0;
+    }
+    return it->second;
+}
+
 const std::vector<std::size_t>& ImplicitSplitOverlay::activeIncomingEdges(const NodePtr& node) const {
     static const std::vector<std::size_t> empty;
     auto it = activeIncomingEdgeIdsByNode_.find(node);
@@ -178,6 +170,7 @@ const std::vector<std::size_t>& ImplicitSplitOverlay::activeOutgoingEdges(const 
 void ImplicitSplitOverlay::rebuildActiveEdgeIndices() {
     activeIncomingEdgeIdsByNode_.clear();
     activeOutgoingEdgeIdsByRef_.clear();
+    activeSemanticInputOccurrencesByFact_.clear();
     activeEdgeIds_.clear();
     if (activeEdgeCount_ == 0) {
         return;
@@ -193,6 +186,9 @@ void ImplicitSplitOverlay::rebuildActiveEdgeIndices() {
         std::vector<SplitNodeRef> seenInputs;
         seenInputs.reserve(edge.inputs.size());
         for (const auto& input : edge.inputs) {
+            if (input.base && isFactRef(input)) {
+                ++activeSemanticInputOccurrencesByFact_[input.base];
+            }
             bool duplicate = false;
             for (const auto& seen : seenInputs) {
                 if (seen == input) {
@@ -532,6 +528,24 @@ bool ImplicitSplitOverlay::applySplit(ImplicitSplitMode mode, ImplicitSplitOverl
 }
 
 bool ImplicitSplitOverlay::rewriteAllFactsPass(ImplicitSplitOverlayStats* stats) {
+    auto canAbsorbFactRef = [&](const SplitNodeRef& ref, std::size_t localOccurrences) {
+        if (!isFactRef(ref) || !ref.base) {
+            return false;
+        }
+        const auto& inputState = nodeState_.at(ref.base);
+        if (inputState.hasEvidence || inputState.needOutput) {
+            return false;
+        }
+        if (inputState.originalIsFact) {
+            if (activeIncomingCount(ref.base) != 0) {
+                return false;
+            }
+            const double p = factProbabilityOf(ref);
+            return !(p > 0.0 && p < 1.0) || activeSemanticInputCount(ref.base) == localOccurrences;
+        }
+        const double p = factProbabilityOf(ref);
+        return !(p > 0.0 && p < 1.0) && activeOutgoingCount(ref) == 1;
+    };
     bool changed = false;
     for (const auto edgeIndex : activeEdgeIds_) {
         auto& edge = edges_[edgeIndex];
@@ -540,16 +554,7 @@ bool ImplicitSplitOverlay::rewriteAllFactsPass(ImplicitSplitOverlayStats* stats)
         }
         bool allFacts = true;
         for (const auto& input : edge.inputs) {
-            if (!isFactRef(input)) {
-                allFacts = false;
-                break;
-            }
-            const auto& inputState = nodeState_.at(input.base);
-            if (inputState.hasEvidence) {
-                allFacts = false;
-                break;
-            }
-            if (activeOutgoingCount(input) != 1) {
+            if (!canAbsorbFactRef(input, 1)) {
                 allFacts = false;
                 break;
             }
@@ -584,6 +589,24 @@ bool ImplicitSplitOverlay::rewriteAllFactsPass(ImplicitSplitOverlayStats* stats)
 }
 
 bool ImplicitSplitOverlay::rewriteSingleHyperedgePass(ImplicitSplitOverlayStats* stats) {
+    auto canAbsorbFactRef = [&](const SplitNodeRef& ref, std::size_t localOccurrences) {
+        if (!isFactRef(ref) || !ref.base) {
+            return false;
+        }
+        const auto& inputState = nodeState_.at(ref.base);
+        if (inputState.hasEvidence || inputState.needOutput) {
+            return false;
+        }
+        if (inputState.originalIsFact) {
+            if (activeIncomingCount(ref.base) != 0) {
+                return false;
+            }
+            const double p = factProbabilityOf(ref);
+            return !(p > 0.0 && p < 1.0) || activeSemanticInputCount(ref.base) == localOccurrences;
+        }
+        const double p = factProbabilityOf(ref);
+        return !(p > 0.0 && p < 1.0) && activeOutgoingCount(ref) == 1;
+    };
     bool changed = false;
     for (auto& edge : edges_) {
         if (!edge.active || edge.inputs.size() <= 1 || !edge.output) {
@@ -597,12 +620,7 @@ bool ImplicitSplitOverlay::rewriteSingleHyperedgePass(ImplicitSplitOverlayStats*
         for (std::size_t i = 0; i < edge.inputs.size(); ++i) {
             const auto& input = edge.inputs[i];
             if (isFactRef(input)) {
-                const auto& inputState = nodeState_.at(input.base);
-                if (activeIncomingCount(input.base) != 0 || inputState.hasEvidence || inputState.needOutput) {
-                    invalid = true;
-                    break;
-                }
-                if (activeOutgoingCount(input) != 1) {
+                if (!canAbsorbFactRef(input, 1)) {
                     invalid = true;
                     break;
                 }
@@ -657,15 +675,21 @@ bool ImplicitSplitOverlay::rewriteSingleHyperedgePass(ImplicitSplitOverlayStats*
     return changed;
 }
 
-bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
-        bool enableSingleHyperedge, bool enableAllFacts, ImplicitSplitOverlayStats* stats) {
+bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge, bool enableLinearTwoEdge,
+        bool enableParallelEdge, bool enableFanOutConverge, bool enableAllFacts,
+        ImplicitSplitOverlayStats* stats) {
     struct FastPathCandidate {
         enum class Kind {
             SingleHyperedge,
+            LinearTwoEdge,
+            ParallelEdge,
+            FanOutConverge,
         };
 
         Kind kind;
         std::size_t edgeIndex = 0;
+        std::vector<std::size_t> edgeIndices;
+        SplitNodeRef entryRef{};
         std::vector<SplitNodeRef> internalNodes;
     };
 
@@ -698,8 +722,69 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
         return nodes;
     };
 
+    auto addUniqueNode = [](std::vector<SplitNodeRef>& nodes,
+                             std::unordered_set<SplitNodeRef, SplitNodeRefHash>& seen,
+                             const SplitNodeRef& ref) {
+        if (!ref.base) {
+            return;
+        }
+        if (seen.insert(ref).second) {
+            nodes.push_back(ref);
+        }
+    };
+
+    auto hasActivePath = [&](const NodePtr& from, const NodePtr& target) {
+        if (!from || !target) {
+            return false;
+        }
+        if (from == target) {
+            return true;
+        }
+        std::vector<NodePtr> worklist{from};
+        std::unordered_set<NodePtr> visited{from};
+        while (!worklist.empty()) {
+            NodePtr current = worklist.back();
+            worklist.pop_back();
+            const auto& outs = activeOutgoingEdges(SplitNodeRef{current, 0});
+            for (const auto edgeIndex : outs) {
+                if (edgeIndex >= edges_.size()) {
+                    continue;
+                }
+                const auto& edge = edges_[edgeIndex];
+                if (!edge.active || !edge.output) {
+                    continue;
+                }
+                if (edge.output == target) {
+                    return true;
+                }
+                if (visited.insert(edge.output).second) {
+                    worklist.push_back(edge.output);
+                }
+            }
+        }
+        return false;
+    };
+
     auto classifySingleHyperedge = [&](std::size_t edgeIndex, SplitNodeRef* siOut,
                                        bool* siNegatedOut) {
+        auto canAbsorbFactRef = [&](const SplitNodeRef& ref, std::size_t localOccurrences) {
+            if (!isFactRef(ref) || !ref.base) {
+                return false;
+            }
+            const auto& inputState = nodeState_.at(ref.base);
+            if (inputState.hasEvidence || inputState.needOutput) {
+                return false;
+            }
+            if (inputState.originalIsFact) {
+                if (activeIncomingCount(ref.base) != 0) {
+                    return false;
+                }
+                const double p = factProbabilityOf(ref);
+                return !(p > 0.0 && p < 1.0) || activeSemanticInputCount(ref.base) == localOccurrences;
+            }
+            const double p = factProbabilityOf(ref);
+            return !(p > 0.0 && p < 1.0) && activeOutgoingCount(ref) == 1;
+        };
         if (edgeIndex >= edges_.size()) {
             return false;
         }
@@ -715,12 +800,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
         for (std::size_t i = 0; i < edge.inputs.size(); ++i) {
             const auto& input = edge.inputs[i];
             if (isFactRef(input)) {
-                const auto& inputState = nodeState_.at(input.base);
-                if (activeIncomingCount(input.base) != 0 || inputState.hasEvidence || inputState.needOutput) {
-                    invalid = true;
-                    break;
-                }
-                if (activeOutgoingCount(input) != 1) {
+                if (!canAbsorbFactRef(input, 1)) {
                     invalid = true;
                     break;
                 }
@@ -738,11 +818,174 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
         if (invalid || !sawSi || factInputs == 0 || isFactRef(si) || !si.base || si.base == edge.output) {
             return false;
         }
+        if (hasActivePath(edge.output, si.base)) {
+            return false;
+        }
         if (siOut) {
             *siOut = si;
         }
         if (siNegatedOut) {
             *siNegatedOut = siNegated;
+        }
+        return true;
+    };
+
+    auto classifyLinearTwoEdge = [&](std::size_t edgeIndex, SplitNodeRef* entryOut, bool* entryNegatedOut,
+                                     NodePtr* midOut, std::size_t* nextEdgeOut) {
+        if (edgeIndex >= edges_.size()) {
+            return false;
+        }
+        const auto& edge1 = edges_[edgeIndex];
+        if (!edge1.active || edge1.inputs.size() != 1 || !edge1.output) {
+            return false;
+        }
+        if (edge1.negations.size() > 1) {
+            return false;
+        }
+        const SplitNodeRef entry = edge1.inputs[0];
+        NodePtr mid = edge1.output;
+        if (!entry.base || !mid || mid == entry.base) {
+            return false;
+        }
+        const auto& midState = nodeState_.at(mid);
+        if (midState.needOutput || midState.hasEvidence) {
+            return false;
+        }
+        const auto& incomingMid = activeIncomingEdges(mid);
+        if (incomingMid.size() != 1 || incomingMid[0] != edgeIndex) {
+            return false;
+        }
+        const SplitNodeRef midRef{mid, 0};
+        const auto& outgoingMid = activeOutgoingEdges(midRef);
+        if (outgoingMid.size() != 1) {
+            return false;
+        }
+        const std::size_t edge2Index = outgoingMid[0];
+        if (edge2Index >= edges_.size()) {
+            return false;
+        }
+        const auto& edge2 = edges_[edge2Index];
+        if (!edge2.active || edge2.inputs.size() != 1 || !(edge2.inputs[0] == midRef) || !edge2.output) {
+            return false;
+        }
+        if (edge2.negations.size() > 1 || (!edge2.negations.empty() && edge2.negations[0])) {
+            return false;
+        }
+        if (edge2.output == mid || edge2.output == entry.base) {
+            return false;
+        }
+        if (entryOut) {
+            *entryOut = entry;
+        }
+        if (entryNegatedOut) {
+            *entryNegatedOut = !edge1.negations.empty() && edge1.negations[0];
+        }
+        if (midOut) {
+            *midOut = mid;
+        }
+        if (nextEdgeOut) {
+            *nextEdgeOut = edge2Index;
+        }
+        return true;
+    };
+
+    struct FanOutConvergeInfo {
+        std::vector<std::size_t> fanEdges;
+        std::size_t convEdge = 0;
+        bool fanNegated = false;
+        bool mixedPolarity = false;
+        NodePtr exit = nullptr;
+        std::vector<SplitNodeRef> xiRefs;
+    };
+
+    auto classifyFanOutConverge = [&](const SplitNodeRef& entryRef, FanOutConvergeInfo* outInfo) {
+        if (!isFactRef(entryRef) || !entryRef.base) {
+            return false;
+        }
+        const auto& entryState = nodeState_.at(entryRef.base);
+        if (!entryState.originalIsFact || !entryState.currentIsFact || entryState.needOutput ||
+                entryState.hasEvidence) {
+            return false;
+        }
+        const auto& outs = activeOutgoingEdges(entryRef);
+        if (outs.size() < 2) {
+            return false;
+        }
+
+        FanOutConvergeInfo info;
+        std::unordered_set<NodePtr> xiSet;
+        bool fanNegInit = false;
+        std::size_t convEdgeIndex = std::numeric_limits<std::size_t>::max();
+        for (const auto edgeIndex : outs) {
+            if (edgeIndex >= edges_.size()) {
+                return false;
+            }
+            const auto& fanEdge = edges_[edgeIndex];
+            if (!fanEdge.active || fanEdge.inputs.size() != 1 || !(fanEdge.inputs[0] == entryRef) ||
+                    !fanEdge.output) {
+                return false;
+            }
+            const auto& xiState = nodeState_.at(fanEdge.output);
+            if (xiState.needOutput || xiState.hasEvidence) {
+                return false;
+            }
+            if (!xiSet.insert(fanEdge.output).second) {
+                return false;
+            }
+            const auto& incomingXi = activeIncomingEdges(fanEdge.output);
+            if (incomingXi.size() != 1 || incomingXi[0] != edgeIndex) {
+                return false;
+            }
+            const SplitNodeRef xiRef{fanEdge.output, 0};
+            const auto& outgoingXi = activeOutgoingEdges(xiRef);
+            if (outgoingXi.size() != 1) {
+                return false;
+            }
+            if (convEdgeIndex == std::numeric_limits<std::size_t>::max()) {
+                convEdgeIndex = outgoingXi[0];
+            } else if (convEdgeIndex != outgoingXi[0]) {
+                return false;
+            }
+            const bool neg = !fanEdge.negations.empty() && fanEdge.negations[0];
+            if (!fanNegInit) {
+                info.fanNegated = neg;
+                fanNegInit = true;
+            } else if (info.fanNegated != neg) {
+                info.mixedPolarity = true;
+            }
+            info.fanEdges.push_back(edgeIndex);
+            info.xiRefs.push_back(xiRef);
+        }
+
+        if (convEdgeIndex == std::numeric_limits<std::size_t>::max() || convEdgeIndex >= edges_.size()) {
+            return false;
+        }
+        const auto& convEdge = edges_[convEdgeIndex];
+        if (!convEdge.active || !convEdge.output || convEdge.inputs.size() != info.xiRefs.size()) {
+            return false;
+        }
+        if (convEdge.negations.size() > convEdge.inputs.size()) {
+            return false;
+        }
+        for (bool neg : convEdge.negations) {
+            if (neg) {
+                return false;
+            }
+        }
+        std::unordered_set<SplitNodeRef, SplitNodeRefHash> convInputs(convEdge.inputs.begin(), convEdge.inputs.end());
+        std::unordered_set<SplitNodeRef, SplitNodeRefHash> xiInputs(info.xiRefs.begin(), info.xiRefs.end());
+        if (convInputs != xiInputs || convEdge.output == entryRef.base) {
+            return false;
+        }
+        info.convEdge = convEdgeIndex;
+        info.exit = convEdge.output;
+        const double p = factProbabilityOf(entryRef);
+        if (p > 0.0 && p < 1.0 &&
+                activeSemanticInputCount(entryRef.base) != info.fanEdges.size()) {
+            return false;
+        }
+        if (outInfo) {
+            *outInfo = std::move(info);
         }
         return true;
     };
@@ -787,19 +1030,225 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
         return true;
     };
 
+    auto addSyntheticEdge = [&](const std::vector<SplitNodeRef>& inputs, const std::vector<bool>& negations,
+                                const NodePtr& output, double probability) {
+        if (!output || nearlyZero(probability)) {
+            return;
+        }
+        ImplicitSplitOverlayEdge newEdge;
+        newEdge.baseEdge = nullptr;
+        newEdge.inputs = inputs;
+        newEdge.negations = negations;
+        newEdge.output = output;
+        newEdge.probability = std::clamp(probability, 0.0, 1.0);
+        newEdge.deterministic = nearlyOne(newEdge.probability);
+        newEdge.active = true;
+        edges_.push_back(std::move(newEdge));
+        ++activeEdgeCount_;
+    };
+
+    auto applyLinearTwoEdge = [&](std::size_t edgeIndex) {
+        SplitNodeRef entry{};
+        bool entryNegated = false;
+        NodePtr mid = nullptr;
+        std::size_t edge2Index = 0;
+        if (!classifyLinearTwoEdge(edgeIndex, &entry, &entryNegated, &mid, &edge2Index)) {
+            return false;
+        }
+        auto& edge1 = edges_[edgeIndex];
+        auto& edge2 = edges_[edge2Index];
+        const double probability = std::clamp(edge1.probability, 0.0, 1.0) *
+                std::clamp(edge2.probability, 0.0, 1.0);
+        edge1.active = false;
+        edge2.active = false;
+        if (activeEdgeCount_ >= 2) {
+            activeEdgeCount_ -= 2;
+        } else {
+            activeEdgeCount_ = 0;
+        }
+        addSyntheticEdge({entry}, {entryNegated}, edge2.output, probability);
+        if (stats) {
+            ++stats->linearTwoEdgeRewrites;
+            stats->removedEdges += 2;
+        }
+        return true;
+    };
+
+    auto applyParallelEdges = [&](const std::vector<std::size_t>& edgeIndices) {
+        if (edgeIndices.size() < 2) {
+            return false;
+        }
+        SplitNodeRef entry{};
+        NodePtr output = nullptr;
+        bool negated = false;
+        bool negInit = false;
+        double prod = 1.0;
+        std::size_t validEdges = 0;
+        for (const auto edgeIndex : edgeIndices) {
+            if (edgeIndex >= edges_.size()) {
+                return false;
+            }
+            const auto& edge = edges_[edgeIndex];
+            if (!edge.active || edge.inputs.size() != 1 || !edge.output) {
+                return false;
+            }
+            if (!negInit) {
+                entry = edge.inputs[0];
+                output = edge.output;
+                negated = !edge.negations.empty() && edge.negations[0];
+                negInit = true;
+            } else if (!(edge.inputs[0] == entry) || edge.output != output ||
+                    (!edge.negations.empty() && edge.negations[0]) != negated) {
+                return false;
+            }
+            prod *= 1.0 - std::clamp(edge.probability, 0.0, 1.0);
+            ++validEdges;
+        }
+        if (validEdges < 2 || !entry.base || !output || output == entry.base) {
+            return false;
+        }
+        for (const auto edgeIndex : edgeIndices) {
+            edges_[edgeIndex].active = false;
+        }
+        if (activeEdgeCount_ >= validEdges) {
+            activeEdgeCount_ -= validEdges;
+        } else {
+            activeEdgeCount_ = 0;
+        }
+        addSyntheticEdge({entry}, {negated}, output, std::clamp(1.0 - prod, 0.0, 1.0));
+        if (stats) {
+            ++stats->parallelEdgeRewrites;
+            stats->removedEdges += validEdges;
+        }
+        return true;
+    };
+
+    auto applyFanOutConverge = [&](const SplitNodeRef& entryRef) {
+        FanOutConvergeInfo info;
+        if (!classifyFanOutConverge(entryRef, &info)) {
+            return false;
+        }
+        for (const auto edgeIndex : info.fanEdges) {
+            edges_[edgeIndex].active = false;
+        }
+        edges_[info.convEdge].active = false;
+        const std::size_t removed = info.fanEdges.size() + 1;
+        if (activeEdgeCount_ >= removed) {
+            activeEdgeCount_ -= removed;
+        } else {
+            activeEdgeCount_ = 0;
+        }
+
+        if (!info.mixedPolarity) {
+            double probability = std::clamp(edges_[info.convEdge].probability, 0.0, 1.0);
+            for (const auto edgeIndex : info.fanEdges) {
+                probability *= std::clamp(edges_[edgeIndex].probability, 0.0, 1.0);
+            }
+            addSyntheticEdge({entryRef}, {info.fanNegated}, info.exit, probability);
+        }
+        if (stats) {
+            ++stats->fanOutConvergeRewrites;
+            stats->removedEdges += removed;
+        }
+        return true;
+    };
+
     bool changedAny = false;
     while (true) {
         if (stats) {
             ++stats->fastPathIterations;
         }
         std::vector<FastPathCandidate> candidates;
+        candidates.reserve(activeEdgeIds_.size());
         if (enableSingleHyperedge) {
-            candidates.reserve(activeEdgeIds_.size());
             for (const auto edgeIndex : activeEdgeIds_) {
                 if (classifySingleHyperedge(edgeIndex, nullptr, nullptr)) {
                     candidates.push_back(FastPathCandidate{
-                            FastPathCandidate::Kind::SingleHyperedge, edgeIndex, collectInternalNodes(edgeIndex)});
+                            FastPathCandidate::Kind::SingleHyperedge,
+                            edgeIndex,
+                            {},
+                            {},
+                            collectInternalNodes(edgeIndex)});
                 }
+            }
+        }
+        if (enableLinearTwoEdge) {
+            for (const auto edgeIndex : activeEdgeIds_) {
+                SplitNodeRef entry{};
+                NodePtr mid = nullptr;
+                std::size_t edge2Index = 0;
+                if (!classifyLinearTwoEdge(edgeIndex, &entry, nullptr, &mid, &edge2Index)) {
+                    continue;
+                }
+                std::vector<SplitNodeRef> nodes;
+                std::unordered_set<SplitNodeRef, SplitNodeRefHash> seen;
+                addUniqueNode(nodes, seen, entry);
+                addUniqueNode(nodes, seen, SplitNodeRef{mid, 0});
+                addUniqueNode(nodes, seen, SplitNodeRef{edges_[edge2Index].output, 0});
+                candidates.push_back(FastPathCandidate{
+                        FastPathCandidate::Kind::LinearTwoEdge, edgeIndex, {}, entry, std::move(nodes)});
+            }
+        }
+        if (enableParallelEdge) {
+            for (const auto& [output, incoming] : activeIncomingEdgeIdsByNode_) {
+                struct ParallelKey {
+                    SplitNodeRef ref;
+                    bool negated = false;
+
+                    bool operator==(const ParallelKey& other) const {
+                        return ref == other.ref && negated == other.negated;
+                    }
+                };
+                struct ParallelKeyHash {
+                    std::size_t operator()(const ParallelKey& key) const {
+                        std::size_t h = SplitNodeRefHash{}(key.ref);
+                        return h ^ (std::hash<bool>{}(key.negated) + 0x9e3779b97f4a7c15ULL + (h << 6U) + (h >> 2U));
+                    }
+                };
+                std::unordered_map<ParallelKey, std::vector<std::size_t>, ParallelKeyHash> groups;
+                for (const auto edgeIndex : incoming) {
+                    if (edgeIndex >= edges_.size()) {
+                        continue;
+                    }
+                    const auto& edge = edges_[edgeIndex];
+                    if (!edge.active || edge.inputs.size() != 1 || !edge.output || edge.output != output) {
+                        continue;
+                    }
+                    groups[ParallelKey{edge.inputs[0], !edge.negations.empty() && edge.negations[0]}].push_back(
+                            edgeIndex);
+                }
+                for (auto& [key, groupEdges] : groups) {
+                    if (groupEdges.size() < 2 || !key.ref.base || output == key.ref.base) {
+                        continue;
+                    }
+                    candidates.push_back(FastPathCandidate{
+                            FastPathCandidate::Kind::ParallelEdge,
+                            0,
+                            groupEdges,
+                            key.ref,
+                            {key.ref, SplitNodeRef{output, 0}}});
+                }
+            }
+        }
+        if (enableFanOutConverge) {
+            for (const auto& ref : enumerateActiveFactRefs()) {
+                FanOutConvergeInfo info;
+                if (!classifyFanOutConverge(ref, &info)) {
+                    continue;
+                }
+                std::vector<SplitNodeRef> nodes;
+                std::unordered_set<SplitNodeRef, SplitNodeRefHash> seen;
+                addUniqueNode(nodes, seen, ref);
+                for (const auto& xiRef : info.xiRefs) {
+                    addUniqueNode(nodes, seen, xiRef);
+                }
+                addUniqueNode(nodes, seen, SplitNodeRef{info.exit, 0});
+                candidates.push_back(FastPathCandidate{
+                        FastPathCandidate::Kind::FanOutConverge,
+                        info.convEdge,
+                        info.fanEdges,
+                        ref,
+                        std::move(nodes)});
             }
         }
 
@@ -837,6 +1286,33 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(
                     const bool applied = applySingleHyperedge(candidate.edgeIndex);
                     if (stats) {
                         stats->fastPathSingleMs += elapsedMs(singleStart);
+                    }
+                    changed = applied || changed;
+                    break;
+                }
+                case FastPathCandidate::Kind::LinearTwoEdge: {
+                    const auto linearStart = Clock::now();
+                    const bool applied = applyLinearTwoEdge(candidate.edgeIndex);
+                    if (stats) {
+                        stats->fastPathLinearMs += elapsedMs(linearStart);
+                    }
+                    changed = applied || changed;
+                    break;
+                }
+                case FastPathCandidate::Kind::ParallelEdge: {
+                    const auto parallelStart = Clock::now();
+                    const bool applied = applyParallelEdges(candidate.edgeIndices);
+                    if (stats) {
+                        stats->fastPathParallelMs += elapsedMs(parallelStart);
+                    }
+                    changed = applied || changed;
+                    break;
+                }
+                case FastPathCandidate::Kind::FanOutConverge: {
+                    const auto fanStart = Clock::now();
+                    const bool applied = applyFanOutConverge(candidate.entryRef);
+                    if (stats) {
+                        stats->fastPathFanOutMs += elapsedMs(fanStart);
                     }
                     changed = applied || changed;
                     break;
@@ -1140,7 +1616,9 @@ MaterializedImplicitSplitGraph ImplicitSplitOverlay::materializeToGraph(
         const auto& state = nodeState_.at(base);
         NodePtr materialized = out.graph->createNode(base->getTuple(), state.factProbability);
         materialized->isFact = state.currentIsFact;
+        materialized->setOriginalFact(state.originalIsFact);
         materialized->setProbability(state.factProbability);
+        materialized->setSemanticFactId(base->getSemanticFactId());
         const bool skipOutput = skippedOutputNodes && skippedOutputNodes->count(base) > 0;
         if (state.needOutput && !skipOutput) {
             materialized->setQuery();
@@ -1168,7 +1646,9 @@ MaterializedImplicitSplitGraph ImplicitSplitOverlay::materializeToGraph(
         NodePtr shadow = out.graph->createNode(shadowTuple, factProbabilityOf(ref));
         shadow->isFact = true;
         shadow->isShadow = true;
+        shadow->setOriginalFact(nodeState_.at(ref.base).originalIsFact);
         shadow->setProbability(factProbabilityOf(ref));
+        shadow->setSemanticFactId(ref.base->getSemanticFactId());
         refNodeMap.emplace(ref, shadow);
         ++out.aliasNodes;
         return shadow;
@@ -1445,6 +1925,9 @@ void accumulateOverlayStats(ImplicitSplitOverlayStats& total, const ImplicitSpli
     total.edgesAliased += iter.edgesAliased;
     total.allFactsRewrites += iter.allFactsRewrites;
     total.singleHyperedgeRewrites += iter.singleHyperedgeRewrites;
+    total.linearTwoEdgeRewrites += iter.linearTwoEdgeRewrites;
+    total.parallelEdgeRewrites += iter.parallelEdgeRewrites;
+    total.fanOutConvergeRewrites += iter.fanOutConvergeRewrites;
     total.removedEdges += iter.removedEdges;
     total.factOutputsFolded += iter.factOutputsFolded;
     total.splitFactsConsidered += iter.splitFactsConsidered;
@@ -1460,6 +1943,9 @@ void accumulateOverlayStats(ImplicitSplitOverlayStats& total, const ImplicitSpli
     total.splitAliasApplyMs += iter.splitAliasApplyMs;
     total.rebuildIndexMs += iter.rebuildIndexMs;
     total.fastPathSingleMs += iter.fastPathSingleMs;
+    total.fastPathLinearMs += iter.fastPathLinearMs;
+    total.fastPathParallelMs += iter.fastPathParallelMs;
+    total.fastPathFanOutMs += iter.fastPathFanOutMs;
     total.fastPathAllFactsMs += iter.fastPathAllFactsMs;
 }
 
@@ -1479,7 +1965,9 @@ void runOverlayRounds(ImplicitSplitOverlay& overlay, const ImplicitSplitPipeline
         bool fastPathChanged = false;
         if (options.runOverlayFastPaths) {
             fastPathChanged = overlay.rewriteFastPathsToFixpoint(
-                    options.runOverlaySingleHyperedge, options.runOverlayAllFacts, &roundStats);
+                    options.runOverlaySingleHyperedge, options.runOverlayLinearTwoEdge,
+                    options.runOverlayParallelEdge, options.runOverlayFanOutConverge,
+                    options.runOverlayAllFacts, &roundStats);
         }
         const auto fastPathMs = elapsedMs(fastPathStart);
 
@@ -1825,6 +2313,9 @@ void printBenchmarkImplicitSummary(const ImplicitSplitPipelineResult& run, doubl
               << " overlay_edges_aliased=" << stats.overlayStats.edgesAliased
               << " overlay_all_facts=" << stats.overlayStats.allFactsRewrites
               << " overlay_single=" << stats.overlayStats.singleHyperedgeRewrites
+              << " overlay_linear=" << stats.overlayStats.linearTwoEdgeRewrites
+              << " overlay_parallel=" << stats.overlayStats.parallelEdgeRewrites
+              << " overlay_fan_out=" << stats.overlayStats.fanOutConvergeRewrites
               << " split_facts=" << stats.overlayStats.splitFactsConsidered
               << " split_facts_aliased=" << stats.overlayStats.splitFactsAliased
               << " split_cache_hits=" << stats.overlayStats.splitFactsCacheHits
@@ -1854,10 +2345,12 @@ void printBenchmarkImplicitSummary(const ImplicitSplitPipelineResult& run, doubl
 
     auto countSemanticRandomVarsInView = [](const IncrementalDerivationGraphViewInterface& view) {
         std::size_t out = 0;
+        std::unordered_set<std::size_t> seenFacts;
         for (const auto& node : view.getNodes()) {
             if (node && node->isFact) {
                 const double p = node->getProbability();
-                if (p > 0.0 && p < 1.0) {
+                if (p > 0.0 && p < 1.0 &&
+                        seenFacts.insert(canonicalFactIdForGraphNode(node)).second) {
                     ++out;
                 }
             }
@@ -1874,10 +2367,12 @@ void printBenchmarkImplicitSummary(const ImplicitSplitPipelineResult& run, doubl
     };
     auto countSemanticRandomVarsInComp = [](const ComponentSubgraph& comp) {
         std::size_t out = 0;
+        std::unordered_set<std::size_t> seenFacts;
         for (const auto& node : comp.nodes) {
             if (node && node->isFact) {
                 const double p = node->getProbability();
-                if (p > 0.0 && p < 1.0) {
+                if (p > 0.0 && p < 1.0 &&
+                        seenFacts.insert(canonicalFactIdForGraphNode(node)).second) {
                     ++out;
                 }
             }
@@ -1993,9 +2488,9 @@ enum class ExpectedPattern {
     None,
     OverlayAllFacts,
     OverlaySingleHyperedge,
-    MaterializedLinearTwoEdge,
-    MaterializedParallelEdge,
-    MaterializedFanOutConverge,
+    OverlayLinearTwoEdge,
+    OverlayParallelEdge,
+    OverlayFanOutConverge,
 };
 
 struct ExampleCase {
@@ -2079,17 +2574,21 @@ std::pair<std::vector<OverlayOutputProbability>, ImplicitSplitPipelineStats> run
     return {result.outputProbabilities, result.stats};
 }
 
+NodePtr makeSmokeFact(IncrementalDerivationGraph& graph, const UntypedTuple& tuple, double probability) {
+    NodePtr fact = graph.createNode(tuple, probability);
+    fact->isFact = true;
+    fact->setOriginalFact(true);
+    return fact;
+}
+
 std::vector<ExampleCase> buildExamples() {
     return {
             ExampleCase{
                     "disjoint_all_facts",
                     [](IncrementalDerivationGraph& graph, std::vector<NodePtr>& outputs) {
-                        NodePtr f = graph.createNode(UntypedTuple{"f", {1}}, 0.4);
-                        f->isFact = true;
-                        NodePtr g = graph.createNode(UntypedTuple{"g", {1}}, 0.7);
-                        g->isFact = true;
-                        NodePtr h = graph.createNode(UntypedTuple{"h", {1}}, 0.9);
-                        h->isFact = true;
+                        NodePtr f = makeSmokeFact(graph, UntypedTuple{"f", {1}}, 0.4);
+                        NodePtr g = makeSmokeFact(graph, UntypedTuple{"g", {1}}, 0.7);
+                        NodePtr h = makeSmokeFact(graph, UntypedTuple{"h", {1}}, 0.9);
                         NodePtr q1 = graph.createNode(UntypedTuple{"q1", {1}}, 1.0);
                         NodePtr q2 = graph.createNode(UntypedTuple{"q2", {1}}, 1.0);
                         q1->setQuery();
@@ -2099,13 +2598,25 @@ std::vector<ExampleCase> buildExamples() {
                         outputs = {q1, q2};
                     },
                     true,
+                    ExpectedPattern::None,
+            },
+            ExampleCase{
+                    "all_facts_single_region",
+                    [](IncrementalDerivationGraph& graph, std::vector<NodePtr>& outputs) {
+                        NodePtr a = makeSmokeFact(graph, UntypedTuple{"af", {1}}, 0.4);
+                        NodePtr b = makeSmokeFact(graph, UntypedTuple{"bf", {1}}, 0.7);
+                        NodePtr q = graph.createNode(UntypedTuple{"aq", {1}}, 1.0);
+                        q->setQuery();
+                        graph.createHyperedge({a, b}, q);
+                        outputs = {q};
+                    },
+                    false,
                     ExpectedPattern::OverlayAllFacts,
             },
             ExampleCase{
                     "fanout_reconverge_no_split",
                     [](IncrementalDerivationGraph& graph, std::vector<NodePtr>& outputs) {
-                        NodePtr f = graph.createNode(UntypedTuple{"f", {1}}, 0.35);
-                        f->isFact = true;
+                        NodePtr f = makeSmokeFact(graph, UntypedTuple{"f", {1}}, 0.35);
                         NodePtr a = graph.createNode(UntypedTuple{"a", {1}}, 1.0);
                         NodePtr b = graph.createNode(UntypedTuple{"b", {1}}, 1.0);
                         NodePtr q = graph.createNode(UntypedTuple{"q", {1}}, 1.0);
@@ -2121,16 +2632,11 @@ std::vector<ExampleCase> buildExamples() {
             ExampleCase{
                     "split_single_hyperedge",
                     [](IncrementalDerivationGraph& graph, std::vector<NodePtr>& outputs) {
-                        NodePtr f = graph.createNode(UntypedTuple{"f", {1}}, 0.4);
-                        f->isFact = true;
-                        NodePtr u = graph.createNode(UntypedTuple{"u", {1}}, 0.3);
-                        u->isFact = true;
-                        NodePtr v = graph.createNode(UntypedTuple{"v", {1}}, 0.5);
-                        v->isFact = true;
-                        NodePtr w = graph.createNode(UntypedTuple{"w", {1}}, 0.6);
-                        w->isFact = true;
-                        NodePtr x = graph.createNode(UntypedTuple{"x", {1}}, 0.2);
-                        x->isFact = true;
+                        NodePtr f = makeSmokeFact(graph, UntypedTuple{"f", {1}}, 1.0);
+                        NodePtr u = makeSmokeFact(graph, UntypedTuple{"u", {1}}, 0.3);
+                        NodePtr v = makeSmokeFact(graph, UntypedTuple{"v", {1}}, 0.5);
+                        NodePtr w = makeSmokeFact(graph, UntypedTuple{"w", {1}}, 0.6);
+                        NodePtr x = makeSmokeFact(graph, UntypedTuple{"x", {1}}, 0.2);
 
                         NodePtr a = graph.createNode(UntypedTuple{"a", {1}}, 1.0);
                         NodePtr b = graph.createNode(UntypedTuple{"b", {1}}, 1.0);
@@ -2153,8 +2659,7 @@ std::vector<ExampleCase> buildExamples() {
             ExampleCase{
                     "linear_two_edge",
                     [](IncrementalDerivationGraph& graph, std::vector<NodePtr>& outputs) {
-                        NodePtr f = graph.createNode(UntypedTuple{"lf", {1}}, 0.4);
-                        f->isFact = true;
+                        NodePtr f = makeSmokeFact(graph, UntypedTuple{"lf", {1}}, 0.4);
                         f->setEvidence(true);
                         NodePtr mid = graph.createNode(UntypedTuple{"lmid", {1}}, 1.0);
                         NodePtr q = graph.createNode(UntypedTuple{"lq", {1}}, 1.0);
@@ -2167,13 +2672,12 @@ std::vector<ExampleCase> buildExamples() {
                         outputs = {q};
                     },
                     false,
-                    ExpectedPattern::MaterializedLinearTwoEdge,
+                    ExpectedPattern::OverlayLinearTwoEdge,
             },
             ExampleCase{
                     "parallel_edge",
                     [](IncrementalDerivationGraph& graph, std::vector<NodePtr>& outputs) {
-                        NodePtr f = graph.createNode(UntypedTuple{"pf", {1}}, 0.5);
-                        f->isFact = true;
+                        NodePtr f = makeSmokeFact(graph, UntypedTuple{"pf", {1}}, 0.5);
                         NodePtr q = graph.createNode(UntypedTuple{"pq", {1}}, 1.0);
                         q->setQuery();
                         EdgePtr e1 = graph.createHyperedge({f}, q);
@@ -2184,13 +2688,12 @@ std::vector<ExampleCase> buildExamples() {
                         outputs = {q};
                     },
                     false,
-                    ExpectedPattern::MaterializedParallelEdge,
+                    ExpectedPattern::OverlayParallelEdge,
             },
             ExampleCase{
                     "fan_out_converge",
                     [](IncrementalDerivationGraph& graph, std::vector<NodePtr>& outputs) {
-                        NodePtr f = graph.createNode(UntypedTuple{"ff", {1}}, 0.5);
-                        f->isFact = true;
+                        NodePtr f = makeSmokeFact(graph, UntypedTuple{"ff", {1}}, 0.5);
                         NodePtr a = graph.createNode(UntypedTuple{"fa", {1}}, 1.0);
                         NodePtr b = graph.createNode(UntypedTuple{"fb", {1}}, 1.0);
                         NodePtr q = graph.createNode(UntypedTuple{"fq", {1}}, 1.0);
@@ -2205,7 +2708,7 @@ std::vector<ExampleCase> buildExamples() {
                         outputs = {q};
                     },
                     false,
-                    ExpectedPattern::MaterializedFanOutConverge,
+                    ExpectedPattern::OverlayFanOutConverge,
             },
     };
 }
@@ -2248,17 +2751,17 @@ int souffle::problog::runImplicitSplitSmokeMain() {
                 require(implicitStats.overlayStats.singleHyperedgeRewrites > 0,
                         ex.name + ": expected overlay single-hyperedge rewrite");
                 break;
-            case ExpectedPattern::MaterializedLinearTwoEdge:
-                require(implicitStats.materializedDetectedBefore.linearTwoEdge > 0,
-                        ex.name + ": expected materialized linear-two-edge support");
+            case ExpectedPattern::OverlayLinearTwoEdge:
+                require(implicitStats.overlayStats.linearTwoEdgeRewrites > 0,
+                        ex.name + ": expected overlay linear-two-edge rewrite");
                 break;
-            case ExpectedPattern::MaterializedParallelEdge:
-                require(implicitStats.materializedDetectedBefore.parallelEdge > 0,
-                        ex.name + ": expected materialized parallel-edge support");
+            case ExpectedPattern::OverlayParallelEdge:
+                require(implicitStats.overlayStats.parallelEdgeRewrites > 0,
+                        ex.name + ": expected overlay parallel-edge rewrite");
                 break;
-            case ExpectedPattern::MaterializedFanOutConverge:
-                require(implicitStats.materializedDetectedBefore.fanOutConverge > 0,
-                        ex.name + ": expected materialized fan-out-converge support");
+            case ExpectedPattern::OverlayFanOutConverge:
+                require(implicitStats.overlayStats.fanOutConvergeRewrites > 0,
+                        ex.name + ": expected overlay fan-out-converge rewrite");
                 break;
             case ExpectedPattern::None:
                 break;
@@ -2269,6 +2772,9 @@ int souffle::problog::runImplicitSplitSmokeMain() {
                       << " implicit_aliases=" << implicitStats.overlayStats.aliasesCreated
                       << " implicit_all_facts=" << implicitStats.overlayStats.allFactsRewrites
                       << " implicit_single=" << implicitStats.overlayStats.singleHyperedgeRewrites
+                      << " implicit_linear=" << implicitStats.overlayStats.linearTwoEdgeRewrites
+                      << " implicit_parallel=" << implicitStats.overlayStats.parallelEdgeRewrites
+                      << " implicit_fan_out=" << implicitStats.overlayStats.fanOutConvergeRewrites
                       << " detected_before=" << summarizeRewritePatternCounts(implicitStats.materializedDetectedBefore)
                       << "\n";
             std::cout << "  baseline  " << summarizeOverlayProbabilities(baseline) << "\n";

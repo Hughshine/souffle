@@ -179,6 +179,15 @@ public:
     int getVarIndex(const Node& node) override {
         auto it = nodeIndex_.find(&node);
         if (it != nodeIndex_.end()) return it->second;
+        const auto semanticId = node.getSemanticFactId();
+        if (node.isFact) {
+            auto itSemantic = factSemanticIndex_.find(semanticId);
+            if (itSemantic != factSemanticIndex_.end()) {
+                nodeIndex_[&node] = itSemantic->second;
+                ++factSemanticRefCount_[semanticId];
+                return itSemantic->second;
+            }
+        }
         int idx = -1;
         if (reuseVarIndexEnabled) {
             auto freeIt = freeNodeIndexByTuple_.find(node.getTuple());
@@ -194,15 +203,27 @@ public:
             idx = nextVarIndex_++;
         }
         nodeIndex_[&node] = idx;
+        if (node.isFact) {
+            factSemanticIndex_[semanticId] = idx;
+            ++factSemanticRefCount_[semanticId];
+        }
         return idx;
     }
 
     bool peekVarIndex(const Node& node, int& idx) const override {
         auto it = nodeIndex_.find(&node);
-        if (it == nodeIndex_.end()) {
+        if (it != nodeIndex_.end()) {
+            idx = it->second;
+            return true;
+        }
+        if (!node.isFact) {
             return false;
         }
-        idx = it->second;
+        auto itSemantic = factSemanticIndex_.find(node.getSemanticFactId());
+        if (itSemantic == factSemanticIndex_.end()) {
+            return false;
+        }
+        idx = itSemantic->second;
         return true;
     }
 
@@ -245,6 +266,11 @@ public:
             return;
         }
         dropFreeIndex(idx);
+        if (node.isFact && it == nodeIndex_.end()) {
+            const auto semanticId = node.getSemanticFactId();
+            factSemanticIndex_[semanticId] = idx;
+            ++factSemanticRefCount_[semanticId];
+        }
         nodeIndex_[&node] = idx;
         if (idx >= nextVarIndex_) {
             nextVarIndex_ = idx + 1;
@@ -276,14 +302,28 @@ public:
         }
         int idx = it->second;
         nodeIndex_.erase(it);
+        if (node.isFact) {
+            const auto semanticId = node.getSemanticFactId();
+            auto refIt = factSemanticRefCount_.find(semanticId);
+            if (refIt != factSemanticRefCount_.end()) {
+                if (refIt->second > 1) {
+                    --refIt->second;
+                    return;
+                }
+                factSemanticRefCount_.erase(refIt);
+                factSemanticIndex_.erase(semanticId);
+            }
+        }
         variableRegistry.erase(idx);
         if (weights.erase(idx) > 0) {
             ++weightsEpoch_;
         }
         dropFreeIndex(idx);
         freeIndices_.insert(idx);
-        freeNodeIndexByTuple_[node.getTuple()] = idx;
-        freeIndexToTuple_[idx] = node.getTuple();
+        if (!node.isShadow) {
+            freeNodeIndexByTuple_[node.getTuple()] = idx;
+            freeIndexToTuple_[idx] = node.getTuple();
+        }
     }
     void releaseVarIndex(const Hyperedge& edge) override {
         if (!reuseVarIndexEnabled) {
@@ -311,6 +351,8 @@ public:
     void reset() override {
         nodeIndex_.clear();
         edgeIndex_.clear();
+        factSemanticIndex_.clear();
+        factSemanticRefCount_.clear();
         nextVarIndex_ = 0;
         freeIndices_.clear();
         freeNodeIndexByTuple_.clear();
@@ -333,6 +375,8 @@ public:
     void resetHard() override {
         nodeIndex_.clear();
         edgeIndex_.clear();
+        factSemanticIndex_.clear();
+        factSemanticRefCount_.clear();
         nextVarIndex_ = 0;
         freeIndices_.clear();
         freeNodeIndexByTuple_.clear();
@@ -357,6 +401,8 @@ public:
     Debugger& debugger = Debugger::getInstance();
     int nextVarIndex_ = 0;
     std::unordered_map<const Node*, int> nodeIndex_;
+    std::unordered_map<std::size_t, int> factSemanticIndex_;
+    std::unordered_map<std::size_t, std::size_t> factSemanticRefCount_;
     std::unordered_map<const Hyperedge*, int> edgeIndex_;
     std::unordered_set<int> freeIndices_;
     std::unordered_map<UntypedTuple, int> freeNodeIndexByTuple_;
@@ -430,7 +476,12 @@ public:
                 incView != nullptr &&
                 (!incView->getDeltaInsertNodes().empty() || !incView->getDeltaInsertEdges().empty() ||
                         !incView->getDeltaDeleteNodes().empty() || !incView->getDeltaDeleteEdges().empty());
-        const bool disableReorder = incView != nullptr && hasDelta && !incReorderEnabled;
+        const char* disableReorderEnv = std::getenv("SOUFFLE_CUDD_DISABLE_REORDER");
+        const bool disableReorderByEnv = disableReorderEnv != nullptr &&
+                (std::string(disableReorderEnv) == "1" || std::string(disableReorderEnv) == "true" ||
+                        std::string(disableReorderEnv) == "TRUE");
+        const bool disableReorder =
+                disableReorderByEnv || (incView != nullptr && hasDelta && !incReorderEnabled);
         if (disableReorder) {
             Cudd_AutodynDisable(manager.get());
             currentReorderingType = CUDD_REORDER_SAME;

@@ -53,12 +53,24 @@ Pick the smallest set of checks that match your change:
   - det-opt/default-on and `--no-det-opt` with incremental/full mode combinations
   - rewrite split-mode equivalence
   - dirty-frontier rewrite detection vs forced full-detect equivalence
+  - canonical compiler/runtime/online-CLI flag surfaces
+  - standalone graph-query exact replay and canonical parser validation
+  - benchmark-derived side-channel full/inc compile-run workflows, including
+    `.csv` relation-output checks on the maintained full rewrite case
+  - `--scbf --rewrite` lane telemetry on a maintained smoke case
+  - staged taint pipeline compile/run reliability
+  - staged data-race pipeline smoke coverage
   - dump/log artifact contracts
 - The regression runner always compiles with the repo-built binary passed from
   CMake (`$<TARGET_FILE:souffle>`), avoiding accidental `/usr/local/bin/souffle`.
 - Regression inputs are organized under `tests/regression/cases/`:
   - static `compute.dl` + `input/*.facts/*.prob` by default
   - optional per-case `generate.py` for larger derived inputs
+- CI runs the same maintained regression label, so benchmark-derived stage
+  pipeline cases under `tests/regression/` are part of the normal regression
+  gate as long as they are registered in `tests/regression/CMakeLists.txt`.
+  These cases intentionally shrink input size while keeping representative
+  semantic structure and stage ordering.
 
 ## Legacy/Experimental Tests
 - Historical legacy suites were removed; use `docs/historical/` notes for past workflows.
@@ -67,4 +79,6 @@ Pick the smallest set of checks that match your change:
 - `UNCOMMITTED` — test(regression): add maintained CTest regression workflow
 - `UNCOMMITTED` — docs(testing): add dedicated regression runbook under docs/topics/testing
 - `UNCOMMITTED` — docs(testing): document regression labels and cmake targets
+- `UNCOMMITTED` — test(regression): add canonical flag and graph-query maintained coverage
+- `UNCOMMITTED` — test(regression): add benchmark-derived side-channel, taint, and data-race stage coverage
 - `aaa18c137` — docs(repo): add core docs
