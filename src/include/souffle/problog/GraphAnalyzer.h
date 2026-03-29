@@ -149,18 +149,162 @@ private:
         size_t fanOutConvergeCount  = 0;
     };
 
-    // Fast-path detectors (<=2 edges)
+    struct DetectionFrontier {
+        NodeSet nodes;
+        EdgeSet edges;
+    };
+
+    static bool isNodeInView(const DerivationGraphViewInterface& g, NodePtr n) {
+        return n && g.getNodes().count(n) > 0;
+    }
+
+    static bool isEdgeInView(const DerivationGraphViewInterface& g, EdgePtr e) {
+        return e && g.getEdges().count(e) > 0;
+    }
+
+    static void addEdgeEndpoints(const DerivationGraphViewInterface& g, EdgePtr e, NodeSet& nodes) {
+        if (!isEdgeInView(g, e)) return;
+        NodePtr out = g.getOutput(e);
+        if (isNodeInView(g, out)) {
+            nodes.insert(out);
+        }
+        for (auto in : g.getInputs(e)) {
+            if (isNodeInView(g, in)) {
+                nodes.insert(in);
+            }
+        }
+    }
+
+    static DetectionFrontier buildDetectionFrontier(
+            const DerivationGraphViewInterface& g,
+            const NodeSet& dirtyNodes,
+            const EdgeSet& dirtyEdges) {
+        DetectionFrontier frontier;
+
+        for (auto n : dirtyNodes) {
+            if (isNodeInView(g, n)) {
+                frontier.nodes.insert(n);
+            }
+        }
+        for (auto e : dirtyEdges) {
+            if (!isEdgeInView(g, e)) continue;
+            frontier.edges.insert(e);
+        }
+        for (auto e : frontier.edges) {
+            addEdgeEndpoints(g, e, frontier.nodes);
+        }
+
+        // Two-hop expansion around dirty seeds to capture local pattern changes:
+        // edge-local rewrites, SO-grouping, and small chain updates.
+        constexpr int kExpandRounds = 2;
+        for (int round = 0; round < kExpandRounds; ++round) {
+            std::vector<NodePtr> nodeSnapshot(frontier.nodes.begin(), frontier.nodes.end());
+            for (auto n : nodeSnapshot) {
+                if (!isNodeInView(g, n)) continue;
+                for (auto inEdge : g.getIncomingEdges(n)) {
+                    if (!isEdgeInView(g, inEdge)) continue;
+                    frontier.edges.insert(inEdge);
+                    addEdgeEndpoints(g, inEdge, frontier.nodes);
+                }
+                for (auto outEdge : g.getOutgoingEdges(n)) {
+                    if (!isEdgeInView(g, outEdge)) continue;
+                    frontier.edges.insert(outEdge);
+                    addEdgeEndpoints(g, outEdge, frontier.nodes);
+                }
+            }
+        }
+
+        return frontier;
+    }
+
+    struct SemanticFactUseStats {
+        std::unordered_map<std::size_t, std::size_t> inputOccurrences;
+        std::unordered_map<std::size_t, std::size_t> pinnedNodes;
+    };
+
+    static bool isProbabilisticFact(const NodePtr& node) {
+        return node && node->isFact && node->getProbability() > 0.0 && node->getProbability() < 1.0;
+    }
+
+    static SemanticFactUseStats buildSemanticFactUseStats(const DerivationGraphViewInterface& g) {
+        SemanticFactUseStats stats;
+        for (auto node : g.getNodes()) {
+            if (!isProbabilisticFact(node)) continue;
+            if (node->needOutput || node->hasEvidence()) {
+                ++stats.pinnedNodes[node->getSemanticFactId()];
+            }
+        }
+        for (auto edge : g.getEdges()) {
+            if (!isEdgeInView(g, edge)) continue;
+            for (auto input : g.getInputs(edge)) {
+                if (!isProbabilisticFact(input)) continue;
+                ++stats.inputOccurrences[input->getSemanticFactId()];
+            }
+        }
+        return stats;
+    }
+
+    static bool canAbsorbFactLiteral(const DerivationGraphViewInterface& g, NodePtr node,
+            const SemanticFactUseStats& semanticStats, std::size_t localOccurrences = 1) {
+        if (!node || !node->isFact || node->hasEvidence() || node->needOutput) {
+            return false;
+        }
+        if (!g.getIncomingEdges(node).empty()) {
+            return false;
+        }
+        if (!isProbabilisticFact(node)) {
+            return true;
+        }
+        if (!node->isOriginalFactNode()) {
+            return false;
+        }
+        const auto semanticId = node->getSemanticFactId();
+        auto pinnedIt = semanticStats.pinnedNodes.find(semanticId);
+        if (pinnedIt != semanticStats.pinnedNodes.end() && pinnedIt->second > 0) {
+            return false;
+        }
+        auto occIt = semanticStats.inputOccurrences.find(semanticId);
+        return occIt != semanticStats.inputOccurrences.end() && occIt->second == localOccurrences;
+    }
+
+    // Fast-path detectors (<=2 edges).
+    // If candidate sets are provided, scanning is restricted to that local frontier.
     static std::vector<SISORegionInfo> detectFastPathRegions(
-            const DerivationGraphViewInterface& g, FastPathDetectStats* stats = nullptr) {
+            const DerivationGraphViewInterface& g,
+            FastPathDetectStats* stats = nullptr,
+            const EdgeSet* candidateEdges = nullptr,
+            const NodeSet* candidateNodes = nullptr) {
         std::vector<SISORegionInfo> regions;
         bool debug = std::getenv("SOUFFLE_SISO_FAST_DEBUG") != nullptr;
-        auto isBlockedFact = [](NodePtr n) {
-            return !n || !n->isFact || n->hasEvidence() || n->needOutput;
-        };
+        std::vector<EdgePtr> edgeScan;
+        std::vector<NodePtr> nodeScan;
+        if (candidateEdges) {
+            edgeScan.reserve(candidateEdges->size());
+            for (auto e : *candidateEdges) {
+                if (isEdgeInView(g, e)) edgeScan.push_back(e);
+            }
+        } else {
+            edgeScan.reserve(g.getEdges().size());
+            for (auto e : g.getEdges()) {
+                if (e) edgeScan.push_back(e);
+            }
+        }
+        if (candidateNodes) {
+            nodeScan.reserve(candidateNodes->size());
+            for (auto n : *candidateNodes) {
+                if (isNodeInView(g, n)) nodeScan.push_back(n);
+            }
+        } else {
+            nodeScan.reserve(g.getNodes().size());
+            for (auto n : g.getNodes()) {
+                if (n) nodeScan.push_back(n);
+            }
+        }
+        const auto semanticFactStats = buildSemanticFactUseStats(g);
 
         // 1) Single hyperedge: one edge exit, inputs.size()>=1, exactly one non-fact (SI), others are input facts
         auto tSingleStart = std::chrono::steady_clock::now();
-        for (auto e : g.getEdges()) {
+        for (auto e : edgeScan) {
             if (!e) continue;
             auto inputs = g.getInputs(e);
             if (inputs.size() <= 1) {
@@ -180,19 +324,42 @@ private:
                 std::cout << "[siso-fast] edge " << e->getId() << " -> " << (exit ? exit->toString() : "null")
                           << " as single-hyperedge candidate" << std::endl;
             }
-            for (auto n : inputs) {
+            for (size_t idx = 0; idx < inputs.size(); ++idx) {
+                auto n = inputs[idx];
                 if (!n) {
                     invalid = true;
                     if (debug) std::cout << "  skip: null input\n";
                     break;
                 }
-                if (n->isFact && g.getIncomingEdges(n).empty() && !n->hasEvidence() && !n->needOutput) {
-                    auto outs = g.getOutgoingEdges(n);
-                    if (outs.size() != 1) {
+                if (n->isFact) {
+                    // Legacy single-hyperedge rewrite collapses absorbed literals into a
+                    // synthetic edge weight. That is semantics-preserving for deterministic
+                    // literals, but not for probabilistic literals under the current
+                    // edge-variable FC/WMC encoding, because shared support would be hidden
+                    // inside an edge weight rather than represented explicitly in the graph.
+                    if (isProbabilisticFact(n)) {
                         invalid = true;
                         if (debug) {
-                            std::cout << "  skip: fact input has " << outs.size()
-                                      << " outgoing edges (must be exactly 1)" << std::endl;
+                            std::cout << "  skip: probabilistic fact input cannot be absorbed into "
+                                         "single-hyperedge edge weight"
+                                      << std::endl;
+                        }
+                        break;
+                    }
+                    if (!canAbsorbFactLiteral(g, n, semanticFactStats, 1)) {
+                        invalid = true;
+                        if (debug) {
+                            std::cout << "  skip: fact input is not a semantic singleton literal"
+                                      << std::endl;
+                        }
+                        break;
+                    }
+                    const auto& support = n->getProbabilisticSupportTokens();
+                    if (!support.empty() && edgeInputHasSupportOverlap(g, e, idx, support)) {
+                        invalid = true;
+                        if (debug) {
+                            std::cout << "  skip: fact input has probabilistic support overlap"
+                                      << std::endl;
                         }
                         break;
                     }
@@ -240,7 +407,7 @@ private:
 
         // 3) Linear two-edge: entry->mid->exit, each edge single input
         auto tLinearStart = std::chrono::steady_clock::now();
-        for (auto e1 : g.getEdges()) {
+        for (auto e1 : edgeScan) {
             if (!e1) continue;
             auto in1 = g.getInputs(e1);
             if (in1.size() != 1) continue;
@@ -251,6 +418,9 @@ private:
             if (!entry || !mid) continue;
             if (entry == mid) continue;
             if (mid->hasEvidence() || mid->needOutput) continue;  // mid cannot be query/evidence
+            // Linear contraction deletes `mid`, so `mid` must be single-source from this edge.
+            auto midIn = g.getIncomingEdges(mid);
+            if (midIn.size() != 1 || midIn[0] != e1) continue;
             // mid should have exactly one outgoing edge for the chain
             auto midOut = g.getOutgoingEdges(mid);
             if (midOut.size() != 1) continue;
@@ -276,7 +446,7 @@ private:
         // 4) Parallel edges: same SI -> same SO, each edge has exactly one input.
         // Linear-time grouping by SO and then SI to avoid O(m^2).
         auto tParallelStart = std::chrono::steady_clock::now();
-        for (NodePtr so : g.getNodes()) {
+        for (NodePtr so : nodeScan) {
             if (!so) continue;
             auto incoming = g.getIncomingEdges(so);
             if (incoming.size() < 2) continue;  // need at least two edges to form parallel region
@@ -314,7 +484,7 @@ private:
 
         // 2) Fan-out converge (SI fact fan-out to xi, xi converge to SO via one multi-input edge)
         auto tFanStart = std::chrono::steady_clock::now();
-        for (NodePtr si : g.getNodes()) {
+        for (NodePtr si : nodeScan) {
             if (!si) continue;
             if (!si->isFact || si->hasEvidence() || si->needOutput) continue;
             auto outsSi = g.getOutgoingEdges(si);
@@ -364,6 +534,7 @@ private:
             }
             std::unordered_set<NodePtr> convInSet(convInputs.begin(), convInputs.end());
             if (convInSet != xiSet) continue;
+            if (!canAbsorbFactLiteral(g, si, semanticFactStats, fanEdges.size())) continue;
             NodePtr so = g.getOutput(conv);
             if (!so || so == si) continue;
             // build region: all fan edges + conv edge
@@ -382,7 +553,7 @@ private:
 
         // 2) All-facts single hyperedge: single edge with all fact inputs and inputs have no incoming edges.
         auto tAllFactsStart = std::chrono::steady_clock::now();
-        for (auto e : g.getEdges()) {
+        for (auto e : edgeScan) {
             if (!e) continue;
             auto inputs = g.getInputs(e);
             if (inputs.empty()) continue;
@@ -392,19 +563,27 @@ private:
                           << " as all-facts candidate" << std::endl;
             }
             bool allFacts = true;
-            for (auto n : inputs) {
-                if (!n || !n->isFact || n->hasEvidence()) {
+            for (size_t idx = 0; idx < inputs.size(); ++idx) {
+                auto n = inputs[idx];
+                if (!n || !n->isFact) {
                     allFacts = false;
                     if (debug) {
-                        std::cout << "  skip: input not pure fact or evidence" << std::endl;
+                        std::cout << "  skip: input is not a fact" << std::endl;
                     }
                     break;
                 }
-                auto outs = g.getOutgoingEdges(n);
-                if (outs.size() != 1 || outs[0] != e) {
+                if (!canAbsorbFactLiteral(g, n, semanticFactStats, 1)) {
                     allFacts = false;
                     if (debug) {
-                        std::cout << "  skip: input fact has outgoing edges not limited to this region" << std::endl;
+                        std::cout << "  skip: input fact is not a semantic singleton literal" << std::endl;
+                    }
+                    break;
+                }
+                const auto& support = n->getProbabilisticSupportTokens();
+                if (!support.empty() && edgeInputHasSupportOverlap(g, e, idx, support)) {
+                    allFacts = false;
+                    if (debug) {
+                        std::cout << "  skip: input fact overlaps with other support" << std::endl;
                     }
                     break;
                 }
@@ -1187,11 +1366,60 @@ public:
     }
 
     static inline std::vector<SISORegionInfo> detectAllSISOStrictFromExit(
-        const DerivationGraphViewInterface& g)
+        const DerivationGraphViewInterface& g,
+        const std::unordered_set<NodePtr>* dirtyNodes,
+        const std::unordered_set<EdgePtr>* dirtyEdges,
+        bool forceCompleteDetect = false)
     {
+        const char* dirtyEnv = std::getenv("SOUFFLE_SISO_DIRTY_DETECT");
+        const bool disableDirtyFromEnv = dirtyEnv && (std::string(dirtyEnv) == "0" ||
+                        std::string(dirtyEnv) == "false" || std::string(dirtyEnv) == "FALSE");
+        if (forceCompleteDetect || disableDirtyFromEnv) {
+            dirtyNodes = nullptr;
+            dirtyEdges = nullptr;
+        }
         auto t0 = std::chrono::steady_clock::now();
         FastPathDetectStats fastStats;
-        auto regions = detectFastPathRegions(g, &fastStats);
+        std::vector<SISORegionInfo> regions;
+        bool usedDirtyFrontier = false;
+        bool attemptedDirtyFrontier = false;
+        bool fallbackToFull = false;
+        size_t seedNodes = 0;
+        size_t seedEdges = 0;
+        size_t frontierNodes = 0;
+        size_t frontierEdges = 0;
+
+        if (dirtyNodes && dirtyEdges && (!dirtyNodes->empty() || !dirtyEdges->empty())) {
+            attemptedDirtyFrontier = true;
+            seedNodes = dirtyNodes->size();
+            seedEdges = dirtyEdges->size();
+            auto frontier = buildDetectionFrontier(g, *dirtyNodes, *dirtyEdges);
+            frontierNodes = frontier.nodes.size();
+            frontierEdges = frontier.edges.size();
+
+            const double nodeRatio = g.getNodes().empty()
+                                             ? 0.0
+                                             : static_cast<double>(frontierNodes) /
+                                                       static_cast<double>(g.getNodes().size());
+            const double edgeRatio = g.getEdges().empty()
+                                             ? 0.0
+                                             : static_cast<double>(frontierEdges) /
+                                                       static_cast<double>(g.getEdges().size());
+            // Dirty detection is only useful when frontier is materially smaller than full graph.
+            constexpr double kFallbackRatio = 0.60;
+            if (frontierNodes == 0 || frontierEdges == 0 ||
+                    nodeRatio > kFallbackRatio || edgeRatio > kFallbackRatio) {
+                fallbackToFull = true;
+            } else {
+                usedDirtyFrontier = true;
+                regions = detectFastPathRegions(g, &fastStats, &frontier.edges, &frontier.nodes);
+            }
+        }
+
+        if (!usedDirtyFrontier) {
+            regions = detectFastPathRegions(g, &fastStats);
+        }
+
         auto t1 = std::chrono::steady_clock::now();
         // Dedup: smaller regions first to avoid overlap.
         auto countKinds = [](const std::vector<SISORegionInfo>& vec) {
@@ -1250,6 +1478,12 @@ public:
         auto sortMs = std::chrono::duration_cast<std::chrono::milliseconds>(tSortEnd - tSortStart).count();
         auto filterMs = std::chrono::duration_cast<std::chrono::milliseconds>(tFilterEnd - tFilterStart).count();
 
+        std::cout << "[siso-detect] mode="
+                  << (attemptedDirtyFrontier ? "dirty-frontier" : "full")
+                  << " fallback=" << (fallbackToFull ? 1 : 0)
+                  << " seeds(nodes=" << seedNodes << ",edges=" << seedEdges << ")"
+                  << " frontier(nodes=" << frontierNodes << ",edges=" << frontierEdges << ")"
+                  << std::endl;
         std::cout << "[siso-detect] fast-path regions " << result.size()
                   << " (candidates=" << regions.size()
                   << ", single-hyperedge=" << keptByKind[0]
@@ -1277,6 +1511,13 @@ public:
                   << " kept=" << result.size()
                   << std::endl;
         return result;
+    }
+
+    static inline std::vector<SISORegionInfo> detectAllSISOStrictFromExit(
+        const DerivationGraphViewInterface& g,
+        bool forceCompleteDetect = false)
+    {
+        return detectAllSISOStrictFromExit(g, nullptr, nullptr, forceCompleteDetect);
     }
 
     // Output the full graph and highlight a SISO region with different colors.

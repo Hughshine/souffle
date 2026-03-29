@@ -63,7 +63,7 @@ static IncSubgraphView buildFullIncViewLocal(
     return IncSubgraphView(nodes, edges, {}, {}, {}, {});
 }
 
-static std::size_t precomputeIsolatedOutputFactsLocal(IncSubgraphView& view) {
+static std::size_t precomputeIsolatedOutputFactsLocal(SubgraphView& view) {
     std::size_t count = 0;
     for (const auto& node : view.getNodes()) {
         if (!node || !node->needOutput || !node->isFact || node->hasEvidence()) {
@@ -2108,7 +2108,8 @@ void runPipeline(
 
     debugger.startStage(StageKind::PRUNING_FULL);
     auto t2 = std::chrono::steady_clock::now();
-    auto view = graph->prune(program.getOutputRelations());
+    auto prunedView = graph->prune(program.getOutputRelations());
+    auto view = buildFullIncViewLocal(prunedView.getNodes(), prunedView.getEdges());
     auto t3 = std::chrono::steady_clock::now();
     std::cout << "[pipeline] pruning took "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
@@ -2256,7 +2257,6 @@ void runPipeline(
         } else {
             GraphRewriter rewriter;
             RewriteFeatureFlags rewriteFlags;
-            rewriteFlags.forceCompleteSisoDetect = opt.isForceCompleteSisoDetectEnabled();
             const auto& splitMode = opt.getSplitMode();
             if (splitMode == "no-split") {
                 rewriteFlags.splitMode = SplitMode::None;
@@ -2299,7 +2299,6 @@ void runPipeline(
         }
     } else if (opt.isRewriteEnabled() && opt.isDerivationOnly()) {
         std::cout << "[pipeline] derivation-only mode; skip rewrite" << std::endl;
-    }
     }
 
     if (program.getKnowledge() == souffle::Knowledge::BDD) {

@@ -22,7 +22,9 @@ prototypes.
 - Online compilation is the default; `--online` is optional.
 - The legacy `--inc` backend is removed.
 - No interpreter path; `souffle file.dl` defaults to compile-only `-o <basename>`.
-- Rewrite runs only in full-mode runs; if `--rewrite` is enabled, the incremental CLI is disabled after the full run.
+- Rewrite runs only in full-mode runs; if a rewrite mode is enabled, the incremental CLI is disabled after the full run.
+- `--rewrite` selects the explicit SISO rewrite pipeline.
+- `--implicit-rewrite` selects the implicit-split rewrite pipeline and also enables rewrite mode.
 - `--setmode full` maps to `full-hard`; `full-soft` is optional.
 
 ## Quickstart
@@ -75,9 +77,14 @@ See `docs/TESTING.md` for test status and alternative verification paths.
 ## FAQ / Common Issues
 - ctest fails: this fork intentionally disables `ctest`; see `docs/TESTING.md`.
 - Need rewrite or incremental details: start at `docs/INDEX.md`.
+- Need to understand the difference between explicit and implicit rewrite:
+  `--rewrite` is the legacy explicit pass, while `--implicit-rewrite` switches
+  the full pipeline to the implicit-split rewrite path used by the maintained
+  full artifact evaluation.
 - Commit hygiene: see `docs/process/README.git.md` for what to include and exclude.
 
 ## Related commits
+- `UNCOMMITTED` — docs(readme): clarify explicit vs implicit rewrite flags for full-artifact
 - `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack guide and link it from README
 - `UNCOMMITTED` — docs(repo): add project-level docs and move commit hygiene guide under docs/process
 - `812ea4081` — docs(repo): refine README narratives

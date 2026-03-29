@@ -31,6 +31,16 @@
 
 namespace souffle {
 
+inline std::string joinOutputPath(const std::string& dir, const std::string& filename) {
+    if (dir.empty()) {
+        return filename;
+    }
+    if (dir.back() == '/') {
+        return dir + filename;
+    }
+    return dir + "/" + filename;
+}
+
 /**
  * A utility class for parsing command line arguments within generated
  * query programs.

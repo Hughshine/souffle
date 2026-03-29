@@ -158,6 +158,7 @@ public:
     void logMessage(Level level, const std::string& message) const;
     void printReport(std::ostream& os);
     void printReportJson(std::ostream& os);
+    void dumpReportJsonToFile() const {}
 
 private:
     Debugger();

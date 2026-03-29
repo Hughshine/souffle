@@ -71,6 +71,7 @@ struct RewriteFeatureFlags {
     size_t splitMaxGroupsPerNode = 2;       ///< complete-split cap: max groups kept per node (incl. original)
     size_t splitMinGroupEdges = 1;          ///< complete-split threshold: min edges in a split group
     bool enableCleanupIsolated  = true;   ///< drop isolated fact/shadow nodes at end of iteration
+    bool forceCompleteSisoDetect = false; ///< force full-graph SISO detect (disable dirty-frontier detect)
 };
 
 /**
@@ -90,8 +91,8 @@ public:
     * @param debug   Legacy flag (ignored for output); use --dumpstat/--dumpdot instead.
     * @param flags   Feature switches controlling which SISO kinds / passes are enabled.
     */
-    GraphRewriteStats rewriteUntilFixpoint(DerivationGraph& graph,
-                                           SubgraphView& view,
+    GraphRewriteStats rewriteUntilFixpoint(IncrementalDerivationGraph& graph,
+                                           IncSubgraphView& view,
                                            bool debug = false,
                                            const RewriteFeatureFlags& flags = RewriteFeatureFlags{}) const {
         GraphRewriteStats stats;
@@ -117,14 +118,19 @@ public:
         bool firstRegionTiming = true;
 
         auto rewriteStart = std::chrono::steady_clock::now();
+        std::unordered_set<NodePtr> detectDirtyNodes;
+        std::unordered_set<EdgePtr> detectDirtyEdges;
+        bool hasDetectDirty = false;
 
-        auto runSplitPass = [&]() -> bool {
+        auto runSplitPass = [&](std::unordered_set<NodePtr>* splitDirtyNodes,
+                                std::unordered_set<EdgePtr>* splitDirtyEdges) -> bool {
             if (flags.splitMode == SplitMode::None) {
                 return false;
             }
             SplitStats splitStats = (flags.splitMode == SplitMode::Naive)
-                    ? splitFanoutNaive(graph, view, stats, evidenceAffectedNodes)
-                    : splitFanoutComplete(graph, view, stats, flags, evidenceAffectedNodes);
+                    ? splitFanoutNaive(graph, view, stats, evidenceAffectedNodes, splitDirtyNodes, splitDirtyEdges)
+                    : splitFanoutComplete(
+                              graph, view, stats, flags, evidenceAffectedNodes, splitDirtyNodes, splitDirtyEdges);
             std::cout << "[GraphRewriter]   split(" << splitModeToString(flags.splitMode)
                       << "): nodes=" << splitStats.nodesAdded
                       << " edges=" << splitStats.edgesRewritten
@@ -160,6 +166,43 @@ public:
             auto countBeforeStart = std::chrono::steady_clock::now();
             size_t iterRandomVarsBefore = countRandomVarsInView(view);
             double countBeforeMs = toMs(std::chrono::steady_clock::now() - countBeforeStart);
+            std::unordered_set<NodePtr> iterDirtyNodes;
+            std::unordered_set<EdgePtr> iterDirtyEdges;
+            auto markDirtyNode = [&](NodePtr n) {
+                if (n) iterDirtyNodes.insert(n);
+            };
+            auto markDirtyEdge = [&](EdgePtr e) {
+                if (e) iterDirtyEdges.insert(e);
+            };
+            auto markDirtyEdgeEndpoints = [&](EdgePtr e) {
+                if (!e) return;
+                markDirtyEdge(e);
+                markDirtyNode(e->getOutput());
+                for (auto in : e->getInputs()) {
+                    markDirtyNode(in);
+                }
+            };
+            auto markDirtyRegion = [&](const SISORegionInfo& region) {
+                markDirtyNode(region.entry);
+                markDirtyNode(region.exit);
+                for (auto n : region.internalNodes) {
+                    markDirtyNode(n);
+                }
+                for (auto e : region.internalEdges) {
+                    markDirtyEdgeEndpoints(e);
+                }
+            };
+            auto markDirtyAllFactsResult = [&](NodePtr exitNode) {
+                if (exitNode && view.getNodes().count(exitNode) > 0) {
+                    markDirtyNode(exitNode);
+                    for (auto inEdge : view.getIncomingEdges(exitNode)) {
+                        markDirtyEdgeEndpoints(inEdge);
+                    }
+                    for (auto outEdge : view.getOutgoingEdges(exitNode)) {
+                        markDirtyEdgeEndpoints(outEdge);
+                    }
+                }
+            };
 
             view.cachedSortedIncomingEdges.clear();
             double dumpBeforeDotMs = 0.0;
@@ -175,7 +218,11 @@ public:
                 }
             }
             auto detectStart = std::chrono::steady_clock::now();
-            auto regions = GraphAnalyzer::detectAllSISOStrictFromExit(view);
+            auto regions = hasDetectDirty
+                    ? GraphAnalyzer::detectAllSISOStrictFromExit(
+                              view, &detectDirtyNodes, &detectDirtyEdges, flags.forceCompleteSisoDetect)
+                    : GraphAnalyzer::detectAllSISOStrictFromExit(
+                              view, nullptr, nullptr, flags.forceCompleteSisoDetect);
             // Filter by enabled flags.
             if (!flags.enableSingleHyperedge || !flags.enableAllFactsToSO ||
                     !flags.enableLinearTwoEdge || !flags.enableParallelEdge ||
@@ -242,7 +289,15 @@ public:
                     std::cout << "[GraphRewriter] No SISO regions found; rewrite fixpoint at iteration "
                               << stats.numIterations << std::endl;
                 }
-                if (runSplitPass()) {
+                if (runSplitPass(&iterDirtyNodes, &iterDirtyEdges)) {
+                    hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
+                    if (hasDetectDirty) {
+                        detectDirtyNodes.swap(iterDirtyNodes);
+                        detectDirtyEdges.swap(iterDirtyEdges);
+                    } else {
+                        detectDirtyNodes.clear();
+                        detectDirtyEdges.clear();
+                    }
                     continue;
                 }
                 break;
@@ -290,6 +345,7 @@ public:
                         double p = edge->getProbability();
                         if (p < 0.0) p = 0.0;
                         if (p > 1.0) p = 1.0;
+                        std::vector<SupportToken> exitSupport = edge->getProbabilisticSupportTokens();
                         size_t regionRandomVars = 0;
                         if (p > 0.0 && p < 1.0) ++regionRandomVars;
                         for (size_t i = 0; i < inputs.size(); ++i) {
@@ -300,10 +356,13 @@ public:
                             if (np < 0.0) np = 0.0;
                             if (np > 1.0) np = 1.0;
                             p *= isNegated ? (1.0 - np) : np;
+                            exitSupport = mergeSupportTokenLists(
+                                    {&exitSupport, &n->getProbabilisticSupportTokens()});
                             if (np > 0.0 && np < 1.0) ++regionRandomVars;
                         }
                         exit->isFact = true;
                         exit->setProbability(p);
+                        exit->setProbabilisticSupportTokens(std::move(exitSupport));
 
                         auto& edges = view.mutableEdges();
                         auto& nodes = view.mutableNodes();
@@ -352,6 +411,7 @@ public:
                         if (dumpStats) {
                             // Fast-path all-facts debug logging elided to reduce overhead.
                         }
+                        markDirtyAllFactsResult(exit);
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
                         continue;
@@ -367,6 +427,8 @@ public:
                         double p = edge->getProbability();
                         if (p < 0.0) p = 0.0;
                         if (p > 1.0) p = 1.0;
+                        std::vector<SupportToken> newEdgeSupport =
+                                edge->getProbabilisticSupportTokens();
                         size_t regionRandomVars = 0;
                         if (p > 0.0 && p < 1.0) ++regionRandomVars;
                         for (size_t i = 0; i < inputs.size(); ++i) {
@@ -378,6 +440,8 @@ public:
                             if (np < 0.0) np = 0.0;
                             if (np > 1.0) np = 1.0;
                             p *= isNegated ? (1.0 - np) : np;
+                            newEdgeSupport = mergeSupportTokenLists(
+                                    {&newEdgeSupport, &n->getProbabilisticSupportTokens()});
                             if (np > 0.0 && np < 1.0) ++regionRandomVars;
                         }
                         std::vector<NodePtr> siInput = {region.entry};
@@ -395,6 +459,7 @@ public:
                             continue;
                         }
                         newEdge->setProbability(p);
+                        newEdge->setProbabilisticSupportTokens(std::move(newEdgeSupport));
 
                         auto& edges = view.mutableEdges();
                         auto& nodes = view.mutableNodes();
@@ -419,6 +484,8 @@ public:
                         if (dumpStats) {
                             // Fast-path single-hyperedge debug logging elided to reduce overhead.
                         }
+                        markDirtyRegion(region);
+                        markDirtyEdgeEndpoints(newEdge);
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
                         continue;
@@ -464,6 +531,9 @@ public:
                         if (p2 < 0.0) p2 = 0.0;
                         if (p2 > 1.0) p2 = 1.0;
                         double p = p1 * p2;
+                        std::vector<SupportToken> newEdgeSupport = mergeSupportTokenLists(
+                                {&intoMid->getProbabilisticSupportTokens(),
+                                        &outMid->getProbabilisticSupportTokens()});
                         size_t regionRandomVars = 0;
                         if (p1 > 0.0 && p1 < 1.0) ++regionRandomVars;
                         if (p2 > 0.0 && p2 < 1.0) ++regionRandomVars;
@@ -473,6 +543,7 @@ public:
                         EdgePtr newEdge = graph.createHyperedge(inputsNew, region.exit, nullptr, negsNew);
                         if (!newEdge) continue;
                         newEdge->setProbability(p);
+                        newEdge->setProbabilisticSupportTokens(std::move(newEdgeSupport));
 
                         auto& edges = view.mutableEdges();
                         auto& nodes = view.mutableNodes();
@@ -494,6 +565,8 @@ public:
                         if (dumpStats) {
                             // Fast-path linear-two-edge debug logging elided to reduce overhead.
                         }
+                        markDirtyRegion(region);
+                        markDirtyEdgeEndpoints(newEdge);
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
                         continue;
@@ -545,12 +618,19 @@ public:
                         double pEff = 1.0 - prod;
                         if (pEff < 0.0) pEff = 0.0;
                         if (pEff > 1.0) pEff = 1.0;
+                        std::vector<SupportToken> newEdgeSupport;
+                        for (auto e : region.internalEdges) {
+                            if (!e) continue;
+                            newEdgeSupport = mergeSupportTokenLists(
+                                    {&newEdgeSupport, &e->getProbabilisticSupportTokens()});
+                        }
 
                         std::vector<NodePtr> newInputs = {entryNode};
                         std::vector<bool> newNegs = {negFlag};
                         EdgePtr newEdge = graph.createHyperedge(newInputs, exitNode, nullptr, newNegs);
                         if (!newEdge) continue;
                         newEdge->setProbability(pEff);
+                        newEdge->setProbabilisticSupportTokens(std::move(newEdgeSupport));
 
                         auto& edges = view.mutableEdges();
                         size_t removedEdges = 0;
@@ -568,6 +648,8 @@ public:
                         if (dumpStats) {
                             // Fast-path parallel-edge debug logging elided to reduce overhead.
                         }
+                        markDirtyRegion(region);
+                        markDirtyEdgeEndpoints(newEdge);
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
                         continue;
@@ -640,6 +722,7 @@ public:
                             stats.numEdgesRemoved += removedEdges;
                             stats.numNodesRemoved += removedNodes;
                             view.invalidateCaches();
+                            markDirtyRegion(region);
                             ++rewrittenThisRound;
                             ++stats.numRegionsRewritten;
                             continue;
@@ -663,6 +746,15 @@ public:
                         if (pc > 1.0) pc = 1.0;
                         p *= pc;
                         if (pc > 0.0 && pc < 1.0) ++regionRandomVars;
+                        std::vector<SupportToken> entrySupport =
+                                entryNode->getProbabilisticSupportTokens();
+                        for (auto fe : fanEdges) {
+                            if (!fe) continue;
+                            entrySupport = mergeSupportTokenLists(
+                                    {&entrySupport, &fe->getProbabilisticSupportTokens()});
+                        }
+                        entrySupport = mergeSupportTokenLists(
+                                {&entrySupport, &convEdge->getProbabilisticSupportTokens()});
 
                         removeFanAndConv();
 
@@ -671,11 +763,13 @@ public:
                         EdgePtr newEdge = graph.createHyperedge(newInputs, exitNode, nullptr, newNeg);
                         if (newEdge) {
                             newEdge->setProbability(1.0);
+                            newEdge->clearProbabilisticSupportTokens();
                             edges.insert(newEdge);
                             stats.numEdgesAdded += 1;
                         }
                         entryNode->isFact = true;
                         entryNode->setProbability(p);
+                        entryNode->setProbabilisticSupportTokens(std::move(entrySupport));
 
                         stats.totalRandomVars += regionRandomVars;
                         stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
@@ -683,6 +777,10 @@ public:
                         stats.numNodesRemoved += removedNodes;
                         view.invalidateCaches();
 
+                        markDirtyRegion(region);
+                        if (newEdge) {
+                            markDirtyEdgeEndpoints(newEdge);
+                        }
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
                         continue;
@@ -808,6 +906,10 @@ public:
                               << ", kind=" << (isSimple ? "simple_fact" : "general")
                               << std::endl;
                 }
+                markDirtyRegion(region);
+                if (newEdge) {
+                    markDirtyEdgeEndpoints(newEdge);
+                }
                 ++rewrittenThisRound;
                 stats.totalRandomVars += regionRandomVars;
                 stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
@@ -835,61 +937,55 @@ public:
                 auto edgeListStart = std::chrono::steady_clock::now();
                 auto edgeList = view.getEdges();
                 edgeListMs = toMs(std::chrono::steady_clock::now() - edgeListStart);
+                const auto semanticFactStats = buildSemanticFactUseStats(view);
                 for (auto edge : edgeList) {
                     if (!edge) continue;
                     auto inputs = view.getInputs(edge);
                     if (inputs.empty()) continue;
                     std::vector<NodePtr> keepInputs;
-                    std::vector<NodePtr> factInputs;
+                    std::vector<bool> keepNegs;
                     auto negs = view.getBodyNegations(edge);
                     double p = edge->getProbability();
+                    std::vector<SupportToken> compactSupport =
+                            edge->getProbabilisticSupportTokens();
                     assertRewriteProbability(p, "edge compaction base edge id=" + std::to_string(edge->getId()));
                     bool changed = false;
                     for (size_t idx = 0; idx < inputs.size(); ++idx) {
                         auto n = inputs[idx];
                         if (!n) continue;
-                        if (n->isFact && !n->hasEvidence() && !n->needOutput) {
-                            // absorb only if fact has exactly one outgoing edge (this edge)
-                            auto outs = view.getOutgoingEdges(n);
-                            if (outs.size() != 1 || outs[0] != edge) {
-                                keepInputs.push_back(n);
-                                continue;
-                            }
+                        if (n->isFact && !isProbabilisticFactNode(n) &&
+                                canAbsorbFactLiteral(view, n, semanticFactStats, 1) &&
+                                !edgeInputHasSupportOverlap(view, edge, idx, n->getProbabilisticSupportTokens())) {
                             double np = n->getProbability();
                             assertRewriteProbability(np, "edge compaction input fact id=" + std::to_string(n->getId()));
                             bool isNeg = (idx < negs.size() ? negs[idx] : false);
                             p *= isNeg ? (1.0 - np) : np;
-                            factInputs.push_back(n);
+                            compactSupport = mergeSupportTokenLists(
+                                    {&compactSupport, &n->getProbabilisticSupportTokens()});
                             changed = true;
                         } else {
                             keepInputs.push_back(n);
+                            keepNegs.push_back(idx < negs.size() ? negs[idx] : false);
                         }
                     }
                     // If nothing to absorb or no non-fact inputs remain, skip.
                     if (!changed || keepInputs.empty()) continue;
 
-                    EdgePtr newEdge = graph.createHyperedge(keepInputs, edge->getOutput());
+                    EdgePtr newEdge = graph.createHyperedge(
+                            keepInputs, edge->getOutput(), nullptr, keepNegs, edge->getRuleApp());
                     if (!newEdge) continue;
                     assertRewriteProbability(p, "edge compaction new edge id=" + std::to_string(newEdge->getId()));
                     newEdge->setProbability(p);
+                    newEdge->setProbabilisticSupportTokens(std::move(compactSupport));
 
                     auto& edges = view.mutableEdges();
-                    auto& nodes = view.mutableNodes();
                     if (edges.erase(edge) > 0) {
                         ++compactRemovedEdges;
                     }
                     edges.insert(newEdge);
                     ++compactAddedEdges;
-
-                    // Remove fact inputs that became isolated.
-                    for (auto n : factInputs) {
-                        if (!n) continue;
-                        if (view.getIncomingEdges(n).empty() && view.getOutgoingEdges(n).empty()) {
-                            if (nodes.erase(n) > 0) {
-                                ++compactRemovedNodes;
-                            }
-                        }
-                    }
+                    markDirtyEdgeEndpoints(edge);
+                    markDirtyEdgeEndpoints(newEdge);
 
                     ++compactedEdges;
                 }
@@ -1013,10 +1109,27 @@ public:
                               << stats.numIterations << " (rewrite fixpoint reached in "
                               << iterMs << " ms)." << std::endl;
                 }
-                if (runSplitPass()) {
+                if (runSplitPass(&iterDirtyNodes, &iterDirtyEdges)) {
+                    hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
+                    if (hasDetectDirty) {
+                        detectDirtyNodes.swap(iterDirtyNodes);
+                        detectDirtyEdges.swap(iterDirtyEdges);
+                    } else {
+                        detectDirtyNodes.clear();
+                        detectDirtyEdges.clear();
+                    }
                     continue;
                 }
                 break;
+            }
+
+            hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
+            if (hasDetectDirty) {
+                detectDirtyNodes.swap(iterDirtyNodes);
+                detectDirtyEdges.swap(iterDirtyEdges);
+            } else {
+                detectDirtyNodes.clear();
+                detectDirtyEdges.clear();
             }
 
             stats.numRegionsRewritten += rewrittenThisRound;
@@ -1102,7 +1215,7 @@ private:
         return p > 0.0 && p < 1.0;
     }
 
-    std::unordered_set<NodePtr> collectEvidenceAffectedNodes(const SubgraphView& view) const {
+    std::unordered_set<NodePtr> collectEvidenceAffectedNodes(const IncSubgraphView& view) const {
         std::unordered_set<NodePtr> affected;
         auto& depGraph = view.getCycleDependencyGraph();
         size_t componentCount = depGraph.getComponentCount();
@@ -1124,7 +1237,7 @@ private:
         return affected;
     }
 
-    static NodePtr createShadowFact(DerivationGraph& graph, const NodePtr& fact,
+    static NodePtr createShadowFact(IncrementalDerivationGraph& graph, const NodePtr& fact,
             const EdgePtr& edgeHint) {
         if (!fact || !edgeHint) return nullptr;
         UntypedTuple shadowTuple;
@@ -1139,10 +1252,63 @@ private:
         shadow->isFact = true;
         shadow->needOutput = false;
         shadow->isShadow = true;
+        shadow->setOriginalFact(fact->isOriginalFactNode());
+        shadow->setSemanticFactId(fact->getSemanticFactId());
+        shadow->setProbabilisticSupportTokens(fact->getProbabilisticSupportTokens());
         return shadow;
     }
 
-    static bool canPrecomputeOutputFact(const SubgraphView& view, const NodePtr& node,
+    struct SemanticFactUseStats {
+        std::unordered_map<std::size_t, std::size_t> inputOccurrences;
+        std::unordered_map<std::size_t, std::size_t> pinnedNodes;
+    };
+
+    static bool isProbabilisticFactNode(const NodePtr& node) {
+        return node && node->isFact && node->getProbability() > 0.0 && node->getProbability() < 1.0;
+    }
+
+    static SemanticFactUseStats buildSemanticFactUseStats(const IncSubgraphView& view) {
+        SemanticFactUseStats stats;
+        for (auto node : view.getNodes()) {
+            if (!isProbabilisticFactNode(node)) continue;
+            if (node->needOutput || node->hasEvidence()) {
+                ++stats.pinnedNodes[node->getSemanticFactId()];
+            }
+        }
+        for (auto edge : view.getEdges()) {
+            if (!edge) continue;
+            for (auto input : view.getInputs(edge)) {
+                if (!isProbabilisticFactNode(input)) continue;
+                ++stats.inputOccurrences[input->getSemanticFactId()];
+            }
+        }
+        return stats;
+    }
+
+    static bool canAbsorbFactLiteral(const IncSubgraphView& view, const NodePtr& node,
+            const SemanticFactUseStats& semanticStats, std::size_t localOccurrences = 1) {
+        if (!node || !node->isFact || node->hasEvidence() || node->needOutput) {
+            return false;
+        }
+        if (!view.getIncomingEdges(node).empty()) {
+            return false;
+        }
+        if (!isProbabilisticFactNode(node)) {
+            return true;
+        }
+        if (!node->isOriginalFactNode()) {
+            return false;
+        }
+        const auto semanticId = node->getSemanticFactId();
+        auto pinnedIt = semanticStats.pinnedNodes.find(semanticId);
+        if (pinnedIt != semanticStats.pinnedNodes.end() && pinnedIt->second > 0) {
+            return false;
+        }
+        auto occIt = semanticStats.inputOccurrences.find(semanticId);
+        return occIt != semanticStats.inputOccurrences.end() && occIt->second == localOccurrences;
+    }
+
+    static bool canPrecomputeOutputFact(const IncSubgraphView& view, const NodePtr& node,
             const std::unordered_set<NodePtr>& evidenceAffectedNodes) {
         if (!node || !node->needOutput || !node->isFact) return false;
         if (node->hasEvidence()) return false;
@@ -1152,7 +1318,7 @@ private:
         return true;
     }
 
-    static size_t precomputeOutputFacts(SubgraphView& view,
+    static size_t precomputeOutputFacts(IncSubgraphView& view,
             const std::unordered_set<NodePtr>& evidenceAffectedNodes) {
         size_t count = 0;
         for (auto node : view.getNodes()) {
@@ -1167,9 +1333,11 @@ private:
         return count;
     }
 
-    SplitStats splitFanoutNaive(DerivationGraph& graph, SubgraphView& view,
+    SplitStats splitFanoutNaive(IncrementalDerivationGraph& graph, IncSubgraphView& view,
             GraphRewriteStats& stats,
-            const std::unordered_set<NodePtr>& evidenceAffectedNodes) const {
+            const std::unordered_set<NodePtr>& evidenceAffectedNodes,
+            std::unordered_set<NodePtr>* dirtyNodes = nullptr,
+            std::unordered_set<EdgePtr>* dirtyEdges = nullptr) const {
         SplitStats out;
         auto splitStart = std::chrono::steady_clock::now();
         constexpr size_t kMaxReachable = 50;
@@ -1177,7 +1345,7 @@ private:
         for (auto fact : nodesList) {
             if (!fact || !fact->isFact || fact->hasEvidence() || fact->needOutput) continue;
             if (evidenceAffectedNodes.count(fact)) continue;
-            auto outs = view.getOutgoingEdges(fact);
+            const auto& outs = view.getOutgoingEdges(fact);
             if (outs.size() < 2) continue;
 
             // Compute reachable sets for each outgoing edge's output.
@@ -1201,7 +1369,7 @@ private:
                 while (!q.empty()) {
                     NodePtr cur = q.front();
                     q.pop();
-                    auto nextEdges = view.getOutgoingEdges(cur);
+                    const auto& nextEdges = view.getOutgoingEdges(cur);
                     for (auto ne : nextEdges) {
                         if (!ne) continue;
                         NodePtr outNode = view.getOutput(ne);
@@ -1221,26 +1389,36 @@ private:
             }
             if (skipFact || reachSets.size() != outs.size()) continue;
 
-            // Identify branches disjoint from all others.
-            std::vector<size_t> independentIdx;
+            // Identify branches disjoint from all others by marking per-node branch ownership.
+            // This avoids O(k^2) pairwise set-intersection checks across branch reachability sets.
+            size_t totalReachableNodes = 0;
+            for (const auto& set : reachSets) {
+                totalReachableNodes += set.size();
+            }
+            std::unordered_map<NodePtr, int> nodeOwner;
+            nodeOwner.reserve(totalReachableNodes * 2 + 1);
+
+            std::vector<char> hasOverlap(reachSets.size(), 0);
             for (size_t i = 0; i < reachSets.size(); ++i) {
-                bool disjoint = true;
-                for (size_t j = 0; j < reachSets.size(); ++j) {
-                    if (i == j) continue;
-                    const auto& a = reachSets[i];
-                    const auto& b = reachSets[j];
-                    // Check intersection (iterate smaller set).
-                    const auto& small = (a.size() < b.size()) ? a : b;
-                    const auto& large = (a.size() < b.size()) ? b : a;
-                    for (auto n : small) {
-                        if (large.count(n)) {
-                            disjoint = false;
-                            break;
-                        }
+                for (auto n : reachSets[i]) {
+                    auto [it, inserted] = nodeOwner.emplace(n, static_cast<int>(i));
+                    if (inserted) continue;
+                    const int prevOwner = it->second;
+                    if (prevOwner == static_cast<int>(i)) continue;
+                    hasOverlap[i] = 1;
+                    if (prevOwner >= 0) {
+                        hasOverlap[static_cast<size_t>(prevOwner)] = 1;
+                        it->second = -1;
                     }
-                    if (!disjoint) break;
                 }
-                if (disjoint) independentIdx.push_back(i);
+            }
+
+            std::vector<size_t> independentIdx;
+            independentIdx.reserve(reachSets.size());
+            for (size_t i = 0; i < hasOverlap.size(); ++i) {
+                if (!hasOverlap[i]) {
+                    independentIdx.push_back(i);
+                }
             }
             if (independentIdx.empty()) continue;
 
@@ -1281,6 +1459,18 @@ private:
                 ++stats.numEdgesAdded;
                 nodes.insert(shadow);
                 ++out.nodesAdded;
+                if (dirtyNodes) {
+                    dirtyNodes->insert(fact);
+                    dirtyNodes->insert(shadow);
+                    dirtyNodes->insert(edge->getOutput());
+                    dirtyNodes->insert(newEdge->getOutput());
+                    for (auto in : edge->getInputs()) dirtyNodes->insert(in);
+                    for (auto in : newEdge->getInputs()) dirtyNodes->insert(in);
+                }
+                if (dirtyEdges) {
+                    dirtyEdges->insert(edge);
+                    dirtyEdges->insert(newEdge);
+                }
                 changed = true;
             }
             if (changed) {
@@ -1292,9 +1482,11 @@ private:
         return out;
     }
 
-    SplitStats splitFanoutComplete(DerivationGraph& graph, SubgraphView& view,
+    SplitStats splitFanoutComplete(IncrementalDerivationGraph& graph, IncSubgraphView& view,
             GraphRewriteStats& stats, const RewriteFeatureFlags& flags,
-            const std::unordered_set<NodePtr>& evidenceAffectedNodes) const {
+            const std::unordered_set<NodePtr>& evidenceAffectedNodes,
+            std::unordered_set<NodePtr>* dirtyNodes = nullptr,
+            std::unordered_set<EdgePtr>* dirtyEdges = nullptr) const {
         SplitStats out;
         auto splitStart = std::chrono::steady_clock::now();
         const auto& nodeSet = view.getNodes();
@@ -1391,7 +1583,7 @@ private:
             return out;
         }
 
-        // Simple candidate queue seeded once per split pass.
+        // Simple candidate queue seeded once per split pass; can be made incremental later.
         std::deque<NodePtr> queue;
         std::unordered_set<NodePtr> inQueue;
         auto enqueueFact = [&](const NodePtr& n) {
@@ -1418,7 +1610,7 @@ private:
             if (!fact || !fact->isFact || fact->hasEvidence() || fact->needOutput) continue;
             if (evidenceAffectedNodes.count(fact)) continue;
             if (view.getNodes().count(fact) == 0) continue;
-            auto outs = view.getOutgoingEdges(fact);
+            const auto& outs = view.getOutgoingEdges(fact);
             if (outs.size() < 2) continue;
             auto itFact = nodeIndex.find(fact);
             if (itFact == nodeIndex.end()) continue;
@@ -1589,6 +1781,18 @@ private:
                     }
                     edges.insert(newEdge);
                     ++stats.numEdgesAdded;
+                    if (dirtyNodes) {
+                        dirtyNodes->insert(fact);
+                        dirtyNodes->insert(shadow);
+                        dirtyNodes->insert(edge->getOutput());
+                        dirtyNodes->insert(newEdge->getOutput());
+                        for (auto in : edge->getInputs()) dirtyNodes->insert(in);
+                        for (auto in : newEdge->getInputs()) dirtyNodes->insert(in);
+                    }
+                    if (dirtyEdges) {
+                        dirtyEdges->insert(edge);
+                        dirtyEdges->insert(newEdge);
+                    }
                 }
                 if (rewired > 0) {
                     nodes.insert(shadow);
@@ -1801,7 +2005,7 @@ private:
 
         if (pEntry <= std::numeric_limits<double>::epsilon()) {
             if (debug) {
-                std::cout << " (entryProbâ‰?, treat as 0)" << std::endl;
+                std::cout << " (entryProbâ‰ˆ0, treat as 0)" << std::endl;
             }
             return 0.0;
         }
@@ -1818,8 +2022,8 @@ private:
         return pCond;
     }
 
-    EdgePtr applyRegionRewrite(DerivationGraph& graph,
-                               SubgraphView& view,
+    EdgePtr applyRegionRewrite(IncrementalDerivationGraph& graph,
+                               IncSubgraphView& view,
                                const SISORegionInfo& region,
                                double condProb,
                                GraphRewriteStats& stats,
@@ -1903,5 +2107,3 @@ private:
 };
 
 }  // namespace souffle::problog
-
-

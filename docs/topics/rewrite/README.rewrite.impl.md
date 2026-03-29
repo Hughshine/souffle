@@ -6,7 +6,9 @@
 - [src/include/souffle/problog/GraphAnalyzer.h](src/include/souffle/problog/GraphAnalyzer.h)
 
 
-This file summarizes the SISO rewrite pipeline: design, current state (post revert), observed behavior, and near‑term plans.
+This file summarizes the full-mode rewrite pipeline family: the legacy explicit
+SISO rewrite (`--rewrite`) and the newer implicit-split pipeline
+(`--implicit-rewrite`), along with current behavior and near-term plans.
 
 ## Status
 - Active pipeline summary; update with new runs and behavior changes.
@@ -17,6 +19,17 @@ This file summarizes the SISO rewrite pipeline: design, current state (post reve
 
 ## Goal
 - Iteratively find SISO regions (single entry/exit) in the derivation graph, summarize each region into a single probabilistic edge, then run the usual forward compilation on the smaller view.
+
+## Rewrite modes
+- `--rewrite`: explicit SISO rewrite. The pipeline rewrites the live derivation
+  graph in place via `GraphRewriter` and then runs the usual hybrid FC/WMC stage.
+- `--implicit-rewrite`: implicit-split rewrite. The pipeline first runs the
+  implicit split/materialize flow, carries precomputed tuple probabilities
+  forward, rebuilds the live graph/view, and then hands the result to the same
+  full-mode FC/WMC machinery.
+- Both modes still report their end-to-end cost inside `FC_WMC_HYBRID`; the
+  maintained artifact compares plain vs implicit rewrite by default, while the
+  appendix taint benchmark contrasts plain, explicit, and implicit rewrite.
 
 ## Implementation (current state)
 - Detection: `GraphAnalyzer::detectAllSISOStrictFromExit(view)` on the working `IncSubgraphView`; cached incoming edges are cleared each iteration.
@@ -41,7 +54,17 @@ This file summarizes the SISO rewrite pipeline: design, current state (post reve
   component’s size, rand vars, fast/slow mode, and the slow‑path reason.
 - Logging: pipeline logs timings; rewrite stats include iterations, region counts, nodes/edges removed/added.
 
-## Latest evaluation (2026-01-05, full rule set)
+### Implicit-specific behavior
+- CLI surface: `--implicit-rewrite` turns on rewrite mode and selects the
+  implicit pipeline; `--rewrite` continues to mean the explicit pass.
+- The implicit pipeline records `rewrite_engine=implicit` in the hybrid stage
+  metadata and logs overlay/materialization timing such as
+  `implicit_overlay_prep_ms` and `implicit_graph_rewrite_ms`.
+- The pipeline carries precomputed tuple probabilities from the implicit split
+  pass into the final output map so correctness checks can compare implicit and
+  non-rewrite runs directly on `facts.prob`.
+
+## Latest explicit evaluation (2026-01-05, full rule set)
 Settings:
 - `--det-opt` always on; `--rewrite` toggled.
 - Compile with `--full-only`.
@@ -115,6 +138,7 @@ Settings:
 Use this as a reference before making further optimizations. Keep changes small and measure on both small (P5) and larger (P12/P1x) cases, comparing total time and BDD sizes with and without rewrite.
 
 ## Related commits
+- `UNCOMMITTED` — docs(rewrite): document explicit vs implicit rewrite modes for full-artifact
 - `812ea4081` — docs(repo): refine README narratives
 - `3e9b024ca` — docs(readme): refresh eval and pipeline notes
 - `4dd403de4` — Translate Chinese comments and docs to English
