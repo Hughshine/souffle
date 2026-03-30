@@ -69,6 +69,26 @@ struct IncRegionalOutputProfile {
 
 inline IncRegionalOutputProfile incRegionalOutputProfile;
 
+struct IncRegionalTurnSummary {
+    bool valid = false;
+    size_t boundaryTotal = 0;
+    size_t regionNodeCount = 0;
+    size_t deltaReachNodeCount = 0;
+    bool usedCalibrationOverrides = false;
+    bool trueRegionalReuse = false;
+
+    void reset() {
+        valid = false;
+        boundaryTotal = 0;
+        regionNodeCount = 0;
+        deltaReachNodeCount = 0;
+        usedCalibrationOverrides = false;
+        trueRegionalReuse = false;
+    }
+};
+
+inline IncRegionalTurnSummary incRegionalTurnSummary;
+
 static inline bool incRegionalTraceEnabled() {
     return !incRegionalTraceTargets().empty();
 }
@@ -3228,6 +3248,14 @@ public:
         lastPlanBoundaryNodes_ = plan.boundaryNodes;
         stats_.regionNodeCount = plan.regionNodes.size();
         stats_.boundaryNodeCount = plan.boundaryNodes.size();
+        incRegionalTurnSummary.valid = true;
+        incRegionalTurnSummary.boundaryTotal = plan.boundaryNodes.size();
+        incRegionalTurnSummary.regionNodeCount = plan.regionNodes.size();
+        incRegionalTurnSummary.deltaReachNodeCount = analyzer.lastDeltaReachable().nodes.size();
+        incRegionalTurnSummary.usedCalibrationOverrides = !calibRes.weightOverrides.empty();
+        incRegionalTurnSummary.trueRegionalReuse =
+                incRegionalTurnSummary.boundaryTotal > 0 &&
+                incRegionalTurnSummary.regionNodeCount < incRegionalTurnSummary.deltaReachNodeCount;
 
         // Apply calibrated gate weights so the existing (non-rebuilt) outside-of-region formulas
         // evaluate consistently under the new boundary targets. Also snapshot original weights for WMC routing.
