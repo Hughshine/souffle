@@ -47,6 +47,10 @@ Current maintained cases:
   - `inc-regional + det-opt` correctness check against `full-hard` (default-on behavior).
 - `regression.detopt_derivation_guard` (`detopt_recursive_derivation_guard_vs_full`):
   - det-opt recursive delete/rederive guard for multi-support tuples (`inc-naive` vs `full-hard`).
+- `regression.nonrecursive_timestamp_views` (`nonrecursive_mixed_timestamp_views`):
+  - paired deterministic/probabilistic tiny repro for the non-recursive mixed-update
+    timestamp bug; incremental execution must not retain a spurious `KEY_IND(1)` and
+    `--no-det-opt` must stay aligned with `full-hard`.
 - `regression.rewrite_split` (`rewrite_split_modes_equiv`):
   - rewrite/no-rewrite consistency across split modes.
 - `regression.rewrite_dirty_detect` (`rewrite_dirty_detect_equiv`):

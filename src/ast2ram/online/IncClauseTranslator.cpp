@@ -220,9 +220,9 @@ Own<ram::Statement> IncClauseTranslator::translateNonRecursiveClause(const ast::
         // Currently we allow no input program changes, so the fact must already be inserted
         return createRamFactQuery(clause);  // TODO: we can avoid the reinsertion
     }
-    // INC: for each rule p :- s1, ..., sn, we need to create n queries
-    // each query corresponds to a delta rule, dp :- news_1, ..., ds_i, ..., olds_n
-    // note that s_1 ... s_i-1 have new facts, s_i+1 ... s_n should be the old version
+    // INC: for each rule p :- s1, ..., sn, we need to create n queries.
+    // The combined path is retained for compatibility, but the maintained
+    // non-recursive pipeline now runs delete and insert as separate phases.
     // we create n delta rules (clauses), and invoke createRamRuleQuery on each o them
     // ds_i here only contains added or removed tuples; we don't care about how its derivation set changes in details, because rule application is not a transitive information
     // so delta relation is just newly inserted or newly deleted tuples (insert set and delete set has no overlap)
@@ -867,21 +867,24 @@ Own<ram::Operation> IncClauseTranslator::createInsertion(const ast::Clause & cla
 
 std::string IncClauseTranslator::getAtomNameForIncDeltaRule(const ast::Clause& clause, const ast::Atom* atom, const std::size_t curIndex, const std::size_t deltaIndex, const bool isInsert) const {
     assert(!isRecursive() && "recursive not supported");
-    if (curIndex < deltaIndex) {
-        // new relation (should change the name
-        // this new relation is not the new relation for delta cases )
-        return getConcreteRelationName(atom->getQualifiedName());
-    }
-    if (curIndex > deltaIndex) {
-        // old relation
-        return getOldRelationName(atom->getQualifiedName());
-    }
-        // delta case
-    if (isInsert) {
-        return getIncDeltaTupleInsertRelationName(atom->getQualifiedName());
-    } else {
+    if (curIndex == deltaIndex) {
+        if (isInsert) {
+            return getIncDeltaTupleInsertRelationName(atom->getQualifiedName());
+        }
         return getIncDeltaTupleDeleteRelationName(atom->getQualifiedName());
     }
+
+    if (isInsert) {
+        if (curIndex < deltaIndex) {
+            return getConcreteRelationName(atom->getQualifiedName());
+        }
+        return getPostDeleteRelationName(atom->getQualifiedName());
+    }
+
+    if (curIndex < deltaIndex) {
+        return getPostDeleteRelationName(atom->getQualifiedName());
+    }
+    return getOldRelationName(atom->getQualifiedName());
 }
 
 std::string IncClauseTranslator::getAtomNameForRecIncDeltaRule(const ast::Clause& clause, const ast::Atom* atom, const std::size_t curIndex, const std::size_t deltaIndex, const bool isInsert/*, const bool isPrefill*/) const {

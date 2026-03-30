@@ -158,10 +158,11 @@ const std::string getBaseRelationName(const std::string& name) {
     stripPrefix("@tmp3_",
     stripPrefix("@tmp2_",
     stripPrefix("@tmp_",
+    stripPrefix("@post_delete_",
     stripPrefix("@old_",
     stripPrefix("@new_",
     stripPrefix("@delta_",
-    stripPrefix("@info_", name))))))))))));
+    stripPrefix("@info_", name)))))))))))));
     res = stripPrefix("@delta_tuple_delete_", res);
     res = stripPrefix("@delta_tuple_insert_", res);
     res = stripPrefix("@new_derv_delete_", res);

@@ -105,6 +105,10 @@ std::string getOldRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "@old_");
 }
 
+std::string getPostDeleteRelationName(const ast::QualifiedName& name) {
+    return getConcreteRelationName(name, "@post_delete_");
+}
+
 std::string getDeltaRelationName(const ast::QualifiedName& name) {
     return getConcreteRelationName(name, "@delta_");
 }
@@ -220,6 +224,7 @@ std::string getBaseRelationName(const ast::QualifiedName& name) {
     stripPrefix("@tmp3_",
     stripPrefix("@tmp2_",
     stripPrefix("@tmp_",
+        stripPrefix("@post_delete_",
         stripPrefix("@old_",
             stripPrefix("@delta_tuple_delete_",
                 stripPrefix("@delta_tuple_insert_",
@@ -227,7 +232,7 @@ std::string getBaseRelationName(const ast::QualifiedName& name) {
                         stripPrefix("@new_derv_insert_",
                             stripPrefix("@new_",
                                 stripPrefix("@delta_",
-                                    stripPrefix("@info_", name.toString()))))))))))))))));
+                                    stripPrefix("@info_", name.toString())))))))))))))))));
 
     str = stripPrefix( "@inc_tuple_overdelete_", str);
     str = stripPrefix( "@inc_derv_overdelete_", str);

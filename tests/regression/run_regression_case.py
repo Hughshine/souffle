@@ -836,6 +836,69 @@ def case_detopt_recursive_derivation_guard_vs_full(souffle_bin: Path, work_root:
         )
 
 
+def case_nonrecursive_mixed_timestamp_views(souffle_bin: Path, work_root: Path) -> None:
+    case_src = CASES_ROOT / "nonrecursive_mixed_timestamp_views"
+    if not case_src.exists():
+        raise CaseFailure(f"missing regression case directory: {case_src}")
+    case_dir = work_root / "nonrecursive_mixed_timestamp_views"
+    reset_dir(case_dir)
+    shutil.copytree(case_src, case_dir, dirs_exist_ok=True)
+    turns = [["delete assign(3, 4)", "insert assign(2, 4) 1.0"]]
+
+    for variant, extra_args in (
+        ("det", ["--det-opt"]),
+        ("prob", ["--no-det-opt"]),
+    ):
+        variant_dir = case_dir / variant
+        compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=variant_dir)
+        out_inc = variant_dir / "out_inc_naive"
+        out_full = variant_dir / "out_full_hard"
+
+        run_cli_mode(
+            compute_bin=compute_bin,
+            input_dir=in_dir,
+            output_dir=out_inc,
+            mode="inc-naive",
+            turns=turns,
+            extra_args=extra_args,
+            timeout=180,
+        )
+        run_cli_mode(
+            compute_bin=compute_bin,
+            input_dir=in_dir,
+            output_dir=out_full,
+            mode="full-hard",
+            turns=turns,
+            extra_args=extra_args,
+            timeout=180,
+        )
+
+        assert_prob_close(
+            out_inc / "facts.prob",
+            out_full / "facts.prob",
+            label=f"nonrecursive_mixed_timestamp_views {variant} final",
+        )
+
+        inc_iter = parse_prob_file(iter_prob_path(out_inc, 1, "inc-naive"))
+        full_iter = parse_prob_file(iter_prob_path(out_full, 1, "full"))
+        if normalize_tuple_key("KEY_IND(1)") in inc_iter:
+            raise CaseFailure(
+                f"nonrecursive_mixed_timestamp_views {variant}: spurious KEY_IND(1) remained in "
+                f"{iter_prob_path(out_inc, 1, 'inc-naive')}"
+            )
+        if normalize_tuple_key("KEY_IND(1)") in full_iter:
+            raise CaseFailure(
+                f"nonrecursive_mixed_timestamp_views {variant}: unexpected KEY_IND(1) appeared in "
+                f"{iter_prob_path(out_full, 1, 'full')}"
+            )
+
+        if normalize_table_lines(out_inc / "KEY_IND.csv") != normalize_table_lines(out_full / "KEY_IND.csv"):
+            raise CaseFailure(
+                f"nonrecursive_mixed_timestamp_views {variant}: KEY_IND.csv mismatch\n"
+                f"inc={out_inc / 'KEY_IND.csv'}\nfull={out_full / 'KEY_IND.csv'}"
+            )
+
+
 def case_rewrite_split_modes_equiv(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("rewrite_split_modes_equiv", work_root)
     input_dir = case_dir / "input"
@@ -1590,6 +1653,7 @@ CASES = {
     "detopt_inc_naive_combo_vs_full": case_detopt_inc_naive_combo_vs_full,
     "detopt_inc_regional_single_round_vs_full": case_detopt_inc_regional_single_round_vs_full,
     "detopt_recursive_derivation_guard_vs_full": case_detopt_recursive_derivation_guard_vs_full,
+    "nonrecursive_mixed_timestamp_views": case_nonrecursive_mixed_timestamp_views,
     "rewrite_split_modes_equiv": case_rewrite_split_modes_equiv,
     "rewrite_dirty_detect_equiv": case_rewrite_dirty_detect_equiv,
     "full_det_modes": case_full_det_modes,

@@ -51,6 +51,9 @@ const std::string& getRelationName(const ast::QualifiedName& name);
 /** Get the corresponding RAM delta relation name for the relation */
 std::string getOldRelationName(const ast::QualifiedName& name);
 
+/** Get the corresponding RAM post-delete relation name for the relation */
+std::string getPostDeleteRelationName(const ast::QualifiedName& name);
+
 /** Get the corresponding RAM delta relation name for the relation */
 std::string getDeltaRelationName(const ast::QualifiedName& name);
 

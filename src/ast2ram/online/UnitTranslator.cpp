@@ -312,55 +312,13 @@ Own<ram::Statement> UnitTranslator::generateStratum(std::size_t scc) const {
 
 Own<ram::Statement> UnitTranslator::generateNonRecursiveRelationInc(const ast::Relation& rel) const {
     VecOwn<ram::Statement> result;
-
-    // Get relation names
     std::string mainRelation = getConcreteRelationName(rel.getQualifiedName());
+    std::string postDeleteRelation = getPostDeleteRelationName(rel.getQualifiedName());
 
-    // Iterate over all non-recursive clauses that belong to the relation
-    for (auto&& clause : context->getProgram()->getClauses(rel)) {
-        // Skip recursive and subsumptive clauses
-        if (context->isRecursiveClause(clause) || isA<ast::SubsumptiveClause>(clause)) {
-            continue;
-        }
-
-        // Translate clause
-        TranslationMode mode = rel.getAuxiliaryArity() > 0 ? Auxiliary : Incremental;
-        Own<ram::Statement> rule = context->translateNonRecursiveClauseInc(*clause, mode);
-
-        // Add logging
-        if (glb->config().has("profile")) {
-            const std::string& relationName = toString(rel.getQualifiedName());
-            const auto& srcLocation = clause->getSrcLoc();
-            const std::string clauseText = stringify(toString(*clause));
-            const std::string logTimerStatement =
-                    LogStatement::tNonrecursiveRule(relationName, srcLocation, clauseText);
-            rule = mk<ram::LogRelationTimer>(std::move(rule), logTimerStatement, mainRelation);
-        }
-
-        // Add debug info
-        std::ostringstream ds;
-        clause->printForDebugInfo(ds);
-        ds << "\nin file ";
-        ds << clause->getSrcLoc();
-        rule = mk<ram::DebugInfo>(std::move(rule), ds.str());
-
-        // Add rule to result
-        appendStmt(result, std::move(rule));
-    }
-
-    if (context->getProgram()->getClauses(rel).size() > 0) {
-        auto headRelationName = getConcreteRelationName(rel.getQualifiedName());
-        auto headOldRelationName = getOldRelationName(rel.getQualifiedName());
-        auto headDeltaDervInsertRelationName = getIncDeltaDervInsertRelationName(rel.getQualifiedName());
-        auto headDeltaDervDeleteRelationName = getIncDeltaDervDeleteRelationName(rel.getQualifiedName());
-        auto headDeltaTupleInsertRelationName = getIncDeltaTupleInsertRelationName(rel.getQualifiedName());
-        auto headDeltaTupleDeleteRelationName = getIncDeltaTupleDeleteRelationName(rel.getQualifiedName());
-
-        appendStmt(result, mk<ram::DeltaUnion>(headRelationName,
-            headOldRelationName, headRelationName,
-            headDeltaDervInsertRelationName, headDeltaDervDeleteRelationName,
-            headDeltaTupleInsertRelationName, headDeltaTupleDeleteRelationName));
-    }
+    appendStmt(result, generateNonRecursiveRelationDel(rel));
+    appendStmt(result, mk<ram::Clear>(postDeleteRelation));
+    appendStmt(result, generateMergeRelations(&rel, postDeleteRelation, mainRelation));
+    appendStmt(result, generateNonRecursiveRelationIns(rel));
 
     // Add logging for entire relation
     if (glb->config().has("profile")) {
@@ -1763,6 +1721,18 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratumInc(
     // rederive phase
     appendStmt(result, wrapPhaseTimer("rederive", generateStratumRederive(scc, sccNumber)));
 
+    {
+        VecOwn<ram::Statement> snapshotPostDelete;
+        for (const ast::Relation* rel : scc) {
+            const std::string postDeleteRelation = getPostDeleteRelationName(rel->getQualifiedName());
+            appendStmt(snapshotPostDelete, mk<ram::Clear>(postDeleteRelation));
+            appendStmt(snapshotPostDelete, generateMergeRelations(rel, postDeleteRelation,
+                    getConcreteRelationName(rel->getQualifiedName())));
+        }
+        appendStmt(result, wrapPhaseTimer("post_delete_snapshot",
+                mk<ram::Sequence>(std::move(snapshotPostDelete))));
+    }
+
     // insert phase
     VecOwn<ram::Statement> insertPhase;
     appendStmt(insertPhase, wrapPhaseSubTimer("insert", "preamble", generateStratumPreambleInc(scc, false)));
@@ -1857,19 +1827,19 @@ Own<ram::Statement> UnitTranslator::generateLoadRelationInc(const ast::Relation*
         // base relation
         std::string ramRelationName = getRelationName(relation->getQualifiedName());
         std::string ramOldRelationName = getOldRelationName(relation->getQualifiedName());
+        std::string ramPostDeleteRelationName = getPostDeleteRelationName(relation->getQualifiedName());
 
-        // join get "new" input relation
-        // clear old; swap new and old; merge new and old
-        auto mergeToNewStmt =
+        auto rebuildInputViewsStmt =
             mk<ram::Sequence>(
-                // mk<ram::Clear>(ramOldRelationName),
-                // mk<ram::Swap>(ramOldRelationName, ramRelationName),
-                // generateMergeRelations(relation, ramOldRelationName, ramRelationName),
-                mk<ram::ExactClear>(ramRelationName),
+                mk<ram::ExactClear>(ramPostDeleteRelationName),
                 generateMergeRelationsWithFilter(relation,
-                    getConcreteRelationName(relation->getQualifiedName()),  // new relation
-                    getOldRelationName(relation->getQualifiedName()),
+                    ramPostDeleteRelationName,
+                    ramOldRelationName,
                     getIncDeltaTupleDeleteRelationName(relation->getQualifiedName())),
+                mk<ram::ExactClear>(ramRelationName),
+                generateMergeRelations(relation,
+                    getConcreteRelationName(relation->getQualifiedName()),
+                    ramPostDeleteRelationName),
                 generateMergeRelations(relation,
                     getConcreteRelationName(relation->getQualifiedName()),
                     getIncDeltaTupleInsertRelationName(relation->getQualifiedName()))
@@ -1885,7 +1855,7 @@ Own<ram::Statement> UnitTranslator::generateLoadRelationInc(const ast::Relation*
 
         //
 
-        Own<ram::Statement> stmts = mk<ram::Sequence>(std::move(mergeToNewStmt));
+        Own<ram::Statement> stmts = mk<ram::Sequence>(std::move(rebuildInputViewsStmt));
         // Own<ram::Statement> stmts = mk<ram::Sequence>(std::move(copyNewToOldStmt), std::move(mergeToNewStmt));
         // Own<ram::Statement> stmts = mk<ram::Sequence>(std::move(copyNewToOldStmt), std::move(loadIncDeltaInsertStmt), std::move(loadIncDeltaDeleteStmt), std::move(removeRedundancyStmt), std::move(mergeToNewStmt));
         if (glb->config().has("profile")) {
@@ -2021,6 +1991,11 @@ VecOwn<ram::Relation> UnitTranslator::createRamRelations(const std::vector<std::
             // Add relation that cache old result
             std::string oldName = getOldRelationName(rel->getQualifiedName());
             ramRelations.push_back(createRamRelation(rel, oldName));
+
+            // Snapshot used by mixed-update non-recursive clauses after delete
+            // processing and, for recursive SCCs, after rederive.
+            std::string postDeleteName = getPostDeleteRelationName(rel->getQualifiedName());
+            ramRelations.push_back(createRamRelation(rel, postDeleteName));
 
             // INC: Add delta relation for derivation-changing tuples in incremental computation
             // We will have @inc_delta_derv_[insert|delete]_ and @inc_delta_tuple_[insert|delete}_ relations
@@ -2165,6 +2140,7 @@ Own<ram::Statement> UnitTranslator::generateIncTableUpdate(const std::vector<std
             appendStmt(res, mk<ram::Clear>(oldRelationName));
             appendStmt(res,
                 generateMergeRelations(rel, oldRelationName, relationName));
+            appendStmt(res, mk<ram::Clear>(getPostDeleteRelationName(rel->getQualifiedName())));
             auto overdeleteName = getIncTupleOverDeleteRelationName(rel->getQualifiedName());
             auto dervOverdeleteName = getIncDervOverDeleteRelationName(rel->getQualifiedName());
             appendStmt(res, mk<ram::ExactClear>(overdeleteName));
