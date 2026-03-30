@@ -91,6 +91,41 @@ public:
     }
 
 private:
+    static void stabilizeFactSemanticIds(
+            const IncrementalDerivationGraph& oldGraph, IncrementalDerivationGraph& newGraph) {
+        std::unordered_map<UntypedTuple, size_t> oldFactSemanticIds;
+        oldFactSemanticIds.reserve(oldGraph.getNodes().size());
+        size_t nextSemanticId = 0;
+        for (const auto& node : oldGraph.getNodes()) {
+            if (!node || !node->isFact) {
+                continue;
+            }
+            oldFactSemanticIds.emplace(node->getTuple(), node->getSemanticFactId());
+            nextSemanticId = std::max(nextSemanticId, node->getSemanticFactId() + 1);
+        }
+
+        std::vector<NodePtr> newFactNodes;
+        newFactNodes.reserve(newGraph.getNodes().size());
+        for (const auto& node : newGraph.getNodes()) {
+            if (node && node->isFact) {
+                newFactNodes.push_back(node);
+            }
+        }
+        std::sort(newFactNodes.begin(), newFactNodes.end(),
+                [](const NodePtr& lhs, const NodePtr& rhs) {
+                    return lhs->getTuple() < rhs->getTuple();
+                });
+
+        for (const auto& node : newFactNodes) {
+            auto it = oldFactSemanticIds.find(node->getTuple());
+            if (it != oldFactSemanticIds.end()) {
+                node->setSemanticFactId(it->second);
+            } else {
+                node->setSemanticFactId(nextSemanticId++);
+            }
+        }
+    }
+
     void handleCommitCommand() {
         std::cout << "PARSED COMMIT: Would apply " << cli.pendingOperations.size()
                   << " pending changes and run incremental computation" << std::endl;
@@ -239,6 +274,7 @@ private:
         const bool useIncFc = cli.isIncrementalFcMode();
         const bool useRegionalFc = (cli.modeSpec.fc == FcMode::INC_REGIONAL);
         Debugger& debugger = Debugger::getInstance();
+        IncrementalDerivationGraph* oldGraph = cli.graph;
         std::unique_ptr<IncSubgraphView> oldPrunedView;
         if (useIncFc && cli.graph != nullptr) {
             DerivationGraph::setMergeBiImpEnabled(false);
@@ -268,6 +304,9 @@ private:
         cli.graph = IncrementalDerivationGraph::createFrom(
                 DerivationManager::untypedTuple2RuleApplications, *cli.ruleManager, *cli.queryManager,
                 fact_prob, evidenceList);
+        if (useIncFc && oldGraph != nullptr) {
+            stabilizeFactSemanticIds(*oldGraph, *cli.graph);
+        }
         debugger.endStage();
         if (cli.opt.isDumpDotEnabled()) {
             FunctionTimer timer("PRUNING_FULL: dumpDot-before-prune");

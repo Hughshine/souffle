@@ -19,7 +19,20 @@
 ## Status
 - Active implementation and performance note for online DRed.
 
-## Recent changes (2026-01-11)
+## Recent changes
+- `2026-03-30`
+  - staged `sem=full + fc=inc-*` reruns now stabilize surviving fact
+    `semanticFactId` values before post-prune diff/remap in
+    `handleFullSemCommit()`
+  - this prevents incremental FC state from being remapped onto the wrong
+    fact-variable ids after a staged full rerun
+  - validation:
+    - staged all-case sweep over `P1`, `P3-P20` on one `Δ=1.0%` five-alpha
+      grid completed with `95/95` checked aggregate JSONs and `0` staged
+      mismatches
+    - clean rebuild + targeted staged reruns on
+      `P17/P20 × {mix-d50-i50,mix-d0-i100}` still matched exactly
+- `2026-01-11`
 - Rederive now covers non-recursive clauses in recursive strata (e.g., base `equal_assign` rules), so det-opt
   rederive can restore deleted tuples that still have non-recursive support.
 - Non-recursive rederive body atoms now scan `@inc_tuple_overdelete_*` instead of `@inc_derv_overdelete_*` to

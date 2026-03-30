@@ -88,6 +88,38 @@ Important distinction:
   - standalone structural profiling / rewrite experiments
   - useful for rewrite diagnosis, but not a substitute for end-to-end probability validation
 
+## Current Incremental Reading
+- The current `inc-artifact` branch has two repaired incremental correctness
+  fixes:
+  - non-recursive mixed updates now materialize an explicit
+    `@post_delete_*` timestamp view
+  - staged `sem=full + fc=inc-*` reruns now stabilize fact
+    `semanticFactId` values before post-prune diff/remap
+- Current validation boundary:
+  - deterministic and probabilistic tiny repros agree with `full`
+  - a fresh all-case core sweep over `P1`, `P3-P20` on one `Δ=1.0%`
+    five-alpha mixed grid (`sets=1`, `delta-runs=1`, `--det-opt`,
+    `--enable-inc-reord`, `--no-compare-full-inc`) completed with:
+    - `95/95` aggregate JSONs reporting `compare.ok = true`
+    - `95/95` aggregate JSONs reporting
+      `inc_naive_final_vs_full_final.ok = true`
+  - a fresh staged all-case sweep on the same workload completed with:
+    - `95/95` staged aggregate JSONs checked
+    - `0` staged `full_inc_*` mismatches
+  - after a clean rebuild, targeted staged reruns on
+    `P17/P20 × {mix-d50-i50,mix-d0-i100}` still matched exactly
+  - the maintained regression suite passes cleanly (`19/19`)
+- Current RQ2 sanity read from the repaired staged sweep:
+  - all `P1`, `P3-P20`, full vs `inc-naive`:
+    - Derivation `39.537% -> 49.569%`
+    - Compilation `54.143% -> 44.536%`
+  - larger cases `P13-P20`, full vs `inc-naive`:
+    - Derivation `5.234% -> 17.941%`
+    - Compilation `93.537% -> 79.039%`
+  - larger cases `P13-P20`, full vs `inc-regional`:
+    - Derivation `5.234% -> 21.626%`
+    - Compilation `93.537% -> 73.880%`
+
 ## Trusted Current Reading
 The compact current status lives here:
 - [README.rewrite.status.md](/home/hugh/research/datalog/souffle/docs/research/README.rewrite.status.md)

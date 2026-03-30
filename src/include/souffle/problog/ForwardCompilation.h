@@ -2482,22 +2482,6 @@ void buildFormulasIncCyclewise(
         debugger.logMessage(Level::INFO, "Finished updating variable ordering after deletion (non-deterministic). Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
 
-        if (fcTraceEnabled()) {
-            for (const auto& node : view.getNodes()) {
-                if (!fcTraceMatch(node)) {
-                    continue;
-                }
-                auto it = nodeFormulas.find(node);
-                const bool present = it != nodeFormulas.end();
-                const bool isFalse = present && formulaManager.isSame(it->second, formulaManager.getFalse());
-                const bool changed = changedNodes.count(node) > 0;
-                std::cout << "[fc-trace] post-delete node=" << node->getTuple().toString()
-                          << " formula_present=" << (present ? 1 : 0)
-                          << " formula_false=" << (isFalse ? 1 : 0)
-                          << " changed=" << (changed ? 1 : 0)
-                          << std::endl;
-            }
-        }
         if (deleteProfile) {
             deleteVarOrderMs = toMs(delVarOrderStart, Clock::now());
         }

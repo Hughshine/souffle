@@ -21,6 +21,30 @@ raw logs and generated artifacts.
 - Full-mode, incremental, and taint benchmark work.
 - Current research comparisons and local experiment runs.
 
+## Current Incremental Trust Boundary
+- The current `inc-artifact` branch should be treated as having two trusted
+  incremental repairs:
+  - non-recursive mixed-update timestamp repair via explicit
+    `@post_delete_*` views
+  - staged `sem=full + fc=inc-*` repair via stable fact `semanticFactId`
+    assignment before post-prune diff/remap
+- Current validation status:
+  - deterministic and probabilistic tiny repros agree with `full`
+  - fresh all-case core sweep (`P1`, `P3-P20`; one `Δ=1.0%` five-alpha mixed
+    grid; `sets=1`, `delta-runs=1`, `--det-opt`, `--enable-inc-reord`,
+    `--no-compare-full-inc`) completed with:
+    - `95/95` aggregate JSONs reporting `compare.ok = true`
+    - `95/95` aggregate JSONs reporting
+      `inc_naive_final_vs_full_final.ok = true`
+  - fresh staged all-case sweep on the same workload completed with:
+    - `95/95` staged aggregate JSONs checked
+    - `0` staged `full_inc_*` mismatches
+  - after a clean rebuild, targeted staged reruns on
+    `P17/P20 × {mix-d50-i50,mix-d0-i100}` still matched exactly
+  - maintained regression suite passes cleanly (`19/19`)
+- Remaining artifact risk is now workload/provenance curation for paper-facing
+  runtime claims rather than a known open core or staged correctness bug.
+
 ## Required Record For Every Trusted Experiment
 Record these facts in your working notes before treating a result as real:
 - hypothesis or question being tested
@@ -55,6 +79,13 @@ Record these facts in your working notes before treating a result as real:
   - same input data
   - same output target relation set
   - same interpretation of timing fields
+- For incremental side-channel timing comparisons:
+  - do not compare top-level mode `elapsed_s`
+  - compare per-turn `log.stages.turns[1].time_seconds`
+  - `turn 1` is the shared initial full-hard setup run
+  - `turn 2` is the actual delta-step runtime:
+    - `FULL-HARD` for `full`
+    - `INC` for `inc-naive` / `inc-regional`
 - For taint stage-local comparisons, it is valid to compare variants on a shared
   stage input only if that stage input was produced by a matched chain from the
   same generated base. Treat those results as stage-local only; they do not by
