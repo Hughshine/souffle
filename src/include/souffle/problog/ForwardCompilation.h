@@ -3612,6 +3612,7 @@ void buildFormulasIncRegionalCyclewise(
     std::set<NodePtr>& changedNodes
 ) {
     debugger.logMessage(Level::INFO, "[inc-regional] start pipeline");
+    incRegionalTurnSummary.reset();
     if (incRegionalOutputProfile.active && !incRegionalOutputProfile.overrideWeights.empty()) {
         for (const auto& [varIdx, weights] : incRegionalOutputProfile.originalWeights) {
             formulaManager.setVariableWeight(varIdx, weights.first, weights.second);
@@ -3638,6 +3639,7 @@ void buildFormulasIncRegionalCyclewise(
 
     if (deltaInsertedEdges.empty() && deltaInsertedNodes.empty() &&
             deltaDeletedEdges.empty() && deltaDeletedNodes.empty()) {
+        incRegionalTurnSummary.valid = true;
         debugger.logMessage(Level::INFO, "No changes to apply, skipping incremental update");
         formulaManager.dumpProfilingStatistics();
         for (auto& [key, value]: formulaManager.getProfilingStatistics()) {

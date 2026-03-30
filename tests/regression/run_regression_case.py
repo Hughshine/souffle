@@ -570,22 +570,33 @@ def run_cli_mode(
     turns: Sequence[Sequence[str]],
     extra_args: Sequence[str] | None = None,
     timeout: int = 240,
-) -> None:
+) -> subprocess.CompletedProcess[str]:
+    cli_script = make_cli_script(turns)
+    return run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        script_text=cli_script,
+        extra_args=["--setmode", mode, *(list(extra_args) if extra_args else [])],
+        timeout=timeout,
+    )
+
+
+def run_cli_script(
+    *,
+    compute_bin: Path,
+    input_dir: Path,
+    output_dir: Path,
+    script_text: str,
+    extra_args: Sequence[str] | None = None,
+    timeout: int = 240,
+) -> subprocess.CompletedProcess[str]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        str(compute_bin),
-        "-F",
-        str(input_dir),
-        "-D",
-        str(output_dir),
-        "--setmode",
-        mode,
-    ]
+    cmd = [str(compute_bin), "-F", str(input_dir), "-D", str(output_dir)]
     if extra_args:
         cmd.extend(extra_args)
-    cli_script = make_cli_script(turns)
-    write_text(output_dir / "commands.txt", cli_script)
-    run_cmd(cmd, cwd=compute_bin.parent, stdin_text=cli_script, timeout=timeout)
+    write_text(output_dir / "commands.txt", script_text)
+    return run_cmd(cmd, cwd=compute_bin.parent, stdin_text=script_text, timeout=timeout)
 
 
 def run_full_once(
@@ -622,6 +633,21 @@ def find_single_glob(base_dir: Path, pattern: str, *, label: str) -> Path:
 def assert_stdout_contains(stdout: str, needle: str, *, label: str) -> None:
     if needle not in stdout:
         raise CaseFailure(f"{label}: missing stdout substring\nexpected={needle}\nstdout:\n{stdout}")
+
+
+def assert_stdout_not_contains(stdout: str, needle: str, *, label: str) -> None:
+    if needle in stdout:
+        raise CaseFailure(f"{label}: unexpected stdout substring\nneedle={needle}\nstdout:\n{stdout}")
+
+
+def assert_path_exists(path: Path, *, label: str) -> None:
+    if not path.exists():
+        raise CaseFailure(f"{label}: missing expected path {path}")
+
+
+def assert_path_missing(path: Path, *, label: str) -> None:
+    if path.exists():
+        raise CaseFailure(f"{label}: unexpected path present {path}")
 
 
 def case_smoke_full_only(souffle_bin: Path, work_root: Path) -> None:
@@ -786,13 +812,265 @@ def case_detopt_inc_regional_single_round_vs_full(souffle_bin: Path, work_root: 
         extra_args=extra,
     )
 
-    # NOTE: inc-regional is currently validated in single-round form only.
     for iteration in (1, 2):
         assert_prob_close(
             iter_prob_path(out_regional, iteration, "inc-regional"),
             iter_prob_path(out_full, iteration, "full"),
             label=f"detopt_inc_regional iter={iteration}",
         )
+
+
+def case_detopt_inc_regional_multiturn_state_machine(
+    souffle_bin: Path, work_root: Path
+) -> None:
+    case_dir = prepare_case_workspace("detopt_inc_regional_multiturn_state_machine", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    extra = ["--det-opt"]
+    turns = [
+        ["insert srcA(1) 1.0"],
+        ["delete srcA(1)", "insert srcD(1) 1.0"],
+        ["insert srcA(1) 1.0"],
+    ]
+    fallback_inc = (
+        "[cli] fc-state=R requested=SEM-INC+INC-REGIONAL+WMC-INC-REGIONAL "
+        "fallback=SEM-INC+INC-NAIVE+WMC-INC-NAIVE"
+    )
+    fallback_full = (
+        "[cli] fc-state=R requested=SEM-FULL+INC-REGIONAL+WMC-INC-REGIONAL "
+        "fallback=SEM-FULL+INC-NAIVE+WMC-INC-NAIVE"
+    )
+
+    out_full = case_dir / "out_full_hard"
+    run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_full,
+        mode="full-hard",
+        turns=turns,
+        extra_args=extra,
+        timeout=300,
+    )
+
+    out_regional_rrr = case_dir / "out_regional_rrr"
+    proc_regional_rrr = run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_regional_rrr,
+        mode="inc-regional",
+        turns=turns,
+        extra_args=extra,
+        timeout=300,
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_rrr, 1, "inc-regional"),
+        iter_prob_path(out_full, 1, "full"),
+        label="regional->regional->regional iter=1",
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_rrr, 2, "inc-naive"),
+        iter_prob_path(out_full, 2, "full"),
+        label="regional->regional->regional iter=2 fallback",
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_rrr, 3, "inc-regional"),
+        iter_prob_path(out_full, 3, "full"),
+        label="regional->regional->regional iter=3 re-entry",
+    )
+    assert_path_exists(
+        out_regional_rrr / "fact-iter2-inc-naive.prob",
+        label="regional->regional turn2 fallback artifact",
+    )
+    assert_path_missing(
+        out_regional_rrr / "fact-iter2-inc-regional.prob",
+        label="regional->regional turn2 should not stay regional",
+    )
+    assert_stdout_contains(
+        proc_regional_rrr.stdout,
+        fallback_inc,
+        label="regional->regional fallback log",
+    )
+
+    script_regional_full_regional = "\n".join(
+        [
+            "setmode inc-regional",
+            "insert srcA(1) 1.0",
+            "commit",
+            "setmode sem=full fc=inc-regional",
+            "delete srcA(1)",
+            "insert srcD(1) 1.0",
+            "commit",
+            "setmode inc-regional",
+            "insert srcA(1) 1.0",
+            "commit",
+            "q",
+            "",
+        ]
+    )
+    out_regional_full_regional = case_dir / "out_regional_full_regional"
+    proc_regional_full_regional = run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_regional_full_regional,
+        script_text=script_regional_full_regional,
+        extra_args=extra,
+        timeout=300,
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_full_regional, 1, "inc-regional"),
+        iter_prob_path(out_full, 1, "full"),
+        label="regional->full-inc-regional->regional iter=1",
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_full_regional, 2, "inc-naive"),
+        iter_prob_path(out_full, 2, "full"),
+        label="regional->full-inc-regional->regional iter=2 fallback",
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_full_regional, 3, "inc-regional"),
+        iter_prob_path(out_full, 3, "full"),
+        label="regional->full-inc-regional->regional iter=3 re-entry",
+    )
+    assert_stdout_contains(
+        proc_regional_full_regional.stdout,
+        fallback_full,
+        label="regional->full-inc-regional fallback log",
+    )
+
+    script_regional_full_naive = "\n".join(
+        [
+            "setmode inc-regional",
+            "insert srcA(1) 1.0",
+            "commit",
+            "setmode sem=full fc=inc-naive",
+            "delete srcA(1)",
+            "insert srcD(1) 1.0",
+            "commit",
+            "setmode inc-regional",
+            "insert srcA(1) 1.0",
+            "commit",
+            "q",
+            "",
+        ]
+    )
+    out_regional_full_naive = case_dir / "out_regional_full_naive"
+    proc_regional_full_naive = run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_regional_full_naive,
+        script_text=script_regional_full_naive,
+        extra_args=extra,
+        timeout=300,
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_full_naive, 1, "inc-regional"),
+        iter_prob_path(out_full, 1, "full"),
+        label="regional->full-inc-naive->regional iter=1",
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_full_naive, 2, "inc-naive"),
+        iter_prob_path(out_full, 2, "full"),
+        label="regional->full-inc-naive->regional iter=2 normalize",
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_full_naive, 3, "inc-regional"),
+        iter_prob_path(out_full, 3, "full"),
+        label="regional->full-inc-naive->regional iter=3 normalized re-entry",
+    )
+    assert_stdout_not_contains(
+        proc_regional_full_naive.stdout,
+        "[cli] fc-state=",
+        label="regional->full-inc-naive should not fallback",
+    )
+
+
+def case_detopt_inc_regional_multiturn_degenerate(
+    souffle_bin: Path, work_root: Path
+) -> None:
+    case_dir = prepare_case_workspace("detopt_inc_regional_multiturn_degenerate", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    extra = ["--det-opt"]
+    turns = [
+        ["insert srcA(1) 1.0"],
+        ["insert srcD(1) 1.0"],
+    ]
+
+    out_full = case_dir / "out_full_hard"
+    run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_full,
+        mode="full-hard",
+        turns=turns,
+        extra_args=extra,
+        timeout=240,
+    )
+
+    out_regional_rr = case_dir / "out_regional_rr"
+    proc_regional_rr = run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_regional_rr,
+        mode="inc-regional",
+        turns=turns,
+        extra_args=extra,
+        timeout=240,
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_rr, 1, "inc-regional"),
+        iter_prob_path(out_full, 1, "full"),
+        label="degenerate regional->regional iter=1",
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_rr, 2, "inc-regional"),
+        iter_prob_path(out_full, 2, "full"),
+        label="degenerate regional->regional iter=2",
+    )
+    assert_stdout_not_contains(
+        proc_regional_rr.stdout,
+        "[cli] fc-state=",
+        label="degenerate regional->regional should stay regional",
+    )
+    assert_path_exists(
+        out_regional_rr / "fact-iter2-inc-regional.prob",
+        label="degenerate regional->regional artifact",
+    )
+
+    script_regional_full_regional = "\n".join(
+        [
+            "setmode inc-regional",
+            "insert srcA(1) 1.0",
+            "commit",
+            "setmode sem=full fc=inc-regional",
+            "insert srcD(1) 1.0",
+            "commit",
+            "q",
+            "",
+        ]
+    )
+    out_regional_full_regional = case_dir / "out_regional_full_regional"
+    proc_regional_full_regional = run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_regional_full_regional,
+        script_text=script_regional_full_regional,
+        extra_args=extra,
+        timeout=240,
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_full_regional, 1, "inc-regional"),
+        iter_prob_path(out_full, 1, "full"),
+        label="degenerate regional->full-inc-regional iter=1",
+    )
+    assert_prob_close(
+        iter_prob_path(out_regional_full_regional, 2, "inc-regional"),
+        iter_prob_path(out_full, 2, "full"),
+        label="degenerate regional->full-inc-regional iter=2",
+    )
+    assert_stdout_not_contains(
+        proc_regional_full_regional.stdout,
+        "[cli] fc-state=",
+        label="degenerate regional->full-inc-regional should stay regional",
+    )
 
 
 def case_detopt_recursive_derivation_guard_vs_full(souffle_bin: Path, work_root: Path) -> None:
@@ -1689,6 +1967,8 @@ CASES = {
     "dred_hub_rederive_naive_vs_full": case_dred_hub_rederive_naive_vs_full,
     "detopt_inc_naive_combo_vs_full": case_detopt_inc_naive_combo_vs_full,
     "detopt_inc_regional_single_round_vs_full": case_detopt_inc_regional_single_round_vs_full,
+    "detopt_inc_regional_multiturn_state_machine": case_detopt_inc_regional_multiturn_state_machine,
+    "detopt_inc_regional_multiturn_degenerate": case_detopt_inc_regional_multiturn_degenerate,
     "detopt_recursive_derivation_guard_vs_full": case_detopt_recursive_derivation_guard_vs_full,
     "nonrecursive_mixed_timestamp_views": case_nonrecursive_mixed_timestamp_views,
     "rewrite_split_modes_equiv": case_rewrite_split_modes_equiv,

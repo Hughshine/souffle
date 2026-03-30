@@ -40,6 +40,8 @@ using SemMode = souffle::SemMode;
 using FcMode = souffle::FcMode;
 using WmcMode = souffle::WmcMode;
 using IncrementalModeSpec = souffle::IncrementalModeSpec;
+using FcConsumerClass = souffle::FcConsumerClass;
+using FcStateClass = souffle::FcStateClass;
 
 inline std::string makeTimestampLabel() {
     const auto now = std::chrono::system_clock::now();
@@ -80,6 +82,22 @@ private:
 
     IncrementalModeSpec currentModeSpec() const {
         return modeSpec;
+    }
+
+    IncrementalModeSpec resolveCommittedModeSpec() const {
+        IncrementalModeSpec resolved = modeSpec;
+        if (fcStateClass != FcStateClass::NORMALIZED &&
+                classifyFcConsumer(resolved.fc) == FcConsumerClass::REGIONAL) {
+            resolved.fc = FcMode::INC_NAIVE;
+        }
+        return resolved;
+    }
+
+    bool shouldFallbackRegionalConsumer(
+            const IncrementalModeSpec& requested, const IncrementalModeSpec& effective) const {
+        return requested.fc != effective.fc &&
+               classifyFcConsumer(requested.fc) == FcConsumerClass::REGIONAL &&
+               classifyFcConsumer(effective.fc) == FcConsumerClass::NORMALIZING;
     }
 
     bool isIncrementalSemMode() const {
@@ -124,6 +142,49 @@ private:
 
     std::string modeSummaryLabel() const {
         return souffle::modeSummaryLabel(currentModeSpec());
+    }
+
+    void logCommittedModeResolution(
+            const IncrementalModeSpec& requested, const IncrementalModeSpec& effective) const {
+        if (!shouldFallbackRegionalConsumer(requested, effective)) {
+            return;
+        }
+        std::cout << "[cli] fc-state=" << souffle::fcStateClassLabel(fcStateClass)
+                  << " requested=" << souffle::modeSummaryLabel(requested)
+                  << " fallback=" << souffle::modeSummaryLabel(effective) << std::endl;
+    }
+
+    void updateFcStateAfterTurn(
+            const IncrementalModeSpec& requested, const IncrementalModeSpec& effective) {
+        lastRequestedTurnMode = requested;
+        lastEffectiveTurnMode = effective;
+        lastTurnFallbackToNormalizer = shouldFallbackRegionalConsumer(requested, effective);
+        lastTurnBoundaryTotal = 0;
+        lastTurnRegionNodes = 0;
+        lastTurnDeltaReachNodes = 0;
+        lastTurnTrueRegionalReuse = false;
+        lastTurnUsedCalibrationOverrides = false;
+
+        if (classifyFcConsumer(effective.fc) == FcConsumerClass::REGIONAL) {
+            lastTurnBoundaryTotal = incRegionalTurnSummary.boundaryTotal;
+            lastTurnRegionNodes = incRegionalTurnSummary.regionNodeCount;
+            lastTurnDeltaReachNodes = incRegionalTurnSummary.deltaReachNodeCount;
+            lastTurnTrueRegionalReuse = incRegionalTurnSummary.valid &&
+                    incRegionalTurnSummary.trueRegionalReuse;
+            lastTurnUsedCalibrationOverrides =
+                    incRegionalTurnSummary.valid && incRegionalTurnSummary.usedCalibrationOverrides;
+
+            if (lastTurnTrueRegionalReuse) {
+                fcStateClass = FcStateClass::REGIONALIZED;
+                consecutiveRegionalTurns += 1;
+            } else {
+                fcStateClass = FcStateClass::NORMALIZED;
+                consecutiveRegionalTurns = 0;
+            }
+        } else {
+            fcStateClass = FcStateClass::NORMALIZED;
+            consecutiveRegionalTurns = 0;
+        }
     }
 
     const char* debuggerTurnModeLabel() const {
@@ -521,6 +582,16 @@ private:
     std::set<NodePtr> changedNodes;
 
     IncrementalModeSpec modeSpec{};
+    FcStateClass fcStateClass = FcStateClass::NORMALIZED;
+    IncrementalModeSpec lastRequestedTurnMode{};
+    IncrementalModeSpec lastEffectiveTurnMode{};
+    bool lastTurnFallbackToNormalizer = false;
+    bool lastTurnTrueRegionalReuse = false;
+    bool lastTurnUsedCalibrationOverrides = false;
+    size_t lastTurnBoundaryTotal = 0;
+    size_t lastTurnRegionNodes = 0;
+    size_t lastTurnDeltaReachNodes = 0;
+    size_t consecutiveRegionalTurns = 0;
     bool derivationOnly = false;
     void syncRuntimeTogglesFromOptions() {
         DerivationGraph::setConstFoldEnabled(opt.isConstFoldEnabled());
@@ -771,6 +842,8 @@ private:
                       << " dd-backend=" << opt.getKnowledgeRepresentation()
                       << " dumps=" << joinTokens(opt.getEnabledDumpKinds())
                       << " profile-stages=" << joinTokens(opt.getEnabledProfileStages())
+                      << " fc-state=" << souffle::fcStateClassLabel(fcStateClass)
+                      << " regional-turns=" << consecutiveRegionalTurns
                       << std::endl;
             return;
         }

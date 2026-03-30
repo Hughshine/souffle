@@ -45,6 +45,16 @@ Current maintained cases:
     (explicit `--det-opt` kept for coverage; default is on).
 - `regression.detopt_regional` (`detopt_inc_regional_single_round_vs_full`):
   - `inc-regional + det-opt` correctness check against `full-hard` (default-on behavior).
+- `regression.detopt_regional_multiturn` (`detopt_inc_regional_multiturn_state_machine`):
+  - non-degenerate multi-turn `inc-regional` state-machine coverage:
+    `regional -> regional -> regional` must normalize through `inc-naive` on
+    the middle turn, and `regional -> full-inc-regional -> regional` must keep
+    `sem=full` while falling back only on the FC side.
+- `regression.detopt_regional_degenerate` (`detopt_inc_regional_multiturn_degenerate`):
+  - degenerate multi-turn `inc-regional` coverage:
+    when planner analysis reports no true regional reuse, repeated
+    `inc-regional` and `full-inc-regional` turns should remain regional and
+    should not trigger the multi-turn fallback.
 - `regression.detopt_derivation_guard` (`detopt_recursive_derivation_guard_vs_full`):
   - det-opt recursive delete/rederive guard for multi-support tuples (`inc-naive` vs `full-hard`).
 - `regression.nonrecursive_timestamp_views` (`nonrecursive_mixed_timestamp_views`):
@@ -107,8 +117,6 @@ The runner enforces:
 - expected dump/log file existence for contract checks
 
 ## Current Limits
-- `inc-regional` is currently validated in single-round form only.
-  - Multi-round cases are intentionally deferred until runtime support is ready.
 - The suite is a correctness gate, not a performance benchmark.
   - Heavy `problog-benchmark` workflows remain separate.
 - Benchmark-derived regression cases intentionally use reduced inputs/sample
@@ -122,6 +130,7 @@ The runner enforces:
   - `ctest --test-dir build -L regression --output-on-failure --progress`
 
 ## Related commits
+- `UNCOMMITTED` — test(regression): add multi-turn inc-regional state-machine coverage
 - `UNCOMMITTED` — test(regression): add maintained ctest workflow and cases
 - `UNCOMMITTED` — docs(testing): document maintained regression runbook
 - `UNCOMMITTED` — test(regression): cover canonical flag surfaces and graph-query replay

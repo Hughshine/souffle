@@ -70,7 +70,17 @@ public:
             assert(false && "No program loaded.");
         }
 
-        cli.assertCurrentModeCompatibleWithGraphState();
+        const IncrementalModeSpec requestedMode = cli.modeSpec;
+        const IncrementalModeSpec effectiveMode = cli.resolveCommittedModeSpec();
+        cli.logCommittedModeResolution(requestedMode, effectiveMode);
+        cli.assertModeCompatibleWithGraphState(effectiveMode);
+        struct ModeRestoreGuard {
+            Cli& cli;
+            IncrementalModeSpec saved;
+            ~ModeRestoreGuard() { cli.modeSpec = saved; }
+        } modeRestore{cli, requestedMode};
+        cli.modeSpec = effectiveMode;
+
         if (cli.isElasticFcMode()) {
             std::cout << "[cli] fc-mode elastic currently falls back to inc-naive" << std::endl;
         }
@@ -86,6 +96,8 @@ public:
         } else {
             assert(false && "Unsupported online mode");
         }
+
+        cli.updateFcStateAfterTurn(requestedMode, effectiveMode);
 
         cli.pendingOperations.clear();
     }

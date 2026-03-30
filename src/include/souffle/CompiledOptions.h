@@ -53,6 +53,17 @@ enum class WmcMode {
     INC_REGIONAL
 };
 
+enum class FcConsumerClass {
+    NORMALIZING,
+    REGIONAL
+};
+
+enum class FcStateClass {
+    NORMALIZED,
+    REGIONALIZED,
+    UNKNOWN
+};
+
 enum class FullEvaluator {
     EXACT,
     SCBF,
@@ -140,6 +151,37 @@ inline WmcMode getWmcMode(FcMode fc) {
             break;
     }
     return WmcMode::FULL;
+}
+
+inline FcConsumerClass classifyFcConsumer(FcMode fc) {
+    return effectiveFcMode(fc) == FcMode::INC_REGIONAL ? FcConsumerClass::REGIONAL
+                                                       : FcConsumerClass::NORMALIZING;
+}
+
+inline bool isNormalizingFcConsumer(FcMode fc) {
+    return classifyFcConsumer(fc) == FcConsumerClass::NORMALIZING;
+}
+
+inline const char* fcConsumerClassLabel(FcConsumerClass consumerClass) {
+    switch (consumerClass) {
+        case FcConsumerClass::NORMALIZING:
+            return "C_NORM";
+        case FcConsumerClass::REGIONAL:
+            return "C_REG";
+    }
+    return "C_UNKNOWN";
+}
+
+inline const char* fcStateClassLabel(FcStateClass stateClass) {
+    switch (stateClass) {
+        case FcStateClass::NORMALIZED:
+            return "N";
+        case FcStateClass::REGIONALIZED:
+            return "R";
+        case FcStateClass::UNKNOWN:
+            return "U";
+    }
+    return "U";
 }
 
 inline const char* semModeLabel(SemMode sem) {
