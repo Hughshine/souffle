@@ -104,6 +104,7 @@ std::vector<Own<ram::Expression>> getClauseVarExprs(const ast::Clause& clause) c
     void indexClause(const ast::Clause& clause);
     void indexGenerators(const ast::Clause& clause);
     virtual void indexAtoms(const ast::Clause& clause);
+    void indexConstantConstraints(const ast::Clause& clause);
     void indexAggregators(const ast::Clause& clause);
     void indexMultiResultFunctors(const ast::Clause& clause);
     void indexNodeArguments(std::size_t nodeLevel, const std::vector<ast::Argument*>& nodeArgs);

@@ -18,6 +18,7 @@
 #include "ast2ram/utility/ValueIndex.h"
 #include "ast/Aggregator.h"
 #include "ast/BranchInit.h"
+#include "ast/Constant.h"
 #include "ast/Variable.h"
 #include "ast2ram/utility/Location.h"
 #include "ram/Relation.h"
@@ -54,6 +55,19 @@ const Location& ValueIndex::getDefinitionPoint(const std::string& varName) const
     const auto& referencePoints = varReferencePoints.at(varName);
     assert(!referencePoints.empty() && "at least one reference point should exist");
     return *referencePoints.begin();
+}
+
+void ValueIndex::setConstantDefinition(std::string varName, const ast::Constant& constant) {
+    constantDefinitionPoints.insert_or_assign(std::move(varName), &constant);
+}
+
+bool ValueIndex::hasConstantDefinition(const std::string& varName) const {
+    return contains(constantDefinitionPoints, varName);
+}
+
+const ast::Constant& ValueIndex::getConstantDefinition(const std::string& varName) const {
+    assert(hasConstantDefinition(varName) && "undefined constant reference");
+    return *constantDefinitionPoints.at(varName);
 }
 
 void ValueIndex::setGeneratorLoc(const ast::Argument& arg, const Location& loc) {
@@ -109,6 +123,12 @@ bool ValueIndex::isSomethingDefinedOn(std::size_t level) const {
 void ValueIndex::print(std::ostream& out) const {
     out << "Variables:\n\t";
     out << join(varReferencePoints, "\n\t");
+    if (!constantDefinitionPoints.empty()) {
+        out << "\nConstant-bound variables:\n\t";
+        for (const auto& [name, constant] : constantDefinitionPoints) {
+            out << name << "=" << *constant << "\n\t";
+        }
+    }
 }
 
 }  // namespace souffle::ast2ram

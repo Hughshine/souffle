@@ -91,6 +91,41 @@ public:
     }
 
 private:
+    static void stabilizeFactSemanticIds(
+            const IncrementalDerivationGraph& oldGraph, IncrementalDerivationGraph& newGraph) {
+        std::unordered_map<UntypedTuple, size_t> oldFactSemanticIds;
+        oldFactSemanticIds.reserve(oldGraph.getNodes().size());
+        size_t nextSemanticId = 0;
+        for (const auto& node : oldGraph.getNodes()) {
+            if (!node || !node->isFact) {
+                continue;
+            }
+            oldFactSemanticIds.emplace(node->getTuple(), node->getSemanticFactId());
+            nextSemanticId = std::max(nextSemanticId, node->getSemanticFactId() + 1);
+        }
+
+        std::vector<NodePtr> newFactNodes;
+        newFactNodes.reserve(newGraph.getNodes().size());
+        for (const auto& node : newGraph.getNodes()) {
+            if (node && node->isFact) {
+                newFactNodes.push_back(node);
+            }
+        }
+        std::sort(newFactNodes.begin(), newFactNodes.end(),
+                [](const NodePtr& lhs, const NodePtr& rhs) {
+                    return lhs->getTuple() < rhs->getTuple();
+                });
+
+        for (const auto& node : newFactNodes) {
+            auto it = oldFactSemanticIds.find(node->getTuple());
+            if (it != oldFactSemanticIds.end()) {
+                node->setSemanticFactId(it->second);
+            } else {
+                node->setSemanticFactId(nextSemanticId++);
+            }
+        }
+    }
+
     void handleCommitCommand() {
         std::cout << "PARSED COMMIT: Would apply " << cli.pendingOperations.size()
                   << " pending changes and run incremental computation" << std::endl;
@@ -101,6 +136,31 @@ private:
         const bool useRegional = cli.isRegionalFcMode();
         Debugger& debugger = Debugger::getInstance();
         {
+            auto emitDredInfo = [&]() {
+                const auto& stats = DerivationManager::dredStats;
+                debugger.addInfo("dred_del_ruleapp_recorded", std::to_string(stats.del_ruleapp_recorded));
+                debugger.addInfo("dred_del_ruleapp_delta_delta", std::to_string(stats.del_ruleapp_delta_delta));
+                debugger.addInfo("dred_del_ruleapp_overdelete", std::to_string(stats.del_ruleapp_overdelete));
+                debugger.addInfo("dred_del_complete_scan_calls", std::to_string(stats.del_complete_scan_calls));
+                debugger.addInfo("dred_del_complete_scan_elems", std::to_string(stats.del_complete_scan_elems));
+                debugger.addInfo("dred_del_delta_tuples", std::to_string(stats.del_delta_tuples));
+                debugger.addInfo("dred_del_delta_ruleapps", std::to_string(stats.del_delta_ruleapps));
+                debugger.addInfo("dred_del_ruleapp_erases", std::to_string(stats.del_ruleapp_erases));
+                debugger.addInfo("dred_del_tuple_deletes", std::to_string(stats.del_tuple_deletes));
+                debugger.addInfo("dred_ins_ruleapp_recorded", std::to_string(stats.ins_ruleapp_recorded));
+                debugger.addInfo("dred_ins_ruleapp_delta_delta", std::to_string(stats.ins_ruleapp_delta_delta));
+                debugger.addInfo(
+                        "dred_ins_ruleapp_rederive_erases", std::to_string(stats.ins_ruleapp_rederive_erases));
+                debugger.addInfo("dred_ins_delta_tuples", std::to_string(stats.ins_delta_tuples));
+                debugger.addInfo("dred_ins_delta_ruleapps", std::to_string(stats.ins_delta_ruleapps));
+                debugger.addInfo("dred_rederive_delta_tuples", std::to_string(stats.rederive_delta_tuples));
+                debugger.addInfo("dred_rederive_delta_ruleapps", std::to_string(stats.rederive_delta_ruleapps));
+                debugger.addInfo("dred_ins_ruleapp_merges", std::to_string(stats.ins_ruleapp_merges));
+                debugger.addInfo("dred_ins_tuple_inserts", std::to_string(stats.ins_tuple_inserts));
+                debugger.addInfo("dred_del_time_total_ns", std::to_string(stats.del_time_total_ns));
+                debugger.addInfo("dred_ins_time_total_ns", std::to_string(stats.ins_time_total_ns));
+                debugger.addInfo("dred_red_time_total_ns", std::to_string(stats.red_time_total_ns));
+            };
             bool hasDelete = false;
             bool hasInsert = false;
             for (const auto& op : cli.pendingOperations) {
@@ -119,13 +179,13 @@ private:
             } else if (hasInsert && !hasDelete) {
                 phaseLabel = "insert";
             }
-            if (DerivationManager::isSemStatsEnabled()) {
-                DerivationManager::resetDredStats();
-            }
+            DerivationManager::resetDredStats();
             DerivationManager::clearDetDeltaTuples();
             cli.beginTurnTrace();
             debugger.startStage(StageKind::SEMINAIVE_INC);
             cli.program->runAllInc(cli.program->getInputDirectory(), cli.program->getOutputDirectory(), true);
+            debugger.addInfo("dred_phase", phaseLabel);
+            emitDredInfo();
             debugger.endStage();
             if (DerivationManager::isSemStatsEnabled()) {
                 std::ostringstream label;
@@ -177,6 +237,11 @@ private:
             FunctionTimer timer("PRUNING_INC: dumpDot-before-prune");
             cli.graph->dumpDotInc(
                     cli.outputPath("derivation-inc-before-prune" + std::to_string(cli.iteration) + ".dot"));
+        }
+        if (cli.opt.isDumpJsonBeforePruneEnabled()) {
+            FunctionTimer timer("PRUNING_INC: dumpJson-before-prune");
+            cli.graph->dumpJsonInc(
+                    cli.outputTimestampedPath("derivation-inc-before-prune", cli.iteration, ".json"));
         }
         IncSubgraphView view = [&] {
             FunctionTimer timer("PRUNING_INC: prune");
@@ -239,6 +304,7 @@ private:
         const bool useIncFc = cli.isIncrementalFcMode();
         const bool useRegionalFc = (cli.modeSpec.fc == FcMode::INC_REGIONAL);
         Debugger& debugger = Debugger::getInstance();
+        IncrementalDerivationGraph* oldGraph = cli.graph;
         std::unique_ptr<IncSubgraphView> oldPrunedView;
         if (useIncFc && cli.graph != nullptr) {
             DerivationGraph::setMergeBiImpEnabled(false);
@@ -258,7 +324,7 @@ private:
 
         cli.purgeAllRelations();
         cli.loadInitialInputRelations();
-        DerivationManager::untypedTuple2RuleApplications.clear();
+        DerivationManager::freeRuleApplicationMap(DerivationManager::untypedTuple2RuleApplications);
         debugger.startStage(StageKind::SEMINAIVE_FULL);
         cli.program->runAll(cli.opt.getInputFileDir(), cli.opt.getOutputFileDir(), false);
         std::vector<std::pair<UntypedTuple, bool>> evidenceList;
@@ -268,11 +334,19 @@ private:
         cli.graph = IncrementalDerivationGraph::createFrom(
                 DerivationManager::untypedTuple2RuleApplications, *cli.ruleManager, *cli.queryManager,
                 fact_prob, evidenceList);
+        if (useIncFc && oldGraph != nullptr) {
+            stabilizeFactSemanticIds(*oldGraph, *cli.graph);
+        }
         debugger.endStage();
         if (cli.opt.isDumpDotEnabled()) {
             FunctionTimer timer("PRUNING_FULL: dumpDot-before-prune");
             cli.graph->dumpDotInc(
                     cli.outputPath("derivation-full-before-prune" + std::to_string(cli.iteration) + ".dot"));
+        }
+        if (cli.opt.isDumpJsonBeforePruneEnabled()) {
+            FunctionTimer timer("PRUNING_FULL: dumpJson-before-prune");
+            cli.graph->dumpJsonInc(
+                    cli.outputTimestampedPath("derivation-full-before-prune", cli.iteration, ".json"));
         }
         debugger.startStage(StageKind::PRUNING_FULL);
         IncSubgraphView view = [&] {

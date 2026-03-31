@@ -1,0 +1,7 @@
+.decl mayDep(x:number, p:number)
+.input mayDep
+
+.decl res(x:number)
+.output res
+
+res(X) :- C = 0, mayDep(X, C).
