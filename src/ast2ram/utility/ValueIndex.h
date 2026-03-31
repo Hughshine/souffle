@@ -26,6 +26,7 @@
 namespace souffle::ast {
 class Argument;
 class BranchInit;
+class Constant;
 class RecordInit;
 class Variable;
 }  // namespace souffle::ast
@@ -49,6 +50,9 @@ public:
     void addVarReference(std::string varName, std::size_t ident, std::size_t pos);
     bool isDefined(const std::string& varName) const;
     const Location& getDefinitionPoint(const std::string& varName) const;
+    void setConstantDefinition(std::string varName, const ast::Constant& constant);
+    bool hasConstantDefinition(const std::string& varName) const;
+    const ast::Constant& getConstantDefinition(const std::string& varName) const;
 
     // -- records --
     void setRecordDefinition(const ast::RecordInit& init, std::size_t ident, std::size_t pos);
@@ -70,6 +74,9 @@ public:
 private:
     // Map from variable name to use-points
     std::map<std::string, std::set<Location>> varReferencePoints;
+
+    // Map from variable name to constant definitions introduced by constant normalisation.
+    std::map<std::string, const ast::Constant*> constantDefinitionPoints;
 
     // Map from record inits to definition point (i.e. bounding point)
     std::map<const ast::RecordInit*, Location> recordDefinitionPoints;

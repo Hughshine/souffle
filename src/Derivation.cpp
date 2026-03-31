@@ -294,6 +294,15 @@ const std::unordered_set<UntypedTuple>& DerivationManager::getDetDeltaInsertTupl
     return detDeltaInsertTuples;
 }
 
+void DerivationManager::freeRuleApplicationMap(
+        std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo) {
+    for (auto& [_, ruleSet] : derivationInfo) {
+        delete ruleSet;
+        ruleSet = nullptr;
+    }
+    derivationInfo.clear();
+}
+
 void DerivationManager::DredStats::dump(std::ostream& out, const std::string& label) const {
     out << "[seminaive-dred] " << label << " del"
         << " delta_tuples=" << del_delta_tuples

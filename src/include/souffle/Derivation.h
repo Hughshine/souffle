@@ -314,6 +314,8 @@ public:
     static void recordDetDeltaInsert(const UntypedTuple& tuple);
     static const std::unordered_set<UntypedTuple>& getDetDeltaDeleteTuples();
     static const std::unordered_set<UntypedTuple>& getDetDeltaInsertTuples();
+    static void freeRuleApplicationMap(
+            std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo);
 
     static std::uint64_t nowNanos() {
         return static_cast<std::uint64_t>(

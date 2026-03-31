@@ -20,6 +20,10 @@ std::string makeOutputPath(const CmdOptions& opt, const std::string& filename);
 // to guard features that are only safe in full-only mode.
 void setFullOnlyMode(bool enabled);
 bool isFullOnlyMode();
+bool runNegationPostPass(
+        const CmdOptions& opt,
+        SouffleProgram& program,
+        RuleManager& ruleManager);
 
 void runPipeline(
         const CmdOptions& opt,

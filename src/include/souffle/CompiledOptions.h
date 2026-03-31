@@ -243,7 +243,7 @@ inline const char* detModeOptionSyntax() {
 }
 
 inline const char* dumpKindsOptionSyntax() {
-    return "[ json | dot | stat | const ]";
+    return "[ json | json-before-graph | json-before-prune | dot | stat | const ]";
 }
 
 inline const char* profileStageOptionSyntax() {
@@ -689,7 +689,8 @@ inline const char* approxBackendLabel(ApproxBackend backend) {
 inline bool parseDumpKindToken(const std::string& token, std::string& kind,
         std::string* canonicalToken = nullptr) {
     const std::string value = normalizeFlagToken(token);
-    if (value == "json" || value == "dot" || value == "stat" || value == "const") {
+    if (value == "json" || value == "json-before-graph" || value == "json-before-prune" ||
+            value == "dot" || value == "stat" || value == "const") {
         kind = value;
         if (canonicalToken) {
             *canonicalToken = value;
@@ -868,6 +869,8 @@ protected:
     bool enable_implicit_iterate_split_rewrite = false;  // enable iterative split<->rewrite fixpoint for implicit rewrite
     std::string split_mode = "naive-split";  // split mode for rewrite: no-split/naive-split/complete-split
     bool dump_json = false;  // dump derivation graph JSON after prune
+    bool dump_json_before_graph = false;  // dump ruleapp-reconstructed JSON before graph materialization
+    bool dump_json_before_prune = false;  // dump derivation graph JSON before prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
     bool dump_stat = false;  // dump derivation graph stats after prune
     bool dump_const = false;  // dump constant pre-analysis details
@@ -899,7 +902,8 @@ public:
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
             std::string lfn = "log.txt", bool donly = false, const std::string& mode = "inc",
             bool merge_bi = true, bool foldconst = false, bool rewrite = false,
-            bool dumpjson = false, bool dumpdot = false, bool dumpstat = false, bool dumpconst = false,
+            bool dumpjson = false, bool dumpjsonBeforeGraph = false, bool dumpjsonBeforePrune = false,
+            bool dumpdot = false, bool dumpstat = false, bool dumpconst = false,
             bool dredProfile = false,
             const std::string& splitmode = "naive-split",
             bool incProfile = false,
@@ -913,7 +917,9 @@ public:
             bool postDel = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
     , merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
-      dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
+      dump_json(dumpjson), dump_json_before_graph(dumpjsonBeforeGraph),
+      dump_json_before_prune(dumpjsonBeforePrune),
+      dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
       dred_profile(dredProfile), inc_profile(incProfile), fc_profile(fcProfile),
       inc_delete_profile(incDeleteProfile),
       wmc_profile(wmcProfile),
@@ -1167,6 +1173,18 @@ public:
     void setDumpJsonEnabled(bool enabled) {
         dump_json = enabled;
     }
+    bool isDumpJsonBeforeGraphEnabled() const {
+        return dump_json_before_graph;
+    }
+    void setDumpJsonBeforeGraphEnabled(bool enabled) {
+        dump_json_before_graph = enabled;
+    }
+    bool isDumpJsonBeforePruneEnabled() const {
+        return dump_json_before_prune;
+    }
+    void setDumpJsonBeforePruneEnabled(bool enabled) {
+        dump_json_before_prune = enabled;
+    }
     bool isDumpDotEnabled() const {
         return dump_dot;
     }
@@ -1192,6 +1210,10 @@ public:
         }
         if (kind == "json") {
             dump_json = enabled;
+        } else if (kind == "json-before-graph") {
+            dump_json_before_graph = enabled;
+        } else if (kind == "json-before-prune") {
+            dump_json_before_prune = enabled;
         } else if (kind == "dot") {
             dump_dot = enabled;
         } else if (kind == "stat") {
@@ -1262,6 +1284,8 @@ public:
     std::vector<std::string> getEnabledDumpKinds() const {
         std::vector<std::string> kinds;
         if (dump_json) kinds.push_back("json");
+        if (dump_json_before_graph) kinds.push_back("json-before-graph");
+        if (dump_json_before_prune) kinds.push_back("json-before-prune");
         if (dump_dot) kinds.push_back("dot");
         if (dump_stat) kinds.push_back("stat");
         if (dump_const) kinds.push_back("const");
@@ -1359,7 +1383,10 @@ public:
                 {"implicit-iterate-split-rewrite", false, nullptr, 1020},
                 {"split-mode", true, nullptr, 'P'}, {"rewrite-split", true, nullptr, 1030},
                 {"rewrite-detect", true, nullptr, 1031},
-                {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
+                {"dumpjson", false, nullptr, 'J'},
+                {"dumpjson-before-graph", false, nullptr, 1036},
+                {"dumpjson-before-prune", false, nullptr, 1035},
+                {"dumpdot", false, nullptr, 'T'},
                 {"dumpstat", false, nullptr, 'S'},
                 {"dumpconst", false, nullptr, 'U'},
                 {"dump", true, nullptr, 1032},
@@ -1568,6 +1595,12 @@ public:
                     break;
                 case 'J':
                     setDumpJsonEnabled(true);
+                    break;
+                case 1036:
+                    setDumpJsonBeforeGraphEnabled(true);
+                    break;
+                case 1035:
+                    setDumpJsonBeforePruneEnabled(true);
                     break;
                 case 'T':
                     setDumpDotEnabled(true);
@@ -1809,6 +1842,8 @@ private:
         std::cerr << "    --rewrite-detect=<MODE>      -- Canonical rewrite detect "
                   << rewriteDetectOptionSyntax() << "\n";
         std::cerr << "    --dumpjson                   -- Dump derivation graph JSON after prune\n";
+        std::cerr << "    --dumpjson-before-graph      -- Dump ruleapp-reconstructed JSON before graph materialization\n";
+        std::cerr << "    --dumpjson-before-prune      -- Dump derivation graph JSON before prune\n";
         std::cerr << "    --dumpdot                    -- Dump derivation graph DOT after prune\n";
         std::cerr << "    --dumpstat                   -- Dump derivation graph stats after prune\n";
         std::cerr << "    --dump=<LIST>                -- Canonical dump selector "

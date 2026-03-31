@@ -1589,6 +1589,26 @@ void IncClauseTranslator::indexAtoms(const ast::Clause& clause) {
     }
 }
 
+void IncClauseTranslator::indexConstantConstraints(const ast::Clause& clause) {
+    for (const auto* lit : clause.getBodyLiterals()) {
+        const auto* bc = as<ast::BinaryConstraint>(lit);
+        if (bc == nullptr || bc->getBaseOperator() != BinaryConstraintOp::EQ) {
+            continue;
+        }
+
+        const auto* lhsVar = as<ast::Variable>(bc->getLHS());
+        const auto* rhsVar = as<ast::Variable>(bc->getRHS());
+        const auto* lhsConst = as<ast::Constant>(bc->getLHS());
+        const auto* rhsConst = as<ast::Constant>(bc->getRHS());
+
+        if (lhsVar != nullptr && rhsConst != nullptr) {
+            valueIndex->setConstantDefinition(lhsVar->getName(), *rhsConst);
+        } else if (rhsVar != nullptr && lhsConst != nullptr) {
+            valueIndex->setConstantDefinition(rhsVar->getName(), *lhsConst);
+        }
+    }
+}
+
 void IncClauseTranslator::indexAggregatorBody(const ast::Aggregator& agg) {
     auto aggLoc = valueIndex->getGeneratorLoc(agg);
 
@@ -1721,6 +1741,7 @@ void IncClauseTranslator::indexGenerators(const ast::Clause& clause) {
 
 void IncClauseTranslator::indexClause(const ast::Clause& clause) {
     indexAtoms(clause);
+    indexConstantConstraints(clause);
     indexGenerators(clause);
     indexAggregators(clause);
     indexMultiResultFunctors(clause);

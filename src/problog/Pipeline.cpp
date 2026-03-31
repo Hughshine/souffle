@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -25,6 +26,7 @@
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include "ImplicitSplitRewrite.cpp"
@@ -33,6 +35,15 @@ namespace souffle::problog {
 
 namespace {
 bool fullOnlyMode = false;
+
+struct RuleAppInventory {
+    std::size_t headTuples = 0;
+    std::size_t nullRuleSets = 0;
+    std::size_t totalRuleApps = 0;
+    std::size_t totalBindings = 0;
+    std::size_t maxRuleAppsPerHead = 0;
+    std::size_t uniqueRuleIds = 0;
+};
 
 static bool envFlagDisabled(const char* name) {
     const char* value = std::getenv(name);
@@ -45,6 +56,207 @@ static bool envFlagDisabled(const char* name) {
 
 static std::size_t countInitialInputFacts() {
     return inputFactSet.size();
+}
+
+static RuleAppInventory collectRuleAppInventory() {
+    RuleAppInventory inv;
+    std::unordered_set<souffle::RamDomain> uniqueRuleIds;
+    uniqueRuleIds.reserve(DerivationManager::untypedTuple2RuleApplications.size());
+    for (const auto& [tuple, ruleSetPtr] : DerivationManager::untypedTuple2RuleApplications) {
+        (void)tuple;
+        ++inv.headTuples;
+        if (ruleSetPtr == nullptr) {
+            ++inv.nullRuleSets;
+            continue;
+        }
+        inv.maxRuleAppsPerHead = std::max(inv.maxRuleAppsPerHead, ruleSetPtr->size());
+        inv.totalRuleApps += ruleSetPtr->size();
+        for (const auto& ruleApp : *ruleSetPtr) {
+            inv.totalBindings += ruleApp.varValuesPure.size();
+            uniqueRuleIds.insert(ruleApp.ruleId);
+        }
+    }
+    inv.uniqueRuleIds = uniqueRuleIds.size();
+    return inv;
+}
+
+static void writeJsonEscapedString(std::ostream& out, const std::string& value) {
+    out.put('"');
+    for (unsigned char c : value) {
+        switch (c) {
+            case '"':
+                out << "\\\"";
+                break;
+            case '\\':
+                out << "\\\\";
+                break;
+            case '\b':
+                out << "\\b";
+                break;
+            case '\f':
+                out << "\\f";
+                break;
+            case '\n':
+                out << "\\n";
+                break;
+            case '\r':
+                out << "\\r";
+                break;
+            case '\t':
+                out << "\\t";
+                break;
+            default:
+                if (c < 0x20) {
+                    char buf[7];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned>(c));
+                    out << buf;
+                } else {
+                    out.put(static_cast<char>(c));
+                }
+        }
+    }
+    out.put('"');
+}
+
+static bool isFactLikeRule(const Rule* rule) {
+    return rule != nullptr && (rule->isFact() || rule->getBodyAtoms().empty());
+}
+
+struct CachedRuleDumpInfo {
+    const Rule* rule = nullptr;
+    std::vector<std::string> vars;
+};
+
+static const CachedRuleDumpInfo& getCachedRuleDumpInfo(
+        std::unordered_map<souffle::RamDomain, CachedRuleDumpInfo>& cache,
+        const RuleManager& ruleManager,
+        souffle::RamDomain ruleId) {
+    auto it = cache.find(ruleId);
+    if (it != cache.end()) {
+        return it->second;
+    }
+    CachedRuleDumpInfo info;
+    info.rule = ruleManager.getRule(ruleId);
+    if (info.rule != nullptr) {
+        info.vars = info.rule->getVars();
+    }
+    auto [insertedIt, _] = cache.emplace(ruleId, std::move(info));
+    return insertedIt->second;
+}
+
+static void dumpRuleAppsBeforeGraphJson(
+        const CmdOptions& opt,
+        const RuleManager& ruleManager,
+        const std::unordered_map<UntypedTuple, double>& factProb) {
+    const std::string outputPath = makeOutputPath(opt, "derivation-before-graph.json");
+    std::ofstream out(outputPath);
+    if (!out.good()) {
+        throw std::runtime_error("failed to open pre-graph dump output: " + outputPath);
+    }
+
+    out << std::setprecision(17);
+    std::unordered_map<souffle::RamDomain, CachedRuleDumpInfo> ruleCache;
+    ruleCache.reserve(ruleManager.size());
+
+    out << "{\"facts\":[";
+    bool firstFact = true;
+    auto emitFact = [&](const UntypedTuple& tuple, double probability) {
+        if (!firstFact) {
+            out << ',';
+        }
+        firstFact = false;
+        out << "{\"name\":";
+        writeJsonEscapedString(out, tuple.toString());
+        out << ",\"probability\":" << probability << "}";
+    };
+
+    for (const auto& [tuple, probability] : factProb) {
+        emitFact(tuple, probability);
+    }
+
+    std::unordered_set<UntypedTuple> emittedDerivedFacts;
+    for (const auto& [headTuple, ruleSetPtr] : DerivationManager::untypedTuple2RuleApplications) {
+        if (ruleSetPtr == nullptr) {
+            continue;
+        }
+        for (const auto& ruleApp : *ruleSetPtr) {
+            const auto& cached = getCachedRuleDumpInfo(ruleCache, ruleManager, ruleApp.ruleId);
+            if (!isFactLikeRule(cached.rule)) {
+                continue;
+            }
+            if (factProb.find(headTuple) != factProb.end()) {
+                continue;
+            }
+            if (!emittedDerivedFacts.insert(headTuple).second) {
+                continue;
+            }
+            emitFact(headTuple, cached.rule ? cached.rule->getProbability() : 1.0);
+        }
+    }
+
+    out << "],\"rules\":[";
+    bool firstRule = true;
+    for (const auto& [headTuple, ruleSetPtr] : DerivationManager::untypedTuple2RuleApplications) {
+        if (ruleSetPtr == nullptr) {
+            continue;
+        }
+        for (const auto& ruleApp : *ruleSetPtr) {
+            const auto& cached = getCachedRuleDumpInfo(ruleCache, ruleManager, ruleApp.ruleId);
+            const Rule* rule = cached.rule;
+            if (rule == nullptr || isFactLikeRule(rule)) {
+                continue;
+            }
+            if (!firstRule) {
+                out << ',';
+            }
+            firstRule = false;
+            out << "{\"head\":";
+            writeJsonEscapedString(out, headTuple.toString());
+            out << ",\"probability\":" << rule->getProbability();
+            out << ",\"rule_id\":" << ruleApp.ruleId;
+            out << ",\"mapping\":[";
+            for (std::size_t i = 0; i < ruleApp.varValuesPure.size(); ++i) {
+                if (i != 0) {
+                    out << ',';
+                }
+                out << ruleApp.varValuesPure[i];
+            }
+            out << "],\"bodies\":[";
+            bool firstBody = true;
+            for (const auto& bodyAtom : rule->getBodyAtoms()) {
+                if (!firstBody) {
+                    out << ',';
+                }
+                firstBody = false;
+                const UntypedTuple bodyTuple{
+                        bodyAtom.getRelation(),
+                        bodyAtom.instantiatedFields(cached.vars, ruleApp.varValuesPure)};
+                out << "{\"negation\":" << (bodyAtom.isNegatedAtom() ? "true" : "false")
+                    << ",\"name\":";
+                writeJsonEscapedString(out, bodyTuple.toString());
+                out << "}";
+            }
+            out << "]}";
+        }
+    }
+    out << "]}";
+    out.close();
+    std::cout << "[pipeline] wrote pre-graph ruleapp JSON to " << outputPath << std::endl;
+}
+
+static bool needsMaterializedGraph(const CmdOptions& opt) {
+    if (!opt.isDerivationOnly()) {
+        return true;
+    }
+    if (opt.isDumpJsonEnabled() || opt.isDumpJsonBeforePruneEnabled() || opt.isDumpDotEnabled() ||
+            opt.isDumpStatEnabled()) {
+        return true;
+    }
+    if (opt.isRewriteEnabled() || opt.isImplicitRewriteEnabled() ||
+            opt.isImplicitIterateSplitRewriteEnabled()) {
+        return true;
+    }
+    return false;
 }
 
 static std::size_t estimateBddVarCount(const SubgraphView& view) {
@@ -102,6 +314,925 @@ static ImplicitSplitMode resolveImplicitSplitMode(const std::string& splitMode) 
         return ImplicitSplitMode::Complete;
     }
     return ImplicitSplitMode::Naive;
+}
+
+static bool isSemanticRandomProb(double p) {
+    return p > 0.0 && p < 1.0;
+}
+
+enum class NegationPostPassMode {
+    RuleApp,
+    Graph,
+    Off,
+};
+
+static NegationPostPassMode resolveNegationPostPassMode() {
+    const char* env = std::getenv("SOUFFLE_NEGATION_POSTPASS_MODE");
+    if (!env || *env == '\0') {
+        return NegationPostPassMode::Off;
+    }
+    std::string mode(env);
+    if (mode == "off" || mode == "none") {
+        return NegationPostPassMode::Off;
+    }
+    if (mode == "graph" || mode == "after-graph") {
+        return NegationPostPassMode::Graph;
+    }
+    return NegationPostPassMode::RuleApp;
+}
+
+static const char* negationPostPassModeLabel(NegationPostPassMode mode) {
+    switch (mode) {
+        case NegationPostPassMode::RuleApp:
+            return "ruleapp";
+        case NegationPostPassMode::Graph:
+            return "graph";
+        case NegationPostPassMode::Off:
+            return "off";
+    }
+    return "ruleapp";
+}
+
+static std::string normalizeLogicalRelationName(std::string rel) {
+    if (rel.rfind("@magic.", 0) == 0 || rel.rfind("@neglabel.", 0) == 0) {
+        return rel;
+    }
+
+    for (;;) {
+        bool changed = false;
+        auto strip = [&](const std::string& prefix) {
+            if (rel.rfind(prefix, 0) == 0) {
+                rel = rel.substr(prefix.size());
+                changed = true;
+            }
+        };
+        strip("@split_in.");
+        strip("@interm_in.");
+        strip("@interm_out.");
+        if (rel.rfind("@poscopy_", 0) == 0) {
+            auto dot = rel.find('.');
+            if (dot != std::string::npos) {
+                rel = rel.substr(dot + 1);
+                changed = true;
+            }
+        }
+        if (!changed) {
+            break;
+        }
+    }
+
+    if (!rel.empty()) {
+        auto dot = rel.rfind('.');
+        if (dot != std::string::npos) {
+            auto last = rel.substr(dot + 1);
+            if (last.size() >= 2 && last.front() == '{' && last.back() == '}') {
+                bool ok = true;
+                for (std::size_t i = 1; i + 1 < last.size(); ++i) {
+                    if (last[i] != 'b' && last[i] != 'f') {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) {
+                    rel = rel.substr(0, dot);
+                }
+            }
+        }
+    }
+
+    return rel;
+}
+
+static std::unordered_map<std::string, bool> computeProbabilisticRelations(
+        const SouffleProgram& program,
+        RuleManager& ruleManager,
+        const std::unordered_map<UntypedTuple, double>& factProb) {
+    std::unordered_map<std::string, bool> probabilistic;
+
+    for (const auto* rel : program.getAllRelations()) {
+        if (!rel) continue;
+        probabilistic.try_emplace(normalizeLogicalRelationName(rel->getName()), false);
+    }
+    for (const auto& [tuple, prob] : factProb) {
+        auto rel = normalizeLogicalRelationName(tuple.relation_name);
+        probabilistic.try_emplace(rel, false);
+        if (isSemanticRandomProb(prob)) {
+            probabilistic[rel] = true;
+        }
+    }
+
+    const auto rules = ruleManager.getAllRules();
+    for (const auto* rule : rules) {
+        if (!rule) continue;
+        probabilistic.try_emplace(normalizeLogicalRelationName(rule->getHead().getRelation()), false);
+        for (const auto& bodyAtom : rule->getBodyAtoms()) {
+            probabilistic.try_emplace(normalizeLogicalRelationName(bodyAtom.getRelation()), false);
+        }
+    }
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (const auto* rule : rules) {
+            if (!rule) continue;
+            const std::string headRel = normalizeLogicalRelationName(rule->getHead().getRelation());
+            bool ruleIsProb = isSemanticRandomProb(rule->getProbability());
+            if (!ruleIsProb) {
+                for (const auto& bodyAtom : rule->getBodyAtoms()) {
+                    const std::string bodyRel = normalizeLogicalRelationName(bodyAtom.getRelation());
+                    auto it = probabilistic.find(bodyRel);
+                    if (it != probabilistic.end() && it->second) {
+                        ruleIsProb = true;
+                        break;
+                    }
+                }
+            }
+            if (ruleIsProb && !probabilistic[headRel]) {
+                probabilistic[headRel] = true;
+                changed = true;
+            }
+        }
+    }
+
+    return probabilistic;
+}
+
+static bool isDeterministicRelation(
+        const std::unordered_map<std::string, bool>& probabilisticRelations,
+        const std::string& relation) {
+    auto it = probabilisticRelations.find(normalizeLogicalRelationName(relation));
+    return it == probabilisticRelations.end() || !it->second;
+}
+
+static bool resolveFieldValue(
+        const SymbolicField& field,
+        const std::vector<std::string>& vars,
+        const std::vector<souffle::RamDomain>& values,
+        souffle::RamDomain& out,
+        bool& wildcard) {
+    wildcard = false;
+    if (std::holds_alternative<IntegerField>(field.field)) {
+        out = std::get<IntegerField>(field.field).value;
+        return true;
+    }
+    if (std::holds_alternative<FloatField>(field.field)) {
+        out = souffle::ramBitCast<souffle::RamDomain>(
+                static_cast<souffle::RamFloat>(std::get<FloatField>(field.field).value));
+        return true;
+    }
+    if (std::holds_alternative<VariableField>(field.field)) {
+        const auto& name = std::get<VariableField>(field.field).name;
+        if (name == "_") {
+            wildcard = true;
+            return true;
+        }
+        for (std::size_t i = 0; i < vars.size() && i < values.size(); ++i) {
+            if (vars[i] == name) {
+                out = values[i];
+                return true;
+            }
+        }
+        wildcard = true;
+        return true;
+    }
+    if (std::holds_alternative<std::shared_ptr<ExprField>>(field.field)) {
+        out = std::get<std::shared_ptr<ExprField>>(field.field)->evaluate(vars, values);
+        return true;
+    }
+    return false;
+}
+
+static bool tupleMatchesAtom(
+        const UntypedTuple& tuple,
+        const Atom& atom,
+        const std::vector<std::string>& vars,
+        const std::vector<souffle::RamDomain>& values) {
+    if (tuple.relation_name != atom.getRelation()) {
+        return false;
+    }
+    const auto& atomFields = atom.getFields();
+    if (tuple.fields.size() != atomFields.size()) {
+        return false;
+    }
+
+    for (std::size_t i = 0; i < atomFields.size(); ++i) {
+        souffle::RamDomain expected = 0;
+        bool wildcard = false;
+        if (!resolveFieldValue(atomFields[i], vars, values, expected, wildcard)) {
+            return false;
+        }
+        if (!wildcard && tuple.fields[i] != expected) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool instantiateExactAtomTuple(
+        const Atom& atom,
+        const std::vector<std::string>& vars,
+        const std::vector<souffle::RamDomain>& values,
+        UntypedTuple& outTuple) {
+    outTuple.relation_name = atom.getRelation();
+    outTuple.fields.clear();
+    outTuple.fields.reserve(atom.getFields().size());
+    for (const auto& field : atom.getFields()) {
+        souffle::RamDomain value = 0;
+        bool wildcard = false;
+        if (!resolveFieldValue(field, vars, values, value, wildcard) || wildcard) {
+            outTuple.fields.clear();
+            return false;
+        }
+        outTuple.fields.push_back(value);
+    }
+    return true;
+}
+
+static bool atomHasLiveMatch(
+        const Atom& atom,
+        const std::vector<std::string>& vars,
+        const std::vector<souffle::RamDomain>& values,
+        const std::unordered_map<std::string, std::vector<const UntypedTuple*>>& liveByRelation) {
+    auto it = liveByRelation.find(atom.getRelation());
+    if (it == liveByRelation.end()) {
+        return false;
+    }
+    for (const UntypedTuple* tuple : it->second) {
+        if (tuple && tupleMatchesAtom(*tuple, atom, vars, values)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool isSeedFactTuple(
+        const UntypedTuple& tuple,
+        const std::unordered_set<UntypedTuple>& seedFacts) {
+    return seedFacts.find(tuple) != seedFacts.end();
+}
+
+static void rewriteProgramRelations(
+        SouffleProgram& program,
+        const std::unordered_set<UntypedTuple>& liveTuples) {
+    std::unordered_map<std::string, std::vector<const UntypedTuple*>> tuplesByRelation;
+    tuplesByRelation.reserve(liveTuples.size());
+    for (const auto& tuple : liveTuples) {
+        tuplesByRelation[tuple.relation_name].push_back(&tuple);
+    }
+
+    for (auto* rel : program.getAllRelations()) {
+        if (!rel) continue;
+        const std::string rawName = rel->getName();
+        const std::string normalizedName = normalizeLogicalRelationName(rawName);
+        rel->purge();
+
+        auto it = tuplesByRelation.find(rawName);
+        if (it == tuplesByRelation.end() && normalizedName != rawName) {
+            it = tuplesByRelation.find(normalizedName);
+        }
+        if (it == tuplesByRelation.end()) {
+            continue;
+        }
+
+        for (const UntypedTuple* tuplePtr : it->second) {
+            if (!tuplePtr) continue;
+            const auto& fields = tuplePtr->fields;
+            if (fields.size() != rel->getArity()) {
+                continue;
+            }
+            souffle::tuple typed(rel);
+            for (std::size_t i = 0; i < fields.size(); ++i) {
+                typed[i] = fields[i];
+            }
+            rel->insert(typed);
+        }
+    }
+}
+
+static std::size_t stripDeterministicRuleApps(
+        const std::unordered_map<std::string, bool>& probabilisticRelations) {
+    std::size_t removed = 0;
+    for (auto it = DerivationManager::untypedTuple2RuleApplications.begin();
+            it != DerivationManager::untypedTuple2RuleApplications.end();) {
+        const std::string rel = it->first.relation_name;
+        const bool isProb = probabilisticRelations.find(rel) != probabilisticRelations.end() &&
+                probabilisticRelations.at(rel);
+        if (!isProb) {
+            if (it->second != nullptr) {
+                removed += it->second->size();
+                delete it->second;
+            }
+            it = DerivationManager::untypedTuple2RuleApplications.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return removed;
+}
+
+struct NegationRuleAppState {
+    UntypedTuple head;
+    RuleApplication ruleApp;
+    const Rule* rule = nullptr;
+    std::vector<UntypedTuple> positiveBodies;
+    std::vector<UntypedTuple> deterministicNegatedBodies;
+    bool live = true;
+};
+
+static std::unordered_map<std::string, std::vector<const UntypedTuple*>> buildLiveByRelation(
+        const std::unordered_set<UntypedTuple>& liveTuples) {
+    std::unordered_map<std::string, std::vector<const UntypedTuple*>> liveByRelation;
+    liveByRelation.reserve(liveTuples.size());
+    for (const auto& tuple : liveTuples) {
+        liveByRelation[tuple.relation_name].push_back(&tuple);
+    }
+    return liveByRelation;
+}
+
+static std::unordered_set<UntypedTuple> buildSeedFactTuples(
+        const std::unordered_map<UntypedTuple, double>& factProb,
+        RuleManager& ruleManager) {
+    std::unordered_set<UntypedTuple> seedFacts;
+    seedFacts.reserve(factProb.size() + inputFactSet.size());
+    for (const auto& [tuple, _] : factProb) {
+        seedFacts.insert(tuple);
+    }
+    seedFacts.insert(inputFactSet.begin(), inputFactSet.end());
+    for (const auto& [headTuple, ruleSetPtr] : DerivationManager::untypedTuple2RuleApplications) {
+        if (ruleSetPtr == nullptr) {
+            continue;
+        }
+        for (const auto& ruleApp : *ruleSetPtr) {
+            const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
+            if (rule != nullptr && rule->isFact()) {
+                seedFacts.insert(headTuple);
+                break;
+            }
+        }
+    }
+    return seedFacts;
+}
+
+static bool runRuleAppNegationPostPass(
+        SouffleProgram& program,
+        RuleManager& ruleManager,
+        const std::unordered_map<std::string, bool>& probabilisticRelations) {
+    using Clock = std::chrono::steady_clock;
+    auto t0 = Clock::now();
+
+    std::unordered_set<UntypedTuple> seedFacts;
+    seedFacts.reserve(fact_prob.size() + inputFactSet.size());
+    for (const auto& [tuple, _] : fact_prob) {
+        seedFacts.insert(tuple);
+    }
+    seedFacts.insert(inputFactSet.begin(), inputFactSet.end());
+
+    std::vector<NegationRuleAppState> states;
+    std::unordered_map<UntypedTuple, std::vector<std::size_t>> positiveConsumers;
+    std::unordered_map<UntypedTuple, std::size_t> supportCount;
+    std::unordered_set<UntypedTuple> liveTuples = seedFacts;
+    std::vector<std::size_t> slowStates;
+
+    std::size_t totalRuleApps = 0;
+    for (const auto& [headTuple, ruleSetPtr] : DerivationManager::untypedTuple2RuleApplications) {
+        liveTuples.insert(headTuple);
+        if (ruleSetPtr) {
+            totalRuleApps += ruleSetPtr->size();
+        }
+    }
+    states.reserve(totalRuleApps);
+    positiveConsumers.reserve(totalRuleApps);
+    supportCount.reserve(DerivationManager::untypedTuple2RuleApplications.size());
+
+    {
+        auto liveByRelation = buildLiveByRelation(liveTuples);
+        for (const auto& [headTuple, ruleSetPtr] : DerivationManager::untypedTuple2RuleApplications) {
+            if (ruleSetPtr == nullptr) {
+                continue;
+            }
+            for (const auto& ruleApp : *ruleSetPtr) {
+                NegationRuleAppState state;
+                state.head = headTuple;
+                state.ruleApp = ruleApp;
+                state.rule = ruleManager.getRule(ruleApp.ruleId);
+                bool valid = state.rule != nullptr;
+                bool exactOnly = true;
+                if (valid) {
+                    const auto vars = state.rule->getVars();
+                    if (!tupleMatchesAtom(headTuple, state.rule->getHead(), vars, ruleApp.varValuesPure)) {
+                        valid = false;
+                    } else {
+                        for (const auto& bodyAtom : state.rule->getBodyAtoms()) {
+                            UntypedTuple bodyTuple;
+                            const bool exact = instantiateExactAtomTuple(
+                                    bodyAtom, vars, ruleApp.varValuesPure, bodyTuple);
+                            if (bodyAtom.isNegatedAtom()) {
+                                if (isDeterministicRelation(probabilisticRelations, bodyAtom.getRelation())) {
+                                    if (exact) {
+                                        state.deterministicNegatedBodies.push_back(bodyTuple);
+                                        if (liveTuples.count(bodyTuple)) {
+                                            valid = false;
+                                            break;
+                                        }
+                                    } else {
+                                        exactOnly = false;
+                                        if (atomHasLiveMatch(bodyAtom, vars, ruleApp.varValuesPure, liveByRelation)) {
+                                            valid = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                            } else if (exact) {
+                                state.positiveBodies.push_back(bodyTuple);
+                            } else {
+                                exactOnly = false;
+                            }
+                        }
+                    }
+                }
+
+                const std::size_t idx = states.size();
+                state.live = valid;
+                states.push_back(std::move(state));
+                if (!exactOnly) {
+                    slowStates.push_back(idx);
+                }
+                if (valid) {
+                    supportCount[headTuple] += 1;
+                    for (const auto& bodyTuple : states[idx].positiveBodies) {
+                        positiveConsumers[bodyTuple].push_back(idx);
+                    }
+                }
+            }
+        }
+    }
+
+    std::queue<UntypedTuple> deadTuples;
+    std::size_t removedRuleApps = 0;
+    std::size_t removedTuples = 0;
+    bool changedAny = false;
+
+    auto maybeDeleteHead = [&](const UntypedTuple& head) {
+        if (seedFacts.count(head)) {
+            return;
+        }
+        auto it = supportCount.find(head);
+        const bool noSupport = (it == supportCount.end()) || (it->second == 0);
+        if (noSupport && liveTuples.erase(head) > 0) {
+            deadTuples.push(head);
+            ++removedTuples;
+            changedAny = true;
+        }
+    };
+
+    auto invalidateState = [&](std::size_t idx) {
+        auto& state = states[idx];
+        if (!state.live) {
+            return;
+        }
+        state.live = false;
+        ++removedRuleApps;
+        changedAny = true;
+        auto it = supportCount.find(state.head);
+        if (it != supportCount.end() && it->second > 0) {
+            it->second -= 1;
+            if (it->second == 0) {
+                maybeDeleteHead(state.head);
+            }
+        }
+    };
+
+    for (const auto& [headTuple, _] : DerivationManager::untypedTuple2RuleApplications) {
+        maybeDeleteHead(headTuple);
+    }
+
+    while (!deadTuples.empty()) {
+        const UntypedTuple tuple = deadTuples.front();
+        deadTuples.pop();
+
+        auto depIt = positiveConsumers.find(tuple);
+        if (depIt != positiveConsumers.end()) {
+            for (std::size_t idx : depIt->second) {
+                invalidateState(idx);
+            }
+        }
+
+        if (!slowStates.empty()) {
+            auto liveByRelation = buildLiveByRelation(liveTuples);
+            for (std::size_t idx : slowStates) {
+                auto& state = states[idx];
+                if (!state.live || state.rule == nullptr) {
+                    continue;
+                }
+                const auto vars = state.rule->getVars();
+                bool valid = true;
+                for (const auto& bodyAtom : state.rule->getBodyAtoms()) {
+                    if (bodyAtom.isNegatedAtom()) {
+                        if (isDeterministicRelation(probabilisticRelations, bodyAtom.getRelation()) &&
+                                atomHasLiveMatch(bodyAtom, vars, state.ruleApp.varValuesPure, liveByRelation)) {
+                            valid = false;
+                            break;
+                        }
+                    } else if (!atomHasLiveMatch(bodyAtom, vars, state.ruleApp.varValuesPure, liveByRelation)) {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (!valid) {
+                    invalidateState(idx);
+                }
+            }
+        }
+    }
+
+    for (auto it = DerivationManager::untypedTuple2RuleApplications.begin();
+            it != DerivationManager::untypedTuple2RuleApplications.end();) {
+        const UntypedTuple head = it->first;
+        auto* ruleSet = it->second;
+        if (!liveTuples.count(head) && !seedFacts.count(head)) {
+            if (ruleSet != nullptr) {
+                delete ruleSet;
+            }
+            it = DerivationManager::untypedTuple2RuleApplications.erase(it);
+            continue;
+        }
+        if (ruleSet != nullptr) {
+            std::unordered_set<RuleApplication> filtered;
+            filtered.reserve(ruleSet->size());
+            for (const auto& state : states) {
+                if (state.live && state.head == head) {
+                    filtered.insert(state.ruleApp);
+                }
+            }
+            *ruleSet = std::move(filtered);
+        }
+        ++it;
+    }
+
+    std::size_t strippedDetRuleApps = 0;
+    if (detOptEnabled) {
+        strippedDetRuleApps = stripDeterministicRuleApps(probabilisticRelations);
+    }
+
+    if (changedAny) {
+        rewriteProgramRelations(program, liveTuples);
+    }
+
+    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+    std::cout << "[negation-post-pass] mode=ruleapp"
+              << " ruleapps=" << totalRuleApps
+              << " removed_ruleapps=" << removedRuleApps
+              << " removed_tuples=" << removedTuples
+              << " slow_states=" << slowStates.size()
+              << " stripped_det_ruleapps=" << strippedDetRuleApps
+              << " time_ms=" << elapsedMs
+              << std::endl;
+
+    return changedAny;
+}
+
+static IncSubgraphView runGraphNegationPostPass(
+        const CmdOptions& opt,
+        SouffleProgram& program,
+        RuleManager& ruleManager,
+        const std::unordered_map<std::string, bool>& probabilisticRelations,
+        const std::unordered_set<UntypedTuple>& seedTuples,
+        IncrementalDerivationGraph& graph,
+        bool& changedAny) {
+    // This path is intentionally quarantined. The current graph-mode negation
+    // post-pass does more than delete edges blocked by deterministic negation:
+    // it rebuilds a live subgraph and can perturb programs that should be
+    // semantic no-ops. Keep the implementation below for reference while the
+    // mode stays disabled by default, but fail hard if it is re-enabled
+    // accidentally before a simpler deletion-driven redesign lands.
+    assert(false && "graph-mode negation post-pass is intentionally disabled");
+    fatal("graph-mode negation post-pass is intentionally disabled until redesign");
+    using Clock = std::chrono::steady_clock;
+    auto t0 = Clock::now();
+    const bool hardPruneAllNegations = opt.isDerivationOnly();
+
+    struct CandidateEdgeState {
+        EdgePtr edge;
+        NodePtr head;
+        std::size_t pending_same_stratum_positive = 0;
+        bool blocked = false;
+        bool active = false;
+    };
+
+    const IncSubgraphView fullView = buildFullIncViewLocal(graph);
+
+    std::unordered_map<std::string, std::size_t> relationStrata;
+    relationStrata.reserve(ruleManager.getAllRules().size() * 2 + fullView.getNodes().size());
+    struct RelationDep {
+        std::string head;
+        std::string body;
+        bool negated = false;
+    };
+    std::vector<RelationDep> deps;
+    deps.reserve(ruleManager.getAllRules().size() * 4);
+
+    for (const auto* rule : ruleManager.getAllRules()) {
+        if (!rule) {
+            continue;
+        }
+        const std::string headRel = normalizeLogicalRelationName(rule->getHead().getRelation());
+        relationStrata.try_emplace(headRel, 0);
+        for (const auto& bodyAtom : rule->getBodyAtoms()) {
+            const std::string bodyRel = normalizeLogicalRelationName(bodyAtom.getRelation());
+            relationStrata.try_emplace(bodyRel, 0);
+            deps.push_back({headRel, bodyRel,
+                    bodyAtom.isNegatedAtom() &&
+                            (hardPruneAllNegations ||
+                                    isDeterministicRelation(
+                                            probabilisticRelations, bodyAtom.getRelation()))});
+        }
+    }
+    for (const auto& node : fullView.getNodes()) {
+        if (!node) {
+            continue;
+        }
+        relationStrata.try_emplace(normalizeLogicalRelationName(node->getTuple().relation_name), 0);
+    }
+
+    const std::size_t maxIterations =
+            std::max<std::size_t>(1, relationStrata.size()) * std::max<std::size_t>(1, deps.size() + 1);
+    bool strataChanged = true;
+    for (std::size_t iter = 0; iter < maxIterations && strataChanged; ++iter) {
+        strataChanged = false;
+        for (const auto& dep : deps) {
+            const std::size_t required = relationStrata[dep.body] + (dep.negated ? 1 : 0);
+            if (relationStrata[dep.head] < required) {
+                relationStrata[dep.head] = required;
+                strataChanged = true;
+            }
+        }
+    }
+    if (strataChanged) {
+        throw std::runtime_error(
+                "negation post-pass graph mode detected non-stratified negation while building the graph");
+    }
+
+    auto relationStratumOf = [&](const std::string& relation) -> std::size_t {
+        const std::string normalized = normalizeLogicalRelationName(relation);
+        auto it = relationStrata.find(normalized);
+        return it == relationStrata.end() ? 0 : it->second;
+    };
+    const char* debugHeadEnv = std::getenv("SOUFFLE_NEGATION_DEBUG_HEAD");
+    const std::string debugHead = debugHeadEnv ? std::string(debugHeadEnv) : std::string();
+
+    std::size_t maxStratum = 0;
+    for (const auto& [_, stratum] : relationStrata) {
+        maxStratum = std::max(maxStratum, stratum);
+    }
+
+    std::unordered_set<NodePtr> liveNodes;
+    std::unordered_set<UntypedTuple> liveTuples;
+    liveNodes.reserve(fullView.getNodes().size());
+    liveTuples.reserve(fullView.getNodes().size());
+    for (const auto& node : fullView.getNodes()) {
+        if (node && seedTuples.count(node->getTuple()) > 0) {
+            liveNodes.insert(node);
+            liveTuples.insert(node->getTuple());
+        }
+    }
+
+    std::vector<std::vector<EdgePtr>> edgesByStratum(maxStratum + 1);
+    for (const auto& edge : fullView.getEdges()) {
+        NodePtr head = fullView.getOutput(edge);
+        if (!head) {
+            continue;
+        }
+        edgesByStratum[relationStratumOf(head->getTuple().relation_name)].push_back(edge);
+    }
+
+    std::unordered_set<EdgePtr> activeEdges;
+    activeEdges.reserve(fullView.getEdges().size());
+
+    auto activateEdge = [&](CandidateEdgeState& state, std::queue<NodePtr>& workQueue) {
+        if (state.active || state.blocked) {
+            return;
+        }
+        state.active = true;
+        activeEdges.insert(state.edge);
+        if (liveNodes.insert(state.head).second) {
+            liveTuples.insert(state.head->getTuple());
+            workQueue.push(state.head);
+        }
+    };
+
+    for (std::size_t currentStratum = 0; currentStratum <= maxStratum; ++currentStratum) {
+        const auto& stratumEdges = edgesByStratum[currentStratum];
+        std::vector<CandidateEdgeState> states;
+        states.reserve(stratumEdges.size());
+        std::unordered_map<NodePtr, std::vector<std::size_t>> sameStratumPositiveConsumers;
+        sameStratumPositiveConsumers.reserve(stratumEdges.size());
+        std::queue<NodePtr> workQueue;
+
+        for (const auto& edge : stratumEdges) {
+            NodePtr head = fullView.getOutput(edge);
+            if (!head) {
+                continue;
+            }
+            CandidateEdgeState state{edge, head, 0, false, false};
+            const auto inputs = fullView.getInputs(edge);
+            const auto negs = fullView.getBodyNegations(edge);
+
+            for (std::size_t i = 0; i < inputs.size(); ++i) {
+                NodePtr input = inputs[i];
+                if (!input) {
+                    state.blocked = true;
+                    break;
+                }
+                const bool isNegated = i < negs.size() && negs[i];
+                const std::size_t inputStratum = relationStratumOf(input->getTuple().relation_name);
+
+                if (isNegated) {
+                    if (hardPruneAllNegations ||
+                            isDeterministicRelation(
+                                    probabilisticRelations, input->getTuple().relation_name)) {
+                        if (inputStratum >= currentStratum) {
+                            throw std::runtime_error(
+                                    "negation post-pass graph mode expected negated relation to be in a lower stratum");
+                        }
+                        if (liveNodes.count(input) > 0) {
+                            state.blocked = true;
+                            break;
+                        }
+                    }
+                    // Outside derivation-only mode, probabilistic negation is preserved in the
+                    // derivation graph and handled later by the probability pipeline; graph
+                    // pruning should not treat it as a positive dependency.
+                    continue;
+                }
+
+                if (liveNodes.count(input) > 0) {
+                    continue;
+                }
+                if (inputStratum == currentStratum) {
+                    sameStratumPositiveConsumers[input].push_back(states.size());
+                    state.pending_same_stratum_positive += 1;
+                } else {
+                    state.blocked = true;
+                    break;
+                }
+            }
+
+            if (!debugHead.empty() && head->getTuple().relation_name == debugHead) {
+                std::cerr << "[neg-debug] head=" << head->getTuple().toString()
+                          << " blocked=" << state.blocked
+                          << " pending_same=" << state.pending_same_stratum_positive
+                          << std::endl;
+                for (std::size_t i = 0; i < inputs.size(); ++i) {
+                    const bool isNegated = i < negs.size() && negs[i];
+                    std::cerr << "  input=" << inputs[i]->getTuple().toString()
+                              << " neg=" << isNegated
+                              << " live=" << (liveNodes.count(inputs[i]) > 0)
+                              << " det=" << isDeterministicRelation(
+                                         probabilisticRelations, inputs[i]->getTuple().relation_name)
+                              << " stratum=" << relationStratumOf(inputs[i]->getTuple().relation_name)
+                              << std::endl;
+                }
+            }
+
+            states.push_back(std::move(state));
+        }
+
+        for (auto& state : states) {
+            if (!state.blocked && state.pending_same_stratum_positive == 0) {
+                activateEdge(state, workQueue);
+            }
+        }
+
+        while (!workQueue.empty()) {
+            NodePtr node = workQueue.front();
+            workQueue.pop();
+            auto consumerIt = sameStratumPositiveConsumers.find(node);
+            if (consumerIt == sameStratumPositiveConsumers.end()) {
+                continue;
+            }
+            for (std::size_t idx : consumerIt->second) {
+                auto& state = states[idx];
+                if (state.blocked || state.active || state.pending_same_stratum_positive == 0) {
+                    continue;
+                }
+                state.pending_same_stratum_positive -= 1;
+                if (state.pending_same_stratum_positive == 0) {
+                    activateEdge(state, workQueue);
+                }
+            }
+        }
+    }
+
+    std::unordered_set<NodePtr> filteredNodes = liveNodes;
+    for (const auto& edge : activeEdges) {
+        NodePtr head = fullView.getOutput(edge);
+        if (head) {
+            filteredNodes.insert(head);
+        }
+        for (const auto& input : fullView.getInputs(edge)) {
+            if (input && liveNodes.count(input) > 0) {
+                filteredNodes.insert(input);
+            }
+        }
+    }
+
+    changedAny = filteredNodes.size() != fullView.getNodes().size() ||
+            activeEdges.size() != fullView.getEdges().size();
+
+    if (changedAny) {
+        rewriteProgramRelations(program, liveTuples);
+        if (opt.getOutputFileDir() != "-") {
+            program.printAll(opt.getOutputFileDir());
+        } else {
+            std::cerr << "[negation-post-pass] mode=graph output-dir is '-', skipping sanitized re-print"
+                      << std::endl;
+        }
+    }
+
+    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+    std::cout << "[negation-post-pass] mode=graph"
+              << " stage=create-graph"
+              << " nodes=" << fullView.getNodes().size()
+              << " edges=" << fullView.getEdges().size()
+              << " kept_nodes=" << filteredNodes.size()
+              << " kept_edges=" << activeEdges.size()
+              << " max_stratum=" << maxStratum
+              << " time_ms=" << elapsedMs
+              << std::endl;
+
+    return IncSubgraphView(std::move(filteredNodes), std::move(activeEdges), {}, {}, {}, {});
+}
+
+static IncSubgraphView pruneFilteredIncView(
+        IncSubgraphView view, const std::vector<souffle::Relation*>& outputRelations) {
+    std::unordered_set<std::string> outputRelationNames;
+    outputRelationNames.reserve(outputRelations.size() * 2 + 4);
+    for (const auto* rel : outputRelations) {
+        if (!rel) {
+            continue;
+        }
+        outputRelationNames.insert(rel->getName());
+        outputRelationNames.insert(normalizeLogicalRelationName(rel->getName()));
+    }
+
+    std::unordered_set<NodePtr> reachableNodes;
+    std::unordered_set<EdgePtr> reachableEdges;
+    reachableNodes.reserve(view.getNodes().size());
+    reachableEdges.reserve(view.getEdges().size());
+    std::queue<NodePtr> workQueue;
+
+    for (const auto& node : view.getNodes()) {
+        if (!node) {
+            continue;
+        }
+        const std::string rel = node->getTuple().relation_name;
+        if (node->isQueryNode() || outputRelationNames.count(rel) > 0 ||
+                outputRelationNames.count(normalizeLogicalRelationName(rel)) > 0) {
+            if (reachableNodes.insert(node).second) {
+                workQueue.push(node);
+            }
+            node->setQuery();
+        }
+        if (node->hasEvidence() && reachableNodes.insert(node).second) {
+            workQueue.push(node);
+        }
+    }
+
+    while (!workQueue.empty()) {
+        NodePtr current = workQueue.front();
+        workQueue.pop();
+        if (!current || current->isFact) {
+            continue;
+        }
+        for (const auto& edge : view.getIncomingEdges(current)) {
+            if (edge->hasSelfDependency()) {
+                continue;
+            }
+            reachableEdges.insert(edge);
+            for (const auto& inputNode : view.getInputs(edge)) {
+                if (inputNode && reachableNodes.insert(inputNode).second) {
+                    workQueue.push(inputNode);
+                }
+            }
+        }
+    }
+
+    return IncSubgraphView(std::move(reachableNodes), std::move(reachableEdges), {}, {}, {}, {});
+}
+
+static void markGraphPrunedFlags(IncrementalDerivationGraph& graph, const IncSubgraphView& view) {
+    const auto& liveNodes = view.getNodes();
+    const auto& liveEdges = view.getEdges();
+    for (const auto& node : graph.getNodes()) {
+        if (node) {
+            node->pruned = liveNodes.count(node) == 0;
+        }
+    }
+    for (const auto& edge : graph.getEdges()) {
+        if (edge) {
+            edge->pruned = liveEdges.count(edge) == 0;
+        }
+    }
 }
 
 struct GraphSummary {
@@ -795,7 +1926,7 @@ static void runBddPipeline(
         SouffleProgram& program,
         RuleManager& ruleManager,
         QueryManager& queryManager,
-        IncrementalDerivationGraph& graph,
+        std::unique_ptr<IncrementalDerivationGraph>& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
         bool enableOnlineCli,
@@ -841,7 +1972,7 @@ static void runBddPipeline(
             long long buildMs = 0;
             WeightedBDDManager::InitConfig initConfig;
             auto t2 = std::chrono::steady_clock::now();
-            auto resolvedEvs = applyEvidence(graph, evidences);
+            auto resolvedEvs = applyEvidence(*graph, evidences);
             auto t3 = std::chrono::steady_clock::now();
             auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
             long long evidenceBuildMs = 0;
@@ -1426,7 +2557,7 @@ static void runBddPipeline(
             debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
 
             auto t2 = std::chrono::steady_clock::now();
-            auto resolvedEvs = applyEvidence(graph, evidences);
+            auto resolvedEvs = applyEvidence(*graph, evidences);
             auto t3 = std::chrono::steady_clock::now();
 
             auto components = buildComponentSubgraphs(view);
@@ -1572,7 +2703,7 @@ static void runBddPipeline(
 
     if (enableOnlineCli) {
         IncrementalCLI<BddNodeRef> cli(
-                &program, &graph, &ruleManager, &queryManager, bddManager.get(), &nodeFormulas,
+                &program, graph.get(), &ruleManager, &queryManager, bddManager.get(), &nodeFormulas,
                 &edgeFormulas);
         cli.setCmdOptions(opt);
         cli.run();
@@ -1584,7 +2715,7 @@ static void runSddPipeline(
         SouffleProgram& program,
         RuleManager& ruleManager,
         QueryManager& queryManager,
-        IncrementalDerivationGraph& graph,
+        std::unique_ptr<IncrementalDerivationGraph>& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
         bool enableOnlineCli,
@@ -1627,7 +2758,7 @@ static void runSddPipeline(
             auto analyses = analyzeComponents(view, std::move(components));
 
             auto t2 = std::chrono::steady_clock::now();
-            auto resolvedEvs = applyEvidence(graph, evidences);
+            auto resolvedEvs = applyEvidence(*graph, evidences);
             auto t3 = std::chrono::steady_clock::now();
             auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
 
@@ -1999,7 +3130,7 @@ static void runSddPipeline(
             debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
 
             auto t2 = std::chrono::steady_clock::now();
-            auto resolvedEvs = applyEvidence(graph, evidences);
+            auto resolvedEvs = applyEvidence(*graph, evidences);
             auto t3 = std::chrono::steady_clock::now();
 
             auto components = buildComponentSubgraphs(view);
@@ -2094,7 +3225,7 @@ static void runSddPipeline(
 
     if (enableOnlineCli) {
         IncrementalCLI<SddNodeRef> cli(
-                &program, &graph, &ruleManager, &queryManager, sddManager.get(), &nodeFormulas,
+                &program, graph.get(), &ruleManager, &queryManager, sddManager.get(), &nodeFormulas,
                 &edgeFormulas);
         cli.setCmdOptions(opt);
         cli.run();
@@ -2406,7 +3537,7 @@ static bool resolveOnlineCliAvailability(
 
 static void runKnowledgeRuntimeLane(const CmdOptions& opt, SouffleProgram& program,
         RuleManager& ruleManager, QueryManager& queryManager,
-        IncrementalDerivationGraph& graph, IncSubgraphView& view,
+        std::unique_ptr<IncrementalDerivationGraph>& graph, IncSubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences, bool allowOnlineCli,
         StageInfo* rewriteHybridStage) {
     switch (program.getKnowledge()) {
@@ -2426,6 +3557,22 @@ static void runKnowledgeRuntimeLane(const CmdOptions& opt, SouffleProgram& progr
     }
 }
 
+bool runNegationPostPass(
+        const CmdOptions& opt,
+        SouffleProgram& program,
+        RuleManager& ruleManager) {
+    const NegationPostPassMode mode = resolveNegationPostPassMode();
+    if (mode != NegationPostPassMode::RuleApp) {
+        if (mode == NegationPostPassMode::Off) {
+            std::cout << "[negation-post-pass] mode=off" << std::endl;
+        }
+        return false;
+    }
+
+    auto probabilisticRelations = computeProbabilisticRelations(program, ruleManager, fact_prob);
+    return runRuleAppNegationPostPass(program, ruleManager, probabilisticRelations);
+}
+
 void runPipeline(
         const CmdOptions& opt,
         SouffleProgram& program,
@@ -2441,6 +3588,10 @@ void runPipeline(
     precomputedTupleProbResult.clear();
     debugger.addInfo("full_runtime_lane", fullRuntimeLaneLabel(opt));
     debugger.addInfo("knowledge_backend", knowledgeBackendLabel(program.getKnowledge()));
+    const NegationPostPassMode negationPostPassMode = resolveNegationPostPassMode();
+    debugger.addInfo("negation_postpass_mode", negationPostPassModeLabel(negationPostPassMode));
+    const auto probabilisticRelations = computeProbabilisticRelations(program, ruleManager, factProb);
+    const auto seedTuples = buildSeedFactTuples(factProb, ruleManager);
 
     if (::detForceEnabled) {
         std::cout << "[det-force] enabled; skip derivation graph and emit prob=1.0" << std::endl;
@@ -2459,6 +3610,45 @@ void runPipeline(
 
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);
     debugger.addInfo("input_fact_size", std::to_string(countInitialInputFacts()));
+    const RuleAppInventory ruleAppInventory = collectRuleAppInventory();
+    debugger.addInfo("ruleapp_head_tuples", std::to_string(ruleAppInventory.headTuples));
+    debugger.addInfo("ruleapp_null_sets", std::to_string(ruleAppInventory.nullRuleSets));
+    debugger.addInfo("ruleapp_total", std::to_string(ruleAppInventory.totalRuleApps));
+    debugger.addInfo("ruleapp_total_bindings", std::to_string(ruleAppInventory.totalBindings));
+    debugger.addInfo("ruleapp_max_per_head", std::to_string(ruleAppInventory.maxRuleAppsPerHead));
+    debugger.addInfo("ruleapp_unique_rules", std::to_string(ruleAppInventory.uniqueRuleIds));
+    const double avgRuleAppsPerHead = ruleAppInventory.headTuples
+            ? static_cast<double>(ruleAppInventory.totalRuleApps) /
+                    static_cast<double>(ruleAppInventory.headTuples)
+            : 0.0;
+    const double avgBindingsPerRuleApp = ruleAppInventory.totalRuleApps
+            ? static_cast<double>(ruleAppInventory.totalBindings) /
+                    static_cast<double>(ruleAppInventory.totalRuleApps)
+            : 0.0;
+    debugger.addInfo("ruleapp_avg_per_head", std::to_string(avgRuleAppsPerHead));
+    debugger.addInfo("ruleapp_avg_bindings", std::to_string(avgBindingsPerRuleApp));
+    std::cout << "[pipeline] recorded ruleapps: heads=" << ruleAppInventory.headTuples
+              << " null_sets=" << ruleAppInventory.nullRuleSets
+              << " total=" << ruleAppInventory.totalRuleApps
+              << " unique_rules=" << ruleAppInventory.uniqueRuleIds
+              << " avg_per_head=" << avgRuleAppsPerHead
+              << " avg_bindings=" << avgBindingsPerRuleApp
+              << " max_per_head=" << ruleAppInventory.maxRuleAppsPerHead << std::endl;
+    if (opt.isDumpJsonBeforeGraphEnabled()) {
+        const auto tDump0 = std::chrono::steady_clock::now();
+        dumpRuleAppsBeforeGraphJson(opt, ruleManager, factProb);
+        const auto tDump1 = std::chrono::steady_clock::now();
+        debugger.addInfo("dumpjson_before_graph_ms", std::to_string(
+                std::chrono::duration_cast<std::chrono::milliseconds>(tDump1 - tDump0).count()));
+        if (!needsMaterializedGraph(opt)) {
+            std::cout << "[pipeline] skipping create graph; pre-graph dump satisfied requested outputs"
+                      << std::endl;
+            debugger.endStage();
+            debugger.endTurn();
+            dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter0.txt");
+            return;
+        }
+    }
     auto t0 = std::chrono::steady_clock::now();
     auto graph = std::unique_ptr<IncrementalDerivationGraph>(IncrementalDerivationGraph::createFrom(
             DerivationManager::untypedTuple2RuleApplications, ruleManager, queryManager, factProb, evidences));
@@ -2473,12 +3663,33 @@ void runPipeline(
     if (opt.isDumpDotEnabled()) {
         graph->dumpDot(makeOutputPath(opt, "before_prune.dot"));
     }
+    if (opt.isDumpJsonBeforePruneEnabled()) {
+        graph->dumpJson(makeOutputPath(opt, "derivation-before-prune.json"));
+    }
 
     debugger.startStage(StageKind::PRUNING_FULL);
     auto t2 = std::chrono::steady_clock::now();
-    const GraphSummary beforePrune = summarizeGraphLight(*graph);
+    IncSubgraphView view = buildFullIncViewLocal(*graph);
+    const GraphSummary beforePrune = summarizeGraphLight(view);
     addGraphSummaryInfo(debugger, "before_", beforePrune);
-    auto view = graph->prune(program.getOutputRelations());
+
+    if (negationPostPassMode == NegationPostPassMode::Graph) {
+        bool graphPostChanged = false;
+        auto tNeg0 = std::chrono::steady_clock::now();
+        view = runGraphNegationPostPass(
+                opt, program, ruleManager, probabilisticRelations, seedTuples, *graph, graphPostChanged);
+        auto tNeg1 = std::chrono::steady_clock::now();
+        const GraphSummary afterGraphPost = summarizeGraphLight(view);
+        addGraphSummaryInfo(debugger, "after_negation_", afterGraphPost);
+        debugger.addInfo("negation_postpass_changed", graphPostChanged ? "1" : "0");
+        debugger.addInfo("negation_postpass_ms", std::to_string(
+                std::chrono::duration_cast<std::chrono::milliseconds>(tNeg1 - tNeg0).count()));
+        view = pruneFilteredIncView(std::move(view), program.getOutputRelations());
+        markGraphPrunedFlags(*graph, view);
+    } else {
+        view = graph->prune(program.getOutputRelations());
+    }
+
     const GraphSummary afterPrune = summarizeGraphLight(view);
     addGraphSummaryInfo(debugger, "after_", afterPrune);
     debugger.addInfo("removed_nodes", std::to_string(
@@ -2503,7 +3714,7 @@ void runPipeline(
     const bool allowOnlineCli =
             resolveOnlineCliAvailability(opt, enableOnlineCli, rewriteLane.rewritePerformed);
     runKnowledgeRuntimeLane(
-            opt, program, ruleManager, queryManager, *graph, view, evidences, allowOnlineCli,
+            opt, program, ruleManager, queryManager, graph, view, evidences, allowOnlineCli,
             rewriteLane.hybridStage);
 }
 

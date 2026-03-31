@@ -1079,7 +1079,7 @@ def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
         output_dir=out_full,
         mode="full-hard",
         turns=[[]],
-        extra_args=["--dumpjson", "--dumpdot", "--dumpstat", "--logfile", "reglog"],
+        extra_args=["--dumpjson", "--dumpjson-before-prune", "--dumpdot", "--dumpstat", "--logfile", "reglog"],
     )
 
     expected_dot_before = out_full / "derivation-full-before-prune1.dot"
@@ -1091,11 +1091,48 @@ def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
 
     assert_glob_nonempty(
         out_full,
+        "derivation-full-before-prune1-*.json",
+        label="dump contract json before prune",
+    )
+    assert_glob_nonempty(
+        out_full,
         "derivation-full-after-prune1-*.json",
         label="dump contract json after prune",
     )
     assert_glob_nonempty(out_full, "reglog_*.json", label="dump contract debugger logs")
     assert_glob_nonempty(out_full, "graph-*.json", label="dump contract graph stats")
+
+
+def case_full_const_negation_grounding(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("full_const_negation_grounding", work_root)
+
+    compute_bin, in_dir, _ = compile_compute(
+        souffle_bin=souffle_bin, case_dir=case_dir, full_only=True
+    )
+    out_dir = case_dir / "out_derv_only"
+    run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_dir,
+        extra_args=["--dumpjson", "--dumpjson-before-prune", "--derv-only", "--no-det-opt"],
+    )
+
+    before_prune_json = out_dir / "derivation-before-prune.json"
+    if not before_prune_json.exists():
+        raise CaseFailure(
+            f"const grounding: missing derivation-before-prune.json at {before_prune_json}"
+        )
+    derivation_json = out_dir / "derivation.json"
+    if not derivation_json.exists():
+        raise CaseFailure(f"const grounding: missing derivation.json at {derivation_json}")
+
+    result_csv = out_dir / "res.csv"
+    if normalize_table_lines(result_csv) != ["1", "2"]:
+        raise CaseFailure(
+            "const grounding: unexpected res.csv contents\n"
+            f"path={result_csv}\n"
+            f"lines={normalize_table_lines(result_csv)}"
+        )
 
 
 def case_canonical_compile_defaults_contract(souffle_bin: Path, work_root: Path) -> None:
@@ -1658,6 +1695,7 @@ CASES = {
     "rewrite_dirty_detect_equiv": case_rewrite_dirty_detect_equiv,
     "full_det_modes": case_full_det_modes,
     "dump_outputs_contract": case_dump_outputs_contract,
+    "full_const_negation_grounding": case_full_const_negation_grounding,
     "canonical_compile_defaults_contract": case_canonical_compile_defaults_contract,
     "canonical_online_cli_surface": case_canonical_online_cli_surface,
     "graph_query_canonical_surface": case_graph_query_canonical_surface,
