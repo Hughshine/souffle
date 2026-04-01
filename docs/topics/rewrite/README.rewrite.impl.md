@@ -21,6 +21,7 @@ SISO rewrite (`--rewrite`) and the newer implicit-split pipeline
 - Iteratively find SISO regions (single entry/exit) in the derivation graph, summarize each region into a single probabilistic edge, then run the usual forward compilation on the smaller view.
 
 ## Rewrite modes
+- Default full-mode runs do not rewrite.
 - `--rewrite`: explicit SISO rewrite. The pipeline rewrites the live derivation
   graph in place via `GraphRewriter` and then runs the usual hybrid FC/WMC stage.
 - `--implicit-rewrite`: implicit-split rewrite. The pipeline first runs the
@@ -63,6 +64,28 @@ SISO rewrite (`--rewrite`) and the newer implicit-split pipeline
 - The pipeline carries precomputed tuple probabilities from the implicit split
   pass into the final output map so correctness checks can compare implicit and
   non-rewrite runs directly on `facts.prob`.
+
+### Implicit profiling and JSON output
+- The maintained full artifact writes these values into the default JSON stage
+  log whenever a run uses `--implicit-rewrite`; no extra profiling flag is
+  required.
+- `FC_WMC_HYBRID` remains the top-level rewrite stage for end-to-end timing, and
+  its `info` map now includes the implicit substage totals used by the artifact
+  benchmark collectors.
+- Key fields:
+  - `implicit_overlay_siso_detect_ms`: time spent identifying SISO / fast-path
+    candidates in the overlay view.
+  - `implicit_overlay_siso_summarize_ms`: time spent applying SISO
+    summarization, including the fast-path rewrite action itself.
+  - `implicit_graph_bdd_compile_ms`: total BDD compilation time spent inside the
+    implicit graph rewriter.
+  - `implicit_graph_bdd_wmc_ms`: total BDD WMC time spent inside the implicit
+    graph rewriter.
+  - `implicit_graph_apply_ms`: total time applying rewritten region results back
+    to the implicit graph.
+- `implicit_overlay_fastpath_ms` is a wider umbrella timer than the SISO pair
+  above. It includes fast-path control/dispatch overhead in addition to the
+  actual rewrite time captured by `implicit_overlay_siso_summarize_ms`.
 
 ## Latest explicit evaluation (2026-01-05, full rule set)
 Settings:
@@ -138,6 +161,7 @@ Settings:
 Use this as a reference before making further optimizations. Keep changes small and measure on both small (P5) and larger (P12/P1x) cases, comparing total time and BDD sizes with and without rewrite.
 
 ## Related commits
+- `60bbdc2e4` — perf(problog): expose implicit rewrite profiling in JSON
 - `UNCOMMITTED` — docs(rewrite): document explicit vs implicit rewrite modes for full-artifact
 - `812ea4081` — docs(repo): refine README narratives
 - `3e9b024ca` — docs(readme): refresh eval and pipeline notes

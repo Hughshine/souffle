@@ -23,8 +23,12 @@ prototypes.
 - The legacy `--inc` backend is removed.
 - No interpreter path; `souffle file.dl` defaults to compile-only `-o <basename>`.
 - Rewrite runs only in full-mode runs; if a rewrite mode is enabled, the incremental CLI is disabled after the full run.
+- Full-mode runs do not rewrite by default. Rewrite remains opt-in.
 - `--rewrite` selects the explicit SISO rewrite pipeline.
 - `--implicit-rewrite` selects the implicit-split rewrite pipeline and also enables rewrite mode.
+- When `--implicit-rewrite` is active, the full pipeline emits detailed implicit
+  profiling inside the default JSON stage log and `FC_WMC_HYBRID` stage info,
+  including overlay/SISO timing and BDD substage timing.
 - `--setmode full` maps to `full-hard`; `full-soft` is optional.
 
 ## Quickstart
@@ -81,9 +85,14 @@ See `docs/TESTING.md` for test status and alternative verification paths.
   `--rewrite` is the legacy explicit pass, while `--implicit-rewrite` switches
   the full pipeline to the implicit-split rewrite path used by the maintained
   full artifact evaluation.
+- Need the new implicit profiling fields: run with `--implicit-rewrite` and
+  inspect the JSON stage log or `FC_WMC_HYBRID` stage info for fields such as
+  `implicit_overlay_siso_detect_ms`, `implicit_overlay_siso_summarize_ms`, and
+  `implicit_graph_bdd_compile_ms`.
 - Commit hygiene: see `docs/process/README.git.md` for what to include and exclude.
 
 ## Related commits
+- `60bbdc2e4` — perf(problog): expose implicit rewrite profiling in JSON
 - `UNCOMMITTED` — docs(readme): clarify explicit vs implicit rewrite flags for full-artifact
 - `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack guide and link it from README
 - `UNCOMMITTED` — docs(repo): add project-level docs and move commit hygiene guide under docs/process
