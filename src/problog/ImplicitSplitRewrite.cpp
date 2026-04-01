@@ -546,9 +546,14 @@ bool ImplicitSplitOverlay::rewriteAllFactsPass(ImplicitSplitOverlayStats* stats)
         const double p = factProbabilityOf(ref);
         return !(p > 0.0 && p < 1.0) && activeOutgoingCount(ref) == 1;
     };
-    bool changed = false;
+    const auto detectStart = Clock::now();
+    std::vector<std::size_t> candidateEdges;
+    candidateEdges.reserve(activeEdgeIds_.size());
     for (const auto edgeIndex : activeEdgeIds_) {
-        auto& edge = edges_[edgeIndex];
+        if (edgeIndex >= edges_.size()) {
+            continue;
+        }
+        const auto& edge = edges_[edgeIndex];
         if (!edge.active || edge.inputs.empty() || !edge.output) {
             continue;
         }
@@ -562,7 +567,22 @@ bool ImplicitSplitOverlay::rewriteAllFactsPass(ImplicitSplitOverlayStats* stats)
         if (!allFacts || activeIncomingCount(edge.output) != 1) {
             continue;
         }
+        candidateEdges.push_back(edgeIndex);
+    }
+    if (stats) {
+        stats->fastPathDetectMs += elapsedMs(detectStart);
+    }
 
+    const auto summarizeStart = Clock::now();
+    bool changed = false;
+    for (const auto edgeIndex : candidateEdges) {
+        if (edgeIndex >= edges_.size()) {
+            continue;
+        }
+        auto& edge = edges_[edgeIndex];
+        if (!edge.active || edge.inputs.empty() || !edge.output) {
+            continue;
+        }
         double probability = edge.deterministic ? 1.0 : edge.probability;
         for (std::size_t i = 0; i < edge.inputs.size(); ++i) {
             double inputProb = factProbabilityOf(edge.inputs[i]);
@@ -584,6 +604,9 @@ bool ImplicitSplitOverlay::rewriteAllFactsPass(ImplicitSplitOverlayStats* stats)
             ++stats->removedEdges;
             ++stats->factOutputsFolded;
         }
+    }
+    if (stats) {
+        stats->fastPathSummarizeMs += elapsedMs(summarizeStart);
     }
     return changed;
 }
@@ -1158,6 +1181,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         if (stats) {
             ++stats->fastPathIterations;
         }
+        const auto detectStart = Clock::now();
         std::vector<FastPathCandidate> candidates;
         candidates.reserve(activeEdgeIds_.size());
         if (enableSingleHyperedge) {
@@ -1276,6 +1300,9 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
             }
             selected.push_back(candidate);
         }
+        if (stats) {
+            stats->fastPathDetectMs += elapsedMs(detectStart);
+        }
 
         bool changed = false;
         bool rebuiltBeforeAllFacts = false;
@@ -1284,8 +1311,10 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
                 case FastPathCandidate::Kind::SingleHyperedge: {
                     const auto singleStart = Clock::now();
                     const bool applied = applySingleHyperedge(candidate.edgeIndex);
+                    const double elapsed = elapsedMs(singleStart);
                     if (stats) {
-                        stats->fastPathSingleMs += elapsedMs(singleStart);
+                        stats->fastPathSingleMs += elapsed;
+                        stats->fastPathSummarizeMs += elapsed;
                     }
                     changed = applied || changed;
                     break;
@@ -1293,8 +1322,10 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
                 case FastPathCandidate::Kind::LinearTwoEdge: {
                     const auto linearStart = Clock::now();
                     const bool applied = applyLinearTwoEdge(candidate.edgeIndex);
+                    const double elapsed = elapsedMs(linearStart);
                     if (stats) {
-                        stats->fastPathLinearMs += elapsedMs(linearStart);
+                        stats->fastPathLinearMs += elapsed;
+                        stats->fastPathSummarizeMs += elapsed;
                     }
                     changed = applied || changed;
                     break;
@@ -1302,8 +1333,10 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
                 case FastPathCandidate::Kind::ParallelEdge: {
                     const auto parallelStart = Clock::now();
                     const bool applied = applyParallelEdges(candidate.edgeIndices);
+                    const double elapsed = elapsedMs(parallelStart);
                     if (stats) {
-                        stats->fastPathParallelMs += elapsedMs(parallelStart);
+                        stats->fastPathParallelMs += elapsed;
+                        stats->fastPathSummarizeMs += elapsed;
                     }
                     changed = applied || changed;
                     break;
@@ -1311,8 +1344,10 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
                 case FastPathCandidate::Kind::FanOutConverge: {
                     const auto fanStart = Clock::now();
                     const bool applied = applyFanOutConverge(candidate.entryRef);
+                    const double elapsed = elapsedMs(fanStart);
                     if (stats) {
-                        stats->fastPathFanOutMs += elapsedMs(fanStart);
+                        stats->fastPathFanOutMs += elapsed;
+                        stats->fastPathSummarizeMs += elapsed;
                     }
                     changed = applied || changed;
                     break;
@@ -1942,6 +1977,8 @@ void accumulateOverlayStats(ImplicitSplitOverlayStats& total, const ImplicitSpli
     total.splitCompleteMs += iter.splitCompleteMs;
     total.splitAliasApplyMs += iter.splitAliasApplyMs;
     total.rebuildIndexMs += iter.rebuildIndexMs;
+    total.fastPathDetectMs += iter.fastPathDetectMs;
+    total.fastPathSummarizeMs += iter.fastPathSummarizeMs;
     total.fastPathSingleMs += iter.fastPathSingleMs;
     total.fastPathLinearMs += iter.fastPathLinearMs;
     total.fastPathParallelMs += iter.fastPathParallelMs;
@@ -2306,6 +2343,8 @@ void printBenchmarkImplicitSummary(const ImplicitSplitPipelineResult& run, doubl
               << " overlay_prep_ms=" << stats.overlayPrepMs
               << " overlay_split_ms=" << stats.overlaySplitMs
               << " overlay_fastpath_ms=" << stats.overlayFastPathMs
+              << " overlay_siso_detect_ms=" << stats.overlayStats.fastPathDetectMs
+              << " overlay_siso_summarize_ms=" << stats.overlayStats.fastPathSummarizeMs
               << " materialize_ms=" << stats.materializeMs
               << " detect_ms=" << stats.graphDetectMs
               << " graph_rewrite_ms=" << stats.graphRewriteMs
@@ -2329,6 +2368,9 @@ void printBenchmarkImplicitSummary(const ImplicitSplitPipelineResult& run, doubl
               << " rebuild_index_ms=" << stats.overlayStats.rebuildIndexMs
               << " fastpath_iterations=" << stats.overlayStats.fastPathIterations
               << " fastpath_single_ms=" << stats.overlayStats.fastPathSingleMs
+              << " fastpath_linear_ms=" << stats.overlayStats.fastPathLinearMs
+              << " fastpath_parallel_ms=" << stats.overlayStats.fastPathParallelMs
+              << " fastpath_fan_out_ms=" << stats.overlayStats.fastPathFanOutMs
               << " fastpath_allfacts_ms=" << stats.overlayStats.fastPathAllFactsMs
               << " materialized_alias_nodes=" << stats.materializedAliasNodes
               << " nodes_before=" << stats.materializedNodesBefore
@@ -2337,8 +2379,14 @@ void printBenchmarkImplicitSummary(const ImplicitSplitPipelineResult& run, doubl
               << " edges_after=" << stats.materializedEdgesAfter
               << " graph_iterations=" << stats.graphRewriteStats.numIterations
               << " graph_regions=" << stats.graphRewriteStats.numRegionsRewritten
+              << " graph_general_regions=" << stats.graphRewriteStats.numGeneralRegionsRewritten
               << " graph_rv_before=" << stats.graphRewriteStats.randomVarsBefore
               << " graph_rv_after=" << stats.graphRewriteStats.randomVarsAfter
+              << " graph_detect_total_ms=" << stats.graphRewriteStats.totalDetectMs
+              << " graph_bdd_manager_init_ms=" << stats.graphRewriteStats.totalBddManagerInitMs
+              << " graph_bdd_compile_ms=" << stats.graphRewriteStats.totalBddBuildMs
+              << " graph_bdd_wmc_ms=" << stats.graphRewriteStats.totalBddWmcMs
+              << " graph_apply_ms=" << stats.graphRewriteStats.totalApplyMs
               << " before=" << summarizeRewritePatternCounts(stats.materializedDetectedBefore)
               << " after=" << summarizeRewritePatternCounts(stats.materializedDetectedAfter)
               << "\n";

@@ -2232,27 +2232,68 @@ void runPipeline(
                       << " overlay_prep_ms=" << implicitResult.stats.overlayPrepMs
                       << " overlay_split_ms=" << implicitResult.stats.overlaySplitMs
                       << " overlay_fastpath_ms=" << implicitResult.stats.overlayFastPathMs
+                      << " overlay_siso_detect_ms=" << implicitResult.stats.overlayStats.fastPathDetectMs
+                      << " overlay_siso_summarize_ms=" << implicitResult.stats.overlayStats.fastPathSummarizeMs
                       << " materialize_ms=" << implicitResult.stats.materializeMs
                       << " detect_ms=" << implicitResult.stats.graphDetectMs
                       << " graph_rewrite_ms=" << implicitResult.stats.graphRewriteMs
+                      << " graph_bdd_compile_ms=" << implicitResult.stats.graphRewriteStats.totalBddBuildMs
                       << " overlay_aliases=" << implicitResult.stats.overlayStats.aliasesCreated
                       << " overlay_edges_aliased=" << implicitResult.stats.overlayStats.edgesAliased
                       << " overlay_all_facts=" << implicitResult.stats.overlayStats.allFactsRewrites
                       << " overlay_single=" << implicitResult.stats.overlayStats.singleHyperedgeRewrites
                       << std::endl;
             if (rewriteHybridStage) {
+                const auto formatMs = [](double value) {
+                    std::ostringstream oss;
+                    oss << std::fixed << std::setprecision(6) << value;
+                    return oss.str();
+                };
+                const auto addImplicitInfo = [&](const std::string& key, double value) {
+                    const std::string text = formatMs(value);
+                    debugger.addInfo(key, text);
+                    rewriteHybridStage->logMessage(Level::INFO, key + "=" + text);
+                };
                 debugger.addInfo("rewrite_engine", "implicit");
-                debugger.addInfo("implicit_overlay_prep_ms",
-                        std::to_string(static_cast<long long>(implicitResult.stats.overlayPrepMs)));
-                debugger.addInfo("implicit_graph_rewrite_ms",
-                        std::to_string(static_cast<long long>(implicitResult.stats.graphRewriteMs)));
                 rewriteHybridStage->logMessage(Level::INFO, "rewrite_engine=implicit");
+                addImplicitInfo("implicit_total_ms", implicitResult.stats.totalMs);
+                addImplicitInfo("implicit_overlay_prep_ms", implicitResult.stats.overlayPrepMs);
+                addImplicitInfo("implicit_overlay_split_ms", implicitResult.stats.overlaySplitMs);
+                addImplicitInfo("implicit_overlay_fastpath_ms", implicitResult.stats.overlayFastPathMs);
+                addImplicitInfo("implicit_overlay_siso_detect_ms",
+                        implicitResult.stats.overlayStats.fastPathDetectMs);
+                addImplicitInfo("implicit_overlay_siso_summarize_ms",
+                        implicitResult.stats.overlayStats.fastPathSummarizeMs);
+                addImplicitInfo("implicit_overlay_rebuild_index_ms",
+                        implicitResult.stats.overlayStats.rebuildIndexMs);
+                addImplicitInfo("implicit_overlay_fastpath_single_ms",
+                        implicitResult.stats.overlayStats.fastPathSingleMs);
+                addImplicitInfo("implicit_overlay_fastpath_linear_ms",
+                        implicitResult.stats.overlayStats.fastPathLinearMs);
+                addImplicitInfo("implicit_overlay_fastpath_parallel_ms",
+                        implicitResult.stats.overlayStats.fastPathParallelMs);
+                addImplicitInfo("implicit_overlay_fastpath_fan_out_ms",
+                        implicitResult.stats.overlayStats.fastPathFanOutMs);
+                addImplicitInfo("implicit_overlay_fastpath_allfacts_ms",
+                        implicitResult.stats.overlayStats.fastPathAllFactsMs);
+                addImplicitInfo("implicit_materialize_ms", implicitResult.stats.materializeMs);
+                addImplicitInfo("implicit_graph_detect_ms", implicitResult.stats.graphDetectMs);
+                addImplicitInfo("implicit_graph_rewrite_ms", implicitResult.stats.graphRewriteMs);
+                addImplicitInfo("implicit_graph_detect_total_ms",
+                        implicitResult.stats.graphRewriteStats.totalDetectMs);
+                addImplicitInfo("implicit_graph_bdd_manager_init_ms",
+                        implicitResult.stats.graphRewriteStats.totalBddManagerInitMs);
+                addImplicitInfo("implicit_graph_bdd_compile_ms",
+                        implicitResult.stats.graphRewriteStats.totalBddBuildMs);
+                addImplicitInfo("implicit_graph_bdd_wmc_ms",
+                        implicitResult.stats.graphRewriteStats.totalBddWmcMs);
+                addImplicitInfo("implicit_graph_apply_ms",
+                        implicitResult.stats.graphRewriteStats.totalApplyMs);
+                debugger.addInfo("implicit_graph_general_regions",
+                        std::to_string(implicitResult.stats.graphRewriteStats.numGeneralRegionsRewritten));
                 rewriteHybridStage->logMessage(Level::INFO,
-                        "implicit_overlay_prep_ms=" +
-                                std::to_string(static_cast<long long>(implicitResult.stats.overlayPrepMs)));
-                rewriteHybridStage->logMessage(Level::INFO,
-                        "implicit_graph_rewrite_ms=" +
-                                std::to_string(static_cast<long long>(implicitResult.stats.graphRewriteMs)));
+                        "implicit_graph_general_regions=" +
+                                std::to_string(implicitResult.stats.graphRewriteStats.numGeneralRegionsRewritten));
             }
         } else {
             GraphRewriter rewriter;

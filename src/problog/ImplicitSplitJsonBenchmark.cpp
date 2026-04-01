@@ -277,6 +277,8 @@ void printImplicitSummary(const ImplicitSplitPipelineResult& run, double loadMs)
               << " overlay_prep_ms=" << stats.overlayPrepMs
               << " overlay_split_ms=" << stats.overlaySplitMs
               << " overlay_fastpath_ms=" << stats.overlayFastPathMs
+              << " overlay_siso_detect_ms=" << stats.overlayStats.fastPathDetectMs
+              << " overlay_siso_summarize_ms=" << stats.overlayStats.fastPathSummarizeMs
               << " materialize_ms=" << stats.materializeMs
               << " detect_ms=" << stats.graphDetectMs
               << " graph_rewrite_ms=" << stats.graphRewriteMs
@@ -296,6 +298,9 @@ void printImplicitSummary(const ImplicitSplitPipelineResult& run, double loadMs)
               << " rebuild_index_ms=" << stats.overlayStats.rebuildIndexMs
               << " fastpath_iterations=" << stats.overlayStats.fastPathIterations
               << " fastpath_single_ms=" << stats.overlayStats.fastPathSingleMs
+              << " fastpath_linear_ms=" << stats.overlayStats.fastPathLinearMs
+              << " fastpath_parallel_ms=" << stats.overlayStats.fastPathParallelMs
+              << " fastpath_fan_out_ms=" << stats.overlayStats.fastPathFanOutMs
               << " fastpath_allfacts_ms=" << stats.overlayStats.fastPathAllFactsMs
               << " materialized_alias_nodes=" << stats.materializedAliasNodes
               << " nodes_before=" << stats.materializedNodesBefore
@@ -304,8 +309,14 @@ void printImplicitSummary(const ImplicitSplitPipelineResult& run, double loadMs)
               << " edges_after=" << stats.materializedEdgesAfter
               << " graph_iterations=" << stats.graphRewriteStats.numIterations
               << " graph_regions=" << stats.graphRewriteStats.numRegionsRewritten
+              << " graph_general_regions=" << stats.graphRewriteStats.numGeneralRegionsRewritten
               << " graph_rv_before=" << stats.graphRewriteStats.randomVarsBefore
               << " graph_rv_after=" << stats.graphRewriteStats.randomVarsAfter
+              << " graph_detect_total_ms=" << stats.graphRewriteStats.totalDetectMs
+              << " graph_bdd_manager_init_ms=" << stats.graphRewriteStats.totalBddManagerInitMs
+              << " graph_bdd_compile_ms=" << stats.graphRewriteStats.totalBddBuildMs
+              << " graph_bdd_wmc_ms=" << stats.graphRewriteStats.totalBddWmcMs
+              << " graph_apply_ms=" << stats.graphRewriteStats.totalApplyMs
               << " before=" << summarizeRewritePatternCounts(stats.materializedDetectedBefore)
               << " after=" << summarizeRewritePatternCounts(stats.materializedDetectedAfter)
               << "\n";

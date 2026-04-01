@@ -72,6 +72,8 @@ struct ImplicitSplitOverlayStats {
     double splitCompleteMs = 0.0;
     double splitAliasApplyMs = 0.0;
     double rebuildIndexMs = 0.0;
+    double fastPathDetectMs = 0.0;
+    double fastPathSummarizeMs = 0.0;
     double fastPathSingleMs = 0.0;
     double fastPathLinearMs = 0.0;
     double fastPathParallelMs = 0.0;

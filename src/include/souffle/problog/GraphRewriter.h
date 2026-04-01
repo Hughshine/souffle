@@ -37,6 +37,7 @@ using SISORegionInfo = ::SISORegionInfo;
 struct GraphRewriteStats {
     size_t numIterations = 0;          ///< Number of outer iterations
     size_t numRegionsRewritten = 0;    ///< Total SISO regions rewritten
+    size_t numGeneralRegionsRewritten = 0;  ///< Regions summarized via general BDD rewrite
     size_t numNodesRemoved = 0;        ///< Internal nodes removed from the view
     size_t numEdgesRemoved = 0;        ///< Internal edges removed from the view
     size_t numEdgesAdded = 0;          ///< Synthetic edges added
@@ -45,6 +46,11 @@ struct GraphRewriteStats {
     size_t simpleFactRegions = 0;      ///< Count of simple fact-based regions rewritten
     size_t randomVarsBefore = 0;       ///< Random vars in the view before rewrite
     size_t randomVarsAfter = 0;        ///< Random vars in the view after rewrite
+    double totalDetectMs = 0.0;        ///< Total SISO detection time across iterations
+    double totalBddManagerInitMs = 0.0;  ///< Total CUDD manager init time attributed to rewrite
+    double totalBddBuildMs = 0.0;      ///< Total BDD build/compilation time across rewritten regions
+    double totalBddWmcMs = 0.0;        ///< Total BDD WMC time across rewritten regions
+    double totalApplyMs = 0.0;         ///< Total rewrite apply time for general regions
 };
 
 enum class SplitMode {
@@ -257,6 +263,7 @@ public:
                 regions.swap(filtered);
             }
             double detectMs = toMs(std::chrono::steady_clock::now() - detectStart);
+            stats.totalDetectMs += detectMs;
             std::cout << "[GraphRewriter] SISO detection took "
                       << detectMs << " ms" << std::endl;
             size_t detectedSingle = 0, detectedLinear = 0, detectedParallel = 0, detectedAllFacts = 0, detectedGeneral = 0;
@@ -860,13 +867,18 @@ public:
                                       << managerInitMs << " ms" << std::endl;
                         }
                     }
-                    double effectiveMgrInitMs = managerInitialized ? managerInitMs : 0.0;
+                    double effectiveMgrInitMs = firstRegionTiming ? managerInitMs : 0.0;
                     condProb = computeRegionConditionalProbability(
                         *bddManager, effectiveMgrInitMs, regionView, region.entry, region.exit, dumpStats, &timing);
                 }
                 double condMs = toMs(std::chrono::steady_clock::now() - condStart);
                 loopCondMs += condMs;
-                firstRegionTiming = false;
+                if (!isSimple) {
+                    stats.totalBddManagerInitMs += timing.mgrInitMs;
+                    stats.totalBddBuildMs += timing.buildMs;
+                    stats.totalBddWmcMs += timing.wmcMs;
+                    firstRegionTiming = false;
+                }
 
                 if (condProb <= 0.0) {
                     if (dumpStats) {
@@ -881,6 +893,10 @@ public:
                 double applyMs = toMs(std::chrono::steady_clock::now() - applyStart);
                 timing.applyMs = applyMs;
                 loopRewrittenMs += applyMs;
+                if (!isSimple) {
+                    stats.totalApplyMs += applyMs;
+                    ++stats.numGeneralRegionsRewritten;
+                }
 
                 if (dumpStats) {
                     auto regionMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1954,7 +1970,18 @@ private:
 
         auto itEntry = nodeFormulas.find(entry);
         if (itEntry == nodeFormulas.end()) {
+            auto t2 = std::chrono::steady_clock::now();
             double pExit = bddManager.computeWeightedModelCount(itExit->second);
+            auto t3 = std::chrono::steady_clock::now();
+            double wmcMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
+            if (timingOut) {
+                timingOut->mgrInitMs = managerInitMs;
+                timingOut->buildMs = buildMs;
+                timingOut->wmcMs = wmcMs;
+                timingOut->roundTimingsMs = roundTimings;
+                timingOut->liveNodes = Cudd_ReadNodeCount(bddManager.getManager());
+                timingOut->memMb = Cudd_ReadMemoryInUse(bddManager.getManager()) / (1024.0 * 1024);
+            }
             if (debug) {
                 std::cout << "[GraphRewriter]   Entry has no local formula; use Pr(exit)="
                           << pExit << " as conditional probability."
