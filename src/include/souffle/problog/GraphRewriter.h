@@ -36,6 +36,9 @@ using SISORegionInfo = ::SISORegionInfo;
  */
 struct GraphRewriteStats {
     size_t numIterations = 0;          ///< Number of outer iterations
+    size_t numRegionsDetected = 0;     ///< Total detected SISO regions across iterations
+    size_t totalDetectedRegionNodes = 0;  ///< Total node count summed over detected SISO regions
+    size_t totalDetectedRegionEdges = 0;  ///< Total edge count summed over detected SISO regions
     size_t numRegionsRewritten = 0;    ///< Total SISO regions rewritten
     size_t numGeneralRegionsRewritten = 0;  ///< Regions summarized via general BDD rewrite
     size_t numNodesRemoved = 0;        ///< Internal nodes removed from the view
@@ -276,6 +279,13 @@ public:
                     case SISORegionKind::General: ++detectedGeneral; break;
                     default: break;
                 }
+            }
+            stats.numRegionsDetected += regions.size();
+            for (const auto& r : regions) {
+                const size_t nodesInRegion = r.internalNodes.size();
+                const size_t edgesInRegion = r.internalEdges.size();
+                stats.totalDetectedRegionNodes += nodesInRegion;
+                stats.totalDetectedRegionEdges += edgesInRegion;
             }
 
             if (regions.empty()) {

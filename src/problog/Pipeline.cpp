@@ -2238,6 +2238,7 @@ void runPipeline(
                       << " detect_ms=" << implicitResult.stats.graphDetectMs
                       << " graph_rewrite_ms=" << implicitResult.stats.graphRewriteMs
                       << " graph_bdd_compile_ms=" << implicitResult.stats.graphRewriteStats.totalBddBuildMs
+                      << " graph_detected_regions=" << implicitResult.stats.graphRewriteStats.numRegionsDetected
                       << " overlay_aliases=" << implicitResult.stats.overlayStats.aliasesCreated
                       << " overlay_edges_aliased=" << implicitResult.stats.overlayStats.edgesAliased
                       << " overlay_all_facts=" << implicitResult.stats.overlayStats.allFactsRewrites
@@ -2254,6 +2255,11 @@ void runPipeline(
                     debugger.addInfo(key, text);
                     rewriteHybridStage->logMessage(Level::INFO, key + "=" + text);
                 };
+                const auto addImplicitTextInfo = [&](const std::string& key, const std::string& value) {
+                    debugger.addInfo(key, value);
+                    rewriteHybridStage->logMessage(Level::INFO, key + "=" + value);
+                };
+                const auto& implicitGraphStats = implicitResult.stats.graphRewriteStats;
                 debugger.addInfo("rewrite_engine", "implicit");
                 rewriteHybridStage->logMessage(Level::INFO, "rewrite_engine=implicit");
                 addImplicitInfo("implicit_total_ms", implicitResult.stats.totalMs);
@@ -2280,20 +2286,25 @@ void runPipeline(
                 addImplicitInfo("implicit_graph_detect_ms", implicitResult.stats.graphDetectMs);
                 addImplicitInfo("implicit_graph_rewrite_ms", implicitResult.stats.graphRewriteMs);
                 addImplicitInfo("implicit_graph_detect_total_ms",
-                        implicitResult.stats.graphRewriteStats.totalDetectMs);
+                        implicitGraphStats.totalDetectMs);
                 addImplicitInfo("implicit_graph_bdd_manager_init_ms",
-                        implicitResult.stats.graphRewriteStats.totalBddManagerInitMs);
+                        implicitGraphStats.totalBddManagerInitMs);
                 addImplicitInfo("implicit_graph_bdd_compile_ms",
-                        implicitResult.stats.graphRewriteStats.totalBddBuildMs);
+                        implicitGraphStats.totalBddBuildMs);
                 addImplicitInfo("implicit_graph_bdd_wmc_ms",
-                        implicitResult.stats.graphRewriteStats.totalBddWmcMs);
-                addImplicitInfo("implicit_graph_apply_ms",
-                        implicitResult.stats.graphRewriteStats.totalApplyMs);
+                        implicitGraphStats.totalBddWmcMs);
+                addImplicitInfo("implicit_graph_apply_ms", implicitGraphStats.totalApplyMs);
+                addImplicitTextInfo("implicit_graph_detected_regions",
+                        std::to_string(implicitGraphStats.numRegionsDetected));
+                addImplicitTextInfo("implicit_graph_detected_region_total_edges",
+                        std::to_string(implicitGraphStats.totalDetectedRegionEdges));
+                addImplicitTextInfo("implicit_graph_detected_region_total_nodes",
+                        std::to_string(implicitGraphStats.totalDetectedRegionNodes));
                 debugger.addInfo("implicit_graph_general_regions",
-                        std::to_string(implicitResult.stats.graphRewriteStats.numGeneralRegionsRewritten));
+                        std::to_string(implicitGraphStats.numGeneralRegionsRewritten));
                 rewriteHybridStage->logMessage(Level::INFO,
                         "implicit_graph_general_regions=" +
-                                std::to_string(implicitResult.stats.graphRewriteStats.numGeneralRegionsRewritten));
+                                std::to_string(implicitGraphStats.numGeneralRegionsRewritten));
             }
         } else {
             GraphRewriter rewriter;
@@ -2319,6 +2330,7 @@ void runPipeline(
                                                    static_cast<double>(rewriteStats.randomVarsBefore);
         std::cout << "[pipeline] rewrite took " << rewriteMs << " ms; iterations="
                   << rewriteStats.numIterations << ", regions=" << rewriteStats.numRegionsRewritten
+                  << ", detectedRegions=" << rewriteStats.numRegionsDetected
                   << ", nodesRemoved=" << rewriteStats.numNodesRemoved
                   << ", edgesRemoved=" << rewriteStats.numEdgesRemoved
                   << ", edgesAdded=" << rewriteStats.numEdgesAdded
@@ -2329,11 +2341,60 @@ void runPipeline(
                   << ", randomVarsRemoved=" << rewriteStats.totalRandomVars
                   << ", simpleFactRegions=" << rewriteStats.simpleFactRegions << std::endl;
         if (rewriteHybridStage) {
-            debugger.addInfo("rewrite_engine", opt.isImplicitRewriteEnabled() ? "implicit" : "legacy");
+            const std::string rewriteEngine = opt.isImplicitRewriteEnabled() ? "implicit" : "legacy";
+            debugger.addInfo("rewrite_engine", rewriteEngine);
             debugger.addInfo("rewrite_ms", std::to_string(rewriteMs));
-            rewriteHybridStage->logMessage(Level::INFO,
-                    std::string("rewrite_engine=") + (opt.isImplicitRewriteEnabled() ? "implicit" : "legacy"));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_engine=" + rewriteEngine);
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_ms=" + std::to_string(rewriteMs));
+
+            if (!opt.isImplicitRewriteEnabled()) {
+                const auto formatMs = [](double value) {
+                    std::ostringstream oss;
+                    oss << std::fixed << std::setprecision(6) << value;
+                    return oss.str();
+                };
+                const auto addExplicitInfo = [&](const std::string& key, double value) {
+                    const std::string text = formatMs(value);
+                    debugger.addInfo(key, text);
+                    rewriteHybridStage->logMessage(Level::INFO, key + "=" + text);
+                };
+                const auto addExplicitTextInfo = [&](const std::string& key, const std::string& value) {
+                    debugger.addInfo(key, value);
+                    rewriteHybridStage->logMessage(Level::INFO, key + "=" + value);
+                };
+                const double rewriteMsDouble = static_cast<double>(rewriteMs);
+                addExplicitInfo("explicit_total_ms", rewriteMsDouble);
+                addExplicitInfo("explicit_overlay_prep_ms", 0.0);
+                addExplicitInfo("explicit_overlay_split_ms", 0.0);
+                addExplicitInfo("explicit_overlay_fastpath_ms", 0.0);
+                addExplicitInfo("explicit_overlay_siso_detect_ms", 0.0);
+                addExplicitInfo("explicit_overlay_siso_summarize_ms", 0.0);
+                addExplicitInfo("explicit_overlay_rebuild_index_ms", 0.0);
+                addExplicitInfo("explicit_overlay_fastpath_single_ms", 0.0);
+                addExplicitInfo("explicit_overlay_fastpath_linear_ms", 0.0);
+                addExplicitInfo("explicit_overlay_fastpath_parallel_ms", 0.0);
+                addExplicitInfo("explicit_overlay_fastpath_fan_out_ms", 0.0);
+                addExplicitInfo("explicit_overlay_fastpath_allfacts_ms", 0.0);
+                addExplicitInfo("explicit_materialize_ms", 0.0);
+                addExplicitInfo("explicit_graph_detect_ms", rewriteStats.totalDetectMs);
+                addExplicitInfo("explicit_graph_rewrite_ms", rewriteMsDouble);
+                addExplicitInfo("explicit_graph_detect_total_ms", rewriteStats.totalDetectMs);
+                addExplicitInfo("explicit_graph_bdd_manager_init_ms", rewriteStats.totalBddManagerInitMs);
+                addExplicitInfo("explicit_graph_bdd_compile_ms", rewriteStats.totalBddBuildMs);
+                addExplicitInfo("explicit_graph_bdd_wmc_ms", rewriteStats.totalBddWmcMs);
+                addExplicitInfo("explicit_graph_apply_ms", rewriteStats.totalApplyMs);
+                addExplicitTextInfo("explicit_graph_detected_regions",
+                        std::to_string(rewriteStats.numRegionsDetected));
+                addExplicitTextInfo("explicit_graph_detected_region_total_edges",
+                        std::to_string(rewriteStats.totalDetectedRegionEdges));
+                addExplicitTextInfo("explicit_graph_detected_region_total_nodes",
+                        std::to_string(rewriteStats.totalDetectedRegionNodes));
+                debugger.addInfo("explicit_graph_general_regions",
+                        std::to_string(rewriteStats.numGeneralRegionsRewritten));
+                rewriteHybridStage->logMessage(Level::INFO,
+                        "explicit_graph_general_regions=" +
+                                std::to_string(rewriteStats.numGeneralRegionsRewritten));
+            }
         }
         if (opt.isDumpDotEnabled()) {
             view.dumpDot(makeOutputPath(opt, "rewrite_final.dot"));
