@@ -1611,6 +1611,41 @@ std::vector<OverlayOutputProbability> ImplicitSplitOverlay::collectDirectOutputP
     return result;
 }
 
+std::vector<OverlayFactCommit> ImplicitSplitOverlay::collectFactCommits() const {
+    std::vector<OverlayFactCommit> result;
+    result.reserve(nodeState_.size());
+    for (const auto& [node, state] : nodeState_) {
+        if (!node) {
+            continue;
+        }
+        const bool factChanged = node->isFact != state.currentIsFact;
+        const bool probChanged = std::abs(node->getProbability() - state.factProbability) > kImplicitSplitEps;
+        if (!factChanged && !probChanged) {
+            continue;
+        }
+        result.push_back(OverlayFactCommit{node, state.currentIsFact, state.factProbability});
+    }
+    std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+        return a.node->getId() < b.node->getId();
+    });
+    return result;
+}
+
+std::vector<EdgePtr> ImplicitSplitOverlay::collectInactiveBaseEdges() const {
+    std::vector<EdgePtr> result;
+    result.reserve(edges_.size());
+    for (const auto& edge : edges_) {
+        if (!edge.active && edge.baseEdge) {
+            result.push_back(edge.baseEdge);
+        }
+    }
+    std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+        return a->getId() < b->getId();
+    });
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+}
+
 OverlayGraphStats ImplicitSplitOverlay::computeStats() const {
     OverlayGraphStats stats;
     stats.activeEdges = activeEdgeCount_;
@@ -2032,9 +2067,13 @@ ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
     runOverlayRounds(overlay, options, result.stats);
 
     const auto directOutputs = overlay.collectDirectOutputProbabilities();
+    result.directOutputs = directOutputs;
+    result.factCommits = overlay.collectFactCommits();
+    result.inactiveBaseEdges = overlay.collectInactiveBaseEdges();
     const auto overlayGraphStats = overlay.computeStats();
     const bool allOutputsDirect = directOutputs.size() == overlay.getOutputs().size();
     const bool needsResidualGraph = overlayGraphStats.activeEdges > 0 || !allOutputsDirect;
+    result.needsResidualGraph = needsResidualGraph;
     if (!needsResidualGraph) {
         precomputedProbResult.clear();
         precomputedTupleProbResult.clear();
@@ -2045,6 +2084,20 @@ ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
         for (const auto& [tupleStr, prob] : result.carriedPrecomputedTupleProbs) {
             precomputedTupleProbResult.emplace(tupleStr, prob);
         }
+        result.outputProbabilities = directOutputs;
+        result.stats.totalMs = elapsedMs(totalStart);
+        return result;
+    }
+
+    const auto& overlayStats = result.stats.overlayStats;
+    const bool canCommitOverlayFactsInPlace = overlayStats.aliasesCreated == 0 &&
+            overlayStats.edgesAliased == 0 && overlayStats.singleHyperedgeRewrites == 0 &&
+            overlayStats.linearTwoEdgeRewrites == 0 && overlayStats.parallelEdgeRewrites == 0 &&
+            overlayStats.fanOutConvergeRewrites == 0 &&
+            (!result.factCommits.empty() || !result.inactiveBaseEdges.empty());
+    if (canCommitOverlayFactsInPlace) {
+        precomputedProbResult.clear();
+        precomputedTupleProbResult.clear();
         result.outputProbabilities = directOutputs;
         result.stats.totalMs = elapsedMs(totalStart);
         return result;
