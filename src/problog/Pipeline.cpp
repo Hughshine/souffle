@@ -83,6 +83,44 @@ static std::size_t precomputeIsolatedOutputFactsLocal(SubgraphView& view) {
     return count;
 }
 
+static bool canUseImplicitAllFactsCommit(const ImplicitSplitPipelineResult& result) {
+    if (!result.needsResidualGraph) {
+        return false;
+    }
+    const auto& stats = result.stats.overlayStats;
+    if (stats.aliasesCreated != 0 || stats.edgesAliased != 0 || stats.singleHyperedgeRewrites != 0 ||
+            stats.linearTwoEdgeRewrites != 0 || stats.parallelEdgeRewrites != 0 ||
+            stats.fanOutConvergeRewrites != 0) {
+        return false;
+    }
+    return !result.factCommits.empty() || !result.inactiveBaseEdges.empty();
+}
+
+static std::size_t applyImplicitAllFactsCommit(IncSubgraphView& view, const ImplicitSplitPipelineResult& result) {
+    precomputedProbResult.clear();
+    precomputedTupleProbResult.clear();
+
+    for (const auto& commit : result.factCommits) {
+        if (!commit.node) {
+            continue;
+        }
+        commit.node->isFact = commit.isFact;
+        commit.node->setProbability(commit.probability);
+    }
+
+    std::size_t removedEdges = 0;
+    auto& edges = view.mutableEdges();
+    for (const auto& edge : result.inactiveBaseEdges) {
+        if (!edge) {
+            continue;
+        }
+        removedEdges += edges.erase(edge);
+    }
+
+    view.invalidateCaches();
+    return removedEdges;
+}
+
 static ImplicitSplitMode resolveImplicitSplitMode(const std::string& splitMode) {
     if (splitMode == "no-split") {
         return ImplicitSplitMode::None;
@@ -2129,6 +2167,19 @@ void runPipeline(
     if (opt.isRewriteEnabled() && !opt.isDerivationOnly()) {
         auto rewriteStart = std::chrono::steady_clock::now();
         GraphRewriteStats rewriteStats;
+        const auto runLegacyRewrite = [&] {
+            GraphRewriter rewriter;
+            RewriteFeatureFlags rewriteFlags;
+            const auto& splitMode = opt.getSplitMode();
+            if (splitMode == "no-split") {
+                rewriteFlags.splitMode = SplitMode::None;
+            } else if (splitMode == "complete-split") {
+                rewriteFlags.splitMode = SplitMode::Complete;
+            } else {
+                rewriteFlags.splitMode = SplitMode::Naive;
+            }
+            rewriteStats = rewriter.rewriteUntilFixpoint(*graph, view, opt.isProfiling(), rewriteFlags);
+        };
         if (opt.isImplicitRewriteEnabled()) {
             std::unordered_set<UntypedTuple> originalOutputTuples;
             std::unordered_set<std::string> originalOutputRelations;
@@ -2147,48 +2198,36 @@ void runPipeline(
             rewriteOptions.collectPatternStats = false;
             rewriteOptions.iterateSplitRewrite = false;
             auto implicitResult = runImplicitSplitRewritePipeline(view, rewriteOptions);
-            rewriteStats = implicitResult.stats.graphRewriteStats;
             precomputedTupleProbResult.clear();
             for (const auto& [tupleStr, prob] : implicitResult.carriedPrecomputedTupleProbs) {
                 precomputedTupleProbResult[tupleStr] = prob;
             }
-            graph = std::move(implicitResult.materialized.graph);
-            if (!graph) {
-                graph = std::make_unique<IncrementalDerivationGraph>();
-            }
-            view = buildFullIncViewLocal(
-                    implicitResult.materialized.liveNodes, implicitResult.materialized.liveEdges);
-            std::unordered_set<UntypedTuple> liveViewTuples;
-            liveViewTuples.reserve(view.getNodes().size());
-            for (const auto& node : view.getNodes()) {
-                if (node) {
-                    liveViewTuples.insert(node->getTuple());
+            if (canUseImplicitAllFactsCommit(implicitResult)) {
+                const std::size_t removedEdges = applyImplicitAllFactsCommit(view, implicitResult);
+                const std::size_t recoveredIsolatedFacts = precomputeIsolatedOutputFactsLocal(view);
+                std::cout << "[pipeline] implicit all-facts commit"
+                          << " fact_nodes=" << implicitResult.factCommits.size()
+                          << " removed_edges=" << removedEdges
+                          << " recovered_isolated_output_facts=" << recoveredIsolatedFacts
+                          << std::endl;
+                runLegacyRewrite();
+            } else {
+                rewriteStats = implicitResult.stats.graphRewriteStats;
+                graph = std::move(implicitResult.materialized.graph);
+                if (!graph) {
+                    graph = std::make_unique<IncrementalDerivationGraph>();
                 }
-            }
-            std::unordered_set<UntypedTuple> precomputedTuples;
-            std::unordered_set<std::string> precomputedTupleStrings;
-            precomputedTuples.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
-            precomputedTupleStrings.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
-            for (const auto& [node, _] : precomputedProbResult) {
-                if (node) {
-                    precomputedTuples.insert(node->getTuple());
-                    precomputedTupleStrings.insert(node->getTuple().toString());
+                view = buildFullIncViewLocal(
+                        implicitResult.materialized.liveNodes, implicitResult.materialized.liveEdges);
+                std::unordered_set<UntypedTuple> liveViewTuples;
+                liveViewTuples.reserve(view.getNodes().size());
+                for (const auto& node : view.getNodes()) {
+                    if (node) {
+                        liveViewTuples.insert(node->getTuple());
+                    }
                 }
-            }
-            for (const auto& [tupleStr, _] : precomputedTupleProbResult) {
-                precomputedTupleStrings.insert(tupleStr);
-            }
-            for (const auto& node : view.getNodes()) {
-                if (node && originalOutputRelations.count(node->getTuple().relation_name) &&
-                        !precomputedTuples.count(node->getTuple()) &&
-                        !precomputedTupleStrings.count(node->getTuple().toString())) {
-                    node->setQuery();
-                }
-            }
-            const std::size_t recoveredIsolatedFacts = precomputeIsolatedOutputFactsLocal(view);
-            if (recoveredIsolatedFacts > 0) {
-                precomputedTuples.clear();
-                precomputedTupleStrings.clear();
+                std::unordered_set<UntypedTuple> precomputedTuples;
+                std::unordered_set<std::string> precomputedTupleStrings;
                 precomputedTuples.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
                 precomputedTupleStrings.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
                 for (const auto& [node, _] : precomputedProbResult) {
@@ -2200,24 +2239,47 @@ void runPipeline(
                 for (const auto& [tupleStr, _] : precomputedTupleProbResult) {
                     precomputedTupleStrings.insert(tupleStr);
                 }
-            }
-            std::size_t recoveredOutputFacts = 0;
-            for (const auto& tuple : originalOutputTuples) {
-                if (liveViewTuples.count(tuple) || precomputedTuples.count(tuple) ||
-                        precomputedTupleStrings.count(tuple.toString())) {
-                    continue;
+                for (const auto& node : view.getNodes()) {
+                    if (node && originalOutputRelations.count(node->getTuple().relation_name) &&
+                            !precomputedTuples.count(node->getTuple()) &&
+                            !precomputedTupleStrings.count(node->getTuple().toString())) {
+                        node->setQuery();
+                    }
                 }
-                NodePtr recovered = graph ? graph->findNode(tuple) : nullptr;
-                if (!recovered || !recovered->isFact) {
-                    continue;
+                const std::size_t recoveredIsolatedFacts = precomputeIsolatedOutputFactsLocal(view);
+                if (recoveredIsolatedFacts > 0) {
+                    precomputedTuples.clear();
+                    precomputedTupleStrings.clear();
+                    precomputedTuples.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
+                    precomputedTupleStrings.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
+                    for (const auto& [node, _] : precomputedProbResult) {
+                        if (node) {
+                            precomputedTuples.insert(node->getTuple());
+                            precomputedTupleStrings.insert(node->getTuple().toString());
+                        }
+                    }
+                    for (const auto& [tupleStr, _] : precomputedTupleProbResult) {
+                        precomputedTupleStrings.insert(tupleStr);
+                    }
                 }
-                precomputedTupleProbResult.emplace(tuple.toString(), recovered->getProbability());
-                ++recoveredOutputFacts;
-            }
-            if (recoveredIsolatedFacts > 0 || recoveredOutputFacts > 0) {
-                std::cout << "[pipeline] implicit recovered isolated_output_facts="
-                          << recoveredIsolatedFacts
-                          << " tuple_output_facts=" << recoveredOutputFacts << std::endl;
+                std::size_t recoveredOutputFacts = 0;
+                for (const auto& tuple : originalOutputTuples) {
+                    if (liveViewTuples.count(tuple) || precomputedTuples.count(tuple) ||
+                            precomputedTupleStrings.count(tuple.toString())) {
+                        continue;
+                    }
+                    NodePtr recovered = graph ? graph->findNode(tuple) : nullptr;
+                    if (!recovered || !recovered->isFact) {
+                        continue;
+                    }
+                    precomputedTupleProbResult.emplace(tuple.toString(), recovered->getProbability());
+                    ++recoveredOutputFacts;
+                }
+                if (recoveredIsolatedFacts > 0 || recoveredOutputFacts > 0) {
+                    std::cout << "[pipeline] implicit recovered isolated_output_facts="
+                              << recoveredIsolatedFacts
+                              << " tuple_output_facts=" << recoveredOutputFacts << std::endl;
+                }
             }
             const GraphSummary implicitHandoffSummary = summarizeGraphLight(view);
             std::cout << "[pipeline] implicit handoff"
@@ -2307,17 +2369,7 @@ void runPipeline(
                                 std::to_string(implicitGraphStats.numGeneralRegionsRewritten));
             }
         } else {
-            GraphRewriter rewriter;
-            RewriteFeatureFlags rewriteFlags;
-            const auto& splitMode = opt.getSplitMode();
-            if (splitMode == "no-split") {
-                rewriteFlags.splitMode = SplitMode::None;
-            } else if (splitMode == "complete-split") {
-                rewriteFlags.splitMode = SplitMode::Complete;
-            } else {
-                rewriteFlags.splitMode = SplitMode::Naive;
-            }
-            rewriteStats = rewriter.rewriteUntilFixpoint(*graph, view, opt.isProfiling(), rewriteFlags);
+            runLegacyRewrite();
         }
         auto rewriteMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now() - rewriteStart)

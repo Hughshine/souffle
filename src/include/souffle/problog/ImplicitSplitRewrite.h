@@ -86,6 +86,12 @@ struct OverlayOutputProbability {
     double probability = 0.0;
 };
 
+struct OverlayFactCommit {
+    NodePtr node;
+    bool isFact = false;
+    double probability = 0.0;
+};
+
 struct OverlayGraphStats {
     std::size_t activeEdges = 0;
     std::size_t activeAliases = 0;
@@ -150,7 +156,11 @@ struct ImplicitSplitPipelineStats {
 struct ImplicitSplitPipelineResult {
     MaterializedImplicitSplitGraph materialized;
     std::vector<OverlayOutputProbability> outputProbabilities;
+    std::vector<OverlayOutputProbability> directOutputs;
+    std::vector<OverlayFactCommit> factCommits;
+    std::vector<EdgePtr> inactiveBaseEdges;
     std::vector<std::pair<std::string, double>> carriedPrecomputedTupleProbs;
+    bool needsResidualGraph = true;
     ImplicitSplitPipelineStats stats;
 };
 
@@ -165,6 +175,8 @@ public:
 
     std::vector<OverlayOutputProbability> computeOutputMarginalsExact() const;
     std::vector<OverlayOutputProbability> collectDirectOutputProbabilities() const;
+    std::vector<OverlayFactCommit> collectFactCommits() const;
+    std::vector<EdgePtr> collectInactiveBaseEdges() const;
     OverlayGraphStats computeStats() const;
     std::string summarize() const;
     MaterializedImplicitSplitGraph materializeToGraph(
