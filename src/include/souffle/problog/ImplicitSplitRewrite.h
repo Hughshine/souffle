@@ -48,6 +48,7 @@ struct ImplicitSplitOverlayEdge {
     double probability = 1.0;
     bool deterministic = true;
     bool active = true;
+    std::vector<SupportToken> supportTokens;
 };
 
 struct ImplicitSplitOverlayStats {
@@ -90,6 +91,17 @@ struct OverlayFactCommit {
     NodePtr node;
     bool isFact = false;
     double probability = 0.0;
+    std::vector<SupportToken> supportTokens;
+};
+
+struct OverlayEdgeCommit {
+    EdgePtr baseEdge;
+    std::vector<NodePtr> inputs;
+    std::vector<bool> negations;
+    NodePtr output;
+    double probability = 1.0;
+    bool deterministic = true;
+    std::vector<SupportToken> supportTokens;
 };
 
 struct OverlayGraphStats {
@@ -158,6 +170,7 @@ struct ImplicitSplitPipelineResult {
     std::vector<OverlayOutputProbability> outputProbabilities;
     std::vector<OverlayOutputProbability> directOutputs;
     std::vector<OverlayFactCommit> factCommits;
+    std::vector<OverlayEdgeCommit> edgeCommits;
     std::vector<EdgePtr> inactiveBaseEdges;
     std::vector<std::pair<std::string, double>> carriedPrecomputedTupleProbs;
     bool needsResidualGraph = true;
@@ -176,6 +189,7 @@ public:
     std::vector<OverlayOutputProbability> computeOutputMarginalsExact() const;
     std::vector<OverlayOutputProbability> collectDirectOutputProbabilities() const;
     std::vector<OverlayFactCommit> collectFactCommits() const;
+    std::vector<OverlayEdgeCommit> collectEdgeCommits() const;
     std::vector<EdgePtr> collectInactiveBaseEdges() const;
     OverlayGraphStats computeStats() const;
     std::string summarize() const;
@@ -197,6 +211,7 @@ private:
         double factProbability = 0.0;
         bool needOutput = false;
         bool hasEvidence = false;
+        std::vector<SupportToken> factSupportTokens;
     };
 
     const IncrementalDerivationGraphViewInterface& view_;

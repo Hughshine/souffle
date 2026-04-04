@@ -83,20 +83,48 @@ static std::size_t precomputeIsolatedOutputFactsLocal(SubgraphView& view) {
     return count;
 }
 
-static bool canUseImplicitAllFactsCommit(const ImplicitSplitPipelineResult& result) {
+static std::size_t sweepIsolatedNonOutputNodesLocal(IncSubgraphView& view) {
+    std::vector<NodePtr> candidates;
+    candidates.reserve(view.getNodes().size());
+    for (const auto& node : view.getNodes()) {
+        if (node) {
+            candidates.push_back(node);
+        }
+    }
+    auto& nodes = view.mutableNodes();
+    std::size_t removed = 0;
+    for (const auto& node : candidates) {
+        if (!node || node->needOutput || node->hasEvidence()) {
+            continue;
+        }
+        if (!view.getIncomingEdges(node).empty() || !view.getOutgoingEdges(node).empty()) {
+            continue;
+        }
+        removed += nodes.erase(node);
+    }
+    if (removed > 0) {
+        view.invalidateCaches();
+    }
+    return removed;
+}
+
+static bool canUseImplicitOverlayCommit(const ImplicitSplitPipelineResult& result) {
     if (!result.needsResidualGraph) {
         return false;
     }
-    const auto& stats = result.stats.overlayStats;
-    if (stats.aliasesCreated != 0 || stats.edgesAliased != 0 || stats.singleHyperedgeRewrites != 0 ||
-            stats.linearTwoEdgeRewrites != 0 || stats.parallelEdgeRewrites != 0 ||
-            stats.fanOutConvergeRewrites != 0) {
-        return false;
-    }
-    return !result.factCommits.empty() || !result.inactiveBaseEdges.empty();
+    return !result.factCommits.empty() || !result.edgeCommits.empty() || !result.inactiveBaseEdges.empty();
 }
 
-static std::size_t applyImplicitAllFactsCommit(IncSubgraphView& view, const ImplicitSplitPipelineResult& result) {
+struct ImplicitOverlayCommitSummary {
+    std::size_t factNodes = 0;
+    std::size_t removedEdges = 0;
+    std::size_t addedEdges = 0;
+    std::size_t removedNodes = 0;
+};
+
+static ImplicitOverlayCommitSummary applyImplicitOverlayCommit(
+        IncrementalDerivationGraph& graph, IncSubgraphView& view, const ImplicitSplitPipelineResult& result) {
+    ImplicitOverlayCommitSummary summary;
     precomputedProbResult.clear();
     precomputedTupleProbResult.clear();
 
@@ -106,19 +134,37 @@ static std::size_t applyImplicitAllFactsCommit(IncSubgraphView& view, const Impl
         }
         commit.node->isFact = commit.isFact;
         commit.node->setProbability(commit.probability);
+        commit.node->setProbabilisticSupportTokens(commit.supportTokens);
+        ++summary.factNodes;
     }
 
-    std::size_t removedEdges = 0;
     auto& edges = view.mutableEdges();
     for (const auto& edge : result.inactiveBaseEdges) {
         if (!edge) {
             continue;
         }
-        removedEdges += edges.erase(edge);
+        summary.removedEdges += edges.erase(edge);
+    }
+    for (const auto& commit : result.edgeCommits) {
+        if (commit.baseEdge) {
+            summary.removedEdges += edges.erase(commit.baseEdge);
+        }
+        if (!commit.output) {
+            continue;
+        }
+        EdgePtr newEdge = graph.createHyperedge(commit.inputs, commit.output, nullptr, commit.negations);
+        if (!newEdge) {
+            throw std::runtime_error("implicit overlay commit failed to create hyperedge");
+        }
+        newEdge->setProbability(commit.probability);
+        newEdge->setProbabilisticSupportTokens(commit.supportTokens);
+        edges.insert(newEdge);
+        ++summary.addedEdges;
     }
 
     view.invalidateCaches();
-    return removedEdges;
+    summary.removedNodes = sweepIsolatedNonOutputNodesLocal(view);
+    return summary;
 }
 
 static ImplicitSplitMode resolveImplicitSplitMode(const std::string& splitMode) {
@@ -2202,12 +2248,14 @@ void runPipeline(
             for (const auto& [tupleStr, prob] : implicitResult.carriedPrecomputedTupleProbs) {
                 precomputedTupleProbResult[tupleStr] = prob;
             }
-            if (canUseImplicitAllFactsCommit(implicitResult)) {
-                const std::size_t removedEdges = applyImplicitAllFactsCommit(view, implicitResult);
+            if (canUseImplicitOverlayCommit(implicitResult)) {
+                const auto commitSummary = applyImplicitOverlayCommit(*graph, view, implicitResult);
                 const std::size_t recoveredIsolatedFacts = precomputeIsolatedOutputFactsLocal(view);
-                std::cout << "[pipeline] implicit all-facts commit"
-                          << " fact_nodes=" << implicitResult.factCommits.size()
-                          << " removed_edges=" << removedEdges
+                std::cout << "[pipeline] implicit overlay commit"
+                          << " fact_nodes=" << commitSummary.factNodes
+                          << " removed_edges=" << commitSummary.removedEdges
+                          << " added_edges=" << commitSummary.addedEdges
+                          << " removed_nodes=" << commitSummary.removedNodes
                           << " recovered_isolated_output_facts=" << recoveredIsolatedFacts
                           << std::endl;
                 runLegacyRewrite();

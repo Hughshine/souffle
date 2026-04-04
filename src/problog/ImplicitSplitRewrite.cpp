@@ -85,6 +85,7 @@ ImplicitSplitOverlay::ImplicitSplitOverlay(const IncrementalDerivationGraphViewI
         state.factProbability = node->getProbability();
         state.needOutput = node->needOutput;
         state.hasEvidence = node->hasEvidence();
+        state.factSupportTokens = node->getProbabilisticSupportTokens();
         nodeState_[node] = state;
         if (node->needOutput) {
             outputs_.push_back(node);
@@ -101,6 +102,7 @@ ImplicitSplitOverlay::ImplicitSplitOverlay(const IncrementalDerivationGraphViewI
         overlayEdge.probability = edge->getProbability();
         overlayEdge.deterministic = edge->isDeterministic();
         overlayEdge.negations = view_.getBodyNegations(edge);
+        overlayEdge.supportTokens = edge->getProbabilisticSupportTokens();
         for (const auto& input : view_.getInputs(edge)) {
             overlayEdge.inputs.push_back(SplitNodeRef{input, 0});
         }
@@ -584,16 +586,20 @@ bool ImplicitSplitOverlay::rewriteAllFactsPass(ImplicitSplitOverlayStats* stats)
             continue;
         }
         double probability = edge.deterministic ? 1.0 : edge.probability;
+        std::vector<SupportToken> factSupport = edge.supportTokens;
         for (std::size_t i = 0; i < edge.inputs.size(); ++i) {
             double inputProb = factProbabilityOf(edge.inputs[i]);
             if (i < edge.negations.size() && edge.negations[i]) {
                 inputProb = 1.0 - inputProb;
             }
             probability *= inputProb;
+            factSupport = mergeSupportTokenLists(
+                    {&factSupport, &nodeState_.at(edge.inputs[i].base).factSupportTokens});
         }
         auto& outState = nodeState_.at(edge.output);
         outState.currentIsFact = true;
         outState.factProbability = std::clamp(probability, 0.0, 1.0);
+        outState.factSupportTokens = std::move(factSupport);
         edge.active = false;
         if (activeEdgeCount_ > 0) {
             --activeEdgeCount_;
@@ -663,6 +669,7 @@ bool ImplicitSplitOverlay::rewriteSingleHyperedgePass(ImplicitSplitOverlayStats*
         }
 
         double probability = edge.deterministic ? 1.0 : edge.probability;
+        std::vector<SupportToken> newEdgeSupport = edge.supportTokens;
         for (std::size_t i = 0; i < edge.inputs.size(); ++i) {
             if (edge.inputs[i] == si) {
                 continue;
@@ -672,6 +679,8 @@ bool ImplicitSplitOverlay::rewriteSingleHyperedgePass(ImplicitSplitOverlayStats*
                 inputProb = 1.0 - inputProb;
             }
             probability *= inputProb;
+            newEdgeSupport = mergeSupportTokenLists(
+                    {&newEdgeSupport, &nodeState_.at(edge.inputs[i].base).factSupportTokens});
         }
         if (nearlyZero(probability)) {
             edge.active = false;
@@ -1021,6 +1030,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         }
         auto& edge = edges_[edgeIndex];
         double probability = edge.deterministic ? 1.0 : edge.probability;
+        std::vector<SupportToken> newEdgeSupport = edge.supportTokens;
         for (std::size_t i = 0; i < edge.inputs.size(); ++i) {
             if (edge.inputs[i] == si) {
                 continue;
@@ -1030,6 +1040,8 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
                 inputProb = 1.0 - inputProb;
             }
             probability *= inputProb;
+            newEdgeSupport = mergeSupportTokenLists(
+                    {&newEdgeSupport, &nodeState_.at(edge.inputs[i].base).factSupportTokens});
         }
         if (nearlyZero(probability)) {
             edge.active = false;
@@ -1047,6 +1059,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         edge.negations = {siNegated};
         edge.probability = std::clamp(probability, 0.0, 1.0);
         edge.deterministic = nearlyOne(edge.probability);
+        edge.supportTokens = std::move(newEdgeSupport);
         if (stats) {
             ++stats->singleHyperedgeRewrites;
         }
@@ -1054,7 +1067,8 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
     };
 
     auto addSyntheticEdge = [&](const std::vector<SplitNodeRef>& inputs, const std::vector<bool>& negations,
-                                const NodePtr& output, double probability) {
+                                const NodePtr& output, double probability,
+                                std::vector<SupportToken> supportTokens = {}) {
         if (!output || nearlyZero(probability)) {
             return;
         }
@@ -1066,6 +1080,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         newEdge.probability = std::clamp(probability, 0.0, 1.0);
         newEdge.deterministic = nearlyOne(newEdge.probability);
         newEdge.active = true;
+        newEdge.supportTokens = std::move(supportTokens);
         edges_.push_back(std::move(newEdge));
         ++activeEdgeCount_;
     };
@@ -1082,6 +1097,8 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         auto& edge2 = edges_[edge2Index];
         const double probability = std::clamp(edge1.probability, 0.0, 1.0) *
                 std::clamp(edge2.probability, 0.0, 1.0);
+        std::vector<SupportToken> newEdgeSupport = mergeSupportTokenLists(
+                {&edge1.supportTokens, &edge2.supportTokens});
         edge1.active = false;
         edge2.active = false;
         if (activeEdgeCount_ >= 2) {
@@ -1089,7 +1106,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         } else {
             activeEdgeCount_ = 0;
         }
-        addSyntheticEdge({entry}, {entryNegated}, edge2.output, probability);
+        addSyntheticEdge({entry}, {entryNegated}, edge2.output, probability, std::move(newEdgeSupport));
         if (stats) {
             ++stats->linearTwoEdgeRewrites;
             stats->removedEdges += 2;
@@ -1130,6 +1147,10 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         if (validEdges < 2 || !entry.base || !output || output == entry.base) {
             return false;
         }
+        std::vector<SupportToken> newEdgeSupport;
+        for (const auto edgeIndex : edgeIndices) {
+            newEdgeSupport = mergeSupportTokenLists({&newEdgeSupport, &edges_[edgeIndex].supportTokens});
+        }
         for (const auto edgeIndex : edgeIndices) {
             edges_[edgeIndex].active = false;
         }
@@ -1138,7 +1159,8 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         } else {
             activeEdgeCount_ = 0;
         }
-        addSyntheticEdge({entry}, {negated}, output, std::clamp(1.0 - prod, 0.0, 1.0));
+        addSyntheticEdge(
+                {entry}, {negated}, output, std::clamp(1.0 - prod, 0.0, 1.0), std::move(newEdgeSupport));
         if (stats) {
             ++stats->parallelEdgeRewrites;
             stats->removedEdges += validEdges;
@@ -1164,10 +1186,14 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
 
         if (!info.mixedPolarity) {
             double probability = std::clamp(edges_[info.convEdge].probability, 0.0, 1.0);
+            std::vector<SupportToken> newEdgeSupport = edges_[info.convEdge].supportTokens;
             for (const auto edgeIndex : info.fanEdges) {
                 probability *= std::clamp(edges_[edgeIndex].probability, 0.0, 1.0);
+                newEdgeSupport =
+                        mergeSupportTokenLists({&newEdgeSupport, &edges_[edgeIndex].supportTokens});
             }
-            addSyntheticEdge({entryRef}, {info.fanNegated}, info.exit, probability);
+            addSyntheticEdge(
+                    {entryRef}, {info.fanNegated}, info.exit, probability, std::move(newEdgeSupport));
         }
         if (stats) {
             ++stats->fanOutConvergeRewrites;
@@ -1623,10 +1649,65 @@ std::vector<OverlayFactCommit> ImplicitSplitOverlay::collectFactCommits() const 
         if (!factChanged && !probChanged) {
             continue;
         }
-        result.push_back(OverlayFactCommit{node, state.currentIsFact, state.factProbability});
+        result.push_back(
+                OverlayFactCommit{node, state.currentIsFact, state.factProbability, state.factSupportTokens});
     }
     std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
         return a.node->getId() < b.node->getId();
+    });
+    return result;
+}
+
+std::vector<OverlayEdgeCommit> ImplicitSplitOverlay::collectEdgeCommits() const {
+    std::vector<OverlayEdgeCommit> result;
+    result.reserve(edges_.size());
+    for (const auto& edge : edges_) {
+        if (!edge.active || !edge.output) {
+            continue;
+        }
+        bool preserveBaseEdge = false;
+        if (edge.baseEdge) {
+            const auto& baseInputs = edge.baseEdge->getInputs();
+            const auto& baseNegs = edge.baseEdge->getBodyNegations();
+            preserveBaseEdge = (edge.baseEdge->getOutput() == edge.output) &&
+                    (baseInputs.size() == edge.inputs.size()) && (baseNegs == edge.negations) &&
+                    (edge.baseEdge->isDeterministic() == edge.deterministic) &&
+                    (edge.baseEdge->getProbabilisticSupportTokens() == edge.supportTokens) &&
+                    (std::abs(edge.baseEdge->getProbability() - edge.probability) <= kImplicitSplitEps);
+            if (preserveBaseEdge) {
+                for (std::size_t i = 0; i < baseInputs.size(); ++i) {
+                    if (edge.inputs[i].base != baseInputs[i]) {
+                        preserveBaseEdge = false;
+                        break;
+                    }
+                }
+            }
+        }
+        if (preserveBaseEdge) {
+            continue;
+        }
+        OverlayEdgeCommit commit;
+        commit.baseEdge = edge.baseEdge;
+        commit.negations = edge.negations;
+        commit.output = edge.output;
+        commit.probability = edge.probability;
+        commit.deterministic = edge.deterministic;
+        commit.supportTokens = edge.supportTokens;
+        commit.inputs.reserve(edge.inputs.size());
+        for (const auto& input : edge.inputs) {
+            commit.inputs.push_back(input.base);
+        }
+        result.push_back(std::move(commit));
+    }
+    std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+        const std::size_t aid = a.baseEdge ? a.baseEdge->getId() : 0;
+        const std::size_t bid = b.baseEdge ? b.baseEdge->getId() : 0;
+        if (aid != bid) {
+            return aid < bid;
+        }
+        const std::size_t aout = a.output ? a.output->getId() : 0;
+        const std::size_t bout = b.output ? b.output->getId() : 0;
+        return aout < bout;
     });
     return result;
 }
@@ -2069,6 +2150,13 @@ ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
     const auto directOutputs = overlay.collectDirectOutputProbabilities();
     result.directOutputs = directOutputs;
     result.factCommits = overlay.collectFactCommits();
+    const bool needsEdgeCommits = result.stats.overlayStats.singleHyperedgeRewrites > 0 ||
+            result.stats.overlayStats.linearTwoEdgeRewrites > 0 ||
+            result.stats.overlayStats.parallelEdgeRewrites > 0 ||
+            result.stats.overlayStats.fanOutConvergeRewrites > 0;
+    if (needsEdgeCommits) {
+        result.edgeCommits = overlay.collectEdgeCommits();
+    }
     result.inactiveBaseEdges = overlay.collectInactiveBaseEdges();
     const auto overlayGraphStats = overlay.computeStats();
     const bool allOutputsDirect = directOutputs.size() == overlay.getOutputs().size();
@@ -2090,12 +2178,9 @@ ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
     }
 
     const auto& overlayStats = result.stats.overlayStats;
-    const bool canCommitOverlayFactsInPlace = overlayStats.aliasesCreated == 0 &&
-            overlayStats.edgesAliased == 0 && overlayStats.singleHyperedgeRewrites == 0 &&
-            overlayStats.linearTwoEdgeRewrites == 0 && overlayStats.parallelEdgeRewrites == 0 &&
-            overlayStats.fanOutConvergeRewrites == 0 &&
-            (!result.factCommits.empty() || !result.inactiveBaseEdges.empty());
-    if (canCommitOverlayFactsInPlace) {
+    const bool canCommitOverlayInPlace =
+            !result.factCommits.empty() || !result.edgeCommits.empty() || !result.inactiveBaseEdges.empty();
+    if (canCommitOverlayInPlace && !options.computeOutputMarginals && !options.collectPatternStats) {
         precomputedProbResult.clear();
         precomputedTupleProbResult.clear();
         result.outputProbabilities = directOutputs;
