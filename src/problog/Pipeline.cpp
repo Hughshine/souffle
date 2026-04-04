@@ -127,6 +127,9 @@ static ImplicitOverlayCommitSummary applyImplicitOverlayCommit(
     ImplicitOverlayCommitSummary summary;
     precomputedProbResult.clear();
     precomputedTupleProbResult.clear();
+    for (const auto& [tupleStr, prob] : result.carriedPrecomputedTupleProbs) {
+        precomputedTupleProbResult.emplace(tupleStr, prob);
+    }
 
     for (const auto& commit : result.factCommits) {
         if (!commit.node) {
@@ -165,6 +168,66 @@ static ImplicitOverlayCommitSummary applyImplicitOverlayCommit(
     view.invalidateCaches();
     summary.removedNodes = sweepIsolatedNonOutputNodesLocal(view);
     return summary;
+}
+
+static std::pair<std::size_t, std::size_t> recoverImplicitOutputFactsLocal(IncrementalDerivationGraph& graph,
+        IncSubgraphView& view, const std::unordered_set<UntypedTuple>& originalOutputTuples,
+        const std::unordered_set<std::string>& originalOutputRelations) {
+    std::unordered_set<UntypedTuple> liveViewTuples;
+    liveViewTuples.reserve(view.getNodes().size());
+    for (const auto& node : view.getNodes()) {
+        if (node) {
+            liveViewTuples.insert(node->getTuple());
+        }
+    }
+
+    std::unordered_set<UntypedTuple> precomputedTuples;
+    std::unordered_set<std::string> precomputedTupleStrings;
+    auto rebuildPrecomputedSets = [&]() {
+        precomputedTuples.clear();
+        precomputedTupleStrings.clear();
+        precomputedTuples.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
+        precomputedTupleStrings.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
+        for (const auto& [node, _] : precomputedProbResult) {
+            if (node) {
+                precomputedTuples.insert(node->getTuple());
+                precomputedTupleStrings.insert(node->getTuple().toString());
+            }
+        }
+        for (const auto& [tupleStr, _] : precomputedTupleProbResult) {
+            precomputedTupleStrings.insert(tupleStr);
+        }
+    };
+    rebuildPrecomputedSets();
+
+    for (const auto& node : view.getNodes()) {
+        if (node && originalOutputRelations.count(node->getTuple().relation_name) &&
+                !precomputedTuples.count(node->getTuple()) &&
+                !precomputedTupleStrings.count(node->getTuple().toString())) {
+            node->setQuery();
+        }
+    }
+
+    const std::size_t recoveredIsolatedFacts = precomputeIsolatedOutputFactsLocal(view);
+    if (recoveredIsolatedFacts > 0) {
+        rebuildPrecomputedSets();
+    }
+
+    std::size_t recoveredOutputFacts = 0;
+    for (const auto& tuple : originalOutputTuples) {
+        if (liveViewTuples.count(tuple) || precomputedTuples.count(tuple) ||
+                precomputedTupleStrings.count(tuple.toString())) {
+            continue;
+        }
+        NodePtr recovered = graph.findNode(tuple);
+        if (!recovered || !recovered->isFact) {
+            continue;
+        }
+        precomputedTupleProbResult.emplace(tuple.toString(), recovered->getProbability());
+        ++recoveredOutputFacts;
+    }
+
+    return {recoveredIsolatedFacts, recoveredOutputFacts};
 }
 
 static ImplicitSplitMode resolveImplicitSplitMode(const std::string& splitMode) {
@@ -2238,7 +2301,7 @@ void runPipeline(
             ImplicitSplitPipelineOptions rewriteOptions;
             rewriteOptions.splitMode = resolveImplicitSplitMode(opt.getSplitMode());
             rewriteOptions.runOverlayFastPaths = true;
-            rewriteOptions.runOverlaySingleHyperedge = false;
+            rewriteOptions.runOverlaySingleHyperedge = true;
             rewriteOptions.runOverlayAllFacts = true;
             rewriteOptions.computeOutputMarginals = false;
             rewriteOptions.collectPatternStats = false;
@@ -2250,15 +2313,24 @@ void runPipeline(
             }
             if (canUseImplicitOverlayCommit(implicitResult)) {
                 const auto commitSummary = applyImplicitOverlayCommit(*graph, view, implicitResult);
-                const std::size_t recoveredIsolatedFacts = precomputeIsolatedOutputFactsLocal(view);
+                const auto [recoveredIsolatedFacts, recoveredOutputFacts] =
+                        recoverImplicitOutputFactsLocal(*graph, view, originalOutputTuples, originalOutputRelations);
                 std::cout << "[pipeline] implicit overlay commit"
                           << " fact_nodes=" << commitSummary.factNodes
                           << " removed_edges=" << commitSummary.removedEdges
                           << " added_edges=" << commitSummary.addedEdges
                           << " removed_nodes=" << commitSummary.removedNodes
                           << " recovered_isolated_output_facts=" << recoveredIsolatedFacts
+                          << " recovered_tuple_output_facts=" << recoveredOutputFacts
                           << std::endl;
                 runLegacyRewrite();
+                const auto [postRewriteRecoveredIsolatedFacts, postRewriteRecoveredOutputFacts] =
+                        recoverImplicitOutputFactsLocal(*graph, view, originalOutputTuples, originalOutputRelations);
+                if (postRewriteRecoveredIsolatedFacts > 0 || postRewriteRecoveredOutputFacts > 0) {
+                    std::cout << "[pipeline] implicit recovered isolated_output_facts="
+                              << postRewriteRecoveredIsolatedFacts
+                              << " tuple_output_facts=" << postRewriteRecoveredOutputFacts << std::endl;
+                }
             } else {
                 rewriteStats = implicitResult.stats.graphRewriteStats;
                 graph = std::move(implicitResult.materialized.graph);
@@ -2267,62 +2339,8 @@ void runPipeline(
                 }
                 view = buildFullIncViewLocal(
                         implicitResult.materialized.liveNodes, implicitResult.materialized.liveEdges);
-                std::unordered_set<UntypedTuple> liveViewTuples;
-                liveViewTuples.reserve(view.getNodes().size());
-                for (const auto& node : view.getNodes()) {
-                    if (node) {
-                        liveViewTuples.insert(node->getTuple());
-                    }
-                }
-                std::unordered_set<UntypedTuple> precomputedTuples;
-                std::unordered_set<std::string> precomputedTupleStrings;
-                precomputedTuples.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
-                precomputedTupleStrings.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
-                for (const auto& [node, _] : precomputedProbResult) {
-                    if (node) {
-                        precomputedTuples.insert(node->getTuple());
-                        precomputedTupleStrings.insert(node->getTuple().toString());
-                    }
-                }
-                for (const auto& [tupleStr, _] : precomputedTupleProbResult) {
-                    precomputedTupleStrings.insert(tupleStr);
-                }
-                for (const auto& node : view.getNodes()) {
-                    if (node && originalOutputRelations.count(node->getTuple().relation_name) &&
-                            !precomputedTuples.count(node->getTuple()) &&
-                            !precomputedTupleStrings.count(node->getTuple().toString())) {
-                        node->setQuery();
-                    }
-                }
-                const std::size_t recoveredIsolatedFacts = precomputeIsolatedOutputFactsLocal(view);
-                if (recoveredIsolatedFacts > 0) {
-                    precomputedTuples.clear();
-                    precomputedTupleStrings.clear();
-                    precomputedTuples.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
-                    precomputedTupleStrings.reserve(precomputedProbResult.size() + precomputedTupleProbResult.size());
-                    for (const auto& [node, _] : precomputedProbResult) {
-                        if (node) {
-                            precomputedTuples.insert(node->getTuple());
-                            precomputedTupleStrings.insert(node->getTuple().toString());
-                        }
-                    }
-                    for (const auto& [tupleStr, _] : precomputedTupleProbResult) {
-                        precomputedTupleStrings.insert(tupleStr);
-                    }
-                }
-                std::size_t recoveredOutputFacts = 0;
-                for (const auto& tuple : originalOutputTuples) {
-                    if (liveViewTuples.count(tuple) || precomputedTuples.count(tuple) ||
-                            precomputedTupleStrings.count(tuple.toString())) {
-                        continue;
-                    }
-                    NodePtr recovered = graph ? graph->findNode(tuple) : nullptr;
-                    if (!recovered || !recovered->isFact) {
-                        continue;
-                    }
-                    precomputedTupleProbResult.emplace(tuple.toString(), recovered->getProbability());
-                    ++recoveredOutputFacts;
-                }
+                const auto [recoveredIsolatedFacts, recoveredOutputFacts] =
+                        recoverImplicitOutputFactsLocal(*graph, view, originalOutputTuples, originalOutputRelations);
                 if (recoveredIsolatedFacts > 0 || recoveredOutputFacts > 0) {
                     std::cout << "[pipeline] implicit recovered isolated_output_facts="
                               << recoveredIsolatedFacts

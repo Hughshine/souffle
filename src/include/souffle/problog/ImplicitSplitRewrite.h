@@ -48,6 +48,8 @@ struct ImplicitSplitOverlayEdge {
     double probability = 1.0;
     bool deterministic = true;
     bool active = true;
+    bool hasOwnedSupportTokens = false;
+    const std::vector<SupportToken>* supportTokensView = nullptr;
     std::vector<SupportToken> supportTokens;
 };
 
@@ -211,6 +213,8 @@ private:
         double factProbability = 0.0;
         bool needOutput = false;
         bool hasEvidence = false;
+        bool hasOwnedFactSupportTokens = false;
+        const std::vector<SupportToken>* factSupportTokensView = nullptr;
         std::vector<SupportToken> factSupportTokens;
     };
 
@@ -221,20 +225,29 @@ private:
     std::unordered_map<NodePtr, std::size_t> nextAliasIdByFact_;
     std::unordered_map<NodePtr, std::vector<std::size_t>> aliasesByFact_;
     std::unordered_map<NodePtr, std::vector<std::size_t>> cachedBaseOutgoingEdgesByFact_;
-    std::unordered_map<NodePtr, std::vector<std::size_t>> activeIncomingEdgeIdsByNode_;
-    std::unordered_map<SplitNodeRef, std::vector<std::size_t>, SplitNodeRefHash> activeOutgoingEdgeIdsByRef_;
-    std::unordered_map<NodePtr, std::size_t> activeSemanticInputOccurrencesByFact_;
-    std::vector<std::size_t> activeEdgeIds_;
+    mutable std::unordered_map<NodePtr, std::vector<std::size_t>> activeIncomingEdgeIdsByNode_;
+    mutable std::unordered_map<SplitNodeRef, std::vector<std::size_t>, SplitNodeRefHash> activeOutgoingEdgeIdsByRef_;
+    mutable std::unordered_map<NodePtr, std::size_t> activeSemanticInputOccurrencesByFact_;
+    mutable std::vector<std::size_t> activeEdgeIds_;
+    mutable bool activeEdgeIndicesDirty_ = false;
     std::size_t activeEdgeCount_ = 0;
 
     bool isFactRef(const SplitNodeRef& ref) const;
     double factProbabilityOf(const SplitNodeRef& ref) const;
+    const std::vector<SupportToken>& factSupportTokensOf(const BaseNodeState& state) const;
+    const std::vector<SupportToken>& factSupportTokensOf(const NodePtr& node) const;
+    const std::vector<SupportToken>& edgeSupportTokensOf(const ImplicitSplitOverlayEdge& edge) const;
+    void setFactSupportTokens(BaseNodeState& state, std::vector<SupportToken> tokens);
+    void setEdgeSupportTokens(ImplicitSplitOverlayEdge& edge, std::vector<SupportToken> tokens);
     std::size_t activeIncomingCount(const NodePtr& node) const;
     std::size_t activeOutgoingCount(const SplitNodeRef& ref) const;
     std::size_t activeSemanticInputCount(const NodePtr& fact) const;
     const std::vector<std::size_t>& activeIncomingEdges(const NodePtr& node) const;
     const std::vector<std::size_t>& activeOutgoingEdges(const SplitNodeRef& ref) const;
-    void rebuildActiveEdgeIndices();
+    const std::vector<std::size_t>& activeOutgoingEdgesSnapshot(const SplitNodeRef& ref) const;
+    void markActiveEdgeIndicesDirty();
+    void ensureActiveEdgeIndices() const;
+    void rebuildActiveEdgeIndices() const;
 
     std::vector<std::vector<std::size_t>> partitionFactOutgoingEdgesNaive(
             const NodePtr& fact, ImplicitSplitOverlayStats* stats = nullptr) const;
@@ -244,7 +257,11 @@ private:
             ImplicitSplitOverlayStats* stats);
 
     bool rewriteAllFactsPass(ImplicitSplitOverlayStats* stats);
+    bool rewriteAllFactsToFixpoint(ImplicitSplitOverlayStats* stats);
     bool rewriteSingleHyperedgePass(ImplicitSplitOverlayStats* stats);
+    std::vector<std::size_t> collectAffectedEdgesForSemanticFact(const NodePtr& fact) const;
+    std::vector<std::size_t> collectAffectedEdgesForAllFactsRewrite(std::size_t edgeIndex) const;
+    std::vector<std::size_t> collectAffectedEdgesForSingleHyperedgeRewrite(std::size_t edgeIndex) const;
 
     std::vector<SplitNodeRef> enumerateActiveFactRefs() const;
     std::vector<const ImplicitSplitOverlayEdge*> activeEdgesSorted() const;
