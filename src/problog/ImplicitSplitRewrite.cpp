@@ -216,6 +216,51 @@ const std::vector<std::size_t>& ImplicitSplitOverlay::activeOutgoingEdgesSnapsho
     return it->second;
 }
 
+bool ImplicitSplitOverlay::canSplitFact(const NodePtr& fact) const {
+    if (!fact || fact->isShadow) {
+        return false;
+    }
+    auto itState = nodeState_.find(fact);
+    if (itState == nodeState_.end()) {
+        return false;
+    }
+    const auto& state = itState->second;
+    return state.originalIsFact && state.currentIsFact && !state.needOutput && !state.hasEvidence;
+}
+
+void ImplicitSplitOverlay::markSplitFactDirty(const NodePtr& fact) {
+    if (!canSplitFact(fact)) {
+        return;
+    }
+    if (splitDirtyFactSet_.insert(fact).second) {
+        splitDirtyFacts_.push_back(fact);
+    }
+}
+
+void ImplicitSplitOverlay::markSplitFactsDirtyForInputs(const std::vector<SplitNodeRef>& inputs) {
+    for (const auto& input : inputs) {
+        markSplitFactDirty(input.base);
+    }
+}
+
+void ImplicitSplitOverlay::seedAllSplitFacts() {
+    splitDirtyFactsInitialized_ = true;
+    splitDirtyFacts_.clear();
+    splitDirtyFactSet_.clear();
+    splitDirtyFacts_.reserve(nodeState_.size());
+    splitDirtyFactSet_.reserve(nodeState_.size());
+    for (const auto& [node, _] : nodeState_) {
+        markSplitFactDirty(node);
+    }
+}
+
+std::vector<NodePtr> ImplicitSplitOverlay::takeSplitDirtyFacts() {
+    std::vector<NodePtr> facts = std::move(splitDirtyFacts_);
+    splitDirtyFacts_.clear();
+    splitDirtyFactSet_.clear();
+    return facts;
+}
+
 void ImplicitSplitOverlay::markActiveEdgeIndicesDirty() {
     activeEdgeIndicesDirty_ = true;
 }
@@ -537,16 +582,21 @@ bool ImplicitSplitOverlay::applySplit(ImplicitSplitMode mode, ImplicitSplitOverl
         return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
     };
     ensureActiveEdgeIndices();
-    std::vector<NodePtr> facts;
-    for (const auto& [node, state] : nodeState_) {
-        if (state.originalIsFact && state.currentIsFact && !node->isShadow) {
-            facts.push_back(node);
-        }
+    if (!splitDirtyFactsInitialized_) {
+        seedAllSplitFacts();
+    }
+    std::vector<NodePtr> facts = takeSplitDirtyFacts();
+    if (facts.empty()) {
+        return false;
     }
     std::sort(facts.begin(), facts.end(), [](const NodePtr& a, const NodePtr& b) {
         return a->getId() < b->getId();
     });
     for (const auto& fact : facts) {
+        if (!canSplitFact(fact)) {
+            cachedBaseOutgoingEdgesByFact_.erase(fact);
+            continue;
+        }
         const auto& outs = activeOutgoingEdgesSnapshot(SplitNodeRef{fact, 0});
         std::vector<std::size_t> currentOuts(outs.begin(), outs.end());
         auto itCached = cachedBaseOutgoingEdgesByFact_.find(fact);
@@ -737,6 +787,7 @@ bool ImplicitSplitOverlay::rewriteAllFactsPass(ImplicitSplitOverlayStats* stats)
             continue;
         }
         auto& edge = edges_[edgeIndex];
+        const auto oldInputs = edge.inputs;
         if (!edge.active || edge.inputs.empty() || !edge.output) {
             continue;
         }
@@ -755,6 +806,8 @@ bool ImplicitSplitOverlay::rewriteAllFactsPass(ImplicitSplitOverlayStats* stats)
         outState.currentIsFact = true;
         outState.factProbability = std::clamp(probability, 0.0, 1.0);
         setFactSupportTokens(outState, std::move(factSupport));
+        markSplitFactsDirtyForInputs(edge.inputs);
+        markSplitFactDirty(edge.output);
         edge.active = false;
         if (activeEdgeCount_ > 0) {
             --activeEdgeCount_;
@@ -865,6 +918,8 @@ bool ImplicitSplitOverlay::rewriteAllFactsToFixpoint(ImplicitSplitOverlayStats* 
             outState.currentIsFact = true;
             outState.factProbability = std::clamp(probability, 0.0, 1.0);
             setFactSupportTokens(outState, std::move(factSupport));
+            markSplitFactsDirtyForInputs(edge.inputs);
+            markSplitFactDirty(edge.output);
             edge.active = false;
             if (activeEdgeCount_ > 0) {
                 --activeEdgeCount_;
@@ -1001,6 +1056,7 @@ bool ImplicitSplitOverlay::rewriteSingleHyperedgePass(ImplicitSplitOverlayStats*
             if (!edge.active || edge.inputs.size() <= 1 || !edge.output) {
                 continue;
             }
+            const auto oldInputs = edge.inputs;
 
             double probability = edge.deterministic ? 1.0 : edge.probability;
             std::vector<SupportToken> newEdgeSupport = edgeSupportTokensOf(edge);
@@ -1017,6 +1073,7 @@ bool ImplicitSplitOverlay::rewriteSingleHyperedgePass(ImplicitSplitOverlayStats*
                         {&newEdgeSupport, &factSupportTokensOf(edge.inputs[i].base)});
             }
             if (nearlyZero(probability)) {
+                markSplitFactsDirtyForInputs(oldInputs);
                 edge.active = false;
                 if (activeEdgeCount_ > 0) {
                     --activeEdgeCount_;
@@ -1034,6 +1091,7 @@ bool ImplicitSplitOverlay::rewriteSingleHyperedgePass(ImplicitSplitOverlayStats*
                 continue;
             }
 
+            markSplitFactsDirtyForInputs(oldInputs);
             edge.inputs = {candidate.si};
             edge.negations = {candidate.siNegated};
             edge.probability = std::clamp(probability, 0.0, 1.0);
@@ -1408,6 +1466,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
             return false;
         }
         auto& edge = edges_[edgeIndex];
+        const auto oldInputs = edge.inputs;
         double probability = edge.deterministic ? 1.0 : edge.probability;
         std::vector<SupportToken> newEdgeSupport = edgeSupportTokensOf(edge);
         for (std::size_t i = 0; i < edge.inputs.size(); ++i) {
@@ -1423,6 +1482,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
                     {&newEdgeSupport, &factSupportTokensOf(edge.inputs[i].base)});
         }
         if (nearlyZero(probability)) {
+            markSplitFactsDirtyForInputs(oldInputs);
             edge.active = false;
             if (activeEdgeCount_ > 0) {
                 --activeEdgeCount_;
@@ -1435,6 +1495,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
             return true;
         }
 
+        markSplitFactsDirtyForInputs(oldInputs);
         edge.inputs = {si};
         edge.negations = {siNegated};
         edge.probability = std::clamp(probability, 0.0, 1.0);
@@ -1465,6 +1526,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         edges_.push_back(std::move(newEdge));
         ++activeEdgeCount_;
         markActiveEdgeIndicesDirty();
+        markSplitFactsDirtyForInputs(inputs);
     };
 
     auto applyLinearTwoEdgeCandidate = [&](const FastPathCandidate& candidate) {
@@ -1484,6 +1546,8 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         const auto& edge1Support = edgeSupportTokensOf(edge1);
         const auto& edge2Support = edgeSupportTokensOf(edge2);
         std::vector<SupportToken> newEdgeSupport = mergeSupportTokenLists({&edge1Support, &edge2Support});
+        markSplitFactsDirtyForInputs(edge1.inputs);
+        markSplitFactsDirtyForInputs(edge2.inputs);
         edge1.active = false;
         edge2.active = false;
         if (activeEdgeCount_ >= 2) {
@@ -1531,6 +1595,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
             newEdgeSupport = mergeSupportTokenLists({&newEdgeSupport, &edgeSupport});
         }
         for (const auto edgeIndex : candidate.edgeIndices) {
+            markSplitFactsDirtyForInputs(edges_[edgeIndex].inputs);
             edges_[edgeIndex].active = false;
         }
         if (activeEdgeCount_ >= validEdges) {
@@ -1562,7 +1627,9 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         }
         for (const auto edgeIndex : candidate.edgeIndices) {
             edges_[edgeIndex].active = false;
+            markSplitFactsDirtyForInputs(edges_[edgeIndex].inputs);
         }
+        markSplitFactsDirtyForInputs(edges_[candidate.edgeIndex].inputs);
         edges_[candidate.edgeIndex].active = false;
         const std::size_t removed = candidate.edgeIndices.size() + 1;
         if (activeEdgeCount_ >= removed) {
