@@ -337,6 +337,11 @@ private:
     bool applyDirectSingleHyperedgeCandidate(
             const SingleHyperedgeCandidate& candidate, ImplicitSplitOverlayStats* stats);
     bool rewriteSingleHyperedgePass(ImplicitSplitOverlayStats* stats);
+    void ensureActiveEdgeIndicesWithStats(ImplicitSplitOverlayStats* stats);
+    bool runDirectLocalFastPaths(
+            bool enableAllFacts, bool enableSingleHyperedge, ImplicitSplitOverlayStats* stats);
+    bool runGenericFastPathRounds(bool enableLinearTwoEdge, bool enableParallelEdge, bool enableFanOutConverge,
+            bool enableAllFacts, bool enableSingleHyperedge, ImplicitSplitOverlayStats* stats);
     bool classifyLinearTwoEdge(std::size_t edgeIndex, SplitNodeRef* entryOut, bool* entryNegatedOut,
             NodePtr* midOut, std::size_t* nextEdgeOut) const;
     bool classifyFanOutConverge(const SplitNodeRef& entryRef, FanOutConvergeInfo* outInfo) const;
