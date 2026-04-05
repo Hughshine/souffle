@@ -330,6 +330,17 @@ private:
         std::vector<SplitNodeRef> internalNodes;
     };
 
+    struct DirectLocalFastPathResult {
+        bool changed = false;
+        bool activeEdgesExhausted = false;
+    };
+
+    struct GenericFastPathRoundResult {
+        bool changed = false;
+        bool rebuiltIndicesBeforeLocal = false;
+        DirectLocalFastPathResult local{};
+    };
+
     bool buildAllFactsCandidate(std::size_t edgeIndex, AllFactsCandidate* candidate) const;
     bool applyAllFactsCandidate(const AllFactsCandidate& candidate, ImplicitSplitOverlayStats* stats);
     bool rewriteAllFactsPass(ImplicitSplitOverlayStats* stats);
@@ -338,8 +349,11 @@ private:
             const SingleHyperedgeCandidate& candidate, ImplicitSplitOverlayStats* stats);
     bool rewriteSingleHyperedgePass(ImplicitSplitOverlayStats* stats);
     void ensureActiveEdgeIndicesWithStats(ImplicitSplitOverlayStats* stats);
-    bool runDirectLocalFastPaths(
+    DirectLocalFastPathResult runDirectLocalFastPaths(
             bool enableAllFacts, bool enableSingleHyperedge, ImplicitSplitOverlayStats* stats);
+    GenericFastPathRoundResult runGenericFastPathRound(bool enableLinearTwoEdge, bool enableParallelEdge,
+            bool enableFanOutConverge, bool enableAllFacts, bool enableSingleHyperedge,
+            ImplicitSplitOverlayStats* stats);
     bool runGenericFastPathRounds(bool enableLinearTwoEdge, bool enableParallelEdge, bool enableFanOutConverge,
             bool enableAllFacts, bool enableSingleHyperedge, ImplicitSplitOverlayStats* stats);
     bool classifyLinearTwoEdge(std::size_t edgeIndex, SplitNodeRef* entryOut, bool* entryNegatedOut,
