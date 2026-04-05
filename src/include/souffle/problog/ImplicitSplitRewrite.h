@@ -226,9 +226,28 @@ private:
     std::unordered_map<NodePtr, std::size_t> nextAliasIdByFact_;
     std::unordered_map<NodePtr, std::vector<std::size_t>> aliasesByFact_;
     std::unordered_map<NodePtr, std::vector<std::size_t>> cachedBaseOutgoingEdgesByFact_;
-    std::vector<NodePtr> splitDirtyFacts_;
-    std::unordered_set<NodePtr> splitDirtyFactSet_;
-    bool splitDirtyFactsInitialized_ = false;
+    class SplitDirtyTracker {
+    public:
+        explicit SplitDirtyTracker(ImplicitSplitOverlay& overlay);
+
+        void seedAllFacts();
+        std::vector<NodePtr> takeFacts();
+        void noteEdgeRemoval(const std::vector<SplitNodeRef>& oldInputs);
+        void noteEdgeAddition(const std::vector<SplitNodeRef>& newInputs);
+        void noteEdgeRewrite(const std::vector<SplitNodeRef>& oldInputs, const std::vector<SplitNodeRef>& newInputs);
+        void noteFactifiedNode(const NodePtr& node);
+        bool initialized() const;
+
+    private:
+        void markFact(const NodePtr& fact);
+        void markInputs(const std::vector<SplitNodeRef>& inputs);
+
+        ImplicitSplitOverlay& overlay_;
+        std::vector<NodePtr> facts_;
+        std::unordered_set<NodePtr> factSet_;
+        bool initialized_ = false;
+    };
+    SplitDirtyTracker splitDirty_;
     mutable std::unordered_map<NodePtr, std::vector<std::size_t>> activeIncomingEdgeIdsByNode_;
     mutable std::unordered_map<SplitNodeRef, std::vector<std::size_t>, SplitNodeRefHash> activeOutgoingEdgeIdsByRef_;
     mutable std::unordered_map<NodePtr, std::size_t> activeSemanticInputOccurrencesByFact_;
@@ -250,14 +269,6 @@ private:
     const std::vector<std::size_t>& activeOutgoingEdges(const SplitNodeRef& ref) const;
     const std::vector<std::size_t>& activeOutgoingEdgesSnapshot(const SplitNodeRef& ref) const;
     bool canSplitFact(const NodePtr& fact) const;
-    void markSplitFactDirty(const NodePtr& fact);
-    void markSplitFactsDirtyForInputs(const std::vector<SplitNodeRef>& inputs);
-    void noteSplitFactsForRemovedEdgeInputs(const std::vector<SplitNodeRef>& oldInputs);
-    void noteSplitFactsForAddedEdgeInputs(const std::vector<SplitNodeRef>& newInputs);
-    void noteSplitFactsForRetainedEdgeRewrite(
-            const std::vector<SplitNodeRef>& oldInputs, const std::vector<SplitNodeRef>& newInputs);
-    void seedAllSplitFacts();
-    std::vector<NodePtr> takeSplitDirtyFacts();
     void markActiveEdgeIndicesDirty();
     void ensureActiveEdgeIndices() const;
     void rebuildActiveEdgeIndices() const;
