@@ -664,6 +664,52 @@ same dead ends.
   overlay bookkeeping on the checked taint subset while staying positive on the
   checked large side-channel cases overall
 
+### 2026-04-05: Accepted local refactor candidate — collect fast-path enable flags into scheduler options
+- status:
+  measured against the same detached baseline used for the current
+  `full-artifact-opt` line and kept locally in the active worktree
+- implementation sketch:
+  replace repeated five-boolean plumbing between
+  `rewriteFastPathsToFixpoint(...)`, direct local passes, generic rounds, and
+  candidate collection with a single `FastPathScheduleOptions` carrier. The
+  direct phase, generic rounds, and candidate collector now all consume the
+  same scheduler options object instead of re-spelling the enable bits in each
+  call signature
+- reason for trying it:
+  after making phase results explicit, the remaining scheduler-level ad hoc
+  piece was the repeated manual propagation of
+  `enableSingleHyperedge / enableLinearTwoEdge / enableParallelEdge /
+  enableFanOutConverge / enableAllFacts`. Collecting these into one local
+  carrier makes the intended control surface clearer and removes another source
+  of accidental scheduler divergence without touching any rewrite math
+- detached side-channel comparison against baseline
+  `/tmp/cavfull_side_p19p20_refactorcheck_baseline` on `P19/P20`, fixed seed
+  `424242`, `3` runs each:
+  baseline `P19 bdd_r 1.3299s`, current `1.0566s`; baseline
+  `P20 bdd_r 1.6046s`, current `1.6064s`; current-vs-baseline geometric mean
+  `0.8919x`
+- detached serial taint subset comparison against baseline
+  `/tmp/cavfull_taint_subset_refactorcheck_baseline` on
+  `and-roc, app-018, yaaic`:
+  baseline implicit `45.22s, 16.22s, 8.19s`; current implicit
+  `44.68s, 16.36s, 8.10s`; current-vs-baseline implicit geometric mean
+  `0.9952x`
+- serial stage-level taint reading:
+  total implicit time stayed effectively flat
+  (`implicit_total_ms 12531.09 -> 12529.67`), with mixed but small internal
+  bucket movement:
+  `overlay_prep_ms 10986.06 -> 11059.54`,
+  `split_ms 2796.86 -> 2712.69`,
+  `fastpath_ms 5470.50 -> 5615.91`,
+  `siso_detect_ms 938.17 -> 937.27`,
+  `siso_summarize_ms 1655.60 -> 1624.31`,
+  `rebuild_index_ms 3057.64 -> 3216.60`
+- conclusion:
+  this is still a safe keep. It is primarily an interface cleanup, but it
+  makes the scheduler configuration surface more coherent while remaining
+  effectively neutral on taint and still positive on the checked large
+  side-channel cases
+
 ## Related commits
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
 - `UNCOMMITTED` — docs(research): refresh curated rewrite status around the packaged full artifact

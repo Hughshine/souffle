@@ -1209,7 +1209,7 @@ bool ImplicitSplitOverlay::classifyFanOutConverge(
 }
 
 std::vector<ImplicitSplitOverlay::FastPathCandidate> ImplicitSplitOverlay::collectFastPathCandidates(
-        bool enableLinearTwoEdge, bool enableParallelEdge, bool enableFanOutConverge) const {
+        const FastPathScheduleOptions& options) const {
     auto addUniqueNode = [](std::vector<SplitNodeRef>& nodes,
                              std::unordered_set<SplitNodeRef, SplitNodeRefHash>& seen,
                              const SplitNodeRef& ref) {
@@ -1223,7 +1223,7 @@ std::vector<ImplicitSplitOverlay::FastPathCandidate> ImplicitSplitOverlay::colle
 
     std::vector<FastPathCandidate> candidates;
     candidates.reserve(activeEdgeIds_.size());
-    if (enableLinearTwoEdge) {
+    if (options.enableLinearTwoEdge) {
         for (const auto edgeIndex : activeEdgeIds_) {
             SplitNodeRef entry{};
             bool entryNegated = false;
@@ -1249,7 +1249,7 @@ std::vector<ImplicitSplitOverlay::FastPathCandidate> ImplicitSplitOverlay::colle
                     std::move(nodes)});
         }
     }
-    if (enableParallelEdge) {
+    if (options.enableParallelEdge) {
         for (const auto& [output, incoming] : activeIncomingEdgeIdsByNode_) {
             struct ParallelKey {
                 SplitNodeRef ref;
@@ -1293,7 +1293,7 @@ std::vector<ImplicitSplitOverlay::FastPathCandidate> ImplicitSplitOverlay::colle
             }
         }
     }
-    if (enableFanOutConverge) {
+    if (options.enableFanOutConverge) {
         for (const auto& ref : enumerateActiveFactRefs()) {
             FanOutConvergeInfo info;
             if (!classifyFanOutConverge(ref, &info)) {
@@ -1467,9 +1467,9 @@ void ImplicitSplitOverlay::ensureActiveEdgeIndicesWithStats(ImplicitSplitOverlay
 }
 
 ImplicitSplitOverlay::DirectLocalFastPathResult ImplicitSplitOverlay::runDirectLocalFastPaths(
-        bool enableAllFacts, bool enableSingleHyperedge, ImplicitSplitOverlayStats* stats) {
+        const FastPathScheduleOptions& options, ImplicitSplitOverlayStats* stats) {
     DirectLocalFastPathResult result;
-    if (enableAllFacts && activeEdgeCount_ > 0) {
+    if (options.enableAllFacts && activeEdgeCount_ > 0) {
         const auto allFactsStart = Clock::now();
         const bool allFactsChanged = rewriteAllFactsPass(stats);
         if (stats) {
@@ -1477,7 +1477,7 @@ ImplicitSplitOverlay::DirectLocalFastPathResult ImplicitSplitOverlay::runDirectL
         }
         result.changed = allFactsChanged || result.changed;
     }
-    if (enableSingleHyperedge && activeEdgeCount_ > 0) {
+    if (options.enableSingleHyperedge && activeEdgeCount_ > 0) {
         const auto singleStart = Clock::now();
         const bool singleChanged = rewriteSingleHyperedgePass(stats);
         if (stats) {
@@ -1492,10 +1492,9 @@ ImplicitSplitOverlay::DirectLocalFastPathResult ImplicitSplitOverlay::runDirectL
 }
 
 ImplicitSplitOverlay::GenericFastPathRoundResult ImplicitSplitOverlay::runGenericFastPathRound(
-        bool enableLinearTwoEdge, bool enableParallelEdge, bool enableFanOutConverge, bool enableAllFacts,
-        bool enableSingleHyperedge, ImplicitSplitOverlayStats* stats) {
+        const FastPathScheduleOptions& options, ImplicitSplitOverlayStats* stats) {
     GenericFastPathRoundResult result;
-    if (activeEdgeCount_ == 0 || (!enableLinearTwoEdge && !enableParallelEdge && !enableFanOutConverge)) {
+    if (activeEdgeCount_ == 0 || !options.enableGenericRounds()) {
         result.local.activeEdgesExhausted = activeEdgeCount_ == 0;
         return result;
     }
@@ -1504,8 +1503,7 @@ ImplicitSplitOverlay::GenericFastPathRoundResult ImplicitSplitOverlay::runGeneri
         ++stats->fastPathIterations;
     }
     const auto detectStart = Clock::now();
-    std::vector<FastPathCandidate> selected =
-            collectFastPathCandidates(enableLinearTwoEdge, enableParallelEdge, enableFanOutConverge);
+    std::vector<FastPathCandidate> selected = collectFastPathCandidates(options);
     if (stats) {
         stats->fastPathDetectMs += elapsedMs(detectStart);
     }
@@ -1547,23 +1545,20 @@ ImplicitSplitOverlay::GenericFastPathRoundResult ImplicitSplitOverlay::runGeneri
         result.rebuiltIndicesBeforeLocal = true;
     }
 
-    result.local = runDirectLocalFastPaths(enableAllFacts, enableSingleHyperedge, stats);
+    result.local = runDirectLocalFastPaths(options, stats);
     result.changed = result.local.changed || result.changed;
     return result;
 }
 
-bool ImplicitSplitOverlay::runGenericFastPathRounds(bool enableLinearTwoEdge, bool enableParallelEdge,
-        bool enableFanOutConverge, bool enableAllFacts, bool enableSingleHyperedge,
-        ImplicitSplitOverlayStats* stats) {
-    if (activeEdgeCount_ == 0 || (!enableLinearTwoEdge && !enableParallelEdge && !enableFanOutConverge)) {
+bool ImplicitSplitOverlay::runGenericFastPathRounds(
+        const FastPathScheduleOptions& options, ImplicitSplitOverlayStats* stats) {
+    if (activeEdgeCount_ == 0 || !options.enableGenericRounds()) {
         return false;
     }
 
     bool changedAny = false;
     while (true) {
-        const auto round = runGenericFastPathRound(
-                enableLinearTwoEdge, enableParallelEdge, enableFanOutConverge, enableAllFacts,
-                enableSingleHyperedge, stats);
+        const auto round = runGenericFastPathRound(options, stats);
         if (!round.changed) {
             break;
         }
@@ -1581,18 +1576,17 @@ bool ImplicitSplitOverlay::runGenericFastPathRounds(bool enableLinearTwoEdge, bo
 bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge, bool enableLinearTwoEdge,
         bool enableParallelEdge, bool enableFanOutConverge, bool enableAllFacts,
         ImplicitSplitOverlayStats* stats) {
+    const FastPathScheduleOptions options{
+            enableSingleHyperedge, enableLinearTwoEdge, enableParallelEdge, enableFanOutConverge, enableAllFacts};
     ensureActiveEdgeIndicesWithStats(stats);
 
     bool changedAny = false;
-    const auto localResult = runDirectLocalFastPaths(enableAllFacts, enableSingleHyperedge, stats);
+    const auto localResult = runDirectLocalFastPaths(options, stats);
     changedAny = localResult.changed || changedAny;
     if (localResult.activeEdgesExhausted) {
         return changedAny;
     }
-    changedAny = runGenericFastPathRounds(
-                         enableLinearTwoEdge, enableParallelEdge, enableFanOutConverge, enableAllFacts,
-                         enableSingleHyperedge, stats) ||
-            changedAny;
+    changedAny = runGenericFastPathRounds(options, stats) || changedAny;
     return changedAny;
 }
 
