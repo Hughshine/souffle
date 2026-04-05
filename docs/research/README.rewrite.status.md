@@ -710,6 +710,50 @@ same dead ends.
   effectively neutral on taint and still positive on the checked large
   side-channel cases
 
+### 2026-04-05: Accepted local refactor candidate — split generic round planning from execution
+- status:
+  measured against the same detached baseline used for the current
+  `full-artifact-opt` line and kept locally in the active worktree
+- implementation sketch:
+  introduce an explicit `GenericFastPathRoundPlan` and split generic rounds
+  into `buildGenericFastPathRoundPlan(...)` and
+  `applyGenericFastPathRoundPlan(...)`. `runGenericFastPathRound(...)` now only
+  orchestrates one round: build the selected generic candidates, apply them,
+  rebuild indices if needed, then run the direct local phase
+- reason for trying it:
+  after the schedule-options cleanup, generic rounds still mixed three
+  concerns in one helper: candidate collection, candidate execution, and
+  post-round orchestration. This refactor makes generic rounds structurally
+  match the rest of the codebase better without touching candidate semantics or
+  rewrite math
+- detached side-channel comparison against baseline
+  `/tmp/cavfull_side_p19p20_refactorcheck_baseline` on `P19/P20`, fixed seed
+  `424242`, `3` runs each:
+  baseline `P19 bdd_r 1.3299s`, current `1.0253s`; baseline
+  `P20 bdd_r 1.6046s`, current `1.5259s`; current-vs-baseline geometric mean
+  `0.8562x`
+- detached serial taint subset comparison against baseline
+  `/tmp/cavfull_taint_subset_refactorcheck_baseline` on
+  `and-roc, app-018, yaaic`:
+  baseline implicit `45.22s, 16.22s, 8.19s`; current implicit
+  `46.25s, 15.52s, 7.65s`; current-vs-baseline implicit geometric mean
+  `0.9705x`
+- serial stage-level taint reading:
+  total implicit time stayed essentially flat while internal buckets moved only
+  slightly:
+  `implicit_total_ms 12531.09 -> 12539.71`,
+  `overlay_prep_ms 10986.06 -> 11066.26`,
+  `split_ms 2796.86 -> 2810.22`,
+  `fastpath_ms 5470.50 -> 5426.26`,
+  `siso_detect_ms 938.17 -> 974.99`,
+  `siso_summarize_ms 1655.60 -> 1618.65`,
+  `rebuild_index_ms 3057.64 -> 3013.92`
+- conclusion:
+  this is a safe keep. It gives generic rounds the same kind of explicit
+  plan/apply structure already used in direct local passes, improves the
+  checked large side-channel cases, and remains effectively neutral on taint
+  absolute time
+
 ## Related commits
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
 - `UNCOMMITTED` — docs(research): refresh curated rewrite status around the packaged full artifact

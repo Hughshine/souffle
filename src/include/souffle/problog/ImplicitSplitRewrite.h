@@ -330,6 +330,14 @@ private:
         std::vector<SplitNodeRef> internalNodes;
     };
 
+    struct GenericFastPathRoundPlan {
+        std::vector<FastPathCandidate> selectedCandidates;
+
+        bool empty() const {
+            return selectedCandidates.empty();
+        }
+    };
+
     struct DirectLocalFastPathResult {
         bool changed = false;
         bool activeEdgesExhausted = false;
@@ -373,7 +381,9 @@ private:
     bool classifyLinearTwoEdge(std::size_t edgeIndex, SplitNodeRef* entryOut, bool* entryNegatedOut,
             NodePtr* midOut, std::size_t* nextEdgeOut) const;
     bool classifyFanOutConverge(const SplitNodeRef& entryRef, FanOutConvergeInfo* outInfo) const;
-    std::vector<FastPathCandidate> collectFastPathCandidates(const FastPathScheduleOptions& options) const;
+    GenericFastPathRoundPlan buildGenericFastPathRoundPlan(
+            const FastPathScheduleOptions& options, ImplicitSplitOverlayStats* stats) const;
+    bool applyGenericFastPathRoundPlan(const GenericFastPathRoundPlan& plan, ImplicitSplitOverlayStats* stats);
     bool applyFastPathCandidate(const FastPathCandidate& candidate, ImplicitSplitOverlayStats* stats);
     std::vector<std::size_t> collectAffectedEdgesForSemanticFact(const NodePtr& fact) const;
     std::vector<std::size_t> collectAffectedEdgesForSingleHyperedgeRewrite(std::size_t edgeIndex) const;

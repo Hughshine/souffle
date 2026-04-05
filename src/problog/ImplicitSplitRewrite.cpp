@@ -1208,8 +1208,8 @@ bool ImplicitSplitOverlay::classifyFanOutConverge(
     return true;
 }
 
-std::vector<ImplicitSplitOverlay::FastPathCandidate> ImplicitSplitOverlay::collectFastPathCandidates(
-        const FastPathScheduleOptions& options) const {
+ImplicitSplitOverlay::GenericFastPathRoundPlan ImplicitSplitOverlay::buildGenericFastPathRoundPlan(
+        const FastPathScheduleOptions& options, ImplicitSplitOverlayStats* stats) const {
     auto addUniqueNode = [](std::vector<SplitNodeRef>& nodes,
                              std::unordered_set<SplitNodeRef, SplitNodeRefHash>& seen,
                              const SplitNodeRef& ref) {
@@ -1221,6 +1221,7 @@ std::vector<ImplicitSplitOverlay::FastPathCandidate> ImplicitSplitOverlay::colle
         }
     };
 
+    const auto detectStart = Clock::now();
     std::vector<FastPathCandidate> candidates;
     candidates.reserve(activeEdgeIds_.size());
     if (options.enableLinearTwoEdge) {
@@ -1343,7 +1344,10 @@ std::vector<ImplicitSplitOverlay::FastPathCandidate> ImplicitSplitOverlay::colle
         }
         selected.push_back(candidate);
     }
-    return selected;
+    if (stats) {
+        stats->fastPathDetectMs += elapsedMs(detectStart);
+    }
+    return GenericFastPathRoundPlan{std::move(selected)};
 }
 
 bool ImplicitSplitOverlay::applyFastPathCandidate(
@@ -1454,6 +1458,43 @@ bool ImplicitSplitOverlay::applyFastPathCandidate(
     return false;
 }
 
+bool ImplicitSplitOverlay::applyGenericFastPathRoundPlan(
+        const GenericFastPathRoundPlan& plan, ImplicitSplitOverlayStats* stats) {
+    bool changed = false;
+    for (const auto& candidate : plan.selectedCandidates) {
+        const auto summarizeStart = Clock::now();
+        const bool applied = applyFastPathCandidate(candidate, stats);
+        const double elapsed = elapsedMs(summarizeStart);
+        switch (candidate.kind) {
+            case FastPathCandidate::Kind::LinearTwoEdge: {
+                if (stats) {
+                    stats->fastPathLinearMs += elapsed;
+                    stats->fastPathSummarizeMs += elapsed;
+                }
+                changed = applied || changed;
+                break;
+            }
+            case FastPathCandidate::Kind::ParallelEdge: {
+                if (stats) {
+                    stats->fastPathParallelMs += elapsed;
+                    stats->fastPathSummarizeMs += elapsed;
+                }
+                changed = applied || changed;
+                break;
+            }
+            case FastPathCandidate::Kind::FanOutConverge: {
+                if (stats) {
+                    stats->fastPathFanOutMs += elapsed;
+                    stats->fastPathSummarizeMs += elapsed;
+                }
+                changed = applied || changed;
+                break;
+            }
+        }
+    }
+    return changed;
+}
+
 void ImplicitSplitOverlay::ensureActiveEdgeIndicesWithStats(ImplicitSplitOverlayStats* stats) {
     if (!activeEdgeIndicesDirty_) {
         return;
@@ -1502,43 +1543,8 @@ ImplicitSplitOverlay::GenericFastPathRoundResult ImplicitSplitOverlay::runGeneri
     if (stats) {
         ++stats->fastPathIterations;
     }
-    const auto detectStart = Clock::now();
-    std::vector<FastPathCandidate> selected = collectFastPathCandidates(options);
-    if (stats) {
-        stats->fastPathDetectMs += elapsedMs(detectStart);
-    }
-
-    for (const auto& candidate : selected) {
-        const auto summarizeStart = Clock::now();
-        const bool applied = applyFastPathCandidate(candidate, stats);
-        const double elapsed = elapsedMs(summarizeStart);
-        switch (candidate.kind) {
-            case FastPathCandidate::Kind::LinearTwoEdge: {
-                if (stats) {
-                    stats->fastPathLinearMs += elapsed;
-                    stats->fastPathSummarizeMs += elapsed;
-                }
-                result.changed = applied || result.changed;
-                break;
-            }
-            case FastPathCandidate::Kind::ParallelEdge: {
-                if (stats) {
-                    stats->fastPathParallelMs += elapsed;
-                    stats->fastPathSummarizeMs += elapsed;
-                }
-                result.changed = applied || result.changed;
-                break;
-            }
-            case FastPathCandidate::Kind::FanOutConverge: {
-                if (stats) {
-                    stats->fastPathFanOutMs += elapsed;
-                    stats->fastPathSummarizeMs += elapsed;
-                }
-                result.changed = applied || result.changed;
-                break;
-            }
-        }
-    }
+    const auto plan = buildGenericFastPathRoundPlan(options, stats);
+    result.changed = applyGenericFastPathRoundPlan(plan, stats);
 
     if (result.changed) {
         ensureActiveEdgeIndicesWithStats(stats);
