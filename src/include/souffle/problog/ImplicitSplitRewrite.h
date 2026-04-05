@@ -292,8 +292,57 @@ private:
     void applyEdgeGroupsAsAliases(const NodePtr& fact, const std::vector<std::vector<std::size_t>>& groups,
             ImplicitSplitOverlayStats* stats);
 
+    struct SingleHyperedgeCandidate {
+        std::size_t edgeIndex = 0;
+        SplitNodeRef si{};
+        bool siNegated = false;
+        std::vector<std::size_t> affectedEdges;
+    };
+
+    struct AllFactsCandidate {
+        std::size_t edgeIndex = 0;
+    };
+
+    struct FanOutConvergeInfo {
+        std::vector<std::size_t> fanEdges;
+        std::size_t convEdge = 0;
+        bool fanNegated = false;
+        bool mixedPolarity = false;
+        NodePtr exit = nullptr;
+        std::vector<SplitNodeRef> xiRefs;
+    };
+
+    struct FastPathCandidate {
+        enum class Kind {
+            LinearTwoEdge,
+            ParallelEdge,
+            FanOutConverge,
+        };
+
+        Kind kind;
+        std::size_t edgeIndex = 0;
+        std::size_t auxEdgeIndex = 0;
+        std::vector<std::size_t> edgeIndices;
+        SplitNodeRef entryRef{};
+        bool primaryNegated = false;
+        bool mixedPolarity = false;
+        NodePtr output = nullptr;
+        std::vector<SplitNodeRef> internalNodes;
+    };
+
+    bool buildAllFactsCandidate(std::size_t edgeIndex, AllFactsCandidate* candidate) const;
+    bool applyAllFactsCandidate(const AllFactsCandidate& candidate, ImplicitSplitOverlayStats* stats);
     bool rewriteAllFactsPass(ImplicitSplitOverlayStats* stats);
+    bool buildDirectSingleHyperedgeCandidate(std::size_t edgeIndex, SingleHyperedgeCandidate* candidate) const;
+    bool applyDirectSingleHyperedgeCandidate(
+            const SingleHyperedgeCandidate& candidate, ImplicitSplitOverlayStats* stats);
     bool rewriteSingleHyperedgePass(ImplicitSplitOverlayStats* stats);
+    bool classifyLinearTwoEdge(std::size_t edgeIndex, SplitNodeRef* entryOut, bool* entryNegatedOut,
+            NodePtr* midOut, std::size_t* nextEdgeOut) const;
+    bool classifyFanOutConverge(const SplitNodeRef& entryRef, FanOutConvergeInfo* outInfo) const;
+    std::vector<FastPathCandidate> collectFastPathCandidates(
+            bool enableLinearTwoEdge, bool enableParallelEdge, bool enableFanOutConverge) const;
+    bool applyFastPathCandidate(const FastPathCandidate& candidate, ImplicitSplitOverlayStats* stats);
     std::vector<std::size_t> collectAffectedEdgesForSemanticFact(const NodePtr& fact) const;
     std::vector<std::size_t> collectAffectedEdgesForSingleHyperedgeRewrite(std::size_t edgeIndex) const;
 

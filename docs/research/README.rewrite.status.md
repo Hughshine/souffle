@@ -527,6 +527,50 @@ same dead ends.
   their policy split explicit. Shared helpers are safe only when both the
   semantics and the cost model are truly aligned
 
+### 2026-04-05: Accepted local refactor candidate — symmetric build/apply structure for direct local passes
+- status:
+  measured against the detached baseline used for the current
+  `full-artifact-opt` line and kept locally in the active worktree
+- implementation sketch:
+  extend the earlier direct single-hyperedge `build/apply` split to
+  `all-facts` as well. Both direct local passes now expose explicit candidate
+  builders and mutation applicators:
+  `buildAllFactsCandidate(...)` / `applyAllFactsCandidate(...)` and
+  `buildDirectSingleHyperedgeCandidate(...)` /
+  `applyDirectSingleHyperedgeCandidate(...)`
+- reason for trying it:
+  after the semantic mutation-helper lift and `SplitDirtyTracker`, the next
+  remaining asymmetry was that `all-facts` still open-coded its detect/apply
+  sequence while direct single-hyperedge already had a cleaner two-phase shape.
+  Making the direct local passes structurally symmetric is a better base for
+  any later generic worklist driver without touching rewrite math
+- detached side-channel comparison against baseline
+  `/tmp/cavfull_side_p19p20_refactorcheck_baseline` on `P19/P20`, fixed seed
+  `424242`, `3` runs each:
+  baseline `P19 bdd_r 1.3299s`, current `1.0077s`; baseline
+  `P20 bdd_r 1.6046s`, current `1.2732s`; current-vs-baseline geometric mean
+  `0.7754x`
+- detached serial taint subset comparison against baseline
+  `/tmp/cavfull_taint_subset_refactorcheck_baseline` on
+  `and-roc, app-018, yaaic`:
+  baseline implicit `45.22s, 16.22s, 8.19s`; current implicit
+  `45.59s, 16.09s, 7.49s`; current-vs-baseline implicit geometric mean
+  `0.9707x`
+- serial stage-level taint reading:
+  aggregate overlay profiling improved almost everywhere:
+  `implicit_total_ms 12531.09 -> 12206.99`,
+  `overlay_prep_ms 10986.06 -> 10764.29`,
+  `split_ms 2796.86 -> 2751.00`,
+  `fastpath_ms 5470.50 -> 5403.70`,
+  `siso_detect_ms 938.17 -> 926.17`,
+  `siso_summarize_ms 1655.60 -> 1568.63`;
+  only `rebuild_index_ms` drifted slightly upward
+  (`3057.64 -> 3074.86`)
+- conclusion:
+  this is a safe keep. It makes the direct local rewrite passes more uniform
+  and easier to reason about, while remaining clearly on the no-regression side
+  of both checked workloads
+
 ## Related commits
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
 - `UNCOMMITTED` — docs(research): refresh curated rewrite status around the packaged full artifact
