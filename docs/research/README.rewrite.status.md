@@ -618,6 +618,52 @@ same dead ends.
   are their own phase, and generic fast-path rounds are their own phase. That
   is a cleaner base for any later event-driven scheduler work
 
+### 2026-04-05: Accepted local refactor candidate — explicit round/result carriers for fast-path scheduling
+- status:
+  measured against the same detached baseline used for the current
+  `full-artifact-opt` line and kept locally in the active worktree
+- implementation sketch:
+  keep the direct-vs-generic scheduler split, but replace the remaining
+  scheduler booleans with explicit result carriers:
+  `DirectLocalFastPathResult` and `GenericFastPathRoundResult`.
+  `runDirectLocalFastPaths(...)` now reports both
+  `changed` and `activeEdgesExhausted`, and generic scheduling runs one
+  explicit `runGenericFastPathRound(...)` per iteration before the outer loop
+  decides whether to continue
+- reason for trying it:
+  after separating the direct local phase from generic rounds, the control flow
+  still encoded scheduler state through a small cluster of booleans
+  (`changed`, `changedAny`, `rebuiltBeforeLocal`, `localChanged`). That was
+  still less direct than the intended mechanism. Making the per-phase result
+  explicit is a cleaner base for any later event- or worklist-driven scheduler
+  changes, while keeping classifier policy and rewrite math untouched
+- detached side-channel comparison against baseline
+  `/tmp/cavfull_side_p19p20_refactorcheck_baseline` on `P19/P20`, fixed seed
+  `424242`, `3` runs each:
+  baseline `P19 bdd_r 1.3299s`, current `1.1729s`; baseline
+  `P20 bdd_r 1.6046s`, current `1.6552s`; current-vs-baseline geometric mean
+  `0.9538x`
+- detached serial taint subset comparison against baseline
+  `/tmp/cavfull_taint_subset_refactorcheck_baseline` on
+  `and-roc, app-018, yaaic`:
+  baseline implicit `45.22s, 16.22s, 8.19s`; current implicit
+  `45.06s, 16.51s, 7.92s`; current-vs-baseline implicit geometric mean
+  `0.9936x`
+- serial stage-level taint reading:
+  aggregate profiling improved slightly across every tracked overlay bucket:
+  `implicit_total_ms 12531.09 -> 12487.21`,
+  `overlay_prep_ms 10986.06 -> 10920.13`,
+  `split_ms 2796.86 -> 2773.52`,
+  `fastpath_ms 5470.50 -> 5404.47`,
+  `siso_detect_ms 938.17 -> 936.94`,
+  `siso_summarize_ms 1655.60 -> 1633.80`,
+  `rebuild_index_ms 3057.64 -> 3003.28`
+- conclusion:
+  this is another safe keep. It does not change rewrite semantics, but it
+  makes the scheduler state machine itself more explicit and slightly reduces
+  overlay bookkeeping on the checked taint subset while staying positive on the
+  checked large side-channel cases overall
+
 ## Related commits
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
 - `UNCOMMITTED` — docs(research): refresh curated rewrite status around the packaged full artifact
