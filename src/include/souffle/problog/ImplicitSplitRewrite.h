@@ -252,11 +252,22 @@ private:
     bool canSplitFact(const NodePtr& fact) const;
     void markSplitFactDirty(const NodePtr& fact);
     void markSplitFactsDirtyForInputs(const std::vector<SplitNodeRef>& inputs);
+    void noteSplitFactsForRemovedEdgeInputs(const std::vector<SplitNodeRef>& oldInputs);
+    void noteSplitFactsForAddedEdgeInputs(const std::vector<SplitNodeRef>& newInputs);
+    void noteSplitFactsForRetainedEdgeRewrite(
+            const std::vector<SplitNodeRef>& oldInputs, const std::vector<SplitNodeRef>& newInputs);
     void seedAllSplitFacts();
     std::vector<NodePtr> takeSplitDirtyFacts();
     void markActiveEdgeIndicesDirty();
     void ensureActiveEdgeIndices() const;
     void rebuildActiveEdgeIndices() const;
+    void factifyNode(const NodePtr& node, double probability, std::vector<SupportToken> supportTokens);
+    void deactivateEdge(ImplicitSplitOverlayEdge& edge);
+    void rewriteEdgeInPlace(ImplicitSplitOverlayEdge& edge, const std::vector<SplitNodeRef>& oldInputs,
+            std::vector<SplitNodeRef> newInputs, std::vector<bool> newNegations, double probability,
+            std::vector<SupportToken> supportTokens);
+    void addSyntheticEdge(std::vector<SplitNodeRef> inputs, std::vector<bool> negations, const NodePtr& output,
+            double probability, std::vector<SupportToken> supportTokens = {});
 
     std::vector<std::vector<std::size_t>> partitionFactOutgoingEdgesNaive(
             const NodePtr& fact, ImplicitSplitOverlayStats* stats = nullptr) const;

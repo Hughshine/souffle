@@ -109,6 +109,14 @@ Current reading:
   Performance judgments for local optimization attempts should therefore be
   made within the same binary lineage or same-worktree rebuild, not only
   against an older detached build.
+- On taint-heavy comparisons, `no_rewrite / implicit_rewrite` speedup alone is
+  not a sufficient regression oracle. On `2026-04-04`, a contemporaneous serial
+  detached-baseline comparison showed a helper-only refactor to be slightly
+  faster on implicit absolute time (`impl / baseline_impl = 0.9949x`) even
+  though the derived `no_rewrite / implicit_rewrite` speedup row moved
+  downward (`2.8618x -> 2.7644x`) because the matched `no_rewrite` runs
+  drifted. For taint optimization work, compare implicit absolute time and
+  internal profiling deltas in addition to the no-vs-implicit speedup ratio.
 - Small-case rewrite regressions do not carry the same weight as large-case
   trends; the important cases are the larger ones where inference dominates
   fixed pipeline overhead.
@@ -349,6 +357,47 @@ same dead ends.
   the more selective single-hyperedge dirty rule amplifies the side-channel
   win, but it pushes the taint subset further away from parity and therefore is
   not an acceptable keep
+
+### 2026-04-04: Accepted local refactor candidate — centralize overlay mutation side effects
+- status:
+  measured against a contemporaneous serial detached baseline and kept locally
+  in the active `full-artifact-opt` worktree; not yet promoted into the trusted
+  artifact reading above
+- implementation sketch:
+  replace open-coded overlay mutation sequences inside each pattern-specific
+  rewrite with a centralized mutation API:
+  `factifyNode(...)`, `deactivateEdge(...)`, `rewriteEdgeInPlace(...)`,
+  `addSyntheticEdge(...)`, plus explicit split-dirty note helpers for removed,
+  added, and retained edge rewrites
+- reason for trying it:
+  the previous implementation mixed three concerns inside every pattern branch:
+  pattern logic, overlay state mutation, and split-dirty bookkeeping. The
+  helper-only refactor separates those concerns without changing the intended
+  rewrite semantics, making later dirty-policy experiments much easier to
+  express and review
+- contemporaneous serial side-channel comparison against detached baseline
+  `ef43f0f4f` on `P19/P20`, fixed seed `424242`, `3` runs each:
+  baseline `P19 bdd_r 0.9272s`, helper `0.9677s`; baseline
+  `P20 bdd_r 1.4133s`, helper `1.2212s`; helper-vs-baseline geometric mean
+  `0.9497x`
+- contemporaneous serial taint subset comparison against the same detached
+  baseline on `and-roc, app-018, yaaic`:
+  baseline implicit `45.98s, 15.40s, 7.47s`; helper implicit
+  `46.18s, 15.22s, 7.41s`; helper-vs-baseline implicit geometric mean
+  `0.9949x`
+- important interpretation detail:
+  the derived taint `no_rewrite / implicit_rewrite` speedup row moved from
+  `2.8618x` to `2.7644x`, but this was caused by drift in the matched
+  `no_rewrite` lane rather than a real slowdown in implicit rewrite itself
+- stage-level taint reading:
+  helper-only refactoring redistributed some overlay work
+  (`and-roc/typefilter-dlog +431ms`, `and-roc/pt-obj-dlog -140ms`,
+  `app-018/pt-obj-dlog +80ms`, `yaaic/typefilter-dlog -63ms`) while keeping the
+  net implicit absolute time effectively flat
+- conclusion:
+  the central mutation-helper refactor is an acceptable architecture cleanup.
+  The problematic direction was the later exact-dirty semantic narrowing, not
+  the refactor itself
 
 ## Related commits
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
