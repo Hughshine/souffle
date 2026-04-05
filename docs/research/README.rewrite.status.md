@@ -399,6 +399,53 @@ same dead ends.
   The problematic direction was the later exact-dirty semantic narrowing, not
   the refactor itself
 
+### 2026-04-05: Accepted local refactor candidate — isolate split dirty policy in `SplitDirtyTracker`
+- status:
+  measured against a contemporaneous detached baseline and then revalidated on
+  fully serial taint reruns; kept locally in the active `full-artifact-opt`
+  worktree
+- implementation sketch:
+  move the split-dirty queue and its policy-specific operations out of
+  `ImplicitSplitOverlay` and into a dedicated `SplitDirtyTracker` helper.
+  Pattern code still uses the same mutation API (`factifyNode`,
+  `deactivateEdge`, `rewriteEdgeInPlace`, `addSyntheticEdge`), but split-dirty
+  bookkeeping is now owned by one layer rather than being scattered as
+  `noteSplitFactsFor*` calls throughout the overlay body
+- reason for trying it:
+  the helper-only refactor still left dirty-policy semantics implicit in every
+  pattern branch. A separate tracker makes the architecture more intuitive and
+  localizes future dirty-policy experiments without changing rewrite math or
+  pattern matching
+- contemporaneous side-channel comparison against detached baseline
+  `3544411a5` on `P19/P20`, fixed seed `424242`, `3` runs each:
+  baseline `P19 bdd_r 1.5690s`, tracker `1.8761s`; baseline
+  `P20 bdd_r 2.5858s`, tracker `2.1560s`; tracker-vs-baseline geometric mean
+  `0.9985x`
+- first taint subset comparison on `and-roc, app-018, yaaic` looked mixed
+  (`impl / baseline_impl = 1.0433x`), but that run overlapped with side-channel
+  and baseline builds and therefore was not a trustworthy oracle
+- serial taint subset revalidation on the same three cases:
+  baseline implicit `52.06s, 17.07s, 8.51s`; tracker implicit
+  `52.00s, 16.89s, 8.62s`; tracker-vs-baseline implicit geometric mean
+  `1.0004x`
+- serial stage-level taint reading:
+  aggregate overlay bookkeeping was slightly better rather than worse:
+  `implicit_total_ms 14605.91 -> 14246.41`,
+  `overlay_prep_ms 12751.97 -> 12497.23`,
+  `split_ms 3102.18 -> 3018.98`,
+  `fastpath_ms 6539.47 -> 6349.73`,
+  `rebuild_index_ms 3674.01 -> 3620.58`
+- interpretation detail:
+  the serial taint `no_rewrite / implicit_rewrite` geometric mean still moved
+  (`2.5825x -> 2.8167x`), reinforcing the earlier pitfall that absolute
+  implicit time and internal profiling are the right keep/drop signal for
+  architecture-only refactors
+- conclusion:
+  `SplitDirtyTracker` is an acceptable organization cleanup. It improves the
+  separation between mutation semantics and dirty-policy bookkeeping without a
+  measurable side-channel regression and with essentially flat serial taint
+  absolute time
+
 ## Related commits
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
 - `UNCOMMITTED` — docs(research): refresh curated rewrite status around the packaged full artifact

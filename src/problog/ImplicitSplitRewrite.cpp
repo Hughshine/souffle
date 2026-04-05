@@ -74,7 +74,65 @@ private:
 
 }  // namespace
 
-ImplicitSplitOverlay::ImplicitSplitOverlay(const IncrementalDerivationGraphViewInterface& view) : view_(view) {
+ImplicitSplitOverlay::SplitDirtyTracker::SplitDirtyTracker(ImplicitSplitOverlay& overlay) : overlay_(overlay) {}
+
+void ImplicitSplitOverlay::SplitDirtyTracker::markFact(const NodePtr& fact) {
+    if (!overlay_.canSplitFact(fact)) {
+        return;
+    }
+    if (factSet_.insert(fact).second) {
+        facts_.push_back(fact);
+    }
+}
+
+void ImplicitSplitOverlay::SplitDirtyTracker::markInputs(const std::vector<SplitNodeRef>& inputs) {
+    for (const auto& input : inputs) {
+        markFact(input.base);
+    }
+}
+
+void ImplicitSplitOverlay::SplitDirtyTracker::seedAllFacts() {
+    initialized_ = true;
+    facts_.clear();
+    factSet_.clear();
+    facts_.reserve(overlay_.nodeState_.size());
+    factSet_.reserve(overlay_.nodeState_.size());
+    for (const auto& [node, _] : overlay_.nodeState_) {
+        markFact(node);
+    }
+}
+
+std::vector<NodePtr> ImplicitSplitOverlay::SplitDirtyTracker::takeFacts() {
+    std::vector<NodePtr> facts = std::move(facts_);
+    facts_.clear();
+    factSet_.clear();
+    return facts;
+}
+
+void ImplicitSplitOverlay::SplitDirtyTracker::noteEdgeRemoval(const std::vector<SplitNodeRef>& oldInputs) {
+    markInputs(oldInputs);
+}
+
+void ImplicitSplitOverlay::SplitDirtyTracker::noteEdgeAddition(const std::vector<SplitNodeRef>& newInputs) {
+    markInputs(newInputs);
+}
+
+void ImplicitSplitOverlay::SplitDirtyTracker::noteEdgeRewrite(
+        const std::vector<SplitNodeRef>& oldInputs, const std::vector<SplitNodeRef>& newInputs) {
+    (void)newInputs;
+    markInputs(oldInputs);
+}
+
+void ImplicitSplitOverlay::SplitDirtyTracker::noteFactifiedNode(const NodePtr& node) {
+    markFact(node);
+}
+
+bool ImplicitSplitOverlay::SplitDirtyTracker::initialized() const {
+    return initialized_;
+}
+
+ImplicitSplitOverlay::ImplicitSplitOverlay(const IncrementalDerivationGraphViewInterface& view)
+        : view_(view), splitDirty_(*this) {
     for (const auto& node : view_.getNodes()) {
         if (!node) {
             continue;
@@ -228,53 +286,6 @@ bool ImplicitSplitOverlay::canSplitFact(const NodePtr& fact) const {
     return state.originalIsFact && state.currentIsFact && !state.needOutput && !state.hasEvidence;
 }
 
-void ImplicitSplitOverlay::markSplitFactDirty(const NodePtr& fact) {
-    if (!canSplitFact(fact)) {
-        return;
-    }
-    if (splitDirtyFactSet_.insert(fact).second) {
-        splitDirtyFacts_.push_back(fact);
-    }
-}
-
-void ImplicitSplitOverlay::markSplitFactsDirtyForInputs(const std::vector<SplitNodeRef>& inputs) {
-    for (const auto& input : inputs) {
-        markSplitFactDirty(input.base);
-    }
-}
-
-void ImplicitSplitOverlay::noteSplitFactsForRemovedEdgeInputs(const std::vector<SplitNodeRef>& oldInputs) {
-    markSplitFactsDirtyForInputs(oldInputs);
-}
-
-void ImplicitSplitOverlay::noteSplitFactsForAddedEdgeInputs(const std::vector<SplitNodeRef>& newInputs) {
-    markSplitFactsDirtyForInputs(newInputs);
-}
-
-void ImplicitSplitOverlay::noteSplitFactsForRetainedEdgeRewrite(
-        const std::vector<SplitNodeRef>& oldInputs, const std::vector<SplitNodeRef>& newInputs) {
-    (void)newInputs;
-    markSplitFactsDirtyForInputs(oldInputs);
-}
-
-void ImplicitSplitOverlay::seedAllSplitFacts() {
-    splitDirtyFactsInitialized_ = true;
-    splitDirtyFacts_.clear();
-    splitDirtyFactSet_.clear();
-    splitDirtyFacts_.reserve(nodeState_.size());
-    splitDirtyFactSet_.reserve(nodeState_.size());
-    for (const auto& [node, _] : nodeState_) {
-        markSplitFactDirty(node);
-    }
-}
-
-std::vector<NodePtr> ImplicitSplitOverlay::takeSplitDirtyFacts() {
-    std::vector<NodePtr> facts = std::move(splitDirtyFacts_);
-    splitDirtyFacts_.clear();
-    splitDirtyFactSet_.clear();
-    return facts;
-}
-
 void ImplicitSplitOverlay::factifyNode(const NodePtr& node, double probability, std::vector<SupportToken> supportTokens) {
     if (!node) {
         return;
@@ -283,7 +294,7 @@ void ImplicitSplitOverlay::factifyNode(const NodePtr& node, double probability, 
     outState.currentIsFact = true;
     outState.factProbability = std::clamp(probability, 0.0, 1.0);
     setFactSupportTokens(outState, std::move(supportTokens));
-    markSplitFactDirty(node);
+    splitDirty_.noteFactifiedNode(node);
 }
 
 void ImplicitSplitOverlay::deactivateEdge(ImplicitSplitOverlayEdge& edge) {
@@ -300,7 +311,7 @@ void ImplicitSplitOverlay::deactivateEdge(ImplicitSplitOverlayEdge& edge) {
 void ImplicitSplitOverlay::rewriteEdgeInPlace(ImplicitSplitOverlayEdge& edge, const std::vector<SplitNodeRef>& oldInputs,
         std::vector<SplitNodeRef> newInputs, std::vector<bool> newNegations, double probability,
         std::vector<SupportToken> supportTokens) {
-    noteSplitFactsForRetainedEdgeRewrite(oldInputs, newInputs);
+    splitDirty_.noteEdgeRewrite(oldInputs, newInputs);
     edge.inputs = std::move(newInputs);
     edge.negations = std::move(newNegations);
     edge.probability = std::clamp(probability, 0.0, 1.0);
@@ -314,7 +325,7 @@ void ImplicitSplitOverlay::addSyntheticEdge(std::vector<SplitNodeRef> inputs, st
     if (!output || nearlyZero(probability)) {
         return;
     }
-    noteSplitFactsForAddedEdgeInputs(inputs);
+    splitDirty_.noteEdgeAddition(inputs);
     ImplicitSplitOverlayEdge newEdge;
     newEdge.baseEdge = nullptr;
     newEdge.inputs = std::move(inputs);
@@ -650,10 +661,10 @@ bool ImplicitSplitOverlay::applySplit(ImplicitSplitMode mode, ImplicitSplitOverl
         return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
     };
     ensureActiveEdgeIndices();
-    if (!splitDirtyFactsInitialized_) {
-        seedAllSplitFacts();
+    if (!splitDirty_.initialized()) {
+        splitDirty_.seedAllFacts();
     }
-    std::vector<NodePtr> facts = takeSplitDirtyFacts();
+    std::vector<NodePtr> facts = splitDirty_.takeFacts();
     if (facts.empty()) {
         return false;
     }
@@ -870,7 +881,7 @@ bool ImplicitSplitOverlay::rewriteAllFactsPass(ImplicitSplitOverlayStats* stats)
             factSupport = mergeSupportTokenLists(
                     {&factSupport, &factSupportTokensOf(edge.inputs[i].base)});
         }
-        noteSplitFactsForRemovedEdgeInputs(edge.inputs);
+        splitDirty_.noteEdgeRemoval(edge.inputs);
         factifyNode(edge.output, probability, std::move(factSupport));
         deactivateEdge(edge);
         changed = true;
@@ -974,7 +985,7 @@ bool ImplicitSplitOverlay::rewriteAllFactsToFixpoint(ImplicitSplitOverlayStats* 
                 factSupport = mergeSupportTokenLists(
                         {&factSupport, &factSupportTokensOf(edge.inputs[i].base)});
             }
-            noteSplitFactsForRemovedEdgeInputs(edge.inputs);
+            splitDirty_.noteEdgeRemoval(edge.inputs);
             factifyNode(edge.output, probability, std::move(factSupport));
             deactivateEdge(edge);
             changedAny = true;
@@ -1125,7 +1136,7 @@ bool ImplicitSplitOverlay::rewriteSingleHyperedgePass(ImplicitSplitOverlayStats*
                         {&newEdgeSupport, &factSupportTokensOf(edge.inputs[i].base)});
             }
             if (nearlyZero(probability)) {
-                noteSplitFactsForRemovedEdgeInputs(oldInputs);
+                splitDirty_.noteEdgeRemoval(oldInputs);
                 deactivateEdge(edge);
                 changedAny = true;
                 changedThisRound = true;
@@ -1525,7 +1536,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
                     {&newEdgeSupport, &factSupportTokensOf(edge.inputs[i].base)});
         }
         if (nearlyZero(probability)) {
-            noteSplitFactsForRemovedEdgeInputs(oldInputs);
+            splitDirty_.noteEdgeRemoval(oldInputs);
             deactivateEdge(edge);
             if (stats) {
                 ++stats->singleHyperedgeRewrites;
@@ -1558,8 +1569,8 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         const auto& edge1Support = edgeSupportTokensOf(edge1);
         const auto& edge2Support = edgeSupportTokensOf(edge2);
         std::vector<SupportToken> newEdgeSupport = mergeSupportTokenLists({&edge1Support, &edge2Support});
-        noteSplitFactsForRemovedEdgeInputs(edge1.inputs);
-        noteSplitFactsForRemovedEdgeInputs(edge2.inputs);
+        splitDirty_.noteEdgeRemoval(edge1.inputs);
+        splitDirty_.noteEdgeRemoval(edge2.inputs);
         deactivateEdge(edge1);
         deactivateEdge(edge2);
         addSyntheticEdge({candidate.entryRef}, {candidate.primaryNegated}, candidate.output, probability,
@@ -1601,7 +1612,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
             newEdgeSupport = mergeSupportTokenLists({&newEdgeSupport, &edgeSupport});
         }
         for (const auto edgeIndex : candidate.edgeIndices) {
-            noteSplitFactsForRemovedEdgeInputs(edges_[edgeIndex].inputs);
+            splitDirty_.noteEdgeRemoval(edges_[edgeIndex].inputs);
             deactivateEdge(edges_[edgeIndex]);
         }
         addSyntheticEdge({candidate.entryRef}, {candidate.primaryNegated}, candidate.output,
@@ -1626,10 +1637,10 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
             return false;
         }
         for (const auto edgeIndex : candidate.edgeIndices) {
-            noteSplitFactsForRemovedEdgeInputs(edges_[edgeIndex].inputs);
+            splitDirty_.noteEdgeRemoval(edges_[edgeIndex].inputs);
             deactivateEdge(edges_[edgeIndex]);
         }
-        noteSplitFactsForRemovedEdgeInputs(edges_[candidate.edgeIndex].inputs);
+        splitDirty_.noteEdgeRemoval(edges_[candidate.edgeIndex].inputs);
         deactivateEdge(edges_[candidate.edgeIndex]);
         const std::size_t removed = candidate.edgeIndices.size() + 1;
 
