@@ -446,6 +446,87 @@ same dead ends.
   measurable side-channel regression and with essentially flat serial taint
   absolute time
 
+### 2026-04-05: Accepted local refactor candidate — raise pattern rewrites onto semantic mutation helpers
+- status:
+  measured against a detached baseline built from `b7199897c` and kept locally
+  in the active `full-artifact-opt` worktree; ready to use as the next
+  checkpoint for deeper architecture cleanup
+- implementation sketch:
+  move remaining pattern-local edge-removal sequences onto higher-level
+  semantic helpers:
+  `removeEdge(...)`, `collapseEdgeToFact(...)`, and
+  `replaceEdgesWithSyntheticEdge(...)`. Pattern branches no longer open-code
+  `splitDirty_.noteEdgeRemoval(...) + deactivateEdge(...)`; they express only
+  the intended rewrite outcome and let the mutation layer own the side effects
+- reason for trying it:
+  after introducing `SplitDirtyTracker`, pattern code still leaked
+  mutation-policy details in several places. This helper lift keeps pattern
+  detection/math separate from overlay mutation and makes later event-style
+  refactors much more straightforward
+- serial side-channel comparison against detached baseline `b7199897c` on
+  `P19/P20`, fixed seed `424242`, `3` runs each:
+  baseline `P19 bdd_r 1.0006s`, helper-lift `0.8829s`; baseline
+  `P20 bdd_r 1.4358s`, helper-lift `1.3060s`; helper-lift-vs-baseline
+  geometric mean `0.8959x`
+- serial taint subset comparison against the same detached baseline on
+  `and-roc, app-018, yaaic`:
+  baseline implicit `46.47s, 14.85s, 7.58s`; helper-lift implicit
+  `46.69s, 15.25s, 7.44s`; helper-lift-vs-baseline implicit geometric mean
+  `1.0042x`
+- serial stage-level taint reading:
+  aggregate overlay profiling stayed essentially flat:
+  `implicit_total_ms 12662.32 -> 12665.76`,
+  `overlay_prep_ms 11155.50 -> 11129.58`,
+  `rebuild_index_ms 3232.11 -> 3185.81`,
+  `split_ms 2753.37 -> 2787.02`,
+  `fastpath_ms 5667.36 -> 5623.34`,
+  `siso_detect_ms 904.64 -> 905.41`,
+  `siso_summarize_ms 1710.91 -> 1706.78`
+- stage-level interpretation detail:
+  the only noticeable absolute-stage slowdowns were
+  `and-roc/pt-obj-dlog +353ms` and `app-018/pt-obj-dlog +287ms`, while
+  `yaaic/pt-obj-dlog -158ms` and the aggregate implicit bookkeeping totals
+  remained flat. This points to minor stage noise and downstream FC shape
+  changes rather than a systemic overlay regression
+- conclusion:
+  the semantic mutation-helper lift is a safe architecture cleanup. It makes
+  the implicit rewrite pipeline more intuitive without introducing measurable
+  aggregate overhead, and it is a better base for future event-driven mutation
+  refactors than the previous pattern-local bookkeeping style
+
+### 2026-04-05: Rejected attempt — share one single-hyperedge classifier across direct and generic passes
+- status:
+  rejected and reverted locally; not part of the current keep set
+- implementation sketch:
+  move the duplicated single-hyperedge classifier logic into shared overlay
+  helpers and reuse that shared classifier from both
+  `rewriteSingleHyperedgePass` and `rewriteFastPathsToFixpoint`
+- reason for trying it:
+  after the mutation-helper lift, this looked like the next obvious cleanup:
+  a single classifier layer seemed like a natural way to remove drift between
+  the direct single-hyperedge pass and the generic fast-path selector
+- side-channel outcome against detached baseline `b7199897c` on `P19/P20`,
+  fixed seed `424242`, `3` runs each:
+  baseline `P19 bdd_r 1.0006s`, shared-classifier `2.2915s`; baseline
+  `P20 bdd_r 1.4358s`, shared-classifier `1.6736s`; geometric mean
+  `1.6339x` slower
+- profiling diagnosis on `P19 bdd_r`:
+  final `rand_vars` stayed unchanged at `7306`, but
+  `rewrite_ms 677 -> 2187`,
+  `implicit_total_ms 479.54 -> 1939.63`, and especially
+  `implicit_overlay_fastpath_single_ms 132.12 -> 1496.39`
+- root cause:
+  the two old classifier sites were not semantically identical. The generic
+  fast-path selector carried an expensive `hasActivePath` acyclicity/path
+  guard, while the direct single-hyperedge fixpoint pass used a cheaper local
+  test. Sharing one classifier silently imported that path-BFS cost into the
+  direct pass, which preserved correctness but destroyed side-channel
+  performance
+- conclusion:
+  direct single-hyperedge rewriting and generic fast-path selection must keep
+  their policy split explicit. Shared helpers are safe only when both the
+  semantics and the cost model are truly aligned
+
 ## Related commits
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
 - `UNCOMMITTED` — docs(research): refresh curated rewrite status around the packaged full artifact

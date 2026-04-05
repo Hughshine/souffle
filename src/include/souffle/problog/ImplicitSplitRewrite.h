@@ -274,10 +274,15 @@ private:
     void rebuildActiveEdgeIndices() const;
     void factifyNode(const NodePtr& node, double probability, std::vector<SupportToken> supportTokens);
     void deactivateEdge(ImplicitSplitOverlayEdge& edge);
+    void removeEdge(ImplicitSplitOverlayEdge& edge);
+    void collapseEdgeToFact(ImplicitSplitOverlayEdge& edge, double probability, std::vector<SupportToken> supportTokens);
     void rewriteEdgeInPlace(ImplicitSplitOverlayEdge& edge, const std::vector<SplitNodeRef>& oldInputs,
             std::vector<SplitNodeRef> newInputs, std::vector<bool> newNegations, double probability,
             std::vector<SupportToken> supportTokens);
     void addSyntheticEdge(std::vector<SplitNodeRef> inputs, std::vector<bool> negations, const NodePtr& output,
+            double probability, std::vector<SupportToken> supportTokens = {});
+    void replaceEdgesWithSyntheticEdge(const std::vector<std::size_t>& removedEdgeIndices,
+            std::vector<SplitNodeRef> inputs, std::vector<bool> negations, const NodePtr& output,
             double probability, std::vector<SupportToken> supportTokens = {});
 
     std::vector<std::vector<std::size_t>> partitionFactOutgoingEdgesNaive(
@@ -288,10 +293,8 @@ private:
             ImplicitSplitOverlayStats* stats);
 
     bool rewriteAllFactsPass(ImplicitSplitOverlayStats* stats);
-    bool rewriteAllFactsToFixpoint(ImplicitSplitOverlayStats* stats);
     bool rewriteSingleHyperedgePass(ImplicitSplitOverlayStats* stats);
     std::vector<std::size_t> collectAffectedEdgesForSemanticFact(const NodePtr& fact) const;
-    std::vector<std::size_t> collectAffectedEdgesForAllFactsRewrite(std::size_t edgeIndex) const;
     std::vector<std::size_t> collectAffectedEdgesForSingleHyperedgeRewrite(std::size_t edgeIndex) const;
 
     std::vector<SplitNodeRef> enumerateActiveFactRefs() const;
