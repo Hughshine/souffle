@@ -16,6 +16,7 @@ Legend:
 - [PRIMARY] `docs/topics/README.md` — topical docs map (current behavior)
 - [PRIMARY] `docs/design/README.md` — design proposals map
 - [PRIMARY] `docs/historical/README.md` — archived/historical docs map
+- [SECONDARY] `docs/research/README.rewrite.status.md` — curated rewrite research status and local optimization log
 - [SECONDARY] `docs/topics/runtime/README.flag.md` — consolidated compiler/runtime flag reference
 - [SECONDARY] `docs/topics/runtime/README.dump.md` — dump/debug outputs (compiler + runtime)
 - [PRIMARY] `docs/TESTING.md` — verification status + test commands
@@ -100,6 +101,9 @@ Legend:
 - [DESIGN] `docs/design/README.eqrel.md` — eqrel pruning concept
 - [DESIGN] `docs/design/README.lazy.md` — lazy DD plan
 - [DESIGN] `docs/design/README.refactor.md` — refactor opportunities
+
+## Research Status
+- [SECONDARY] `docs/research/README.rewrite.status.md` — current trusted artifact reading plus local optimization outcomes for rewrite work
 
 ## Archive
 - [HISTORICAL] `docs/historical/PAPER.md` — paper table/figure working note (archived)

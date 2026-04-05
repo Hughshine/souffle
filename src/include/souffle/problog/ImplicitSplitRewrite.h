@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace souffle::problog {
@@ -225,6 +226,9 @@ private:
     std::unordered_map<NodePtr, std::size_t> nextAliasIdByFact_;
     std::unordered_map<NodePtr, std::vector<std::size_t>> aliasesByFact_;
     std::unordered_map<NodePtr, std::vector<std::size_t>> cachedBaseOutgoingEdgesByFact_;
+    std::vector<NodePtr> splitDirtyFacts_;
+    std::unordered_set<NodePtr> splitDirtyFactSet_;
+    bool splitDirtyFactsInitialized_ = false;
     mutable std::unordered_map<NodePtr, std::vector<std::size_t>> activeIncomingEdgeIdsByNode_;
     mutable std::unordered_map<SplitNodeRef, std::vector<std::size_t>, SplitNodeRefHash> activeOutgoingEdgeIdsByRef_;
     mutable std::unordered_map<NodePtr, std::size_t> activeSemanticInputOccurrencesByFact_;
@@ -245,6 +249,11 @@ private:
     const std::vector<std::size_t>& activeIncomingEdges(const NodePtr& node) const;
     const std::vector<std::size_t>& activeOutgoingEdges(const SplitNodeRef& ref) const;
     const std::vector<std::size_t>& activeOutgoingEdgesSnapshot(const SplitNodeRef& ref) const;
+    bool canSplitFact(const NodePtr& fact) const;
+    void markSplitFactDirty(const NodePtr& fact);
+    void markSplitFactsDirtyForInputs(const std::vector<SplitNodeRef>& inputs);
+    void seedAllSplitFacts();
+    std::vector<NodePtr> takeSplitDirtyFacts();
     void markActiveEdgeIndicesDirty();
     void ensureActiveEdgeIndices() const;
     void rebuildActiveEdgeIndices() const;
