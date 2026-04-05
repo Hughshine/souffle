@@ -1454,57 +1454,50 @@ bool ImplicitSplitOverlay::applyFastPathCandidate(
     return false;
 }
 
-bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge, bool enableLinearTwoEdge,
-        bool enableParallelEdge, bool enableFanOutConverge, bool enableAllFacts,
-        ImplicitSplitOverlayStats* stats) {
-    auto ensureActiveIndices = [&]() {
-        if (!activeEdgeIndicesDirty_) {
-            return;
-        }
-        const auto rebuildStart = Clock::now();
-        rebuildActiveEdgeIndices();
-        if (stats) {
-            ++stats->rebuildIndexCount;
-            stats->rebuildIndexMs += elapsedMs(rebuildStart);
-        }
-    };
+void ImplicitSplitOverlay::ensureActiveEdgeIndicesWithStats(ImplicitSplitOverlayStats* stats) {
+    if (!activeEdgeIndicesDirty_) {
+        return;
+    }
+    const auto rebuildStart = Clock::now();
+    rebuildActiveEdgeIndices();
+    if (stats) {
+        ++stats->rebuildIndexCount;
+        stats->rebuildIndexMs += elapsedMs(rebuildStart);
+    }
+}
 
-    ensureActiveIndices();
-
-    bool changedAny = false;
-    auto runAllFactsWorklist = [&]() {
-        if (!enableAllFacts || activeEdgeCount_ == 0) {
-            return false;
-        }
+bool ImplicitSplitOverlay::runDirectLocalFastPaths(
+        bool enableAllFacts, bool enableSingleHyperedge, ImplicitSplitOverlayStats* stats) {
+    bool changed = false;
+    if (enableAllFacts && activeEdgeCount_ > 0) {
         const auto allFactsStart = Clock::now();
-        const bool changed = rewriteAllFactsPass(stats);
+        const bool allFactsChanged = rewriteAllFactsPass(stats);
         if (stats) {
             stats->fastPathAllFactsMs += elapsedMs(allFactsStart);
         }
-        return changed;
-    };
-
-    auto runSingleHyperedgeDirect = [&]() {
-        if (!enableSingleHyperedge || activeEdgeCount_ == 0) {
-            return false;
-        }
+        changed = allFactsChanged || changed;
+    }
+    if (enableSingleHyperedge && activeEdgeCount_ > 0) {
         const auto singleStart = Clock::now();
-        const bool changed = rewriteSingleHyperedgePass(stats);
+        const bool singleChanged = rewriteSingleHyperedgePass(stats);
         if (stats) {
             const double elapsed = elapsedMs(singleStart);
             stats->fastPathSingleMs += elapsed;
             stats->fastPathSummarizeMs += elapsed;
         }
-        return changed;
-    };
+        changed = singleChanged || changed;
+    }
+    return changed;
+}
 
-    changedAny = runAllFactsWorklist() || changedAny;
-    changedAny = runSingleHyperedgeDirect() || changedAny;
-    if (activeEdgeCount_ == 0 || (!enableLinearTwoEdge &&
-                                         !enableParallelEdge && !enableFanOutConverge)) {
-        return changedAny;
+bool ImplicitSplitOverlay::runGenericFastPathRounds(bool enableLinearTwoEdge, bool enableParallelEdge,
+        bool enableFanOutConverge, bool enableAllFacts, bool enableSingleHyperedge,
+        ImplicitSplitOverlayStats* stats) {
+    if (activeEdgeCount_ == 0 || (!enableLinearTwoEdge && !enableParallelEdge && !enableFanOutConverge)) {
+        return false;
     }
 
+    bool changedAny = false;
     while (true) {
         if (stats) {
             ++stats->fastPathIterations;
@@ -1517,7 +1510,7 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         }
 
         bool changed = false;
-        bool rebuiltBeforeAllFacts = false;
+        bool rebuiltBeforeLocal = false;
         for (const auto& candidate : selected) {
             const auto summarizeStart = Clock::now();
             const bool applied = applyFastPathCandidate(candidate, stats);
@@ -1551,14 +1544,12 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         }
 
         if (changed) {
-            ensureActiveIndices();
-            rebuiltBeforeAllFacts = !activeEdgeIndicesDirty_;
+            ensureActiveEdgeIndicesWithStats(stats);
+            rebuiltBeforeLocal = !activeEdgeIndicesDirty_;
         }
 
-        const bool allFactsChanged = runAllFactsWorklist();
-        changed = allFactsChanged || changed;
-        const bool singleHyperedgeChanged = runSingleHyperedgeDirect();
-        changed = singleHyperedgeChanged || changed;
+        const bool localChanged = runDirectLocalFastPaths(enableAllFacts, enableSingleHyperedge, stats);
+        changed = localChanged || changed;
 
         if (!changed) {
             break;
@@ -1567,10 +1558,24 @@ bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge
         if (activeEdgeCount_ == 0) {
             break;
         }
-        if (rebuiltBeforeAllFacts && !allFactsChanged) {
+        if (rebuiltBeforeLocal && !localChanged) {
             continue;
         }
     }
+    return changedAny;
+}
+
+bool ImplicitSplitOverlay::rewriteFastPathsToFixpoint(bool enableSingleHyperedge, bool enableLinearTwoEdge,
+        bool enableParallelEdge, bool enableFanOutConverge, bool enableAllFacts,
+        ImplicitSplitOverlayStats* stats) {
+    ensureActiveEdgeIndicesWithStats(stats);
+
+    bool changedAny = false;
+    changedAny = runDirectLocalFastPaths(enableAllFacts, enableSingleHyperedge, stats) || changedAny;
+    changedAny = runGenericFastPathRounds(
+                         enableLinearTwoEdge, enableParallelEdge, enableFanOutConverge, enableAllFacts,
+                         enableSingleHyperedge, stats) ||
+            changedAny;
     return changedAny;
 }
 

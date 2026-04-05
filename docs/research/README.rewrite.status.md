@@ -571,6 +571,53 @@ same dead ends.
   and easier to reason about, while remaining clearly on the no-regression side
   of both checked workloads
 
+### 2026-04-05: Accepted local refactor candidate — explicit scheduling split between direct local passes and generic rounds
+- status:
+  measured against the same detached baseline used for the current
+  `full-artifact-opt` line and kept locally in the active worktree
+- implementation sketch:
+  split `rewriteFastPathsToFixpoint(...)` into explicit scheduling phases:
+  `ensureActiveEdgeIndicesWithStats(...)`,
+  `runDirectLocalFastPaths(...)`, and
+  `runGenericFastPathRounds(...)`.
+  The direct local passes (`all-facts`, `single-hyperedge`) now have an
+  explicit scheduling boundary relative to the generic
+  `linear / parallel / fan-out` round loop, instead of being embedded as local
+  lambdas inside one large function body
+- reason for trying it:
+  after making direct local passes structurally symmetric, the remaining
+  architectural ambiguity was still at the scheduler level. The code knew about
+  the direct-vs-generic split, but the structure did not make that boundary
+  explicit. This refactor moves the organization closer to the intended
+  mechanism without changing candidate semantics or classifier policy
+- detached side-channel comparison against baseline
+  `/tmp/cavfull_side_p19p20_refactorcheck_baseline` on `P19/P20`, fixed seed
+  `424242`, `3` runs each:
+  baseline `P19 bdd_r 1.3299s`, current `1.1286s`; baseline
+  `P20 bdd_r 1.6046s`, current `1.4518s`; current-vs-baseline geometric mean
+  `0.8763x`
+- detached serial taint subset comparison against baseline
+  `/tmp/cavfull_taint_subset_refactorcheck_baseline` on
+  `and-roc, app-018, yaaic`:
+  baseline implicit `45.22s, 16.22s, 8.19s`; current implicit
+  `45.30s, 16.07s, 8.11s`; current-vs-baseline implicit geometric mean
+  `0.9942x`
+- serial stage-level taint reading:
+  aggregate profiling stayed effectively flat while preserving the direct /
+  generic boundary explicitly:
+  `implicit_total_ms 12531.09 -> 12596.54`,
+  `overlay_prep_ms 10986.06 -> 10983.93`,
+  `split_ms 2796.86 -> 2769.53`,
+  `fastpath_ms 5470.50 -> 5407.16`,
+  `siso_detect_ms 938.17 -> 947.89`,
+  `siso_summarize_ms 1655.60 -> 1594.10`,
+  `rebuild_index_ms 3057.64 -> 3045.77`
+- conclusion:
+  this is also a safe keep. It does not materially change runtime, but it makes
+  the intended scheduler architecture visible in the code: direct local passes
+  are their own phase, and generic fast-path rounds are their own phase. That
+  is a cleaner base for any later event-driven scheduler work
+
 ## Related commits
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
 - `UNCOMMITTED` — docs(research): refresh curated rewrite status around the packaged full artifact
