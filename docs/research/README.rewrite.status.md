@@ -754,6 +754,35 @@ same dead ends.
   checked large side-channel cases, and remains effectively neutral on taint
   absolute time
 
+### 2026-04-05: Rejected attempt — encode generic-round continuation policy on result methods
+- status:
+  measured once, then reverted locally; not kept in `full-artifact-opt`
+- implementation sketch:
+  add convenience methods such as `madeProgress()` and `shouldRunAnotherRound()`
+  onto `DirectLocalFastPathResult` and `GenericFastPathRoundResult`, and use
+  those helpers to simplify `runGenericFastPathRounds(...)` by removing the
+  explicit tail `continue` branch
+- reason for trying it:
+  after splitting generic-round planning from execution, the remaining obvious
+  scheduler cleanup was to make the round result itself carry the continuation
+  policy, so the loop body consumed a semantic result instead of raw fields
+- measured outcome on the usual detached baseline comparison:
+  side `P19/P20` and taint `and-roc/app-018/yaaic` both regressed sharply in
+  one round of runs:
+  side `bdd_r` geometric mean rose to `1.3017x` of baseline, taint absolute
+  implicit time rose to `1.1793x`, and aggregate overlay profiling buckets
+  also rose together (`implicit_total_ms 12531.09 -> 16408.99`)
+- interpretation:
+  this should be treated as an untrusted noisy run rather than as a credible
+  code-signal regression. The code change was too small and semantically
+  equivalent to explain a simultaneous `~30%` increase across side-channel,
+  taint, and internal overlay profiling, while the same run also showed clear
+  machine-load inflation in shared compile and stage wall times
+- conclusion:
+  do not keep this exact cleanup as measured. If this continuation-policy
+  cleanup is revisited, it needs a fresh low-load rerun before any keep/drop
+  decision. The current branch stays on the previous safe checkpoint
+
 ## Related commits
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
 - `UNCOMMITTED` — docs(research): refresh curated rewrite status around the packaged full artifact
