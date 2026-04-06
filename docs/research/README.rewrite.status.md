@@ -96,6 +96,54 @@ Current reading:
   implicit rewrite is the only practical rewrite mode on this sampled taint
   bundle, and it preserves correctness on the completed cases
 
+## Benchmark-wise Rewrite Sensitivity
+Current benchmark-family reading:
+- side-channel is the controlled structural benchmark
+  - each case is intentionally shaped to stress rewrite-exposed local graph
+    structure
+  - the main payoff comes from reducing random-variable pressure and shrinking
+    the downstream DD problem
+  - it is therefore most sensitive to structural fast paths and split:
+    `all-facts`, `single-hyperedge`, `linear-two-edge`, `parallel-edge`,
+    `fan-out-converge`, and the split policy that exposes them
+  - the large cases (`P13-P20`) are the most informative because they move the
+    final FC/WMC cost enough to amortize rewrite overhead
+  - the smaller cases (`P1-P12`) are still useful, but mostly as a regression
+    screen for fixed rewrite overhead rather than as the main payoff signal
+- taint is the realistic multi-stage workload
+  - it is not one homogeneous rewrite benchmark; stage shape matters
+  - `typefilter-dlog` and `pt-obj-dlog` are often all-facts-heavy and reward
+    cheap fact-local contraction strongly
+  - `cipt-cg-dlog` is often only weakly rewriteable, so global overlay
+    bookkeeping and repeated split/detect churn are much more visible there
+  - this makes taint more sensitive than side-channel to rewrite overhead
+    itself, especially `overlay_prep`, `rebuild_index`, and split bookkeeping
+- practical consequence:
+  - side-channel is the best place to judge whether a new rewrite pattern can
+    create structural payoff at all
+  - taint is the best place to judge whether the implementation overhead of
+    that pattern is low enough to keep by default
+
+Open synthesis task:
+- write a compact benchmark-wise map from workload shape to rewrite family:
+  - side-channel large structural cases -> split + structural fast paths that
+    reduce rand vars or collapse shared local structure before FC/WMC
+  - taint all-facts-heavy stages -> cheap fact-local contraction with minimal
+    bookkeeping
+  - taint weakly rewriteable stages -> bookkeeping minimization, early exit,
+    and avoiding churn that does not materially change the final DD problem
+
+## Next Benchmark Family
+- a data-race benchmark is still expected but not yet integrated into the
+  maintained rewrite evaluation set
+- current plan:
+  - treat it more like taint than side-channel
+  - sample or freeze a bounded workload subset first so runtime stays
+    manageable
+  - validate the sample with the same provenance discipline as taint:
+    exact source bundle, exact binary, exact output-equality criterion, and
+    clearly labeled timing fields
+
 ## Known Pitfalls
 - The old `plp-bench:latest` Docker image is no longer a trusted `CAV-FULL`
   reproduction environment.
@@ -817,6 +865,44 @@ same dead ends.
   not introduce new correctness regressions in the checked side-channel or
   taint workflows, and the remaining exceptions are the previously understood
   benchmark issues (`P2` missing source and `stress P19` baseline timeout)
+
+### 2026-04-06: Rejected attempt — Dice-inspired graph-level fact compaction
+- status:
+  implemented as a local probe, measured under fixed-seed side and taint
+  comparisons, then reverted from the kept code path; not part of the current
+  `full-artifact-opt` baseline
+- design source:
+  inspired by `pdatalog-dice`'s `merge_literal_products` simplify pass and by
+  the existing explicit-rewrite edge compaction path
+- implementation sketch:
+  add an implicit direct-local pass that absorbs eligible fact-only inputs from
+  a single active edge into that edge's probability/support bundle when the
+  fact looks private enough to preserve semantics
+- reason for trying it:
+  this is the cleanest derivation-graph-level analogue of a useful formula-side
+  simplification: collapse a local literal product without switching the whole
+  runtime to per-query formula construction
+- fixed-seed side-channel reading on `P19/P20`:
+  baseline `bdd_r` wall time was `3.1506s`, `3.1428s`; the probe measured
+  `3.2088s`, `3.0600s`; patch/baseline wall-time geometric mean: `0.9958x`
+- fixed-seed taint subset reading on `and-roc, app-018, yaaic`:
+  baseline implicit totals were `0.4473s`, `0.3971s`, `0.2135s`; the probe
+  measured `0.4235s`, `0.3766s`, `0.2022s`; patch/baseline absolute-implicit
+  geometric mean: `0.9473x`
+- critical profiling result:
+  `implicit_overlay_fastpath_compaction_ms` stayed `0.000000` on the checked
+  side and taint runs, so the observed timing movement cannot be credited to
+  actual compaction opportunities firing
+- interpretation:
+  the derivation-graph analogue is still conceptually plausible, but the
+  current eligibility rule is either too conservative or simply not matching
+  the checked benchmark shapes. Without evidence that the pass actually fires
+  on real workloads, it should not be promoted into the maintained branch
+- conclusion:
+  keep the idea as a research note only. `pdatalog-dice` remains useful as a
+  source of structural simplification ideas, but the first direct DG-level
+  analogue tried here did not produce workload-backed evidence strong enough to
+  keep
 
 ## Related commits
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts

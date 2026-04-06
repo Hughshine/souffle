@@ -158,6 +158,51 @@ Settings:
 4) Safeguards:
    - Optional limit on total rewrite time or total regions processed; early exit to avoid regressions.
 
+## External Design Reference: `pdatalog-dice`
+A useful external comparator is the local mirror of `pdatalog-dice` under
+`research/external/pdatalog-dice`.
+
+Current reading:
+- `pdatalog-dice` is query-local and formula-oriented:
+  it builds one acyclic proof circuit per query and then simplifies that
+  circuit before Dice evaluation
+- our current rewrite line is graph-oriented and multi-query:
+  it rewrites a shared pruned derivation graph before FC/WMC
+
+Why this matters:
+- `pdatalog-dice` can use formula-local rewrites such as:
+  - `factoring`
+  - literal-product merging
+  - same-parent-signature literal merging
+- those passes do not translate directly into the current derivation-graph
+  rewrite architecture because they assume the IR is already a query-local
+  Boolean formula
+- the direct architectural lesson is therefore not "port the formula pass as
+  is", but:
+  - use it as guidance for future SCBF / formula-level rewrite work
+  - only borrow DG-level analogues that still make sense on a shared graph
+
+Promising DG-level analogues worth testing:
+- graph-level absorption / subsumption between incoming derivation edges to the
+  same output when one term strictly implies another
+- partial fact-bundle compression when a private set of fact inputs always
+  appears together in one edge body
+- signature-based fact co-occurrence compression when a small set of facts
+  always appears under the same parent-edge family
+
+First direct DG-level probe already tried:
+- an implicit direct-local "fact compaction" pass analogous to
+  `merge_literal_products` and to explicit edge compaction
+- fixed-seed checks on side `P19/P20` and taint
+  `and-roc, app-018, yaaic` did not show actual pattern hits:
+  `implicit_overlay_fastpath_compaction_ms` stayed `0.000000`
+- keep this as a design hint, not as a maintained optimization, until a future
+  variant can show real benchmark-backed firings on shared derivation graphs
+
+Non-goal:
+- do not switch the maintained runtime to per-query formula construction just
+  to reuse these ideas; that would be a different pipeline family entirely
+
 Use this as a reference before making further optimizations. Keep changes small and measure on both small (P5) and larger (P12/P1x) cases, comparing total time and BDD sizes with and without rewrite.
 
 ## Related commits
