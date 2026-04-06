@@ -783,6 +783,41 @@ same dead ends.
   cleanup is revisited, it needs a fresh low-load rerun before any keep/drop
   decision. The current branch stays on the previous safe checkpoint
 
+### 2026-04-05: Submission-ready regression checkpoint on `full-artifact-opt`
+- status:
+  full regression rerun completed on branch head `715c24c5c`; this is the
+  current submission-ready checkpoint for the refactoring stack recorded above
+- verification completed:
+  repo regression suite:
+  `ctest --test-dir build -L regression --output-on-failure --progress -j4`
+  passed `4/4`
+- side-channel `RQ2` standard/full rerun:
+  `/tmp/cavfull_submit_regress_standard/RQ2result.tsv`
+  completed for all available cases. `P2` remained the known missing-source
+  case. For the `19` comparable `bdd`/`bdd_r` rows, `bdd_r` matched `bdd` on
+  every checked case and the geometric-mean end-to-end speedup was `2.97x`.
+  The only measured slowdown was `P12` (`0.87x`)
+- side-channel `RQ2` stress/full_probabilistic_enhanced rerun:
+  `/tmp/cavfull_submit_regress_stress_full_probabilistic_enhanced/RQ2result.tsv`
+  completed for all available cases. `P2` again remained the known
+  missing-source case. For the `18` comparable rows, `bdd_r` matched `bdd` on
+  every checked case and the geometric-mean end-to-end speedup was `7.04x`.
+  `P1` and `P3` were small-case slowdowns (`0.57x` and `0.50x`). `P19` plain
+  `bdd` timed out at `300s`, so the recorded `bdd_r` mismatch there remains the
+  known artifact of comparing against an incomplete baseline rather than a new
+  correctness regression
+- taint appendix rerun:
+  `/tmp/cavfull_submit_taint_full/reports/appendix-summary.md`
+  and `/tmp/cavfull_submit_taint_full/reports/appendix-cases.tsv`
+  completed for all `15` bundled cases under `no_rewrite` and
+  `implicit_rewrite`. Implicit final-stage consistency was `15/15`, and the
+  geometric-mean `no_rewrite / implicit_rewrite` speedup was `2.46x`
+- conclusion:
+  the current branch head is stable enough to submit. The refactoring stack did
+  not introduce new correctness regressions in the checked side-channel or
+  taint workflows, and the remaining exceptions are the previously understood
+  benchmark issues (`P2` missing source and `stress P19` baseline timeout)
+
 ## Related commits
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
 - `UNCOMMITTED` — docs(research): refresh curated rewrite status around the packaged full artifact
