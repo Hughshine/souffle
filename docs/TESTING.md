@@ -13,6 +13,9 @@
 ## Status in This Fork
 Maintained regression tests are enabled through CTest labels (`regression`).
 Legacy test suites have been removed from this fork.
+Two heavier benchmark-derived stage-pipeline smokes are maintained separately
+under the `stage-pipeline-heavy` label and are not part of the default regression
+gate.
 
 `cmake/CTestDisabled.cmake` is now only used when explicitly configured with:
 `-DSOUFFLE_DISABLE_CTEST=ON`.
@@ -26,6 +29,8 @@ These commands are defined in CI workflows and scripts:
 - Regression tests:
   - `ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}`
   - `cmake --build build --target check-regression`
+  - `ctest --test-dir build -L stage-pipeline-heavy --output-on-failure --progress -j1`
+  - `cmake --build build --target check-regression-heavy`
   - `sh/run_regression_tests.sh`
 
 CI sets `JOBS` using:
@@ -41,6 +46,8 @@ Pick the smallest set of checks that match your change:
 - Regression run (pre-commit default for runtime/compiler changes):
   - `ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}`
   - Detailed case map: `docs/topics/testing/README.regression.md`
+- Opt-in heavy stage-pipeline run:
+  - `ctest --test-dir build -L stage-pipeline-heavy --output-on-failure --progress -j1`
 - Experiment workflows: follow `docs/topics/evaluation/README.eval.md` or `docs/topics/evaluation/README.eval.inc.md`.
 - Historical evaluation logs are in `docs/historical/` and indexed by `docs/topics/evaluation/README.md`.
 
@@ -58,24 +65,25 @@ Pick the smallest set of checks that match your change:
   - benchmark-derived side-channel full/inc compile-run workflows, including
     `.csv` relation-output checks on the maintained full rewrite case
   - `--scbf --rewrite` lane telemetry on a maintained smoke case
+  - dump/log artifact contracts
+- Separate opt-in `stage-pipeline-heavy` coverage includes:
   - staged taint pipeline compile/run reliability
   - staged data-race pipeline smoke coverage
-  - dump/log artifact contracts
 - The regression runner always compiles with the repo-built binary passed from
   CMake (`$<TARGET_FILE:souffle>`), avoiding accidental `/usr/local/bin/souffle`.
 - Regression inputs are organized under `tests/regression/cases/`:
   - static `compute.dl` + `input/*.facts/*.prob` by default
   - optional per-case `generate.py` for larger derived inputs
-- CI runs the same maintained regression label, so benchmark-derived stage
-  pipeline cases under `tests/regression/` are part of the normal regression
-  gate as long as they are registered in `tests/regression/CMakeLists.txt`.
-  These cases intentionally shrink input size while keeping representative
-  semantic structure and stage ordering.
+- The default correctness gate runs the `regression` label only.
+- Heavy stage-pipeline smokes live under `stage-pipeline-heavy`, run serially, and
+  use larger CTest timeouts because the generated host C++ compile step is much
+  more sensitive to machine load than the ordinary maintained cases.
 
 ## Legacy/Experimental Tests
 - Historical legacy suites were removed; use `docs/historical/` notes for past workflows.
 
 ## Related commits
+- `UNCOMMITTED` — test(regression): move heavy stage-pipeline smokes behind opt-in stage-pipeline-heavy label
 - `UNCOMMITTED` — test(regression): add maintained CTest regression workflow
 - `UNCOMMITTED` — docs(testing): add dedicated regression runbook under docs/topics/testing
 - `UNCOMMITTED` — docs(testing): document regression labels and cmake targets

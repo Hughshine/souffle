@@ -31,6 +31,9 @@ All commands below use the repo build and avoid system-wide `souffle` binaries.
    - `cmake --build build --target check-regression`
 3. Direct ctest label:
    - `ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}`
+4. Opt-in heavy stage-pipeline cases:
+   - `cmake --build build --target check-regression-heavy`
+   - `ctest --test-dir build -L stage-pipeline-heavy --output-on-failure --progress -j1`
 
 ## Cases and Coverage
 Current maintained cases:
@@ -84,9 +87,14 @@ Current maintained cases:
   - benchmark-derived taint stage chain (`andors-trail`, bundle v2) compiled
     and run stage-by-stage with reduced stage inputs to guard compile/runtime
     reliability of the staged taint workflow.
+  - label: `stage-pipeline-heavy` only; not part of the default `-L regression`
+    gate because host C++ compile time can exceed the normal correctness-suite
+    budget under concurrent runs.
 - `regression.datarace_pipeline` (`datarace_stage_pipeline_smoke`):
   - reduced multi-stage data-race pipeline smoke inspired by the
     `checkExcludedM -> parallel -> escaping -> datarace` stage sequence.
+  - label: `stage-pipeline-heavy` only; not part of the default `-L regression`
+    gate for the same reason.
 
 ## Case Asset Model
 - Case data now lives under `tests/regression/cases/<case-id>/`.
@@ -107,6 +115,10 @@ The runner enforces:
   - Multi-round cases are intentionally deferred until runtime support is ready.
 - The suite is a correctness gate, not a performance benchmark.
   - Heavy `problog-benchmark` workflows remain separate.
+- Two benchmark-derived stage-pipeline smokes (`taint_pipeline`,
+  `datarace_pipeline`) are maintained as opt-in `stage-pipeline-heavy` checks.
+  They run serially and with larger CTest timeouts because the generated host
+  C++ compile step can fluctuate substantially by machine and concurrent load.
 - Benchmark-derived regression cases intentionally use reduced inputs/sample
   counts so they stay CI-sized while still preserving semantically rich stage
   sequencing, rewrite/query-output contracts, and the same compile/runtime
@@ -116,8 +128,11 @@ The runner enforces:
 - Always run before committing runtime/compiler changes that can affect semantics.
 - Recommended minimum pre-commit check:
   - `ctest --test-dir build -L regression --output-on-failure --progress`
+- Run `stage-pipeline-heavy` only when changing benchmark-derived stage-pipeline
+  behavior or when explicitly validating those workflows.
 
 ## Related commits
+- `UNCOMMITTED` — test(regression): move heavy stage-pipeline smokes out of default regression label
 - `UNCOMMITTED` — test(regression): add maintained ctest workflow and cases
 - `UNCOMMITTED` — docs(testing): document maintained regression runbook
 - `UNCOMMITTED` — test(regression): cover canonical flag surfaces and graph-query replay

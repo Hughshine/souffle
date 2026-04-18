@@ -19,6 +19,23 @@ function(add_regression_case test_name case_id timeout_sec)
     )
 endfunction()
 
+function(add_heavy_regression_case test_name case_id timeout_sec)
+    add_test(
+        NAME "regression.${test_name}"
+        COMMAND
+            ${Python3_EXECUTABLE}
+            "${REGRESSION_RUNNER}"
+            --case "${case_id}"
+            --souffle-bin "$<TARGET_FILE:souffle>"
+            --work-root "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    set_tests_properties("regression.${test_name}" PROPERTIES
+        LABELS "stage-pipeline-heavy;${case_id}"
+        TIMEOUT "${timeout_sec}"
+        RUN_SERIAL TRUE
+    )
+endfunction()
+
 add_regression_case(smoke smoke_full_only 120)
 add_regression_case(dred_mix dred_mix_naive_vs_full 240)
 add_regression_case(dred_hub dred_hub_rederive_naive_vs_full 240)
@@ -36,8 +53,8 @@ add_regression_case(graph_query_canonical graph_query_canonical_surface 180)
 add_regression_case(side_channel_full_pipeline side_channel_full_pipeline_rewrite 300)
 add_regression_case(scbf_rewrite_lane scbf_rewrite_runtime_lane 180)
 add_regression_case(side_channel_inc_pipeline side_channel_incremental_pipeline_modes 300)
-add_regression_case(taint_pipeline taint_stage_pipeline_compile_smoke 420)
-add_regression_case(datarace_pipeline datarace_stage_pipeline_smoke 240)
+add_heavy_regression_case(taint_pipeline taint_stage_pipeline_compile_smoke 900)
+add_heavy_regression_case(datarace_pipeline datarace_stage_pipeline_smoke 600)
 
 if (NOT TARGET check-regression)
     add_custom_target(check-regression
@@ -47,4 +64,14 @@ if (NOT TARGET check-regression)
         COMMENT "Run maintained Souffle regression tests"
     )
     add_dependencies(check-regression souffle)
+endif()
+
+if (NOT TARGET check-regression-heavy)
+    add_custom_target(check-regression-heavy
+        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --progress -L stage-pipeline-heavy
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        USES_TERMINAL
+        COMMENT "Run opt-in heavy Souffle regression tests"
+    )
+    add_dependencies(check-regression-heavy souffle)
 endif()

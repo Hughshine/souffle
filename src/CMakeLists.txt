@@ -359,7 +359,17 @@ find_library(CUDD_LIBRARY NAMES cudd)
 find_library(SDD_LIBRARY NAMES sdd)
 find_library(SDDXX_LIBRARY NAMES sdd++)
 find_package(approxmc CONFIG QUIET)
+find_package(pepin CONFIG QUIET
+  PATHS
+    ${PROJECT_SOURCE_DIR}/research/external/build/pepin
+    ${CMAKE_SOURCE_DIR}/research/external/build/pepin
+)
+find_program(CARGO_EXECUTABLE cargo)
 set(SOUFFLE_HAS_APPROXMC_DIRECT OFF)
+set(SOUFFLE_HAS_PEPIN_DIRECT OFF)
+set(SOUFFLE_HAS_SCHLANDALS_DIRECT OFF)
+set(SCHLANDALS_FFI_CRATE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/problog/approx/schlandals_ffi)
+set(SCHLANDALS_FFI_LIB ${SCHLANDALS_FFI_CRATE_DIR}/target/release/libsouffle_schlandals_ffi.a)
 if (approxmc_FOUND)
   find_package(cryptominisat5 CONFIG QUIET)
   find_package(sbva CONFIG QUIET)
@@ -386,6 +396,16 @@ if (CUDD_LIBRARY)
   elseif (NOT approxmc_FOUND)
     message(STATUS "Building souffle-problog-graph-query without direct ApproxMC library: approxmc package not found")
   endif ()
+  if (pepin_FOUND AND TARGET pepin)
+    target_compile_definitions(souffle-problog-graph-query PRIVATE SOUFFLE_STANDALONE_HAS_PEPIN_LIB=1)
+    if (PEPIN_INCLUDE_DIRS)
+      target_include_directories(souffle-problog-graph-query PRIVATE ${PEPIN_INCLUDE_DIRS})
+    endif ()
+    list(APPEND SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS pepin)
+    set(SOUFFLE_HAS_PEPIN_DIRECT ON)
+  else ()
+    message(STATUS "Building souffle-problog-graph-query without direct pepin library: pepin package not found")
+  endif ()
   if (SDD_LIBRARY)
     target_compile_definitions(souffle-problog-graph-query PRIVATE SOUFFLE_STANDALONE_HAS_SDD=1)
     list(APPEND SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS ${SDD_LIBRARY})
@@ -394,6 +414,25 @@ if (CUDD_LIBRARY)
     endif ()
   else ()
     message(STATUS "Building souffle-problog-graph-query without SDD backend: SDD library not found")
+  endif ()
+  if (CARGO_EXECUTABLE AND EXISTS ${SCHLANDALS_FFI_CRATE_DIR}/Cargo.toml)
+    add_custom_target(souffle-schlandals-ffi
+      COMMAND ${CARGO_EXECUTABLE} build --manifest-path ${SCHLANDALS_FFI_CRATE_DIR}/Cargo.toml --release --offline
+      WORKING_DIRECTORY ${SCHLANDALS_FFI_CRATE_DIR}
+      BYPRODUCTS ${SCHLANDALS_FFI_LIB}
+      VERBATIM)
+    add_dependencies(souffle-problog-graph-query souffle-schlandals-ffi)
+    target_compile_definitions(souffle-problog-graph-query PRIVATE SOUFFLE_STANDALONE_HAS_SCHLANDALS_LIB=1)
+    list(APPEND SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS
+      ${SCHLANDALS_FFI_LIB}
+      Threads::Threads
+      ${CMAKE_DL_LIBS})
+    if (UNIX AND NOT APPLE)
+      list(APPEND SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS rt util)
+    endif ()
+    set(SOUFFLE_HAS_SCHLANDALS_DIRECT ON)
+  else ()
+    message(STATUS "Building souffle-problog-graph-query without direct Schlandals library: cargo or schlandals ffi crate not found")
   endif ()
   target_link_libraries(souffle-problog-graph-query PRIVATE libsouffle compiled ${SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS})
   add_dependencies(souffle-problog-graph-query compiled)
@@ -419,6 +458,11 @@ add_executable(souffle-amc-pipeline-demo
 target_link_libraries(souffle-amc-pipeline-demo PRIVATE libsouffle compiled)
 add_dependencies(souffle-amc-pipeline-demo compiled)
 install(TARGETS souffle-amc-pipeline-demo DESTINATION bin)
+
+add_executable(souffle-sampling-backend-demo
+               ../experiments/approxmc_demo/problog_sampling_backends_demo.cpp)
+target_link_libraries(souffle-sampling-backend-demo PRIVATE m)
+install(TARGETS souffle-sampling-backend-demo DESTINATION bin)
 
 # --------------------------------------------------
 # Standalone SCBF IR smoke test (independent from runtime pipeline)
@@ -547,8 +591,14 @@ if (CUDD_LIBRARY)
   target_link_libraries(souffle-bdd-vs-amc-benchmark PRIVATE libsouffle compiled ${CUDD_LIBRARY} m)
   add_dependencies(souffle-bdd-vs-amc-benchmark compiled)
   install(TARGETS souffle-bdd-vs-amc-benchmark DESTINATION bin)
+
+  add_executable(souffle-cnf-bdd-exact-count
+                 ../experiments/approxmc_demo/cnf_bdd_exact_count.cpp)
+  target_link_libraries(souffle-cnf-bdd-exact-count PRIVATE libsouffle compiled ${CUDD_LIBRARY} m)
+  add_dependencies(souffle-cnf-bdd-exact-count compiled)
+  install(TARGETS souffle-cnf-bdd-exact-count DESTINATION bin)
 else ()
-  message(WARNING "Skipping souffle-bdd-vs-amc-benchmark: CUDD library not found")
+  message(WARNING "Skipping CNF/BDD experiment tools: CUDD library not found")
 endif ()
 
 

@@ -3,10 +3,14 @@
 #include "souffle/problog/GraphRewriter.h"
 #include "souffle/problog/approx/WeightedConversion.h"
 #include "souffle/problog/formula/CuddManager.h"
+#include "souffle/utility/FileUtil.h"
 #include "souffle/CompiledOptions.h"
 #ifdef SOUFFLE_STANDALONE_HAS_APPROXMC_LIB
 #include <approxmc/approxmc.h>
 #include <cryptominisat5/cryptominisat.h>
+#endif
+#ifdef SOUFFLE_STANDALONE_HAS_PEPIN_LIB
+#include <pepin/pepin.h>
 #endif
 #ifdef SOUFFLE_STANDALONE_HAS_SDD
 #include "souffle/problog/formula/SddManager.h"
@@ -16,6 +20,7 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -25,8 +30,10 @@
 #include <map>
 #include <memory>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <queue>
+#include <random>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -35,6 +42,23 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#ifdef SOUFFLE_STANDALONE_HAS_SCHLANDALS_LIB
+extern "C" int souffle_schlandals_solve(
+        const double* distributions_flat_ptr,
+        const uint32_t* distribution_offsets_ptr,
+        uint32_t num_distributions,
+        const int32_t* clauses_flat_ptr,
+        const uint32_t* clause_offsets_ptr,
+        uint32_t num_clauses,
+        double epsilon,
+        bool lds,
+        double* out_estimate,
+        double* out_lower,
+        double* out_upper,
+        char* error_buf,
+        size_t error_buf_len);
+#endif
 
 namespace {
 
@@ -48,6 +72,10 @@ enum class Backend {
     Bdd,
     Sdd,
     Amc,
+    Sampling,
+    HornSampling,
+    Pepin,
+    Schlandals,
 };
 
 struct Options {
@@ -65,20 +93,32 @@ struct Options {
     souffle::RewriteSplitMode rewriteSplit = souffle::RewriteSplitMode::NAIVE;
     souffle::RewriteDetectMode rewriteDetect = souffle::RewriteDetectMode::DIRTY_FRONTIER;
     std::string approxmcBin;
+    std::string pepinBin;
+    std::string schlandalsBin;
     double epsilon = 0.1;
+    bool epsilonExplicit = false;
     double delta = 0.05;
     uint32_t seed = 1;
     uint32_t amcPrecision = 4;
     bool amcPreprocess = true;
     uint32_t amcVerb = 0;
     bool amcStreamOutput = false;
+    uint64_t samplingSamples = 0;
+    bool samplingSamplesExplicit = false;
+    uint64_t pepinMaxTerms = 10000;
+    uint32_t pepinWeightDigits = 3;
+    uint32_t pepinVerb = 0;
+    bool pepinStreamOutput = false;
+    bool schlandalsLds = false;
+    bool schlandalsStreamOutput = false;
+    bool backendExplicit = false;
 };
 
 const char* backendChoices() {
 #ifdef SOUFFLE_STANDALONE_HAS_SDD
-    return "bdd|sdd|amc";
+    return "bdd|sdd|amc|sampling|horn-sampling|pepin|schlandals";
 #else
-    return "bdd|amc";
+    return "bdd|amc|sampling|horn-sampling|pepin|schlandals";
 #endif
 }
 
@@ -90,12 +130,78 @@ bool isOne(long double x) {
     return std::fabs(x - 1.0L) <= kProbEps;
 }
 
+std::string normalizeLogicalRelationName(std::string rel) {
+    if (rel.rfind("@magic.", 0) == 0 || rel.rfind("@neglabel.", 0) == 0) {
+        return rel;
+    }
+
+    for (;;) {
+        bool changed = false;
+        auto strip = [&](const std::string& prefix) {
+            if (rel.rfind(prefix, 0) == 0) {
+                rel = rel.substr(prefix.size());
+                changed = true;
+            }
+        };
+        strip("@split_in.");
+        strip("@interm_in.");
+        strip("@interm_out.");
+        if (rel.rfind("@poscopy_", 0) == 0) {
+            const auto dot = rel.find('.');
+            if (dot != std::string::npos) {
+                rel = rel.substr(dot + 1);
+                changed = true;
+            }
+        }
+        if (!changed) {
+            break;
+        }
+    }
+
+    if (!rel.empty()) {
+        const auto dot = rel.rfind('.');
+        if (dot != std::string::npos) {
+            const auto last = rel.substr(dot + 1);
+            if (last.size() >= 2 && last.front() == '{' && last.back() == '}') {
+                bool ok = true;
+                for (std::size_t i = 1; i + 1 < last.size(); ++i) {
+                    if (last[i] != 'b' && last[i] != 'f') {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) {
+                    rel = rel.substr(0, dot);
+                }
+            }
+        }
+    }
+
+    return rel;
+}
+
 std::string defaultApproxmcBin() {
     const char* env = std::getenv("APPROXMC_BIN");
     if (env && *env) {
         return env;
     }
     return "/tmp/approxmc-bin/approxmc";
+}
+
+std::string defaultPepinBin() {
+    const char* env = std::getenv("PEPIN_BIN");
+    if (env && *env) {
+        return env;
+    }
+    return "research/external/build/pepin/pepin";
+}
+
+std::string defaultSchlandalsBin() {
+    const char* env = std::getenv("SCHLANDALS_BIN");
+    if (env && *env) {
+        return env;
+    }
+    return "research/external/schlandals/target/release/schlandals";
 }
 
 bool fileExists(const std::string& path) {
@@ -135,9 +241,18 @@ bool fileExists(const std::string& path) {
         << "  --approx-backend <" << souffle::approxBackendOptionSyntax()
         << ">   Canonical approx backend selector\n"
         << "  --approxmc-bin <path> Path to ApproxMC-compatible CLI (for backend=amc)\n"
-        << "  --epsilon <value>     AMC epsilon (> 0, default: 0.1)\n"
+        << "  --pepin-bin <path>    Path to pepin DNF counter CLI (for backend=pepin)\n"
+        << "  --schlandals-bin <path> Path to Schlandals Horn/PWMC CLI fallback (for backend=schlandals)\n"
+        << "  --epsilon <value>     Approximation epsilon (> 0, default: 0.1; backend=pepin uses 0.01 unless explicitly set)\n"
         << "  --delta <value>       AMC delta in (0,1) (default: 0.05)\n"
-        << "  --seed <value>        AMC random seed (default: 1)\n"
+        << "  --seed <value>        Random seed for AMC/sampling/horn-sampling (default: 1)\n"
+        << "  --sampling-samples <n>  Fixed Monte Carlo samples for backend=sampling|horn-sampling\n"
+        << "  --pepin-max-terms <n> Hard DNF term cap for backend=pepin (default: 10000)\n"
+        << "  --pepin-weight-digits <n>  Decimal digits for pepin weight rationals (default: 3)\n"
+        << "  --pepin-verb <n>      Pass pepin verbosity through (default: 0)\n"
+        << "  --pepin-stream-output Stream pepin child output plus local pepin stage markers\n"
+        << "  --schlandals-lds      Enable Schlandals LDS anytime approximation mode\n"
+        << "  --schlandals-stream-output Stream Schlandals child output\n"
         << "  --amc-precision <n>   Weight quantization precision (default: 4)\n"
         << "  --amc-verb <n>        Pass ApproxMC verbosity level through (default: 0)\n"
         << "  --amc-stream-output   Stream ApproxMC child output and AMC stage markers\n"
@@ -182,6 +297,18 @@ Backend parseBackend(const std::string& raw) {
     if (val == "amc") {
         return Backend::Amc;
     }
+    if (val == "sampling") {
+        return Backend::Sampling;
+    }
+    if (val == "horn-sampling" || val == "horn_sampling" || val == "hornsampling") {
+        return Backend::HornSampling;
+    }
+    if (val == "pepin") {
+        return Backend::Pepin;
+    }
+    if (val == "schlandals") {
+        return Backend::Schlandals;
+    }
     if (val == "sdd") {
 #ifdef SOUFFLE_STANDALONE_HAS_SDD
         return Backend::Sdd;
@@ -197,8 +324,35 @@ const char* backendName(Backend backend) {
         case Backend::Bdd: return "bdd";
         case Backend::Sdd: return "sdd";
         case Backend::Amc: return "amc";
+        case Backend::Sampling: return "sampling";
+        case Backend::HornSampling: return "horn-sampling";
+        case Backend::Pepin: return "pepin";
+        case Backend::Schlandals: return "schlandals";
     }
     return "unknown";
+}
+
+uint64_t samplingSamplesFromHoeffding(double epsilon, double delta) {
+    const long double numer = std::log(2.0L / static_cast<long double>(delta));
+    const long double denom = 2.0L * static_cast<long double>(epsilon) * static_cast<long double>(epsilon);
+    const long double raw = numer / denom;
+    return static_cast<uint64_t>(std::ceil(raw));
+}
+
+double hoeffdingHalfWidth(uint64_t samples, double delta) {
+    if (samples == 0) {
+        return 1.0;
+    }
+    const long double numer = std::log(2.0L / static_cast<long double>(delta));
+    const long double denom = 2.0L * static_cast<long double>(samples);
+    return static_cast<double>(std::sqrt(numer / denom));
+}
+
+const char* samplingPolicyName(bool usedSampling, bool explicitSamples) {
+    if (!usedSampling) {
+        return "deterministic";
+    }
+    return explicitSamples ? "fixed" : "derived";
 }
 
 std::vector<std::string> parseRelationList(const std::string& raw) {
@@ -271,6 +425,8 @@ UntypedTuple parseTuple(const std::string& spec) {
 Options parseArgs(int argc, char** argv) {
     Options opt;
     opt.approxmcBin = defaultApproxmcBin();
+    opt.pepinBin = defaultPepinBin();
+    opt.schlandalsBin = defaultSchlandalsBin();
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--json") {
@@ -301,9 +457,15 @@ Options parseArgs(int argc, char** argv) {
                 failUsage("Missing value after --backend", argv[0]);
             }
             opt.backend = parseBackend(argv[++i]);
+            opt.backendExplicit = true;
             if (opt.backend == Backend::Amc) {
                 opt.fullEvaluator = souffle::FullEvaluator::APPROX;
                 opt.approxBackend = souffle::ApproxBackend::AMC;
+            } else if (
+                    opt.backend == Backend::Sampling || opt.backend == Backend::Pepin ||
+                    opt.backend == Backend::Schlandals) {
+                opt.fullEvaluator = souffle::FullEvaluator::EXACT;
+                opt.approxBackend = souffle::ApproxBackend::NONE;
             } else {
                 opt.fullEvaluator = souffle::FullEvaluator::EXACT;
                 opt.ddBackend = backendName(opt.backend);
@@ -364,11 +526,22 @@ Options parseArgs(int argc, char** argv) {
                 failUsage("Missing value after --approxmc-bin", argv[0]);
             }
             opt.approxmcBin = argv[++i];
+        } else if (arg == "--pepin-bin") {
+            if (i + 1 >= argc) {
+                failUsage("Missing value after --pepin-bin", argv[0]);
+            }
+            opt.pepinBin = argv[++i];
+        } else if (arg == "--schlandals-bin") {
+            if (i + 1 >= argc) {
+                failUsage("Missing value after --schlandals-bin", argv[0]);
+            }
+            opt.schlandalsBin = argv[++i];
         } else if (arg == "--epsilon") {
             if (i + 1 >= argc) {
                 failUsage("Missing value after --epsilon", argv[0]);
             }
             opt.epsilon = std::stod(argv[++i]);
+            opt.epsilonExplicit = true;
         } else if (arg == "--delta") {
             if (i + 1 >= argc) {
                 failUsage("Missing value after --delta", argv[0]);
@@ -379,6 +552,33 @@ Options parseArgs(int argc, char** argv) {
                 failUsage("Missing value after --seed", argv[0]);
             }
             opt.seed = static_cast<uint32_t>(std::stoul(argv[++i]));
+        } else if (arg == "--sampling-samples") {
+            if (i + 1 >= argc) {
+                failUsage("Missing value after --sampling-samples", argv[0]);
+            }
+            opt.samplingSamples = static_cast<uint64_t>(std::stoull(argv[++i]));
+            opt.samplingSamplesExplicit = true;
+        } else if (arg == "--pepin-max-terms") {
+            if (i + 1 >= argc) {
+                failUsage("Missing value after --pepin-max-terms", argv[0]);
+            }
+            opt.pepinMaxTerms = static_cast<uint64_t>(std::stoull(argv[++i]));
+        } else if (arg == "--pepin-weight-digits") {
+            if (i + 1 >= argc) {
+                failUsage("Missing value after --pepin-weight-digits", argv[0]);
+            }
+            opt.pepinWeightDigits = static_cast<uint32_t>(std::stoul(argv[++i]));
+        } else if (arg == "--pepin-verb") {
+            if (i + 1 >= argc) {
+                failUsage("Missing value after --pepin-verb", argv[0]);
+            }
+            opt.pepinVerb = static_cast<uint32_t>(std::stoul(argv[++i]));
+        } else if (arg == "--pepin-stream-output") {
+            opt.pepinStreamOutput = true;
+        } else if (arg == "--schlandals-lds") {
+            opt.schlandalsLds = true;
+        } else if (arg == "--schlandals-stream-output") {
+            opt.schlandalsStreamOutput = true;
         } else if (arg == "--amc-precision") {
             if (i + 1 >= argc) {
                 failUsage("Missing value after --amc-precision", argv[0]);
@@ -412,6 +612,21 @@ Options parseArgs(int argc, char** argv) {
     if (opt.amcPrecision == 0) {
         failUsage("--amc-precision must be >= 1", argv[0]);
     }
+    if (opt.pepinMaxTerms == 0) {
+        failUsage("--pepin-max-terms must be >= 1", argv[0]);
+    }
+    if (opt.pepinWeightDigits == 0 || opt.pepinWeightDigits > 15) {
+        failUsage("--pepin-weight-digits must be in [1,15]", argv[0]);
+    }
+    if (opt.backend == Backend::Pepin && !opt.epsilonExplicit) {
+        // Pepin's default epsilon=0.1 is too coarse for the narrow weighted
+        // queries we currently evaluate; use a tighter backend-specific default
+        // unless the user explicitly asked for something else.
+        opt.epsilon = 0.01;
+    }
+    if (opt.samplingSamples == 0) {
+        opt.samplingSamples = std::max<uint64_t>(1000, samplingSamplesFromHoeffding(opt.epsilon, opt.delta));
+    }
 
     if (opt.fullEvaluator == souffle::FullEvaluator::SCBF) {
         failUsage("graph-query does not support --full-evaluator=scbf", argv[0]);
@@ -419,6 +634,44 @@ Options parseArgs(int argc, char** argv) {
     if (opt.rewriteEngine == souffle::RewriteEngine::IMPLICIT ||
             opt.rewriteEngine == souffle::RewriteEngine::IMPLICIT_ITER) {
         failUsage("graph-query currently supports only legacy rewrite", argv[0]);
+    }
+    if (opt.backendExplicit) {
+        switch (opt.backend) {
+            case Backend::Bdd:
+            case Backend::Sdd:
+                if (opt.fullEvaluator == souffle::FullEvaluator::APPROX) {
+                    failUsage("--backend=bdd/sdd conflicts with --full-evaluator=approx", argv[0]);
+                }
+                if (opt.approxBackend != souffle::ApproxBackend::NONE) {
+                    failUsage("--approx-backend requires --full-evaluator=approx", argv[0]);
+                }
+                opt.fullEvaluator = souffle::FullEvaluator::EXACT;
+                opt.ddBackend = backendName(opt.backend);
+                break;
+            case Backend::Amc:
+                if (opt.approxBackend != souffle::ApproxBackend::NONE &&
+                        opt.approxBackend != souffle::ApproxBackend::AMC) {
+                    failUsage("graph-query currently supports only --approx-backend=amc", argv[0]);
+                }
+                opt.fullEvaluator = souffle::FullEvaluator::APPROX;
+                opt.approxBackend = souffle::ApproxBackend::AMC;
+                break;
+            case Backend::Sampling:
+            case Backend::HornSampling:
+            case Backend::Pepin:
+            case Backend::Schlandals:
+                if (opt.fullEvaluator == souffle::FullEvaluator::APPROX ||
+                        opt.approxBackend != souffle::ApproxBackend::NONE) {
+                    failUsage(
+                            "graph-query supports sampling/horn-sampling/pepin/schlandals only via "
+                            "--backend=sampling|horn-sampling|pepin|schlandals "
+                            "(not via --full-evaluator=approx/--approx-backend)",
+                            argv[0]);
+                }
+                opt.fullEvaluator = souffle::FullEvaluator::EXACT;
+                break;
+        }
+        return opt;
     }
     if (opt.fullEvaluator == souffle::FullEvaluator::APPROX) {
         if (opt.approxBackend == souffle::ApproxBackend::NONE) {
@@ -1317,6 +1570,200 @@ private:
     std::unordered_set<EdgePtr> edgeStack_;
 };
 
+using DnfCube = std::vector<int>;
+using DnfFormula = std::vector<DnfCube>;
+
+bool normalizeDnfCube(DnfCube& cube) {
+    std::sort(cube.begin(), cube.end());
+    cube.erase(std::unique(cube.begin(), cube.end()), cube.end());
+    for (std::size_t i = 0; i < cube.size(); ++i) {
+        if (std::binary_search(cube.begin() + static_cast<std::ptrdiff_t>(i + 1), cube.end(), -cube[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void dedupDnf(DnfFormula& dnf) {
+    std::sort(dnf.begin(), dnf.end());
+    dnf.erase(std::unique(dnf.begin(), dnf.end()), dnf.end());
+}
+
+class DnfExpander {
+public:
+    DnfExpander(const ExprArena& arena, uint64_t maxTerms) : arena_(arena), maxTerms_(maxTerms) {}
+
+    DnfFormula build(int exprId) {
+        return expand(exprId, false);
+    }
+
+    std::size_t maxCubeWidth() const {
+        return maxCubeWidth_;
+    }
+
+private:
+    uint64_t memoKey(int exprId, bool negated) const {
+        return (static_cast<uint64_t>(static_cast<uint32_t>(exprId)) << 1U) | (negated ? 1ULL : 0ULL);
+    }
+
+    DnfFormula expand(int exprId, bool negated) {
+        const uint64_t key = memoKey(exprId, negated);
+        auto memoIt = memo_.find(key);
+        if (memoIt != memo_.end()) {
+            return memoIt->second;
+        }
+
+        const auto& expr = arena_.getExpr(exprId);
+        DnfFormula result;
+        switch (expr.kind) {
+            case ExprArena::Kind::Const: {
+                const bool value = negated ? !expr.constValue : expr.constValue;
+                if (value) {
+                    result.push_back(DnfCube{});
+                }
+                break;
+            }
+            case ExprArena::Kind::Var:
+                result.push_back(DnfCube{negated ? -static_cast<int>(expr.var) : static_cast<int>(expr.var)});
+                break;
+            case ExprArena::Kind::Not:
+                result = expand(expr.args.front(), !negated);
+                break;
+            case ExprArena::Kind::And:
+                result = negated ? expandOr(expr.args, true) : expandAnd(expr.args, false);
+                break;
+            case ExprArena::Kind::Or:
+                result = negated ? expandAnd(expr.args, true) : expandOr(expr.args, false);
+                break;
+        }
+
+        finalize(result);
+        memo_.emplace(key, result);
+        return result;
+    }
+
+    DnfFormula expandOr(const std::vector<int>& args, bool negateChildren) {
+        DnfFormula result;
+        for (int arg : args) {
+            DnfFormula child = expand(arg, negateChildren);
+            if (!child.empty()) {
+                result.insert(result.end(), child.begin(), child.end());
+                ensureTermBudget(result.size());
+            }
+        }
+        return result;
+    }
+
+    DnfFormula expandAnd(const std::vector<int>& args, bool negateChildren) {
+        DnfFormula result(1, DnfCube{});
+        for (int arg : args) {
+            DnfFormula child = expand(arg, negateChildren);
+            if (child.empty()) {
+                return {};
+            }
+            result = distribute(result, child);
+            if (result.empty()) {
+                return {};
+            }
+        }
+        return result;
+    }
+
+    DnfFormula distribute(const DnfFormula& lhs, const DnfFormula& rhs) {
+        DnfFormula out;
+        const uint64_t lhsSize = static_cast<uint64_t>(lhs.size());
+        const uint64_t rhsSize = static_cast<uint64_t>(rhs.size());
+        if (lhsSize != 0 && rhsSize > maxTerms_ / lhsSize) {
+            throw std::runtime_error(
+                    "backend=pepin exceeded DNF term budget during conjunction expansion");
+        }
+        out.reserve(static_cast<std::size_t>(lhsSize * rhsSize));
+        for (const auto& a : lhs) {
+            for (const auto& b : rhs) {
+                DnfCube merged = a;
+                merged.insert(merged.end(), b.begin(), b.end());
+                if (!normalizeDnfCube(merged)) {
+                    continue;
+                }
+                maxCubeWidth_ = std::max(maxCubeWidth_, merged.size());
+                out.push_back(std::move(merged));
+                ensureTermBudget(out.size());
+            }
+        }
+        return out;
+    }
+
+    void finalize(DnfFormula& dnf) {
+        for (auto& cube : dnf) {
+            if (!normalizeDnfCube(cube)) {
+                cube.clear();
+                cube.push_back(kTrueLit);
+            } else {
+                maxCubeWidth_ = std::max(maxCubeWidth_, cube.size());
+            }
+        }
+        dnf.erase(
+                std::remove_if(dnf.begin(), dnf.end(), [](const DnfCube& cube) {
+                    return cube.size() == 1 && cube.front() == kTrueLit;
+                }),
+                dnf.end());
+        dedupDnf(dnf);
+        ensureTermBudget(dnf.size());
+    }
+
+    void ensureTermBudget(std::size_t size) const {
+        if (size > maxTerms_) {
+            throw std::runtime_error(
+                    "backend=pepin exceeded DNF term budget (" + std::to_string(maxTerms_) + ")");
+        }
+    }
+
+    const ExprArena& arena_;
+    uint64_t maxTerms_;
+    std::size_t maxCubeWidth_ = 0;
+    std::unordered_map<uint64_t, DnfFormula> memo_;
+};
+
+std::pair<uint64_t, uint64_t> approximateProbabilityFraction(long double prob, uint32_t digits) {
+    uint64_t denom = 1;
+    for (uint32_t i = 0; i < digits; ++i) {
+        denom *= 10ULL;
+    }
+    uint64_t numer = static_cast<uint64_t>(std::llround(prob * static_cast<long double>(denom)));
+    numer = std::min(numer, denom);
+    const uint64_t g = std::gcd(numer, denom);
+    return {numer / g, denom / g};
+}
+
+#ifndef SOUFFLE_STANDALONE_HAS_PEPIN_LIB
+void writePepinDnf(
+        const std::vector<RandomVarInfo>& randomVars,
+        const DnfFormula& dnf,
+        uint32_t weightDigits,
+        const std::string& path) {
+    std::ofstream out(path);
+    if (!out) {
+        throw std::runtime_error("Failed to open DNF output: " + path);
+    }
+
+    const uint32_t numVars = randomVars.empty() ? 0U : static_cast<uint32_t>(randomVars.size() - 1U);
+    out << "p dnf " << numVars << " " << dnf.size() << "\n";
+    for (std::size_t i = 1; i < randomVars.size(); ++i) {
+        const auto [numer, denom] = approximateProbabilityFraction(randomVars[i].probTrue, weightDigits);
+        if (numer * 2ULL == denom) {
+            continue;
+        }
+        out << "w " << i << " " << numer << "/" << denom << "\n";
+    }
+    for (const auto& cube : dnf) {
+        for (int lit : cube) {
+            out << lit << " ";
+        }
+        out << "0\n";
+    }
+}
+#endif
+
 struct CnfBuildResult {
     approxmc_demo::WeightedCNFInput weighted;
     bool unsat = false;
@@ -1649,6 +2096,949 @@ ApproxmcRunResult runApproxmc(
     return res;
 }
 
+struct PepinRunResult {
+    bool ok = false;
+    long double weightedEstimate = 0.0L;
+    std::string rawOutput;
+    std::string message;
+    double runtimeSec = 0.0;
+    const char* counterKind = "cli";
+};
+
+#ifndef SOUFFLE_STANDALONE_HAS_PEPIN_LIB
+std::optional<long double> parsePepinNumber(const std::string& raw) {
+    const std::string num = trim(raw);
+    if (num.empty()) {
+        return std::nullopt;
+    }
+    const auto slashPos = num.find('/');
+    if (slashPos == std::string::npos) {
+        try {
+            return std::stold(num);
+        } catch (const std::exception&) {
+            return std::nullopt;
+        }
+    }
+
+    try {
+        const long double numer = std::stold(trim(num.substr(0, slashPos)));
+        const long double denom = std::stold(trim(num.substr(slashPos + 1)));
+        if (isZero(denom)) {
+            return std::nullopt;
+        }
+        return numer / denom;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+PepinRunResult runPepinCli(
+        const std::string& pepinBin,
+        const std::string& dnfPath,
+        double epsilon,
+        double delta,
+        uint32_t seed,
+        uint32_t verb,
+        bool streamOutput) {
+    PepinRunResult res;
+    res.counterKind = "cli";
+    std::ostringstream cmd;
+    cmd << "\"" << pepinBin << "\""
+        << " --verb " << verb
+        << " --seed " << seed
+        << " --epsilon " << std::setprecision(17) << epsilon
+        << " --delta " << std::setprecision(17) << delta
+        << " \"" << dnfPath << "\""
+        << " 2>&1";
+
+    const auto start = Clock::now();
+    FILE* pipe = popen(cmd.str().c_str(), "r");
+    if (!pipe) {
+        res.message = "Failed to start pepin process";
+        return res;
+    }
+
+    char buf[4096];
+    std::string output;
+    while (std::fgets(buf, sizeof(buf), pipe) != nullptr) {
+        output.append(buf);
+        if (streamOutput) {
+            std::cerr << "[pepin] " << buf;
+            std::cerr.flush();
+        }
+    }
+    const int rc = pclose(pipe);
+    res.runtimeSec = elapsedSeconds(start);
+    res.rawOutput = output;
+
+    std::istringstream iss(output);
+    std::string line;
+    bool found = false;
+    while (std::getline(iss, line)) {
+        constexpr const char* kPrefix = "c [dnfs] Weight no. solutions:";
+        if (line.rfind(kPrefix, 0) != 0) {
+            continue;
+        }
+        auto parsed = parsePepinNumber(line.substr(std::strlen(kPrefix)));
+        if (!parsed.has_value()) {
+            res.message = "Failed to parse pepin weighted estimate";
+            return res;
+        }
+        res.weightedEstimate = *parsed;
+        found = true;
+        break;
+    }
+    if (!found) {
+        res.message = "Pepin output missing weighted estimate";
+        return res;
+    }
+    if (rc != 0) {
+        res.message = "Pepin exited non-zero: " + std::to_string(rc);
+        return res;
+    }
+    res.ok = true;
+    return res;
+}
+#endif
+
+#ifdef SOUFFLE_STANDALONE_HAS_PEPIN_LIB
+PepinRunResult runPepinLibrary(
+        const std::vector<RandomVarInfo>& randomVars,
+        const DnfFormula& dnf,
+        double epsilon,
+        double delta,
+        uint32_t seed,
+        uint32_t verb,
+        uint32_t weightDigits) {
+    PepinRunResult res;
+    res.counterKind = "lib";
+    try {
+        const auto start = Clock::now();
+        PepinNS::Pepin pepin(epsilon, delta, seed, verb, PepinNS::RepresentationType::DENSE);
+        const uint32_t numVars = randomVars.empty() ? 0U : static_cast<uint32_t>(randomVars.size() - 1U);
+        pepin.new_vars(numVars);
+        pepin.set_n_cls(static_cast<uint32_t>(dnf.size()));
+        for (std::size_t i = 1; i < randomVars.size(); ++i) {
+            const auto [numer, denom] = approximateProbabilityFraction(randomVars[i].probTrue, weightDigits);
+            pepin.set_var_weight(static_cast<uint32_t>(i - 1U), static_cast<uint32_t>(numer), static_cast<uint32_t>(denom));
+        }
+        for (const auto& cube : dnf) {
+            std::vector<PepinNS::Lit> clause;
+            clause.reserve(cube.size());
+            for (int lit : cube) {
+                clause.push_back(PepinNS::itol(static_cast<int32_t>(lit)));
+            }
+            if (!pepin.add_clause(clause)) {
+                res.message = "Pepin library rejected a DNF cube";
+                return res;
+            }
+        }
+        const mpq_t* weighted = pepin.get_appx_weighted_sol();
+        res.runtimeSec = elapsedSeconds(start);
+        if (weighted == nullptr) {
+            res.message = "Pepin library returned null weighted estimate";
+            return res;
+        }
+        res.weightedEstimate = static_cast<long double>(mpq_get_d(*weighted));
+        res.ok = true;
+        return res;
+    } catch (const std::exception& ex) {
+        res.message = ex.what();
+        return res;
+    }
+}
+#endif
+
+struct SchlandalsRunResult {
+    bool ok = false;
+    long double estimate = 0.0L;
+    long double lowerBound = 0.0L;
+    long double upperBound = 0.0L;
+    std::string rawOutput;
+    std::string message;
+    double runtimeSec = 0.0;
+};
+
+std::optional<std::pair<long double, long double>> parseSchlandalsBounds(const std::string& line) {
+    const auto lbPos = line.find('[');
+    const auto rbPos = line.find(']');
+    if (lbPos == std::string::npos || rbPos == std::string::npos || rbPos <= lbPos + 1) {
+        return std::nullopt;
+    }
+    const std::string inside = line.substr(lbPos + 1, rbPos - lbPos - 1);
+    std::istringstream iss(inside);
+    long double lb = 0.0L;
+    long double ub = 0.0L;
+    if (!(iss >> lb >> ub)) {
+        return std::nullopt;
+    }
+    return std::make_pair(lb, ub);
+}
+
+SchlandalsRunResult runSchlandals(
+        const std::string& schlandalsBin,
+        const std::string& cnfPath,
+        double epsilon,
+        bool useLds,
+        bool streamOutput) {
+    SchlandalsRunResult res;
+    std::ostringstream cmd;
+    cmd << "\"" << schlandalsBin << "\""
+        << " -i \"" << cnfPath << "\"";
+    if (useLds) {
+        cmd << " --epsilon " << std::setprecision(17) << epsilon << " --lds";
+    }
+    cmd << " 2>&1";
+
+    const auto start = Clock::now();
+    FILE* pipe = popen(cmd.str().c_str(), "r");
+    if (!pipe) {
+        res.message = "Failed to start schlandals process";
+        return res;
+    }
+
+    char buf[4096];
+    std::string output;
+    while (std::fgets(buf, sizeof(buf), pipe) != nullptr) {
+        output.append(buf);
+        if (streamOutput) {
+            std::cerr << "[schlandals] " << buf;
+            std::cerr.flush();
+        }
+    }
+    const int rc = pclose(pipe);
+    res.runtimeSec = elapsedSeconds(start);
+    res.rawOutput = output;
+
+    std::istringstream iss(output);
+    std::string line;
+    bool found = false;
+    while (std::getline(iss, line)) {
+        constexpr const char* kPrefix = "Estimated probability ";
+        if (line.rfind(kPrefix, 0) != 0) {
+            continue;
+        }
+        const auto bounds = parseSchlandalsBounds(line);
+        if (!bounds.has_value()) {
+            res.message = "Failed to parse Schlandals bounds";
+            return res;
+        }
+        const auto withPos = line.find(" with bounds ");
+        if (withPos == std::string::npos) {
+            res.message = "Failed to parse Schlandals estimate";
+            return res;
+        }
+        try {
+            res.estimate = std::stold(line.substr(std::strlen(kPrefix), withPos - std::strlen(kPrefix)));
+        } catch (const std::exception&) {
+            res.message = "Failed to parse Schlandals estimate";
+            return res;
+        }
+        res.lowerBound = bounds->first;
+        res.upperBound = bounds->second;
+        found = true;
+    }
+    if (!found) {
+        res.message = "Schlandals output missing estimate line";
+        return res;
+    }
+    if (rc != 0) {
+        res.message = "Schlandals exited non-zero: " + std::to_string(rc);
+        return res;
+    }
+    res.ok = true;
+    return res;
+}
+
+struct SchlandalsHornEncoding {
+    uint32_t numVars = 0;
+    std::size_t deterministicVars = 0;
+    std::size_t distributions = 0;
+    std::vector<std::vector<double>> distributionWeights;
+    std::vector<std::vector<int>> clauses;
+};
+
+#ifdef SOUFFLE_STANDALONE_HAS_SCHLANDALS_LIB
+struct FlatSchlandalsEncoding {
+    std::vector<double> distributionWeights;
+    std::vector<uint32_t> distributionOffsets{0};
+    std::vector<int32_t> clauseLiterals;
+    std::vector<uint32_t> clauseOffsets{0};
+};
+
+FlatSchlandalsEncoding flattenSchlandalsEncoding(const SchlandalsHornEncoding& encoding) {
+    FlatSchlandalsEncoding flat;
+    for (const auto& dist : encoding.distributionWeights) {
+        flat.distributionWeights.insert(flat.distributionWeights.end(), dist.begin(), dist.end());
+        flat.distributionOffsets.push_back(static_cast<uint32_t>(flat.distributionWeights.size()));
+    }
+    for (const auto& clause : encoding.clauses) {
+        for (int lit : clause) {
+            flat.clauseLiterals.push_back(static_cast<int32_t>(lit));
+        }
+        flat.clauseOffsets.push_back(static_cast<uint32_t>(flat.clauseLiterals.size()));
+    }
+    return flat;
+}
+
+SchlandalsRunResult runSchlandalsDirect(const SchlandalsHornEncoding& encoding, double epsilon, bool useLds) {
+    const auto start = Clock::now();
+    SchlandalsRunResult res;
+    const auto flat = flattenSchlandalsEncoding(encoding);
+    double estimate = 0.0;
+    double lowerBound = 0.0;
+    double upperBound = 0.0;
+    char errorBuf[1024];
+    errorBuf[0] = '\0';
+    const int rc = souffle_schlandals_solve(
+            flat.distributionWeights.empty() ? nullptr : flat.distributionWeights.data(),
+            flat.distributionOffsets.data(),
+            static_cast<uint32_t>(encoding.distributionWeights.size()),
+            flat.clauseLiterals.empty() ? nullptr : flat.clauseLiterals.data(),
+            flat.clauseOffsets.data(),
+            static_cast<uint32_t>(encoding.clauses.size()),
+            epsilon,
+            useLds,
+            &estimate,
+            &lowerBound,
+            &upperBound,
+            errorBuf,
+            sizeof(errorBuf));
+    res.runtimeSec = elapsedSeconds(start);
+    if (rc != 0) {
+        res.message = errorBuf[0] != '\0' ? std::string(errorBuf)
+                                          : "direct schlandals ffi returned error code " + std::to_string(rc);
+        return res;
+    }
+    res.ok = true;
+    res.estimate = estimate;
+    res.lowerBound = lowerBound;
+    res.upperBound = upperBound;
+    return res;
+}
+#endif
+
+struct SupportKeyHash {
+    std::size_t operator()(const std::vector<SupportToken>& values) const {
+        std::size_t seed = 0;
+        for (SupportToken value : values) {
+            seed ^= std::hash<SupportToken>{}(value) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+        }
+        return seed;
+    }
+};
+
+struct SchlandalsNegationAnalysis {
+    std::unordered_map<std::string, bool> probabilisticRelations;
+    std::unordered_map<std::string, std::size_t> relationStrata;
+};
+
+bool isDeterministicRelation(
+        const std::unordered_map<std::string, bool>& probabilisticRelations,
+        const std::string& relation) {
+    const auto it = probabilisticRelations.find(normalizeLogicalRelationName(relation));
+    return it == probabilisticRelations.end() || !it->second;
+}
+
+SchlandalsNegationAnalysis analyzeSchlandalsNegation(
+        const DerivationGraphViewInterface& view, const std::string& backendLabel = "backend=schlandals") {
+    SchlandalsNegationAnalysis out;
+
+    struct RelationDep {
+        std::string head;
+        std::string body;
+        bool negated = false;
+    };
+    std::vector<RelationDep> deps;
+    deps.reserve(view.getEdges().size() * 2U);
+
+    auto ensureRelation = [&](const std::string& relation) {
+        const std::string normalized = normalizeLogicalRelationName(relation);
+        out.probabilisticRelations.try_emplace(normalized, false);
+        out.relationStrata.try_emplace(normalized, 0U);
+        return normalized;
+    };
+
+    for (const auto& node : view.getNodes()) {
+        if (!node) {
+            continue;
+        }
+        const std::string rel = ensureRelation(node->getTuple().relation_name);
+        if (node->isFact && !isZero(node->getProbability()) && !isOne(node->getProbability())) {
+            out.probabilisticRelations[rel] = true;
+        }
+    }
+
+    for (const auto& edge : view.getEdges()) {
+        if (!edge) {
+            continue;
+        }
+        const NodePtr output = view.getOutput(edge);
+        if (!output) {
+            continue;
+        }
+        const std::string headRel = ensureRelation(output->getTuple().relation_name);
+        if (!isZero(edge->getProbability()) && !isOne(edge->getProbability())) {
+            out.probabilisticRelations[headRel] = true;
+        }
+        const auto inputs = view.getInputs(edge);
+        const auto negs = view.getBodyNegations(edge);
+        for (std::size_t i = 0; i < inputs.size(); ++i) {
+            if (!inputs[i]) {
+                continue;
+            }
+            const std::string bodyRel = ensureRelation(inputs[i]->getTuple().relation_name);
+            deps.push_back({headRel, bodyRel, i < negs.size() && negs[i]});
+        }
+    }
+
+    bool changed = true;
+    const std::size_t maxProbIterations = std::max<std::size_t>(1, deps.size() + 1) *
+                                          std::max<std::size_t>(1, out.probabilisticRelations.size());
+    for (std::size_t iter = 0; iter < maxProbIterations && changed; ++iter) {
+        changed = false;
+        for (const auto& edge : view.getEdges()) {
+            if (!edge) {
+                continue;
+            }
+            const NodePtr output = view.getOutput(edge);
+            if (!output) {
+                continue;
+            }
+            const std::string headRel = normalizeLogicalRelationName(output->getTuple().relation_name);
+            bool ruleIsProb = !isZero(edge->getProbability()) && !isOne(edge->getProbability());
+            if (!ruleIsProb) {
+                for (const auto& input : view.getInputs(edge)) {
+                    if (!input) {
+                        continue;
+                    }
+                    const std::string bodyRel = normalizeLogicalRelationName(input->getTuple().relation_name);
+                    auto it = out.probabilisticRelations.find(bodyRel);
+                    if (it != out.probabilisticRelations.end() && it->second) {
+                        ruleIsProb = true;
+                        break;
+                    }
+                }
+            }
+            if (ruleIsProb && !out.probabilisticRelations[headRel]) {
+                out.probabilisticRelations[headRel] = true;
+                changed = true;
+            }
+        }
+    }
+
+    changed = true;
+    const std::size_t maxStrataIterations = std::max<std::size_t>(1, deps.size() + 1) *
+                                            std::max<std::size_t>(1, out.relationStrata.size());
+    for (std::size_t iter = 0; iter < maxStrataIterations && changed; ++iter) {
+        changed = false;
+        for (const auto& dep : deps) {
+            const std::size_t required = out.relationStrata[dep.body] + (dep.negated ? 1U : 0U);
+            if (out.relationStrata[dep.head] < required) {
+                out.relationStrata[dep.head] = required;
+                changed = true;
+            }
+        }
+    }
+    if (changed) {
+        throw std::runtime_error(backendLabel + " does not support non-stratified negation or recursion through negation");
+    }
+
+    return out;
+}
+
+class SchlandalsHornEncoder {
+public:
+    explicit SchlandalsHornEncoder(const DerivationGraphViewInterface& view)
+            : view_(view),
+              negationAnalysis_(analyzeSchlandalsNegation(view, "backend=schlandals")),
+              guardBuilder_(view, guardArena_) {}
+
+    SchlandalsHornEncoding encode(const NodePtr& query) {
+        if (!query || !view_.getNodes().count(query)) {
+            throw std::runtime_error("backend=schlandals query is outside active view");
+        }
+        assignSupportVars();
+        assignNodeVars();
+        emitFactClauses();
+        emitDerivationClauses();
+        clauses_.push_back({-static_cast<int>(ensureNodeVar(query))});
+
+        SchlandalsHornEncoding out;
+        out.numVars = nextVar_ - 1U;
+        out.deterministicVars = nodeVar_.size();
+        out.distributions = distributionWeights_.size();
+        out.distributionWeights = distributionWeights_;
+        out.clauses = clauses_;
+        return out;
+    }
+
+private:
+    bool resolveNegatedGuard(const NodePtr& node, const NodePtr& head) {
+        if (!node || !head) {
+            throw std::runtime_error("backend=schlandals encountered a null negated body literal");
+        }
+        const std::string bodyRel = normalizeLogicalRelationName(node->getTuple().relation_name);
+        const std::string headRel = normalizeLogicalRelationName(head->getTuple().relation_name);
+        const std::size_t bodyStratum = relationStratumOf(bodyRel);
+        const std::size_t headStratum = relationStratumOf(headRel);
+
+        if (bodyStratum >= headStratum) {
+            throw std::runtime_error(
+                    "backend=schlandals only supports stratified negation; negated body relation " + bodyRel +
+                    " is not in a strictly lower stratum than " + headRel);
+        }
+        if (!isDeterministicRelation(negationAnalysis_.probabilisticRelations, bodyRel)) {
+            throw std::runtime_error(
+                    "backend=schlandals currently supports negation only over deterministic lower-stratum relations; " +
+                    bodyRel + " is probabilistic");
+        }
+
+        const int formula = guardBuilder_.buildNodeFormula(node);
+        if (formula == guardArena_.trueId()) {
+            return true;
+        }
+        if (formula == guardArena_.falseId()) {
+            return false;
+        }
+        throw std::runtime_error(
+                "backend=schlandals expected lower-stratum negated guard " + node->getTuple().toString() +
+                " to resolve to a deterministic constant");
+    }
+
+    std::size_t relationStratumOf(const std::string& relation) const {
+        const auto it = negationAnalysis_.relationStrata.find(normalizeLogicalRelationName(relation));
+        return it == negationAnalysis_.relationStrata.end() ? 0U : it->second;
+    }
+
+    void assignSupportVars() {
+        std::vector<NodePtr> sortedNodes(view_.getNodes().begin(), view_.getNodes().end());
+        std::sort(sortedNodes.begin(), sortedNodes.end(), [](const NodePtr& a, const NodePtr& b) {
+            return a->getId() < b->getId();
+        });
+        for (const auto& node : sortedNodes) {
+            if (!node || !node->isFact) {
+                continue;
+            }
+            const long double p = node->getProbability();
+            if (isZero(p) || isOne(p)) {
+                continue;
+            }
+            ensureSupportPresentVar(node->getProbabilisticSupportTokens(), "fact:" + node->toString(), p);
+        }
+
+        std::vector<EdgePtr> sortedEdges(view_.getEdges().begin(), view_.getEdges().end());
+        std::sort(sortedEdges.begin(), sortedEdges.end(), [](const EdgePtr& a, const EdgePtr& b) {
+            return a->getId() < b->getId();
+        });
+        for (const auto& edge : sortedEdges) {
+            if (!edge) {
+                continue;
+            }
+            const long double p = edge->getProbability();
+            if (isZero(p) || isOne(p)) {
+                continue;
+            }
+            ensureSupportPresentVar(edge->getProbabilisticSupportTokens(), "edge:" + edge->toString(), p);
+        }
+    }
+
+    void assignNodeVars() {
+        std::vector<NodePtr> sortedNodes(view_.getNodes().begin(), view_.getNodes().end());
+        std::sort(sortedNodes.begin(), sortedNodes.end(), [](const NodePtr& a, const NodePtr& b) {
+            return a->getId() < b->getId();
+        });
+        for (const auto& node : sortedNodes) {
+            if (node) {
+                ensureNodeVar(node);
+            }
+        }
+    }
+
+    void emitFactClauses() {
+        for (const auto& node : view_.getNodes()) {
+            if (!node || !node->isFact) {
+                continue;
+            }
+            const int nodeVar = static_cast<int>(ensureNodeVar(node));
+            const long double p = node->getProbability();
+            if (isZero(p)) {
+                continue;
+            }
+            if (isOne(p)) {
+                clauses_.push_back({nodeVar});
+                continue;
+            }
+            const int presentVar = static_cast<int>(
+                    ensureSupportPresentVar(node->getProbabilisticSupportTokens(), "fact:" + node->toString(), p));
+            clauses_.push_back({-presentVar, nodeVar});
+        }
+    }
+
+    void emitDerivationClauses() {
+        std::vector<EdgePtr> sortedEdges(view_.getEdges().begin(), view_.getEdges().end());
+        std::sort(sortedEdges.begin(), sortedEdges.end(), [](const EdgePtr& a, const EdgePtr& b) {
+            return a->getId() < b->getId();
+        });
+        for (const auto& edge : sortedEdges) {
+            if (!edge) {
+                continue;
+            }
+            const auto negs = view_.getBodyNegations(edge);
+            const long double p = edge->getProbability();
+            if (isZero(p)) {
+                continue;
+            }
+            const NodePtr output = view_.getOutput(edge);
+            const auto inputs = view_.getInputs(edge);
+            std::vector<int> clause;
+            if (!isOne(p)) {
+                const int presentVar = static_cast<int>(ensureSupportPresentVar(
+                        edge->getProbabilisticSupportTokens(), "edge:" + edge->toString(), p));
+                clause.push_back(-presentVar);
+            }
+            bool blockedByNegatedGuard = false;
+            for (std::size_t i = 0; i < inputs.size(); ++i) {
+                const NodePtr input = inputs[i];
+                const bool isNegated = i < negs.size() && negs[i];
+                if (isNegated) {
+                    if (resolveNegatedGuard(input, output)) {
+                        blockedByNegatedGuard = true;
+                        break;
+                    }
+                    continue;
+                }
+                clause.push_back(-static_cast<int>(ensureNodeVar(input)));
+            }
+            if (blockedByNegatedGuard) {
+                continue;
+            }
+            clause.push_back(static_cast<int>(ensureNodeVar(output)));
+            clauses_.push_back(std::move(clause));
+        }
+    }
+
+    uint32_t ensureNodeVar(const NodePtr& node) {
+        auto it = nodeVar_.find(node);
+        if (it != nodeVar_.end()) {
+            return it->second;
+        }
+        const uint32_t id = nextVar_++;
+        nodeVar_.emplace(node, id);
+        return id;
+    }
+
+    uint32_t ensureSupportPresentVar(
+            const std::vector<SupportToken>& support, const std::string& label, long double p) {
+        auto it = supportPresentVar_.find(support);
+        if (it != supportPresentVar_.end()) {
+            const auto& weights = distributionWeights_.at(supportDistributionIndex_.at(support));
+            if (std::fabs(weights.front() - static_cast<double>(p)) > static_cast<double>(kProbEps)) {
+                throw std::runtime_error(
+                        "Inconsistent probability for shared probabilistic support in schlandals encoding: " +
+                        label);
+            }
+            return it->second;
+        }
+        const uint32_t presentVar = nextVar_;
+        nextVar_ += 2U;
+        supportPresentVar_.emplace(support, presentVar);
+        supportDistributionIndex_[support] = distributionWeights_.size();
+        distributionWeights_.push_back({static_cast<double>(p), static_cast<double>(1.0L - p)});
+        return presentVar;
+    }
+
+    const DerivationGraphViewInterface& view_;
+    const SchlandalsNegationAnalysis negationAnalysis_;
+    uint32_t nextVar_ = 1U;
+    ExprArena guardArena_;
+    ViewFormulaBuilder guardBuilder_;
+    std::unordered_map<NodePtr, uint32_t> nodeVar_;
+    std::unordered_map<std::vector<SupportToken>, uint32_t, SupportKeyHash> supportPresentVar_;
+    std::unordered_map<std::vector<SupportToken>, std::size_t, SupportKeyHash> supportDistributionIndex_;
+    std::vector<std::vector<double>> distributionWeights_;
+    std::vector<std::vector<int>> clauses_;
+};
+
+struct HornSamplingRule {
+    uint32_t head = 0;
+    int supportIndex = -1;
+    std::vector<uint32_t> body;
+};
+
+struct HornSamplingProgram {
+    std::size_t deterministicVars = 0;
+    std::size_t clauses = 0;
+    std::vector<double> supportProbabilities;
+    std::vector<HornSamplingRule> rules;
+    std::vector<uint32_t> zeroBodyRules;
+    std::vector<uint32_t> basePending;
+    std::vector<std::vector<uint32_t>> nodeConsumers;
+    std::vector<std::vector<uint32_t>> nodeProducers;
+    std::vector<std::vector<uint32_t>> supportConsumers;
+    std::unordered_map<NodePtr, uint32_t> nodeIndex;
+};
+
+class HornSamplingProgramCompiler {
+public:
+    explicit HornSamplingProgramCompiler(const DerivationGraphViewInterface& view)
+            : view_(view),
+              negationAnalysis_(analyzeSchlandalsNegation(view, "backend=horn-sampling")),
+              guardBuilder_(view, guardArena_) {}
+
+    HornSamplingProgram compile() {
+        assignSupports();
+        assignNodes();
+        emitFactRules();
+        emitDerivationRules();
+
+        HornSamplingProgram out;
+        out.deterministicVars = nodeIndex_.size();
+        out.clauses = rules_.size();
+        out.supportProbabilities = supportProbabilities_;
+        out.rules = rules_;
+        out.nodeIndex = nodeIndex_;
+        out.zeroBodyRules = zeroBodyRules_;
+        out.basePending = basePending_;
+        out.nodeConsumers.assign(out.deterministicVars, {});
+        out.nodeProducers.assign(out.deterministicVars, {});
+        out.supportConsumers.assign(out.supportProbabilities.size(), {});
+        for (uint32_t ruleId = 0; ruleId < out.rules.size(); ++ruleId) {
+            const auto& rule = out.rules[ruleId];
+            out.nodeProducers.at(rule.head).push_back(ruleId);
+            for (uint32_t bodyNode : rule.body) {
+                out.nodeConsumers.at(bodyNode).push_back(ruleId);
+            }
+            if (rule.supportIndex >= 0) {
+                out.supportConsumers.at(static_cast<std::size_t>(rule.supportIndex)).push_back(ruleId);
+            }
+        }
+        return out;
+    }
+
+private:
+    bool resolveNegatedGuard(const NodePtr& node, const NodePtr& head) {
+        if (!node || !head) {
+            throw std::runtime_error("backend=horn-sampling encountered a null negated body literal");
+        }
+        const std::string bodyRel = normalizeLogicalRelationName(node->getTuple().relation_name);
+        const std::string headRel = normalizeLogicalRelationName(head->getTuple().relation_name);
+        const std::size_t bodyStratum = relationStratumOf(bodyRel);
+        const std::size_t headStratum = relationStratumOf(headRel);
+
+        if (bodyStratum >= headStratum) {
+            throw std::runtime_error(
+                    "backend=horn-sampling only supports stratified negation; negated body relation " + bodyRel +
+                    " is not in a strictly lower stratum than " + headRel);
+        }
+        if (!isDeterministicRelation(negationAnalysis_.probabilisticRelations, bodyRel)) {
+            throw std::runtime_error(
+                    "backend=horn-sampling currently supports negation only over deterministic lower-stratum relations; " +
+                    bodyRel + " is probabilistic");
+        }
+
+        const int formula = guardBuilder_.buildNodeFormula(node);
+        if (formula == guardArena_.trueId()) {
+            return true;
+        }
+        if (formula == guardArena_.falseId()) {
+            return false;
+        }
+        throw std::runtime_error(
+                "backend=horn-sampling expected lower-stratum negated guard " +
+                node->getTuple().toString() + " to resolve to a deterministic constant");
+    }
+
+    std::size_t relationStratumOf(const std::string& relation) const {
+        const auto it = negationAnalysis_.relationStrata.find(normalizeLogicalRelationName(relation));
+        return it == negationAnalysis_.relationStrata.end() ? 0U : it->second;
+    }
+
+    void assignSupports() {
+        std::vector<NodePtr> sortedNodes(view_.getNodes().begin(), view_.getNodes().end());
+        std::sort(sortedNodes.begin(), sortedNodes.end(), [](const NodePtr& a, const NodePtr& b) {
+            return a->getId() < b->getId();
+        });
+        for (const auto& node : sortedNodes) {
+            if (!node || !node->isFact) {
+                continue;
+            }
+            const long double p = node->getProbability();
+            if (isZero(p) || isOne(p)) {
+                continue;
+            }
+            ensureSupportIndex(node->getProbabilisticSupportTokens(), "fact:" + node->toString(), p);
+        }
+
+        std::vector<EdgePtr> sortedEdges(view_.getEdges().begin(), view_.getEdges().end());
+        std::sort(sortedEdges.begin(), sortedEdges.end(), [](const EdgePtr& a, const EdgePtr& b) {
+            return a->getId() < b->getId();
+        });
+        for (const auto& edge : sortedEdges) {
+            if (!edge) {
+                continue;
+            }
+            const long double p = edge->getProbability();
+            if (isZero(p) || isOne(p)) {
+                continue;
+            }
+            ensureSupportIndex(edge->getProbabilisticSupportTokens(), "edge:" + edge->toString(), p);
+        }
+    }
+
+    void assignNodes() {
+        std::vector<NodePtr> sortedNodes(view_.getNodes().begin(), view_.getNodes().end());
+        std::sort(sortedNodes.begin(), sortedNodes.end(), [](const NodePtr& a, const NodePtr& b) {
+            return a->getId() < b->getId();
+        });
+        for (const auto& node : sortedNodes) {
+            if (node) {
+                ensureNodeIndex(node);
+            }
+        }
+    }
+
+    void addRule(uint32_t head, int supportIndex, std::vector<uint32_t> body) {
+        HornSamplingRule rule;
+        rule.head = head;
+        rule.supportIndex = supportIndex;
+        rule.body = std::move(body);
+        basePending_.push_back(static_cast<uint32_t>(rule.body.size()));
+        if (rule.body.empty()) {
+            zeroBodyRules_.push_back(static_cast<uint32_t>(rules_.size()));
+        }
+        rules_.push_back(std::move(rule));
+    }
+
+    void emitFactRules() {
+        std::vector<NodePtr> sortedNodes(view_.getNodes().begin(), view_.getNodes().end());
+        std::sort(sortedNodes.begin(), sortedNodes.end(), [](const NodePtr& a, const NodePtr& b) {
+            return a->getId() < b->getId();
+        });
+        for (const auto& node : sortedNodes) {
+            if (!node || !node->isFact) {
+                continue;
+            }
+            const long double p = node->getProbability();
+            if (isZero(p)) {
+                continue;
+            }
+            const uint32_t head = ensureNodeIndex(node);
+            const int supportIndex = isOne(p)
+                    ? -1
+                    : static_cast<int>(ensureSupportIndex(
+                              node->getProbabilisticSupportTokens(), "fact:" + node->toString(), p));
+            addRule(head, supportIndex, {});
+        }
+    }
+
+    void emitDerivationRules() {
+        std::vector<EdgePtr> sortedEdges(view_.getEdges().begin(), view_.getEdges().end());
+        std::sort(sortedEdges.begin(), sortedEdges.end(), [](const EdgePtr& a, const EdgePtr& b) {
+            return a->getId() < b->getId();
+        });
+        for (const auto& edge : sortedEdges) {
+            if (!edge) {
+                continue;
+            }
+            const long double p = edge->getProbability();
+            if (isZero(p)) {
+                continue;
+            }
+            const NodePtr output = view_.getOutput(edge);
+            if (!output) {
+                continue;
+            }
+            const auto inputs = view_.getInputs(edge);
+            const auto negs = view_.getBodyNegations(edge);
+            std::vector<uint32_t> body;
+            body.reserve(inputs.size());
+            bool blockedByNegatedGuard = false;
+            for (std::size_t i = 0; i < inputs.size(); ++i) {
+                const NodePtr input = inputs[i];
+                const bool isNegated = i < negs.size() && negs[i];
+                if (isNegated) {
+                    if (resolveNegatedGuard(input, output)) {
+                        blockedByNegatedGuard = true;
+                        break;
+                    }
+                    continue;
+                }
+                body.push_back(ensureNodeIndex(input));
+            }
+            if (blockedByNegatedGuard) {
+                continue;
+            }
+            const int supportIndex = isOne(p)
+                    ? -1
+                    : static_cast<int>(ensureSupportIndex(
+                              edge->getProbabilisticSupportTokens(), "edge:" + edge->toString(), p));
+            addRule(ensureNodeIndex(output), supportIndex, std::move(body));
+        }
+    }
+
+    uint32_t ensureNodeIndex(const NodePtr& node) {
+        auto it = nodeIndex_.find(node);
+        if (it != nodeIndex_.end()) {
+            return it->second;
+        }
+        const uint32_t index = static_cast<uint32_t>(nodeIndex_.size());
+        nodeIndex_.emplace(node, index);
+        return index;
+    }
+
+    uint32_t ensureSupportIndex(
+            const std::vector<SupportToken>& support, const std::string& label, long double p) {
+        auto it = supportIndex_.find(support);
+        if (it != supportIndex_.end()) {
+            const double existing = supportProbabilities_.at(it->second);
+            if (std::fabs(existing - static_cast<double>(p)) > static_cast<double>(kProbEps)) {
+                throw std::runtime_error(
+                        "Inconsistent probability for shared probabilistic support in horn-sampling encoding: " +
+                        label);
+            }
+            return static_cast<uint32_t>(it->second);
+        }
+        const uint32_t index = static_cast<uint32_t>(supportProbabilities_.size());
+        supportIndex_.emplace(support, index);
+        supportProbabilities_.push_back(static_cast<double>(p));
+        return index;
+    }
+
+    const DerivationGraphViewInterface& view_;
+    const SchlandalsNegationAnalysis negationAnalysis_;
+    ExprArena guardArena_;
+    ViewFormulaBuilder guardBuilder_;
+    std::unordered_map<NodePtr, uint32_t> nodeIndex_;
+    std::unordered_map<std::vector<SupportToken>, std::size_t, SupportKeyHash> supportIndex_;
+    std::vector<double> supportProbabilities_;
+    std::vector<HornSamplingRule> rules_;
+    std::vector<uint32_t> zeroBodyRules_;
+    std::vector<uint32_t> basePending_;
+};
+
+void writeSchlandalsCnf(const SchlandalsHornEncoding& encoding, const std::string& path) {
+    std::ofstream out(path);
+    if (!out) {
+        throw std::runtime_error("Failed to open Schlandals CNF output: " + path);
+    }
+    out << "p cnf " << encoding.numVars << " " << encoding.clauses.size() << "\n";
+    out << std::setprecision(17);
+    for (const auto& dist : encoding.distributionWeights) {
+        out << "c p distribution";
+        for (double weight : dist) {
+            out << " " << weight;
+        }
+        out << "\n";
+    }
+    for (const auto& clause : encoding.clauses) {
+        for (int lit : clause) {
+            out << lit << " ";
+        }
+        out << "0\n";
+    }
+}
+
 long double applyMultiplier(const approxmc_demo::UnweightedCNFResult& converted, long double unweightedEstimate) {
     const long double denom = std::ldexp(1.0L, static_cast<int>(converted.divideExp));
     return (unweightedEstimate * converted.multiplier) / denom;
@@ -1708,6 +3098,102 @@ struct AmcSummary {
     double approxmcSec = 0.0;
 };
 
+struct SamplingQueryResult {
+    double probability = 0.0;
+    std::size_t randomVars = 0;
+    uint64_t samples = 0;
+    uint64_t successes = 0;
+    double extractSec = 0.0;
+    double samplingSec = 0.0;
+    double empiricalStdErr = 0.0;
+    double guaranteedAbsError = 0.0;
+    bool usedSampling = false;
+};
+
+struct SamplingSummary {
+    std::size_t sampledQueries = 0;
+    std::size_t deterministicQueries = 0;
+    std::size_t maxRandomVars = 0;
+    uint64_t totalSamples = 0;
+    double samplingSec = 0.0;
+};
+
+struct HornSamplingPerQueryResult {
+    double probability = 0.0;
+    uint64_t successes = 0;
+    double empiricalStdErr = 0.0;
+};
+
+struct HornSamplingResult {
+    std::vector<HornSamplingPerQueryResult> queries;
+    std::size_t deterministicVars = 0;
+    std::size_t distributions = 0;
+    std::size_t clauses = 0;
+    uint64_t samples = 0;
+    uint64_t supportDraws = 0;
+    uint64_t earlyStoppedWorlds = 0;
+    double compileSec = 0.0;
+    double samplingSec = 0.0;
+    double guaranteedAbsError = 0.0;
+    double perQueryDelta = 0.0;
+    bool usedSampling = false;
+};
+
+struct HornSamplingSummary {
+    std::size_t sampledQueries = 0;
+    std::size_t deterministicQueries = 0;
+    std::size_t maxDeterministicVars = 0;
+    std::size_t maxDistributions = 0;
+    std::size_t maxClauses = 0;
+    uint64_t worldSamples = 0;
+    uint64_t supportDraws = 0;
+    uint64_t earlyStoppedWorlds = 0;
+    double samplingSec = 0.0;
+};
+
+struct PepinQueryResult {
+    double probability = 0.0;
+    std::size_t randomVars = 0;
+    std::size_t dnfTerms = 0;
+    std::size_t maxCubeWidth = 0;
+    double extractSec = 0.0;
+    double expandSec = 0.0;
+    double pepinSec = 0.0;
+    const char* counterKind = "cli";
+    bool usedPepin = false;
+};
+
+struct PepinSummary {
+    std::size_t approxQueries = 0;
+    std::size_t deterministicQueries = 0;
+    std::size_t maxRandomVars = 0;
+    std::size_t maxDnfTerms = 0;
+    std::size_t maxCubeWidth = 0;
+    double pepinSec = 0.0;
+};
+
+struct SchlandalsQueryResult {
+    double probability = 0.0;
+    double lowerBound = 0.0;
+    double upperBound = 0.0;
+    std::size_t deterministicVars = 0;
+    std::size_t distributions = 0;
+    std::size_t clauses = 0;
+    double encodeSec = 0.0;
+    double schlandalsSec = 0.0;
+    bool approximate = false;
+    bool usedSchlandals = false;
+};
+
+struct SchlandalsSummary {
+    std::size_t approxQueries = 0;
+    std::size_t deterministicQueries = 0;
+    std::size_t maxDeterministicVars = 0;
+    std::size_t maxDistributions = 0;
+    std::size_t maxClauses = 0;
+    double schlandalsSec = 0.0;
+};
+
 bool hasNonTrivialCycles(SubgraphView& view);
 
 bool hasUnsupportedAmcCycles(SubgraphView& view) {
@@ -1729,6 +3215,440 @@ bool hasUnsupportedAmcCycles(SubgraphView& view) {
         }
     }
     return false;
+}
+
+SamplingQueryResult evaluateQueryWithSampling(SubgraphView& view, const NodePtr& query, const Options& opt) {
+    SamplingQueryResult out;
+
+    if (hasUnsupportedAmcCycles(view)) {
+        throw std::runtime_error(
+                "backend=sampling currently requires an acyclic query slice after rewrite");
+    }
+
+    const auto extractStart = Clock::now();
+    ExprArena arena;
+    ViewFormulaBuilder builder(view, arena);
+    const int formula = builder.buildNodeFormula(query);
+    const auto& randomVars = builder.randomVars();
+    out.extractSec = elapsedSeconds(extractStart);
+    out.randomVars = randomVars.empty() ? 0U : static_cast<std::size_t>(randomVars.size() - 1U);
+
+    if (formula == arena.falseId()) {
+        out.probability = 0.0;
+        return out;
+    }
+    if (formula == arena.trueId()) {
+        out.probability = 1.0;
+        return out;
+    }
+    if (out.randomVars == 0) {
+        std::vector<uint8_t> assignment(1, 0U);
+        out.probability = arena.eval(formula, assignment) ? 1.0 : 0.0;
+        return out;
+    }
+
+    out.samples = opt.samplingSamples;
+    out.guaranteedAbsError = hoeffdingHalfWidth(out.samples, opt.delta);
+
+    const auto sampleStart = Clock::now();
+    std::vector<uint8_t> assignment(randomVars.size(), 0U);
+    std::mt19937_64 rng(opt.seed);
+    for (uint64_t sampleIdx = 0; sampleIdx < out.samples; ++sampleIdx) {
+        for (std::size_t i = 1; i < randomVars.size(); ++i) {
+            const double p = static_cast<double>(randomVars[i].probTrue);
+            std::bernoulli_distribution dist(p);
+            assignment[i] = static_cast<uint8_t>(dist(rng));
+        }
+        out.successes += arena.eval(formula, assignment) ? 1ULL : 0ULL;
+    }
+    out.samplingSec = elapsedSeconds(sampleStart);
+
+    out.usedSampling = true;
+    out.probability = static_cast<double>(out.successes) / static_cast<double>(out.samples);
+    out.empiricalStdErr = std::sqrt(
+            std::max(0.0, out.probability * (1.0 - out.probability)) / static_cast<double>(out.samples));
+    return out;
+}
+
+PepinQueryResult evaluateQueryWithPepin(SubgraphView& view, const NodePtr& query, const Options& opt) {
+    PepinQueryResult out;
+
+    const auto extractStart = Clock::now();
+    ExprArena arena;
+    // Pepin uses the same query-local backward extraction as AMC/sampling.
+    // Cycles are cut path-locally by the builder instead of requiring the
+    // whole active slice to be acyclic up front.
+    ViewFormulaBuilder builder(view, arena);
+    const int formula = builder.buildNodeFormula(query);
+    const auto& randomVars = builder.randomVars();
+    out.extractSec = elapsedSeconds(extractStart);
+    out.randomVars = randomVars.empty() ? 0U : static_cast<std::size_t>(randomVars.size() - 1U);
+    if (opt.pepinStreamOutput) {
+        std::cerr << "[pepin-run] query=" << query->getTuple().toString()
+                  << " stage=extract_done"
+                  << " extract_s=" << out.extractSec
+                  << " random_vars=" << out.randomVars
+                  << "\n";
+        std::cerr.flush();
+    }
+
+    if (formula == arena.falseId()) {
+        out.probability = 0.0;
+        return out;
+    }
+    if (formula == arena.trueId()) {
+        out.probability = 1.0;
+        return out;
+    }
+    if (out.randomVars == 0) {
+        std::vector<uint8_t> assignment(1, 0U);
+        out.probability = arena.eval(formula, assignment) ? 1.0 : 0.0;
+        return out;
+    }
+
+    const auto expandStart = Clock::now();
+    DnfExpander expander(arena, opt.pepinMaxTerms);
+    const DnfFormula dnf = expander.build(formula);
+    out.expandSec = elapsedSeconds(expandStart);
+    out.dnfTerms = dnf.size();
+    out.maxCubeWidth = expander.maxCubeWidth();
+    if (opt.pepinStreamOutput) {
+        std::cerr << "[pepin-run] query=" << query->getTuple().toString()
+                  << " stage=expand_done"
+                  << " expand_s=" << out.expandSec
+                  << " dnf_terms=" << out.dnfTerms
+                  << " max_cube_width=" << out.maxCubeWidth
+                  << "\n";
+        std::cerr.flush();
+    }
+
+    if (dnf.empty()) {
+        out.probability = 0.0;
+        return out;
+    }
+
+    PepinRunResult run;
+#ifdef SOUFFLE_STANDALONE_HAS_PEPIN_LIB
+    run = runPepinLibrary(randomVars, dnf, opt.epsilon, opt.delta, opt.seed, opt.pepinVerb, opt.pepinWeightDigits);
+#else
+    const std::string dnfPath =
+            souffle::tempFile() + "." + sanitizeFileSuffix(query->getTuple().toString()) + ".dnf";
+    writePepinDnf(randomVars, dnf, opt.pepinWeightDigits, dnfPath);
+    run = runPepinCli(
+            opt.pepinBin, dnfPath, opt.epsilon, opt.delta, opt.seed, opt.pepinVerb, opt.pepinStreamOutput);
+    std::remove(dnfPath.c_str());
+#endif
+    if (!run.ok) {
+        throw std::runtime_error(
+                "Pepin failed for " + query->getTuple().toString() + ": " + run.message + "\n" + run.rawOutput);
+    }
+    if (opt.pepinStreamOutput) {
+        std::cerr << "[pepin-run] query=" << query->getTuple().toString()
+                  << " stage=counter_done"
+                  << " mode=" << run.counterKind
+                  << " pepin_s=" << run.runtimeSec
+                  << " weighted_estimate=" << std::setprecision(20) << run.weightedEstimate
+                  << "\n";
+        std::cerr.flush();
+    }
+    if (run.weightedEstimate < -kProbEps || run.weightedEstimate > 1.0L + kProbEps) {
+        throw std::runtime_error(
+                "Pepin returned a probability outside [0,1] for " + query->getTuple().toString() +
+                "; try a smaller --pepin-weight-digits (current " + std::to_string(opt.pepinWeightDigits) + ")");
+    }
+
+    out.usedPepin = true;
+    out.pepinSec = run.runtimeSec;
+    out.counterKind = run.counterKind;
+    out.probability = std::clamp(static_cast<double>(run.weightedEstimate), 0.0, 1.0);
+    return out;
+}
+
+SchlandalsQueryResult evaluateQueryWithSchlandals(SubgraphView& view, const NodePtr& query, const Options& opt) {
+    SchlandalsQueryResult out;
+
+    // Validate stratified negation first so negative recursion reports a
+    // semantic error rather than falling through to the generic acyclic guard.
+    (void) analyzeSchlandalsNegation(view, "backend=schlandals");
+
+    if (hasUnsupportedAmcCycles(view)) {
+        throw std::runtime_error(
+                "backend=schlandals currently requires an acyclic query slice after rewrite");
+    }
+
+    const auto encodeStart = Clock::now();
+    SchlandalsHornEncoder encoder(view);
+    const auto encoding = encoder.encode(query);
+    out.encodeSec = elapsedSeconds(encodeStart);
+    out.deterministicVars = encoding.deterministicVars;
+    out.distributions = encoding.distributions;
+    out.clauses = encoding.clauses.size();
+
+#ifdef SOUFFLE_STANDALONE_HAS_SCHLANDALS_LIB
+    const auto run = runSchlandalsDirect(encoding, opt.epsilon, opt.schlandalsLds);
+#else
+    const std::string cnfPath =
+            "/tmp/souffle_graph_query_schlandals_" + sanitizeFileSuffix(query->getTuple().toString()) + ".cnf";
+    writeSchlandalsCnf(encoding, cnfPath);
+    const auto run = runSchlandals(
+            opt.schlandalsBin, cnfPath, opt.epsilon, opt.schlandalsLds, opt.schlandalsStreamOutput);
+    std::remove(cnfPath.c_str());
+#endif
+    if (!run.ok) {
+        throw std::runtime_error(
+                "Schlandals failed for " + query->getTuple().toString() + ": " + run.message + "\n" +
+                run.rawOutput);
+    }
+    if (run.estimate < -kProbEps || run.estimate > 1.0L + kProbEps) {
+        throw std::runtime_error("Schlandals returned a probability outside [0,1]");
+    }
+
+    out.usedSchlandals = true;
+    out.approximate = opt.schlandalsLds;
+    out.schlandalsSec = run.runtimeSec;
+    out.probability = std::clamp(static_cast<double>(1.0L - run.estimate), 0.0, 1.0);
+    out.lowerBound = std::clamp(static_cast<double>(1.0L - run.upperBound), 0.0, 1.0);
+    out.upperBound = std::clamp(static_cast<double>(1.0L - run.lowerBound), 0.0, 1.0);
+    return out;
+}
+
+std::vector<uint32_t> buildHornSamplingSupportOrder(
+        const HornSamplingProgram& program, const std::vector<uint32_t>& queryNodeIndices) {
+    std::vector<uint32_t> order(program.supportProbabilities.size());
+    std::iota(order.begin(), order.end(), 0U);
+    if (order.empty() || queryNodeIndices.empty()) {
+        return order;
+    }
+
+    std::vector<uint32_t> supportCoverage(program.supportProbabilities.size(), 0U);
+    std::vector<uint8_t> seenNode(program.deterministicVars, 0U);
+    std::vector<uint8_t> seenRule(program.rules.size(), 0U);
+    std::vector<uint8_t> seenSupport(program.supportProbabilities.size(), 0U);
+    std::vector<uint32_t> stack;
+    stack.reserve(program.deterministicVars);
+
+    for (uint32_t queryNode : queryNodeIndices) {
+        std::fill(seenNode.begin(), seenNode.end(), 0U);
+        std::fill(seenRule.begin(), seenRule.end(), 0U);
+        std::fill(seenSupport.begin(), seenSupport.end(), 0U);
+        stack.clear();
+        stack.push_back(queryNode);
+        seenNode.at(queryNode) = 1U;
+
+        while (!stack.empty()) {
+            const uint32_t nodeIndex = stack.back();
+            stack.pop_back();
+            for (uint32_t ruleId : program.nodeProducers.at(nodeIndex)) {
+                if (seenRule.at(ruleId)) {
+                    continue;
+                }
+                seenRule[ruleId] = 1U;
+                const auto& rule = program.rules.at(ruleId);
+                if (rule.supportIndex >= 0) {
+                    const std::size_t supportIndex = static_cast<std::size_t>(rule.supportIndex);
+                    if (!seenSupport.at(supportIndex)) {
+                        seenSupport[supportIndex] = 1U;
+                        ++supportCoverage[supportIndex];
+                    }
+                }
+                for (uint32_t bodyNode : rule.body) {
+                    if (!seenNode.at(bodyNode)) {
+                        seenNode[bodyNode] = 1U;
+                        stack.push_back(bodyNode);
+                    }
+                }
+            }
+        }
+    }
+
+    std::stable_sort(order.begin(), order.end(), [&](uint32_t lhs, uint32_t rhs) {
+        const uint32_t lhsCoverage = supportCoverage.at(lhs);
+        const uint32_t rhsCoverage = supportCoverage.at(rhs);
+        if (lhsCoverage != rhsCoverage) {
+            return lhsCoverage > rhsCoverage;
+        }
+        const std::size_t lhsFanout = program.supportConsumers.at(lhs).size();
+        const std::size_t rhsFanout = program.supportConsumers.at(rhs).size();
+        if (lhsFanout != rhsFanout) {
+            return lhsFanout > rhsFanout;
+        }
+        return lhs < rhs;
+    });
+    return order;
+}
+
+HornSamplingResult evaluateQueriesWithHornSampling(
+        SubgraphView& view, const std::vector<NodePtr>& queries, const Options& opt) {
+    HornSamplingResult out;
+    if (queries.empty()) {
+        return out;
+    }
+
+    (void) analyzeSchlandalsNegation(view, "backend=horn-sampling");
+
+    const auto compileStart = Clock::now();
+    HornSamplingProgramCompiler compiler(view);
+    const HornSamplingProgram program = compiler.compile();
+    out.compileSec = elapsedSeconds(compileStart);
+    out.deterministicVars = program.deterministicVars;
+    out.distributions = program.supportProbabilities.size();
+    out.clauses = program.clauses;
+
+    std::vector<uint32_t> queryNodeIndices;
+    queryNodeIndices.reserve(queries.size());
+    for (const auto& query : queries) {
+        const auto it = program.nodeIndex.find(query);
+        if (it == program.nodeIndex.end()) {
+            throw std::runtime_error(
+                    "backend=horn-sampling query is outside compiled Horn program: " +
+                    query->getTuple().toString());
+        }
+        queryNodeIndices.push_back(it->second);
+    }
+
+    out.queries.resize(queries.size());
+    std::vector<std::vector<std::size_t>> queryPositionsByNode(program.deterministicVars);
+    for (std::size_t i = 0; i < queryNodeIndices.size(); ++i) {
+        queryPositionsByNode.at(queryNodeIndices[i]).push_back(i);
+    }
+
+    const std::vector<uint32_t> supportOrder = buildHornSamplingSupportOrder(program, queryNodeIndices);
+    std::vector<uint8_t> nodeTrue(program.deterministicVars, 0U);
+    if (program.supportProbabilities.empty()) {
+        std::vector<uint32_t> pending = program.basePending;
+        std::queue<uint32_t> agenda;
+        auto activate = [&](uint32_t nodeIndex) {
+            if (!nodeTrue[nodeIndex]) {
+                nodeTrue[nodeIndex] = 1U;
+                agenda.push(nodeIndex);
+            }
+        };
+        for (uint32_t ruleId : program.zeroBodyRules) {
+            const auto& rule = program.rules[ruleId];
+            if (rule.supportIndex < 0) {
+                activate(rule.head);
+            }
+        }
+        while (!agenda.empty()) {
+            const uint32_t nodeIndex = agenda.front();
+            agenda.pop();
+            for (uint32_t ruleId : program.nodeConsumers[nodeIndex]) {
+                uint32_t& rem = pending[ruleId];
+                if (rem == 0U) {
+                    continue;
+                }
+                --rem;
+                if (rem == 0U && program.rules[ruleId].supportIndex < 0) {
+                    activate(program.rules[ruleId].head);
+                }
+            }
+        }
+        for (std::size_t i = 0; i < queryNodeIndices.size(); ++i) {
+            out.queries[i].probability = nodeTrue[queryNodeIndices[i]] ? 1.0 : 0.0;
+            out.queries[i].successes = nodeTrue[queryNodeIndices[i]] ? 1ULL : 0ULL;
+        }
+        return out;
+    }
+
+    out.usedSampling = true;
+    out.perQueryDelta = opt.delta;
+    out.samples = opt.samplingSamplesExplicit
+            ? opt.samplingSamples
+            : std::max<uint64_t>(1000, samplingSamplesFromHoeffding(opt.epsilon, out.perQueryDelta));
+    out.guaranteedAbsError = hoeffdingHalfWidth(out.samples, out.perQueryDelta);
+
+    std::vector<uint8_t> supportActive(program.supportProbabilities.size(), 0U);
+    std::vector<uint32_t> pending(program.rules.size(), 0U);
+    std::vector<uint8_t> queryTrue(queries.size(), 0U);
+    std::mt19937_64 rng(opt.seed);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+
+    const auto sampleStart = Clock::now();
+    for (uint64_t sampleIdx = 0; sampleIdx < out.samples; ++sampleIdx) {
+        std::fill(nodeTrue.begin(), nodeTrue.end(), 0U);
+        std::fill(supportActive.begin(), supportActive.end(), 0U);
+        pending = program.basePending;
+        std::fill(queryTrue.begin(), queryTrue.end(), 0U);
+        std::queue<uint32_t> agenda;
+        std::size_t unresolvedQueries = queries.size();
+
+        auto activate = [&](uint32_t nodeIndex) {
+            if (nodeTrue[nodeIndex]) {
+                return;
+            }
+            nodeTrue[nodeIndex] = 1U;
+            agenda.push(nodeIndex);
+            for (std::size_t queryPos : queryPositionsByNode.at(nodeIndex)) {
+                if (!queryTrue[queryPos]) {
+                    queryTrue[queryPos] = 1U;
+                    --unresolvedQueries;
+                }
+            }
+        };
+
+        auto drainAgenda = [&]() {
+            while (!agenda.empty()) {
+                const uint32_t nodeIndex = agenda.front();
+                agenda.pop();
+                for (uint32_t ruleId : program.nodeConsumers[nodeIndex]) {
+                    uint32_t& rem = pending[ruleId];
+                    if (rem == 0U) {
+                        continue;
+                    }
+                    --rem;
+                    if (rem == 0U) {
+                        const auto& rule = program.rules[ruleId];
+                        if (rule.supportIndex < 0 ||
+                                supportActive[static_cast<std::size_t>(rule.supportIndex)]) {
+                            activate(rule.head);
+                        }
+                    }
+                }
+            }
+        };
+
+        for (uint32_t ruleId : program.zeroBodyRules) {
+            const auto& rule = program.rules[ruleId];
+            if (rule.supportIndex < 0) {
+                activate(rule.head);
+            }
+        }
+        drainAgenda();
+
+        std::size_t drawsThisWorld = 0;
+        for (uint32_t supportIndex : supportOrder) {
+            if (unresolvedQueries == 0U) {
+                ++out.earlyStoppedWorlds;
+                break;
+            }
+            ++drawsThisWorld;
+            const bool sampledActive = unit(rng) < program.supportProbabilities[supportIndex];
+            supportActive[supportIndex] = static_cast<uint8_t>(sampledActive);
+            if (!sampledActive) {
+                continue;
+            }
+            for (uint32_t ruleId : program.supportConsumers[supportIndex]) {
+                if (pending[ruleId] == 0U) {
+                    activate(program.rules[ruleId].head);
+                }
+            }
+            drainAgenda();
+        }
+        out.supportDraws += static_cast<uint64_t>(drawsThisWorld);
+
+        for (std::size_t i = 0; i < queryTrue.size(); ++i) {
+            out.queries[i].successes += queryTrue[i] ? 1ULL : 0ULL;
+        }
+    }
+    out.samplingSec = elapsedSeconds(sampleStart);
+
+    for (auto& query : out.queries) {
+        query.probability = static_cast<double>(query.successes) / static_cast<double>(out.samples);
+        query.empiricalStdErr = std::sqrt(
+                std::max(0.0, query.probability * (1.0 - query.probability)) /
+                static_cast<double>(out.samples));
+    }
+    return out;
 }
 
 AmcQueryResult evaluateQueryWithAmc(SubgraphView& view, const NodePtr& query, const Options& opt) {
@@ -2451,6 +4371,404 @@ void runBackendAmc(
     }
 }
 
+void runBackendSampling(
+        const char* backend,
+        SubgraphView& activeView,
+        IncrementalDerivationGraph& graph,
+        const std::vector<UntypedTuple>& queryTuples,
+        const Options& opt,
+        double& fcSec,
+        double& evalSec,
+        SamplingSummary* summaryOut = nullptr) {
+    const auto totalStart = Clock::now();
+    std::cout << "[backend] " << backend << '\n';
+    std::cout << std::setprecision(17);
+
+    SamplingSummary summary;
+
+    for (const auto& queryTuple : queryTuples) {
+        NodePtr target = graph.findNode(queryTuple);
+        if (!target) {
+            target = findByTupleInView(activeView, queryTuple);
+        }
+        if (!target) {
+            if (auto precomputed = findPrecomputedProbability(graph, activeView, queryTuple)) {
+                std::cout << "[result] " << queryTuple.toString() << " = " << *precomputed << '\n';
+                ++summary.deterministicQueries;
+                continue;
+            }
+            throw std::runtime_error("Query tuple is outside active view: " + queryTuple.toString());
+        }
+        if (auto precomputed = findPrecomputedProbability(graph, activeView, queryTuple)) {
+            std::cout << "[result] " << queryTuple.toString() << " = " << *precomputed << '\n';
+            ++summary.deterministicQueries;
+            continue;
+        }
+
+        const auto localSliceStart = Clock::now();
+        SubgraphView queryView = opt.fullGraph
+                ? SubgraphView(activeView.getNodes(), activeView.getEdges())
+                : buildBackwardSliceInView(activeView, {target});
+        const double localSliceSec = elapsedSeconds(localSliceStart);
+        SamplingQueryResult res = evaluateQueryWithSampling(queryView, target, opt);
+
+        fcSec += localSliceSec + res.extractSec;
+        evalSec += res.samplingSec;
+        if (res.usedSampling) {
+            ++summary.sampledQueries;
+            summary.totalSamples += res.samples;
+            summary.samplingSec += res.samplingSec;
+        } else {
+            ++summary.deterministicQueries;
+        }
+        summary.maxRandomVars = std::max(summary.maxRandomVars, res.randomVars);
+
+        const double confidence = 1.0 - opt.delta;
+        const double ciLow =
+                res.usedSampling ? std::max(0.0, res.probability - res.guaranteedAbsError) : res.probability;
+        const double ciHigh =
+                res.usedSampling ? std::min(1.0, res.probability + res.guaranteedAbsError) : res.probability;
+        std::cout << "[sampling-query] tuple=" << queryTuple.toString()
+                  << " sample_policy="
+                  << samplingPolicyName(res.usedSampling, opt.samplingSamplesExplicit)
+                  << " random_vars=" << res.randomVars
+                  << " samples=" << res.samples
+                  << " successes=" << res.successes
+                  << " sampling_s=" << res.samplingSec
+                  << " stderr=" << res.empiricalStdErr
+                  << " confidence=" << confidence
+                  << " configured_delta=" << opt.delta
+                  << " configured_epsilon=" << opt.epsilon
+                  << " achieved_abs_error=" << res.guaranteedAbsError
+                  << " meets_configured_epsilon="
+                  << ((res.usedSampling && res.guaranteedAbsError <= opt.epsilon) ? 1 : 0)
+                  << " ci_low=" << ciLow
+                  << " ci_high=" << ciHigh
+                  << '\n';
+        std::cout << "[result] " << queryTuple.toString() << " = " << res.probability << '\n';
+    }
+
+    if (summaryOut) {
+        *summaryOut = summary;
+    }
+    if (summary.sampledQueries > 0 || summary.deterministicQueries > 0) {
+        std::cout << std::fixed << std::setprecision(6)
+                  << "[sampling-stats] sampled_queries=" << summary.sampledQueries
+                  << " deterministic_queries=" << summary.deterministicQueries
+                  << " max_random_vars=" << summary.maxRandomVars
+                  << " total_samples=" << summary.totalSamples
+                  << " sampling_runtime_s=" << summary.samplingSec
+                  << '\n';
+    }
+    if (summary.sampledQueries == 0 && summary.deterministicQueries == 0) {
+        fcSec = elapsedSeconds(totalStart);
+    }
+}
+
+void runBackendHornSampling(
+        const char* backend,
+        SubgraphView& activeView,
+        IncrementalDerivationGraph& graph,
+        const std::vector<UntypedTuple>& queryTuples,
+        const Options& opt,
+        double& fcSec,
+        double& evalSec,
+        HornSamplingSummary* summaryOut = nullptr) {
+    const auto totalStart = Clock::now();
+    std::cout << "[backend] " << backend << '\n';
+    std::cout << std::setprecision(17);
+
+    HornSamplingSummary summary;
+    std::vector<NodePtr> targets;
+    std::vector<std::size_t> targetPositions;
+    std::vector<std::optional<double>> deterministicResults(queryTuples.size());
+
+    for (std::size_t i = 0; i < queryTuples.size(); ++i) {
+        const auto& queryTuple = queryTuples[i];
+        NodePtr target = findByTupleInView(activeView, queryTuple);
+        if (!target) {
+            if (auto precomputed = findPrecomputedProbability(graph, activeView, queryTuple)) {
+                deterministicResults[i] = *precomputed;
+                ++summary.deterministicQueries;
+                continue;
+            }
+            throw std::runtime_error("Query tuple is outside active view: " + queryTuple.toString());
+        }
+        targets.push_back(target);
+        targetPositions.push_back(i);
+    }
+
+    HornSamplingResult res;
+    if (!targets.empty()) {
+        res = evaluateQueriesWithHornSampling(activeView, targets, opt);
+        fcSec += res.compileSec;
+        evalSec += res.samplingSec;
+        summary.maxDeterministicVars = res.deterministicVars;
+        summary.maxDistributions = res.distributions;
+        summary.maxClauses = res.clauses;
+        summary.worldSamples = res.samples;
+        summary.supportDraws = res.supportDraws;
+        summary.earlyStoppedWorlds = res.earlyStoppedWorlds;
+        summary.samplingSec = res.samplingSec;
+        if (res.usedSampling) {
+            summary.sampledQueries += targets.size();
+        } else {
+            summary.deterministicQueries += targets.size();
+        }
+    }
+
+    std::vector<std::size_t> resultIndexByPosition(queryTuples.size(), std::numeric_limits<std::size_t>::max());
+    for (std::size_t i = 0; i < targetPositions.size(); ++i) {
+        resultIndexByPosition[targetPositions[i]] = i;
+    }
+
+    for (std::size_t i = 0; i < queryTuples.size(); ++i) {
+        const auto& queryTuple = queryTuples[i];
+        const std::size_t resultIndex = resultIndexByPosition[i];
+        if (resultIndex == std::numeric_limits<std::size_t>::max()) {
+            std::cout << "[horn-sampling-query] tuple=" << queryTuple.toString()
+                      << " sample_policy=deterministic"
+                      << " deterministic_vars=0"
+                      << " distributions=0"
+                      << " clauses=0"
+                      << " samples=0"
+                      << " successes=0"
+                      << " sampling_s=0"
+                      << " stderr=0"
+                      << " configured_delta=" << opt.delta
+                      << " confidence=" << (1.0 - opt.delta)
+                      << " achieved_abs_error=0"
+                      << '\n';
+            std::cout << "[result] " << queryTuple.toString() << " = " << deterministicResults[i].value_or(0.0)
+                      << '\n';
+            continue;
+        }
+
+        const auto& qr = res.queries[resultIndex];
+        const double ciLow = res.usedSampling
+                ? std::max(0.0, qr.probability - res.guaranteedAbsError)
+                : qr.probability;
+        const double ciHigh = res.usedSampling
+                ? std::min(1.0, qr.probability + res.guaranteedAbsError)
+                : qr.probability;
+        std::cout << "[horn-sampling-query] tuple=" << queryTuple.toString()
+                  << " sample_policy=" << samplingPolicyName(res.usedSampling, opt.samplingSamplesExplicit)
+                  << " deterministic_vars=" << res.deterministicVars
+                  << " distributions=" << res.distributions
+                  << " clauses=" << res.clauses
+                  << " samples=" << res.samples
+                  << " avg_support_draws="
+                  << (res.samples == 0
+                                  ? 0.0
+                                  : static_cast<double>(res.supportDraws) / static_cast<double>(res.samples))
+                  << " early_stopped_worlds=" << res.earlyStoppedWorlds
+                  << " successes=" << qr.successes
+                  << " sampling_s=" << res.samplingSec
+                  << " stderr=" << qr.empiricalStdErr
+                  << " configured_delta=" << opt.delta
+                  << " confidence=" << (1.0 - opt.delta)
+                  << " configured_epsilon=" << opt.epsilon
+                  << " achieved_abs_error=" << res.guaranteedAbsError
+                  << " meets_configured_epsilon="
+                  << ((res.usedSampling && res.guaranteedAbsError <= opt.epsilon) ? 1 : 0)
+                  << " ci_low=" << ciLow
+                  << " ci_high=" << ciHigh
+                  << '\n';
+        std::cout << "[result] " << queryTuple.toString() << " = " << qr.probability << '\n';
+    }
+
+    if (summaryOut) {
+        *summaryOut = summary;
+    }
+    if (summary.sampledQueries > 0 || summary.deterministicQueries > 0) {
+        std::cout << std::fixed << std::setprecision(6)
+                  << "[horn-sampling-stats] sampled_queries=" << summary.sampledQueries
+                  << " deterministic_queries=" << summary.deterministicQueries
+                  << " max_deterministic_vars=" << summary.maxDeterministicVars
+                  << " max_distributions=" << summary.maxDistributions
+                  << " max_clauses=" << summary.maxClauses
+                  << " world_samples=" << summary.worldSamples
+                  << " support_draws=" << summary.supportDraws
+                  << " avg_support_draws="
+                  << (summary.worldSamples == 0
+                                  ? 0.0
+                                  : static_cast<double>(summary.supportDraws) /
+                                            static_cast<double>(summary.worldSamples))
+                  << " early_stopped_worlds=" << summary.earlyStoppedWorlds
+                  << " sampling_runtime_s=" << summary.samplingSec
+                  << '\n';
+    }
+    if (summary.sampledQueries == 0 && summary.deterministicQueries == 0) {
+        fcSec = elapsedSeconds(totalStart);
+    }
+}
+
+void runBackendPepin(
+        const char* backend,
+        SubgraphView& activeView,
+        IncrementalDerivationGraph& graph,
+        const std::vector<UntypedTuple>& queryTuples,
+        const Options& opt,
+        double& fcSec,
+        double& evalSec,
+        PepinSummary* summaryOut = nullptr) {
+    const auto totalStart = Clock::now();
+    std::cout << "[backend] " << backend << '\n';
+    std::cout << std::setprecision(17);
+
+    PepinSummary summary;
+
+    for (const auto& queryTuple : queryTuples) {
+        NodePtr target = graph.findNode(queryTuple);
+        if (!target) {
+            target = findByTupleInView(activeView, queryTuple);
+        }
+        if (!target) {
+            if (auto precomputed = findPrecomputedProbability(graph, activeView, queryTuple)) {
+                std::cout << "[result] " << queryTuple.toString() << " = " << *precomputed << '\n';
+                ++summary.deterministicQueries;
+                continue;
+            }
+            throw std::runtime_error("Query tuple is outside active view: " + queryTuple.toString());
+        }
+        if (auto precomputed = findPrecomputedProbability(graph, activeView, queryTuple)) {
+            std::cout << "[result] " << queryTuple.toString() << " = " << *precomputed << '\n';
+            ++summary.deterministicQueries;
+            continue;
+        }
+
+        const auto localSliceStart = Clock::now();
+        SubgraphView queryView = opt.fullGraph
+                ? SubgraphView(activeView.getNodes(), activeView.getEdges())
+                : buildBackwardSliceInView(activeView, {target});
+        const double localSliceSec = elapsedSeconds(localSliceStart);
+        PepinQueryResult res = evaluateQueryWithPepin(queryView, target, opt);
+
+        fcSec += localSliceSec + res.extractSec + res.expandSec;
+        evalSec += res.pepinSec;
+        if (res.usedPepin) {
+            ++summary.approxQueries;
+            summary.pepinSec += res.pepinSec;
+        } else {
+            ++summary.deterministicQueries;
+        }
+        summary.maxRandomVars = std::max(summary.maxRandomVars, res.randomVars);
+        summary.maxDnfTerms = std::max(summary.maxDnfTerms, res.dnfTerms);
+        summary.maxCubeWidth = std::max(summary.maxCubeWidth, res.maxCubeWidth);
+
+        std::cout << "[pepin-query] tuple=" << queryTuple.toString()
+                  << " mode=" << res.counterKind
+                  << " random_vars=" << res.randomVars
+                  << " dnf_terms=" << res.dnfTerms
+                  << " max_cube_width=" << res.maxCubeWidth
+                  << " extract_s=" << res.extractSec
+                  << " expand_s=" << res.expandSec
+                  << " pepin_s=" << res.pepinSec
+                  << '\n';
+        std::cout << "[result] " << queryTuple.toString() << " = " << res.probability << '\n';
+    }
+
+    if (summaryOut) {
+        *summaryOut = summary;
+    }
+    if (summary.approxQueries > 0 || summary.deterministicQueries > 0) {
+        std::cout << std::fixed << std::setprecision(6)
+                  << "[pepin-stats] approx_queries=" << summary.approxQueries
+                  << " deterministic_queries=" << summary.deterministicQueries
+                  << " max_random_vars=" << summary.maxRandomVars
+                  << " max_dnf_terms=" << summary.maxDnfTerms
+                  << " max_cube_width=" << summary.maxCubeWidth
+                  << " pepin_runtime_s=" << summary.pepinSec
+                  << '\n';
+    }
+    if (summary.approxQueries == 0 && summary.deterministicQueries == 0) {
+        fcSec = elapsedSeconds(totalStart);
+    }
+}
+
+void runBackendSchlandals(
+        const char* backend,
+        SubgraphView& activeView,
+        IncrementalDerivationGraph& graph,
+        const std::vector<UntypedTuple>& queryTuples,
+        const Options& opt,
+        double& fcSec,
+        double& evalSec,
+        SchlandalsSummary* summaryOut = nullptr) {
+    const auto totalStart = Clock::now();
+    std::cout << "[backend] " << backend << '\n';
+    std::cout << std::setprecision(17);
+
+    SchlandalsSummary summary;
+    for (const auto& queryTuple : queryTuples) {
+        NodePtr target = graph.findNode(queryTuple);
+        if (!target) {
+            target = findByTupleInView(activeView, queryTuple);
+        }
+        if (!target) {
+            if (auto precomputed = findPrecomputedProbability(graph, activeView, queryTuple)) {
+                std::cout << "[result] " << queryTuple.toString() << " = " << *precomputed << '\n';
+                ++summary.deterministicQueries;
+                continue;
+            }
+            throw std::runtime_error("Query tuple is outside active view: " + queryTuple.toString());
+        }
+        if (auto precomputed = findPrecomputedProbability(graph, activeView, queryTuple)) {
+            std::cout << "[result] " << queryTuple.toString() << " = " << *precomputed << '\n';
+            ++summary.deterministicQueries;
+            continue;
+        }
+
+        const auto localSliceStart = Clock::now();
+        SubgraphView queryView = opt.fullGraph
+                ? SubgraphView(activeView.getNodes(), activeView.getEdges())
+                : buildBackwardSliceInView(activeView, {target});
+        const double localSliceSec = elapsedSeconds(localSliceStart);
+        SchlandalsQueryResult res = evaluateQueryWithSchlandals(queryView, target, opt);
+
+        fcSec += localSliceSec + res.encodeSec;
+        evalSec += res.schlandalsSec;
+        if (res.usedSchlandals) {
+            ++summary.approxQueries;
+            summary.schlandalsSec += res.schlandalsSec;
+        } else {
+            ++summary.deterministicQueries;
+        }
+        summary.maxDeterministicVars = std::max(summary.maxDeterministicVars, res.deterministicVars);
+        summary.maxDistributions = std::max(summary.maxDistributions, res.distributions);
+        summary.maxClauses = std::max(summary.maxClauses, res.clauses);
+
+        std::cout << "[schlandals-query] tuple=" << queryTuple.toString()
+                  << " deterministic_vars=" << res.deterministicVars
+                  << " distributions=" << res.distributions
+                  << " clauses=" << res.clauses
+                  << " encode_s=" << res.encodeSec
+                  << " schlandals_s=" << res.schlandalsSec
+                  << " mode=" << (res.approximate ? "lds" : "exact")
+                  << " lower=" << res.lowerBound
+                  << " upper=" << res.upperBound
+                  << '\n';
+        std::cout << "[result] " << queryTuple.toString() << " = " << res.probability << '\n';
+    }
+
+    if (summaryOut) {
+        *summaryOut = summary;
+    }
+    if (summary.approxQueries > 0 || summary.deterministicQueries > 0) {
+        std::cout << std::fixed << std::setprecision(6)
+                  << "[schlandals-stats] approx_queries=" << summary.approxQueries
+                  << " deterministic_queries=" << summary.deterministicQueries
+                  << " max_deterministic_vars=" << summary.maxDeterministicVars
+                  << " max_distributions=" << summary.maxDistributions
+                  << " max_clauses=" << summary.maxClauses
+                  << " schlandals_runtime_s=" << summary.schlandalsSec
+                  << '\n';
+    }
+    if (summary.approxQueries == 0 && summary.deterministicQueries == 0) {
+        fcSec = elapsedSeconds(totalStart);
+    }
+}
+
 void runBackendBddHybrid(
         const char* backend,
         SubgraphView& activeView,
@@ -2637,6 +4955,20 @@ int main(int argc, char** argv) {
                     " (set APPROXMC_BIN or pass --approxmc-bin)");
         }
 #endif
+ #ifndef SOUFFLE_STANDALONE_HAS_PEPIN_LIB
+        if (opt.backend == Backend::Pepin && !fileExists(opt.pepinBin)) {
+            throw std::runtime_error(
+                    "pepin binary not found: " + opt.pepinBin +
+                    " (set PEPIN_BIN or pass --pepin-bin)");
+        }
+ #endif
+ #ifndef SOUFFLE_STANDALONE_HAS_SCHLANDALS_LIB
+        if (opt.backend == Backend::Schlandals && !fileExists(opt.schlandalsBin)) {
+            throw std::runtime_error(
+                    "schlandals binary not found: " + opt.schlandalsBin +
+                    " (set SCHLANDALS_BIN or pass --schlandals-bin)");
+        }
+ #endif
         if (envTruthy(std::getenv("SOUFFLE_STANDALONE_DUMP_JSON"))) {
             DerivationGraphViewInterface::setDumpJsonEnabled(true);
         }
@@ -2813,6 +5145,10 @@ int main(int argc, char** argv) {
         double bddReorderSec = 0.0;
         std::size_t bddReorderCount = 0;
         AmcSummary amcSummary;
+        SamplingSummary samplingSummary;
+        HornSamplingSummary hornSamplingSummary;
+        PepinSummary pepinSummary;
+        SchlandalsSummary schlandalsSummary;
         const bool enableDebugger = envTruthy(std::getenv("SOUFFLE_STANDALONE_USE_DEBUGGER"));
         if (opt.backend == Backend::Bdd) {
             if (opt.rewrite) {
@@ -2828,6 +5164,22 @@ int main(int argc, char** argv) {
             runBackendAmc(
                     backendName(opt.backend), *activeView, *graph, queryTuples, opt, fcSec, evalSec,
                     &amcSummary);
+        } else if (opt.backend == Backend::Sampling) {
+            runBackendSampling(
+                    backendName(opt.backend), *activeView, *graph, queryTuples, opt, fcSec, evalSec,
+                    &samplingSummary);
+        } else if (opt.backend == Backend::HornSampling) {
+            runBackendHornSampling(
+                    backendName(opt.backend), *activeView, *graph, queryTuples, opt, fcSec, evalSec,
+                    &hornSamplingSummary);
+        } else if (opt.backend == Backend::Pepin) {
+            runBackendPepin(
+                    backendName(opt.backend), *activeView, *graph, queryTuples, opt, fcSec, evalSec,
+                    &pepinSummary);
+        } else if (opt.backend == Backend::Schlandals) {
+            runBackendSchlandals(
+                    backendName(opt.backend), *activeView, *graph, queryTuples, opt, fcSec, evalSec,
+                    &schlandalsSummary);
         } else {
 #ifdef SOUFFLE_STANDALONE_HAS_SDD
             runBackend<SddFormulaManager, SddNodeRef>(
@@ -2867,6 +5219,54 @@ int main(int argc, char** argv) {
                       << " preprocess=" << (opt.amcPreprocess ? 1 : 0)
                       << " approx_queries=" << amcSummary.approxQueries
                       << " deterministic_queries=" << amcSummary.deterministicQueries
+                      << '\n';
+        } else if (opt.backend == Backend::Sampling) {
+        std::cout << std::fixed << std::setprecision(6)
+                  << "[sampling-config] sample_policy="
+                  << (opt.samplingSamplesExplicit ? "fixed" : "derived")
+                  << " samples=" << opt.samplingSamples
+                  << " configured_epsilon=" << opt.epsilon
+                  << " configured_delta=" << opt.delta
+                  << " confidence=" << (1.0 - opt.delta)
+                  << " achieved_abs_error=" << hoeffdingHalfWidth(opt.samplingSamples, opt.delta)
+                  << " meets_configured_epsilon="
+                  << (hoeffdingHalfWidth(opt.samplingSamples, opt.delta) <= opt.epsilon ? 1 : 0)
+                  << " sampled_queries=" << samplingSummary.sampledQueries
+                  << " deterministic_queries=" << samplingSummary.deterministicQueries
+                  << '\n';
+        } else if (opt.backend == Backend::HornSampling) {
+            const uint64_t effectiveSamples = opt.samplingSamplesExplicit
+                    ? opt.samplingSamples
+                    : std::max<uint64_t>(1000, samplingSamplesFromHoeffding(opt.epsilon, opt.delta));
+            std::cout << std::fixed << std::setprecision(6)
+                      << "[horn-sampling-config] sample_policy="
+                      << (opt.samplingSamplesExplicit ? "fixed" : "derived")
+                      << " samples=" << effectiveSamples
+                      << " configured_epsilon=" << opt.epsilon
+                      << " configured_delta=" << opt.delta
+                      << " confidence=" << (1.0 - opt.delta)
+                      << " achieved_abs_error=" << hoeffdingHalfWidth(effectiveSamples, opt.delta)
+                      << " meets_configured_epsilon="
+                      << (hoeffdingHalfWidth(effectiveSamples, opt.delta) <= opt.epsilon ? 1 : 0)
+                      << " sampled_queries=" << hornSamplingSummary.sampledQueries
+                      << " deterministic_queries=" << hornSamplingSummary.deterministicQueries
+                      << '\n';
+        } else if (opt.backend == Backend::Pepin) {
+            std::cout << std::fixed << std::setprecision(6)
+                      << "[pepin-config] epsilon=" << opt.epsilon
+                      << " delta=" << opt.delta
+                      << " seed=" << opt.seed
+                      << " max_terms=" << opt.pepinMaxTerms
+                      << " weight_digits=" << opt.pepinWeightDigits
+                      << " approx_queries=" << pepinSummary.approxQueries
+                      << " deterministic_queries=" << pepinSummary.deterministicQueries
+                      << '\n';
+        } else if (opt.backend == Backend::Schlandals) {
+            std::cout << std::fixed << std::setprecision(6)
+                      << "[schlandals-config] epsilon=" << opt.epsilon
+                      << " mode=" << (opt.schlandalsLds ? "lds" : "exact")
+                      << " approx_queries=" << schlandalsSummary.approxQueries
+                      << " deterministic_queries=" << schlandalsSummary.deterministicQueries
                       << '\n';
         }
         std::cout << std::fixed << std::setprecision(6)
