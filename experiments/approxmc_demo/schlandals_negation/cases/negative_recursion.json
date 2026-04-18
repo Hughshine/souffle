@@ -1,0 +1,19 @@
+{
+  "facts": [],
+  "rules": [
+    {
+      "head": "a(1)",
+      "probability": 1,
+      "bodies": [
+        {"name": "b(1)", "negation": true}
+      ]
+    },
+    {
+      "head": "b(1)",
+      "probability": 1,
+      "bodies": [
+        {"name": "a(1)", "negation": true}
+      ]
+    }
+  ]
+}

@@ -13,6 +13,8 @@ target_include_directories(weighted_conversion PUBLIC
 add_executable(weighted_conversion_demo weighted_conversion_demo.cpp)
 target_link_libraries(weighted_conversion_demo PRIVATE weighted_conversion)
 
+add_executable(problog_sampling_backends_demo problog_sampling_backends_demo.cpp)
+
 option(APPROXMC_DEMO_BUILD_WITH_APPROXMC "Build demos that require ApproxMC library" ON)
 if(APPROXMC_DEMO_BUILD_WITH_APPROXMC)
     find_package(approxmc CONFIG QUIET)

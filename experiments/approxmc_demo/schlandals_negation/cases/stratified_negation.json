@@ -1,0 +1,33 @@
+{
+  "facts": [
+    {"name": "coin(1)", "probability": 0.7},
+    {"name": "blocked(1)", "probability": 1},
+    {"name": "seed(1)", "probability": 1}
+  ],
+  "rules": [
+    {
+      "head": "pass(1)",
+      "probability": 1,
+      "bodies": [
+        {"name": "coin(1)", "negation": false},
+        {"name": "missing(1)", "negation": true}
+      ]
+    },
+    {
+      "head": "blocked_pass(1)",
+      "probability": 1,
+      "bodies": [
+        {"name": "coin(1)", "negation": false},
+        {"name": "blocked(1)", "negation": true}
+      ]
+    },
+    {
+      "head": "missing(1)",
+      "probability": 1,
+      "bodies": [
+        {"name": "seed(1)", "negation": false},
+        {"name": "absent_support(1)", "negation": false}
+      ]
+    }
+  ]
+}

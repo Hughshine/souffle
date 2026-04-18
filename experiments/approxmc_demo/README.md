@@ -11,6 +11,7 @@ Standalone experiment directory for using ApproxMC from C++ without modifying So
 - `weighted_appmc_demo.cpp`: weighted counting demo through `WeightedAppMC`.
 - `unweighted_appmc_demo.cpp`: baseline unweighted AppMC demo.
 - `dg_wamc_pipeline_demo.cpp`: derivation-graph -> formula -> weighted-AMC pipeline demo (full/static).
+- `problog_sampling_backends_demo.cpp`: toy ProbLog-style approximation demo comparing multiple sampling backends on one shared example.
 - `DG_WAMC_PIPELINE_DEMO.md`: detailed guide for the derivation-graph pipeline demo.
 - `toy_weighted.cnf`: minimal weighted toy input.
 - `weighted_pipeline_demo.py`: legacy Python pipeline demo kept for comparison.
@@ -160,6 +161,41 @@ Useful flags:
 Expected toy results in the demo output:
 - `q(1)` probability: `0.76`
 - `r(1)` probability: `0.42`
+
+## ProbLog sampling-backend demo
+
+This demo compares several approximation backends on one fixed tiny ProbLog-style example:
+- world/program Monte Carlo
+- formula-support Monte Carlo
+- rejection sampling
+- likelihood weighting
+- importance sampling
+- particle-style SIR
+- Metropolis-Hastings
+- DNF-guided sampling
+
+It now ships four built-in examples with increasing structural complexity:
+- `easy`: one evidence literal, light proof overlap
+- `medium`: more support variables and two evidence literals
+- `rare`: three-literal evidence with lower acceptance probability
+- `dense`: denser proof overlap over a larger support
+
+By default the demo runs all four examples with per-example budgets tuned to
+stay within a practical single-example runtime budget while still tracking the
+exact conditional probability closely.
+
+Build and run (from repo root):
+```bash
+cmake --build build --target souffle-sampling-backend-demo -j
+./build/src/souffle-sampling-backend-demo
+```
+
+Optional backend selection:
+```bash
+./build/src/souffle-sampling-backend-demo --backend dnf
+./build/src/souffle-sampling-backend-demo --backend mh --mh-iterations 800000
+./build/src/souffle-sampling-backend-demo --example dense
+```
 
 ## Upstream references
 - ApproxMC: https://github.com/meelgroup/approxmc

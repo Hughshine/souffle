@@ -370,6 +370,7 @@ set(SOUFFLE_HAS_PEPIN_DIRECT OFF)
 set(SOUFFLE_HAS_SCHLANDALS_DIRECT OFF)
 set(SCHLANDALS_FFI_CRATE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/problog/approx/schlandals_ffi)
 set(SCHLANDALS_FFI_LIB ${SCHLANDALS_FFI_CRATE_DIR}/target/release/libsouffle_schlandals_ffi.a)
+set(SCHLANDALS_CRATE_SOURCE_DIR ${PROJECT_SOURCE_DIR}/research/external/schlandals)
 if (approxmc_FOUND)
   find_package(cryptominisat5 CONFIG QUIET)
   find_package(sbva CONFIG QUIET)
@@ -415,7 +416,9 @@ if (CUDD_LIBRARY)
   else ()
     message(STATUS "Building souffle-problog-graph-query without SDD backend: SDD library not found")
   endif ()
-  if (CARGO_EXECUTABLE AND EXISTS ${SCHLANDALS_FFI_CRATE_DIR}/Cargo.toml)
+  if (CARGO_EXECUTABLE
+      AND EXISTS ${SCHLANDALS_FFI_CRATE_DIR}/Cargo.toml
+      AND EXISTS ${SCHLANDALS_CRATE_SOURCE_DIR}/Cargo.toml)
     add_custom_target(souffle-schlandals-ffi
       COMMAND ${CARGO_EXECUTABLE} build --manifest-path ${SCHLANDALS_FFI_CRATE_DIR}/Cargo.toml --release --offline
       WORKING_DIRECTORY ${SCHLANDALS_FFI_CRATE_DIR}
@@ -432,7 +435,8 @@ if (CUDD_LIBRARY)
     endif ()
     set(SOUFFLE_HAS_SCHLANDALS_DIRECT ON)
   else ()
-    message(STATUS "Building souffle-problog-graph-query without direct Schlandals library: cargo or schlandals ffi crate not found")
+    message(STATUS
+      "Building souffle-problog-graph-query without direct Schlandals library: cargo, ffi crate, or research/external schlandals dependency not found")
   endif ()
   target_link_libraries(souffle-problog-graph-query PRIVATE libsouffle compiled ${SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS})
   add_dependencies(souffle-problog-graph-query compiled)

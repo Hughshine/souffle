@@ -59,8 +59,16 @@ enum class BackendMode {
     Both,
 };
 
+enum class FormulaFamily {
+    AltTree,
+    DnfDisjoint,
+    SharedCore,
+    LadderReach,
+};
+
 struct Options {
     BackendMode backend = BackendMode::Both;
+    FormulaFamily family = FormulaFamily::AltTree;
     uint32_t nvars = 100;
     uint32_t seed = 1;
     double epsilon = 0.1;
@@ -84,6 +92,30 @@ BackendMode parseBackend(const std::string& s) {
     throw std::runtime_error("Invalid backend: " + s + " (expected bdd|amc|both)");
 }
 
+FormulaFamily parseFamily(const std::string& s) {
+    if (s == "alt-tree") return FormulaFamily::AltTree;
+    if (s == "dnf-disjoint") return FormulaFamily::DnfDisjoint;
+    if (s == "shared-core") return FormulaFamily::SharedCore;
+    if (s == "ladder-reach") return FormulaFamily::LadderReach;
+    throw std::runtime_error(
+            "Invalid family: " + s +
+            " (expected alt-tree|dnf-disjoint|shared-core|ladder-reach)");
+}
+
+std::string familyName(FormulaFamily family) {
+    switch (family) {
+        case FormulaFamily::AltTree:
+            return "alt-tree";
+        case FormulaFamily::DnfDisjoint:
+            return "dnf-disjoint";
+        case FormulaFamily::SharedCore:
+            return "shared-core";
+        case FormulaFamily::LadderReach:
+            return "ladder-reach";
+    }
+    return "unknown";
+}
+
 Options parseArgs(int argc, char** argv) {
     Options opt;
     opt.approxmcBin = defaultApproxmcBin();
@@ -92,6 +124,9 @@ Options parseArgs(int argc, char** argv) {
         if (arg == "--backend") {
             if (i + 1 >= argc) throw std::runtime_error("Missing value after --backend");
             opt.backend = parseBackend(argv[++i]);
+        } else if (arg == "--family") {
+            if (i + 1 >= argc) throw std::runtime_error("Missing value after --family");
+            opt.family = parseFamily(argv[++i]);
         } else if (arg == "--nvars") {
             if (i + 1 >= argc) throw std::runtime_error("Missing value after --nvars");
             opt.nvars = static_cast<uint32_t>(std::stoul(argv[++i]));
@@ -127,28 +162,76 @@ bool fileExists(const std::string& path) {
     return in.good();
 }
 
+bool keepIntermediateCnf() {
+    const char* env = std::getenv("SOUFFLE_BDD_AMC_KEEP_CNF");
+    return env && *env && std::strcmp(env, "0") != 0;
+}
+
 struct SyntheticGraph {
     DerivationGraph graph;
     NodePtr query;
     uint32_t randomFacts = 0;
+    uint32_t randomEdges = 0;
+    std::string family;
 };
 
-long double factProb(uint32_t i) {
-    static_cast<void>(i);
-    // Keep weights dyadic to avoid conversion blow-up in this benchmark.
-    return 0.5L;
+long double benchmarkProb(uint32_t i, uint32_t seed) {
+    // Keep weights dyadic so the benchmark reflects weighted WMC without
+    // introducing quantization noise from non-dyadic literals.
+    static constexpr long double kPalette[] = {
+            0.5L,
+            0.25L,
+            0.75L,
+            0.125L,
+            0.875L,
+            0.375L,
+            0.625L,
+    };
+    constexpr size_t kPaletteSize = sizeof(kPalette) / sizeof(kPalette[0]);
+    return kPalette[(static_cast<size_t>(i) + static_cast<size_t>(seed)) % kPaletteSize];
 }
 
-SyntheticGraph buildSyntheticGraph(uint32_t nvars, uint32_t seed) {
+NodePtr createNodeChecked(
+        DerivationGraph& graph,
+        const std::string& rel,
+        std::initializer_list<souffle::RamDomain> args,
+        long double prob = 1.0L,
+        bool isFact = false) {
+    NodePtr n = graph.createNode(UntypedTuple{rel, std::vector<souffle::RamDomain>(args)}, prob);
+    if (!n) {
+        throw std::runtime_error("Failed creating node " + rel);
+    }
+    n->isFact = isFact;
+    return n;
+}
+
+EdgePtr createEdgeChecked(
+        DerivationGraph& graph,
+        std::vector<NodePtr> inputs,
+        const NodePtr& output,
+        long double prob,
+        uint32_t& ruleId) {
+    std::vector<bool> negs(inputs.size(), false);
+    auto e = graph.createHyperedge(
+            std::move(inputs), output, nullptr, negs,
+            RuleApplication{static_cast<souffle::RamDomain>(ruleId++), {}});
+    if (!e) {
+        throw std::runtime_error("Failed creating edge");
+    }
+    e->setProbability(prob);
+    return e;
+}
+
+SyntheticGraph buildAltTreeGraph(uint32_t nvars, uint32_t seed) {
     SyntheticGraph out;
     auto& graph = out.graph;
+    out.family = familyName(FormulaFamily::AltTree);
 
     std::vector<NodePtr> facts;
     facts.reserve(nvars);
     for (uint32_t i = 0; i < nvars; ++i) {
-        NodePtr f = graph.createNode(UntypedTuple{"x", {static_cast<souffle::RamDomain>(i + 1)}}, factProb(i));
-        if (!f) throw std::runtime_error("Failed creating fact node");
-        f->isFact = true;
+        NodePtr f = createNodeChecked(
+                graph, "x", {static_cast<souffle::RamDomain>(i + 1)}, benchmarkProb(i, seed), true);
         facts.push_back(f);
     }
     out.randomFacts = nvars;
@@ -164,28 +247,18 @@ SyntheticGraph buildSyntheticGraph(uint32_t nvars, uint32_t seed) {
                 next.push_back(current[i]);
                 continue;
             }
-            NodePtr n = graph.createNode(UntypedTuple{"t", {static_cast<souffle::RamDomain>(depth),
-                                                            static_cast<souffle::RamDomain>(i / 2 + 1)}},
-                    1.0);
-            if (!n) throw std::runtime_error("Failed creating internal node");
+            NodePtr n = createNodeChecked(graph, "t",
+                    {static_cast<souffle::RamDomain>(depth),
+                            static_cast<souffle::RamDomain>(i / 2 + 1)});
             const NodePtr a = current[i];
             const NodePtr b = current[i + 1];
             if ((depth % 2U) == 0U) {
                 // AND layer
-                auto e = graph.createHyperedge(
-                        {a, b}, n, nullptr, {false, false},
-                        RuleApplication{static_cast<souffle::RamDomain>(ruleId++), {}});
-                if (!e) throw std::runtime_error("Failed creating AND edge");
-                e->setProbability(1.0);
+                createEdgeChecked(graph, {a, b}, n, 1.0L, ruleId);
             } else {
                 // OR layer
-                auto e1 = graph.createHyperedge({a}, n, nullptr, {false},
-                        RuleApplication{static_cast<souffle::RamDomain>(ruleId++), {}});
-                auto e2 = graph.createHyperedge({b}, n, nullptr, {false},
-                        RuleApplication{static_cast<souffle::RamDomain>(ruleId++), {}});
-                if (!e1 || !e2) throw std::runtime_error("Failed creating OR edges");
-                e1->setProbability(1.0);
-                e2->setProbability(1.0);
+                createEdgeChecked(graph, {a}, n, 1.0L, ruleId);
+                createEdgeChecked(graph, {b}, n, 1.0L, ruleId);
             }
             next.push_back(n);
         }
@@ -193,16 +266,140 @@ SyntheticGraph buildSyntheticGraph(uint32_t nvars, uint32_t seed) {
         ++depth;
     }
 
-    NodePtr q = graph.createNode(UntypedTuple{"qbig", {1}}, 1.0);
-    if (!q) throw std::runtime_error("Failed creating query node");
+    NodePtr q = createNodeChecked(graph, "qbig", {1});
     q->setQuery();
-    auto e = graph.createHyperedge({current.front()}, q, nullptr, {false},
-            RuleApplication{static_cast<souffle::RamDomain>(ruleId++), {}});
-    if (!e) throw std::runtime_error("Failed creating query edge");
-    e->setProbability(1.0);
+    createEdgeChecked(graph, {current.front()}, q, 1.0L, ruleId);
 
     out.query = q;
     return out;
+}
+
+SyntheticGraph buildDnfDisjointGraph(uint32_t nvars, uint32_t seed) {
+    SyntheticGraph out;
+    auto& graph = out.graph;
+    out.family = familyName(FormulaFamily::DnfDisjoint);
+
+    const uint32_t termWidth = 4;
+    uint32_t ruleId = 2000 + seed;
+    std::vector<NodePtr> terms;
+    uint32_t factIdx = 0;
+    while (factIdx < nvars) {
+        std::vector<NodePtr> inputs;
+        for (uint32_t j = 0; j < termWidth && factIdx < nvars; ++j, ++factIdx) {
+            inputs.push_back(createNodeChecked(graph, "x",
+                    {static_cast<souffle::RamDomain>(factIdx + 1)},
+                    benchmarkProb(factIdx, seed), true));
+            ++out.randomFacts;
+        }
+        NodePtr term = createNodeChecked(graph, "term",
+                {static_cast<souffle::RamDomain>(terms.size() + 1)});
+        createEdgeChecked(graph, std::move(inputs), term, 1.0L, ruleId);
+        terms.push_back(term);
+    }
+
+    NodePtr q = createNodeChecked(graph, "qdnf", {1});
+    q->setQuery();
+    for (const auto& term : terms) {
+        createEdgeChecked(graph, {term}, q, 1.0L, ruleId);
+    }
+    out.query = q;
+    return out;
+}
+
+SyntheticGraph buildSharedCoreGraph(uint32_t nvars, uint32_t seed) {
+    SyntheticGraph out;
+    auto& graph = out.graph;
+    out.family = familyName(FormulaFamily::SharedCore);
+
+    uint32_t ruleId = 3000 + seed;
+    const uint32_t coreSize = std::min<uint32_t>(
+            std::max<uint32_t>(2, static_cast<uint32_t>(std::sqrt(static_cast<double>(nvars)))),
+            std::max<uint32_t>(2, nvars / 2));
+    std::vector<NodePtr> coreFacts;
+    coreFacts.reserve(coreSize);
+    for (uint32_t i = 0; i < coreSize; ++i) {
+        coreFacts.push_back(createNodeChecked(graph, "c",
+                {static_cast<souffle::RamDomain>(i + 1)},
+                benchmarkProb(i, seed), true));
+        ++out.randomFacts;
+    }
+
+    NodePtr core = createNodeChecked(graph, "core", {1});
+    createEdgeChecked(graph, coreFacts, core, 1.0L, ruleId);
+
+    const uint32_t branchWidth = 2;
+    std::vector<NodePtr> branches;
+    for (uint32_t nextFact = coreSize, branchId = 1; nextFact < nvars; ++branchId) {
+        std::vector<NodePtr> inputs;
+        inputs.push_back(core);
+        for (uint32_t j = 0; j < branchWidth && nextFact < nvars; ++j, ++nextFact) {
+            inputs.push_back(createNodeChecked(graph, "b",
+                    {static_cast<souffle::RamDomain>(nextFact + 1)},
+                    benchmarkProb(nextFact, seed), true));
+            ++out.randomFacts;
+        }
+        NodePtr branch = createNodeChecked(graph, "branch", {static_cast<souffle::RamDomain>(branchId)});
+        createEdgeChecked(graph, std::move(inputs), branch, 1.0L, ruleId);
+        branches.push_back(branch);
+    }
+
+    if (branches.empty()) {
+        branches.push_back(core);
+    }
+
+    NodePtr q = createNodeChecked(graph, "qshared", {1});
+    q->setQuery();
+    for (const auto& branch : branches) {
+        createEdgeChecked(graph, {branch}, q, 1.0L, ruleId);
+    }
+    out.query = q;
+    return out;
+}
+
+SyntheticGraph buildLadderReachGraph(uint32_t nvars, uint32_t seed) {
+    SyntheticGraph out;
+    auto& graph = out.graph;
+    out.family = familyName(FormulaFamily::LadderReach);
+
+    uint32_t ruleId = 4000 + seed;
+    const uint32_t stages = std::max<uint32_t>(1, nvars / 2);
+    NodePtr current = createNodeChecked(graph, "src", {1}, 1.0L, true);
+
+    for (uint32_t stage = 0; stage < stages; ++stage) {
+        NodePtr left = createNodeChecked(graph, "left",
+                {static_cast<souffle::RamDomain>(stage + 1)});
+        NodePtr right = createNodeChecked(graph, "right",
+                {static_cast<souffle::RamDomain>(stage + 1)});
+        NodePtr merged = createNodeChecked(graph, "merge",
+                {static_cast<souffle::RamDomain>(stage + 1)});
+
+        createEdgeChecked(graph, {current}, left, benchmarkProb(2 * stage, seed), ruleId);
+        createEdgeChecked(graph, {current}, right, benchmarkProb(2 * stage + 1, seed), ruleId);
+        createEdgeChecked(graph, {left}, merged, 1.0L, ruleId);
+        createEdgeChecked(graph, {right}, merged, 1.0L, ruleId);
+        out.randomEdges += 2;
+        current = merged;
+    }
+
+    NodePtr q = createNodeChecked(graph, "qreach", {1});
+    q->setQuery();
+    createEdgeChecked(graph, {current}, q, 1.0L, ruleId);
+    out.query = q;
+    return out;
+}
+
+SyntheticGraph buildSyntheticGraph(FormulaFamily family, uint32_t nvars, uint32_t seed) {
+    switch (family) {
+        case FormulaFamily::AltTree:
+            return buildAltTreeGraph(nvars, seed);
+        case FormulaFamily::DnfDisjoint:
+            return buildDnfDisjointGraph(nvars, seed);
+        case FormulaFamily::SharedCore:
+            return buildSharedCoreGraph(nvars, seed);
+        case FormulaFamily::LadderReach:
+            return buildLadderReachGraph(nvars, seed);
+    }
+    throw std::runtime_error("Unhandled family");
 }
 
 struct BddResult {
@@ -716,8 +913,10 @@ struct AmcResult {
     double extractSec = 0.0;
     double encodeSec = 0.0;
     double convertSec = 0.0;
+    double writeCnfSec = 0.0;
     double approxmcSec = 0.0;
     long double unweightedEstimate = 0.0L;
+    std::string cnfPath;
 };
 
 AmcResult runAmc(const DerivationGraph& graph, const NodePtr& query, const Options& opt) {
@@ -759,9 +958,15 @@ AmcResult runAmc(const DerivationGraph& graph, const NodePtr& query, const Optio
     }
 
     const std::string cnfPath = "/tmp/souffle_bdd_amc_" + sanitizeFileSuffix(query->toString()) + ".cnf";
+    const auto tWrite = Clock::now();
     writeApproxmcCnf(converted, cnfPath);
+    out.writeCnfSec = elapsedSec(tWrite);
+    out.cnfPath = cnfPath;
     const auto approx = runApproxmc(opt.approxmcBin, cnfPath, opt.epsilon, opt.delta, opt.seed);
-    std::remove(cnfPath.c_str());
+    if (!keepIntermediateCnf()) {
+        std::remove(cnfPath.c_str());
+        out.cnfPath.clear();
+    }
     if (!approx.ok) {
         throw std::runtime_error("ApproxMC failed: " + approx.message + "\n" + approx.rawOutput);
     }
@@ -774,7 +979,8 @@ AmcResult runAmc(const DerivationGraph& graph, const NodePtr& query, const Optio
 
 void printUsage(const char* argv0) {
     std::cout << "Usage: " << argv0
-              << " [--backend bdd|amc|both] [--nvars 100] [--seed 1]"
+              << " [--backend bdd|amc|both] [--family alt-tree|dnf-disjoint|shared-core|ladder-reach]"
+                 " [--nvars 100] [--seed 1]"
                  " [--epsilon 0.1] [--delta 0.05] [--approxmc-bin /path/to/approxmc]\n";
 }
 
@@ -796,13 +1002,15 @@ int main(int argc, char** argv) {
         }
 
         const auto tBuild = Clock::now();
-        SyntheticGraph bench = buildSyntheticGraph(opt.nvars, opt.seed);
+        SyntheticGraph bench = buildSyntheticGraph(opt.family, opt.nvars, opt.seed);
         const double buildSec = elapsedSec(tBuild);
 
         std::cout << std::setprecision(17);
-        std::cout << "[graph] nodes=" << bench.graph.getNodes().size()
+        std::cout << "[graph] family=" << bench.family
+                  << " nodes=" << bench.graph.getNodes().size()
                   << " edges=" << bench.graph.getEdges().size()
                   << " random_facts=" << bench.randomFacts
+                  << " random_edges=" << bench.randomEdges
                   << " query=" << bench.query->toString()
                   << " build_s=" << buildSec << "\n";
 
@@ -836,7 +1044,9 @@ int main(int argc, char** argv) {
                       << " extract_s=" << amc.extractSec
                       << " encode_s=" << amc.encodeSec
                       << " convert_s=" << amc.convertSec
+                      << " write_cnf_s=" << amc.writeCnfSec
                       << " approxmc_s=" << amc.approxmcSec
+                      << " cnf_path=" << (amc.cnfPath.empty() ? "-" : amc.cnfPath)
                       << " total_s=" << total
                       << " peak_rss_kb=" << peakRssKb()
                       << "\n";
