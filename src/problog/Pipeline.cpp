@@ -32,6 +32,21 @@ namespace souffle::problog {
 namespace {
 bool fullOnlyMode = false;
 
+static std::unordered_map<std::string, std::vector<char>> collectRelationAttributeTypes(
+        SouffleProgram& program) {
+    std::unordered_map<std::string, std::vector<char>> relationTypes;
+    for (auto* rel : program.getAllRelations()) {
+        std::vector<char> attrs;
+        attrs.reserve(rel->getArity());
+        for (std::size_t i = 0; i < rel->getArity(); ++i) {
+            const char* attrType = rel->getAttrType(i);
+            attrs.push_back((attrType != nullptr && attrType[0] != '\0') ? attrType[0] : '?');
+        }
+        relationTypes.emplace(rel->getName(), std::move(attrs));
+    }
+    return relationTypes;
+}
+
 static std::size_t countInitialInputFacts() {
     return inputFactSet.size();
 }
@@ -2215,6 +2230,13 @@ void runPipeline(
         const std::vector<std::pair<UntypedTuple, bool>>& evidences) {
     std::cout << std::fixed << std::setprecision(8);
     Debugger& debugger = Debugger::getInstance();
+    configureUntypedTupleRenderingContext(
+            &program.getSymbolTable(), collectRelationAttributeTypes(program));
+    struct ClearTupleRenderingContext {
+        ~ClearTupleRenderingContext() {
+            clearUntypedTupleRenderingContext();
+        }
+    } clearTupleRenderingContext;
     fcProfileEnabled = opt.isFcProfileEnabled();
     wmcProfileEnabled = opt.isWmcProfileEnabled();
     depGraphProfileEnabled = opt.isDepGraphProfileEnabled();

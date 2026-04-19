@@ -7,6 +7,7 @@
 
 #include "souffle/RamTypes.h"
 #include "souffle/SouffleInterface.h"
+#include "souffle/SymbolTable.h"
 #include "souffle/utility/json11.h"
 
 #include <chrono>
@@ -14,6 +15,7 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -22,9 +24,18 @@
 #include <vector>
 
 class Debugger;
+struct UntypedTuple;
 
 std::string generateFilename(const std::string& prefix = "log", const std::string& suffix = ".txt");
 std::string basenameFromPath(const std::string& path);
+void configureUntypedTupleRenderingContext(souffle::SymbolTable* symbolTable,
+        std::unordered_map<std::string, std::vector<char>> relationAttributeTypes);
+void clearUntypedTupleRenderingContext();
+std::vector<souffle::RamDomain> parseUntypedTupleFields(
+        const std::string& relationName, const std::string& renderedFields);
+std::vector<souffle::RamDomain> parseUntypedTupleJsonFields(
+        const std::string& relationName, const json11::Json& renderedFields);
+UntypedTuple parseUntypedTupleJson(const json11::Json& tupleJson);
 
 class FunctionTimer {
 private:
@@ -60,6 +71,8 @@ struct UntypedTuple {
     static std::string toString(const UntypedTuple& tuple);
     std::string toString() const;
     json11::Json toJson() const;
+    static std::string toStringFields(
+            const std::string& relationName, const std::vector<souffle::RamDomain>& fields);
     static std::string toStringFields(const std::vector<souffle::RamDomain>& fields);
     bool operator<(const UntypedTuple& other) const;
     bool operator==(const UntypedTuple& other) const;

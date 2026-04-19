@@ -1,5 +1,19 @@
 #include "souffle/problog/Atom.h"
 
+namespace {
+souffle::SymbolTable* activeProblogSymbolTable = nullptr;
+}
+
+namespace souffle::problog {
+void setActiveSymbolTable(SymbolTable* symbolTable) {
+    activeProblogSymbolTable = symbolTable;
+}
+
+SymbolTable* getActiveSymbolTable() {
+    return activeProblogSymbolTable;
+}
+}
+
 std::string atomicToString(const AtomicField& field) {
     if (std::holds_alternative<IntegerField>(field)) {
         return std::to_string(std::get<IntegerField>(field).value);
@@ -22,6 +36,10 @@ souffle::RamDomain evaluateAtomic(
     } else if (std::holds_alternative<FloatField>(field)) {
         return souffle::ramBitCast<souffle::RamDomain>(
                 static_cast<souffle::RamFloat>(std::get<FloatField>(field).value));
+    } else if (std::holds_alternative<StringField>(field)) {
+        auto* symbolTable = souffle::problog::getActiveSymbolTable();
+        assert(symbolTable != nullptr && "Active symbol table required for StringField evaluation");
+        return symbolTable->encode(std::get<StringField>(field).value);
     } else if (std::holds_alternative<VariableField>(field)) {
         const std::string& var = std::get<VariableField>(field).name;
         for (size_t i = 0; i < vars.size(); ++i) {

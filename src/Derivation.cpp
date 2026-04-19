@@ -1,5 +1,6 @@
 #include "souffle/Derivation.h"
 
+#include "souffle/problog/Atom.h"
 #include "souffle/problog/debug/Debugger.h"
 #include "souffle/utility/json11.h"
 
@@ -11,11 +12,202 @@
 #include <iostream>
 #include <map>
 #include <set>
+#include <stdexcept>
 #include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+namespace {
+souffle::SymbolTable* tupleRenderSymbolTable = nullptr;
+std::unordered_map<std::string, std::vector<char>> tupleRenderRelationTypes;
+
+std::string renderTupleField(
+        const std::string& relationName, std::size_t index, souffle::RamDomain field) {
+    auto relIt = tupleRenderRelationTypes.find(relationName);
+    if (relIt == tupleRenderRelationTypes.end() || index >= relIt->second.size()) {
+        return std::to_string(field);
+    }
+    switch (relIt->second[index]) {
+        case 's':
+            if (tupleRenderSymbolTable == nullptr) {
+                return std::to_string(field);
+            }
+            return json11::Json(tupleRenderSymbolTable->decode(field)).dump();
+        default:
+            return std::to_string(field);
+    }
+}
+
+json11::Json renderTupleFieldJson(
+        const std::string& relationName, std::size_t index, souffle::RamDomain field) {
+    auto relIt = tupleRenderRelationTypes.find(relationName);
+    if (relIt == tupleRenderRelationTypes.end() || index >= relIt->second.size()) {
+        return json11::Json(static_cast<double>(field));
+    }
+    switch (relIt->second[index]) {
+        case 's':
+            if (tupleRenderSymbolTable == nullptr) {
+                return json11::Json(static_cast<double>(field));
+            }
+            return json11::Json(tupleRenderSymbolTable->decode(field));
+        default:
+            return json11::Json(static_cast<double>(field));
+    }
+}
+
+const std::vector<char>* lookupRelationTypes(const std::string& relationName) {
+    auto relIt = tupleRenderRelationTypes.find(relationName);
+    if (relIt == tupleRenderRelationTypes.end()) {
+        return nullptr;
+    }
+    return &relIt->second;
+}
+
+std::vector<std::string> splitRenderedTupleFields(const std::string& renderedFields) {
+    std::vector<std::string> tokens;
+    std::string current;
+    bool inString = false;
+    bool escaping = false;
+    for (char c : renderedFields) {
+        if (inString) {
+            current.push_back(c);
+            if (escaping) {
+                escaping = false;
+            } else if (c == '\\') {
+                escaping = true;
+            } else if (c == '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (c == '"') {
+            inString = true;
+            current.push_back(c);
+            continue;
+        }
+        if (c == ',') {
+            tokens.push_back(current);
+            current.clear();
+            continue;
+        }
+        current.push_back(c);
+    }
+    if (!current.empty() || !renderedFields.empty()) {
+        tokens.push_back(current);
+    }
+    return tokens;
+}
+}
+
+void configureUntypedTupleRenderingContext(souffle::SymbolTable* symbolTable,
+        std::unordered_map<std::string, std::vector<char>> relationAttributeTypes) {
+    tupleRenderSymbolTable = symbolTable;
+    tupleRenderRelationTypes = std::move(relationAttributeTypes);
+    souffle::problog::setActiveSymbolTable(symbolTable);
+}
+
+void clearUntypedTupleRenderingContext() {
+    tupleRenderSymbolTable = nullptr;
+    tupleRenderRelationTypes.clear();
+    souffle::problog::setActiveSymbolTable(nullptr);
+}
+
+std::vector<souffle::RamDomain> parseUntypedTupleFields(
+        const std::string& relationName, const std::string& renderedFields) {
+    std::vector<souffle::RamDomain> fields;
+    if (renderedFields.empty()) {
+        return fields;
+    }
+    const auto* relationTypes = lookupRelationTypes(relationName);
+    auto tokens = splitRenderedTupleFields(renderedFields);
+    fields.reserve(tokens.size());
+    for (std::size_t i = 0; i < tokens.size(); ++i) {
+        auto token = tokens[i];
+        const auto first = token.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) {
+            continue;
+        }
+        token.erase(0, first);
+        const auto last = token.find_last_not_of(" \t\r\n");
+        token.erase(last + 1);
+        const bool looksLikeJsonString =
+                token.size() >= 2 && token.front() == '"' && token.back() == '"';
+        const bool isSymbol = looksLikeJsonString ||
+                (relationTypes != nullptr && i < relationTypes->size() && (*relationTypes)[i] == 's');
+        if (isSymbol) {
+            if (tupleRenderSymbolTable == nullptr) {
+                throw std::runtime_error(
+                        "cannot parse symbolic tuple field without an active symbol table");
+            }
+            if (!looksLikeJsonString) {
+                fields.push_back(tupleRenderSymbolTable->encode(token));
+                continue;
+            }
+            std::string err;
+            auto parsed = json11::Json::parse(token, err);
+            if (!err.empty() || !parsed.is_string()) {
+                throw std::runtime_error("cannot parse symbolic tuple field: " + token);
+            }
+            fields.push_back(tupleRenderSymbolTable->encode(parsed.string_value()));
+            continue;
+        }
+        fields.push_back(static_cast<souffle::RamDomain>(std::stoll(token)));
+    }
+    return fields;
+}
+
+std::vector<souffle::RamDomain> parseUntypedTupleJsonFields(
+        const std::string& relationName, const json11::Json& renderedFields) {
+    if (!renderedFields.is_array()) {
+        throw std::runtime_error("tuple fields must be a JSON array");
+    }
+    std::vector<souffle::RamDomain> fields;
+    const auto* relationTypes = lookupRelationTypes(relationName);
+    const auto& items = renderedFields.array_items();
+    fields.reserve(items.size());
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        const auto& item = items[i];
+        const bool isSymbol = item.is_string() ||
+                (relationTypes != nullptr && i < relationTypes->size() && (*relationTypes)[i] == 's');
+        if (isSymbol) {
+            if (tupleRenderSymbolTable == nullptr) {
+                if (item.is_number()) {
+                    fields.push_back(static_cast<souffle::RamDomain>(item.number_value()));
+                    continue;
+                }
+                throw std::runtime_error(
+                        "cannot parse symbolic tuple field without an active symbol table");
+            }
+            if (item.is_string()) {
+                fields.push_back(tupleRenderSymbolTable->encode(item.string_value()));
+            } else if (item.is_number()) {
+                fields.push_back(static_cast<souffle::RamDomain>(item.number_value()));
+            } else {
+                throw std::runtime_error("unsupported symbolic tuple JSON field");
+            }
+            continue;
+        }
+        if (!item.is_number()) {
+            throw std::runtime_error("non-numeric tuple field in numeric position");
+        }
+        fields.push_back(static_cast<souffle::RamDomain>(item.number_value()));
+    }
+    return fields;
+}
+
+UntypedTuple parseUntypedTupleJson(const json11::Json& tupleJson) {
+    if (!tupleJson.is_object()) {
+        throw std::runtime_error("tuple JSON must be an object");
+    }
+    const std::string relationName = tupleJson["rel"].string_value();
+    if (relationName.empty() && !tupleJson["rel"].is_string()) {
+        throw std::runtime_error("tuple JSON missing relation name");
+    }
+    const auto& fieldsJson = tupleJson["fieldsRaw"].is_array() ? tupleJson["fieldsRaw"] : tupleJson["fields"];
+    return UntypedTuple{relationName, parseUntypedTupleJsonFields(relationName, fieldsJson)};
+}
 
 std::string generateFilename(const std::string& prefix, const std::string& suffix) {
     std::time_t now = std::time(nullptr);
@@ -73,20 +265,45 @@ void FunctionTimer::reset() {
 }
 
 std::string UntypedTuple::toString(const UntypedTuple& tuple) {
-    std::string result = tuple.relation_name + '(' + toStringFields(tuple.fields) + ')';
+    std::string result = tuple.relation_name + '(' +
+            toStringFields(tuple.relation_name, tuple.fields) + ')';
     return result;
 }
 
 std::string UntypedTuple::toString() const {
-    std::string result = relation_name + '(' + toStringFields(fields) + ')';
+    std::string result = relation_name + '(' + toStringFields(relation_name, fields) + ')';
     return result;
 }
 
 json11::Json UntypedTuple::toJson() const {
+    json11::Json::array renderedFields;
+    json11::Json::array rawFields;
+    renderedFields.reserve(fields.size());
+    rawFields.reserve(fields.size());
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        renderedFields.push_back(renderTupleFieldJson(relation_name, i, fields[i]));
+        rawFields.push_back(static_cast<double>(fields[i]));
+    }
     return json11::Json::object{
             {"rel", relation_name},
-            {"fields", json11::Json::array(fields.begin(), fields.end())},
+            {"fields", renderedFields},
+            {"fieldsRaw", rawFields},
     };
+}
+
+std::string UntypedTuple::toStringFields(
+        const std::string& relationName, const std::vector<souffle::RamDomain>& fields) {
+    std::string result;
+    bool first = true;
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (first) {
+            first = false;
+        } else {
+            result += ",";
+        }
+        result += renderTupleField(relationName, i, fields[i]);
+    }
+    return result;
 }
 
 std::string UntypedTuple::toStringFields(const std::vector<souffle::RamDomain>& fields) {
@@ -612,10 +829,7 @@ json11::Json DerivationManager::derivationInfo2Json(
             }
         }
         json11::Json item = json11::Json::object{
-                {"tuple",
-                        json11::Json::object{{"rel", tuple.relation_name},
-                                {"fields", json11::Json::array(tuple.fields.begin(),
-                                                   tuple.fields.end())}}},
+                {"tuple", tuple.toJson()},
                 {"edges", ruleAppsJson}};
         result.emplace_back(item);
     }
@@ -626,11 +840,16 @@ std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>
 DerivationManager::derivationInfoFromJson(const json11::Json& infoJson) {
     std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> derivationInfo;
     for (const auto& item : infoJson.array_items()) {
-        std::vector<souffle::RamDomain> fields;
-        for (const auto& field : item["tuple"]["fields"].array_items()) {
-            fields.push_back(field.int_value());
+        UntypedTuple tuple;
+        if (item["tuple"].is_object()) {
+            tuple = parseUntypedTupleJson(item["tuple"]);
+        } else {
+            std::vector<souffle::RamDomain> fields;
+            for (const auto& field : item["tuple"]["fields"].array_items()) {
+                fields.push_back(field.int_value());
+            }
+            tuple = UntypedTuple{item["tuple"]["rel"].string_value(), fields};
         }
-        UntypedTuple tuple{item["tuple"]["rel"].string_value(), fields};
         if (derivationInfo.count(tuple) == 0) {
             derivationInfo[tuple] = new std::unordered_set<RuleApplication>();
         }
