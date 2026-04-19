@@ -5,6 +5,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -33,21 +34,37 @@ public:
         return queryAtom.getRelation();
     }
 
-    std::vector<std::string> getBoundVariables() const {
-        std::vector<std::string> vars;
-        for (const auto& f : queryAtom.getFields()) {
-            if (std::holds_alternative<VariableField>(f.field)) {
-                const auto& var = std::get<VariableField>(f.field);
-                vars.push_back(var.name);
-            } else if (std::holds_alternative<IntegerField>(f.field)) {
-                vars.push_back(std::to_string(std::get<IntegerField>(f.field).value));
-            } else if (std::holds_alternative<FloatField>(f.field)) {
-                vars.push_back(std::to_string(std::get<FloatField>(f.field).value));
-            } else if (std::holds_alternative<StringField>(f.field)) {
-                vars.push_back(std::get<StringField>(f.field).value);
+    bool matchesTuple(
+            const std::string& relation, const std::vector<souffle::RamDomain>& fields) const {
+        if (relation != queryAtom.getRelation()) {
+            return false;
+        }
+        const auto& queryFields = queryAtom.getFields();
+        if (queryFields.size() != fields.size()) {
+            return false;
+        }
+        static const std::vector<std::string> noVars;
+        static const std::vector<souffle::RamDomain> noValues;
+        std::unordered_map<std::string, souffle::RamDomain> bindings;
+        for (std::size_t i = 0; i < queryFields.size(); ++i) {
+            if (std::holds_alternative<VariableField>(queryFields[i].field)) {
+                const auto& var = std::get<VariableField>(queryFields[i].field);
+                if (var.name == "_") {
+                    continue;
+                }
+                auto it = bindings.find(var.name);
+                if (it == bindings.end()) {
+                    bindings.emplace(var.name, fields[i]);
+                } else if (it->second != fields[i]) {
+                    return false;
+                }
+                continue;
+            }
+            if (evaluateSymbolicField(queryFields[i], noVars, noValues) != fields[i]) {
+                return false;
             }
         }
-        return vars;
+        return true;
     }
 
 private:
