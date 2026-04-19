@@ -7,6 +7,7 @@
  */
 
 #include "ast/StringConstant.h"
+#include "souffle/utility/StringUtil.h"
 #include <ostream>
 #include <utility>
 
@@ -20,7 +21,7 @@ void StringConstant::print(std::ostream& os) const {
 }
 
 std::string StringConstant::serialize() const {
-    return "SymbolicField{StringField{" + getConstant() + "}}";
+    return "SymbolicField{StringField{\"" + souffle::stringify(getConstant()) + "\"}}";
 }
 
 

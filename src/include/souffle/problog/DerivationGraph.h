@@ -762,7 +762,8 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
                 out << ",\n";
             }
             first = false;
-            out << "    {\"name\": \"" << node->getTuple().toString() << "\",";
+            out << "    {\"name\": " << json11::Json(node->getTuple().toString()).dump() << ",";
+            out << "     \"tuple\": " << node->getTuple().toJson().dump() << ",";
             out << "     \"probability\": " << node->getProbability() << "}";
         }
     }
@@ -781,7 +782,8 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
 
         // Head
         NodePtr headNode = this->getOutput(edge);
-        out << "      \"head\": \"" << headNode->getTuple().toString() << "\",\n";
+        out << "      \"head\": " << json11::Json(headNode->getTuple().toString()).dump() << ",\n";
+        out << "      \"headTuple\": " << headNode->getTuple().toJson().dump() << ",\n";
         // Probability
         out << "      \"probability\": " << edge->getProbability() << ",\n";
         // Bodies
@@ -799,7 +801,8 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
             // Handle negation - default to false if negations vector is too short
             bool isNegated = (i < negations.size()) ? negations[i] : false;
             out << "          \"negation\": " << (isNegated ? "true" : "false") << ",\n";
-            out << "          \"name\": \"" << inputs[i]->getTuple().toString() << "\"\n";
+            out << "          \"name\": " << json11::Json(inputs[i]->getTuple().toString()).dump() << ",\n";
+            out << "          \"tuple\": " << inputs[i]->getTuple().toJson().dump() << "\n";
             out << "        }";
         }
 
@@ -1231,27 +1234,7 @@ public:
         const auto& fields = tuple.fields;
 
         for (const auto& query : queryManager.getAllQuery()) {
-            const std::string& queryRelation = query->getRelationName();
-            const auto& queryVars = query->getBoundVariables();
-
-            if (relation != queryRelation) continue;
-            if (queryVars.size() != fields.size()) {
-                std::cerr << "Length mismatch in relation " << relation
-                          << ": queryVars=" << queryVars.size()
-                          << ", fields=" << fields.size() << std::endl;
-                continue;
-            }
-
-            bool match = true;
-            for (size_t i = 0; i < fields.size(); i++) {
-                if (queryVars[i] == "_") continue;
-                if (std::to_string(fields[i]) != queryVars[i]) {
-                    match = false;
-                    break;
-                }
-            }
-
-            if (match) {
+            if (query->matchesTuple(relation, fields)) {
                 node->setQuery();
             }
         }
@@ -4135,6 +4118,7 @@ void IncrementalDerivationGraphViewInterface::dumpJsonInc(const std::string& fil
     auto fact_to_json = [](const NodePtr& n) -> Json {
         return Json::object{
             {"name", n->getTuple().toString()},
+            {"tuple", n->getTuple().toJson()},
             {"probability", n->getProbability()}
         };
     };
@@ -4147,12 +4131,14 @@ void IncrementalDerivationGraphViewInterface::dumpJsonInc(const std::string& fil
             bool neg = (i < negs.size()) ? negs[i] : false;
             json_array_append(bodies, Json::object{
                 {"negation", neg},
-                {"name", inputs[i]->getTuple().toString()}
+                {"name", inputs[i]->getTuple().toString()},
+                {"tuple", inputs[i]->getTuple().toJson()}
             });
         }
         NodePtr head = this->getOutput(e);
         return Json::object{
             {"head", head ? head->getTuple().toString() : std::string("<null-head>")},
+            {"headTuple", head ? head->getTuple().toJson() : Json()},
             {"probability", e->getProbability()},
             {"bodies", bodies}
         };
@@ -4167,12 +4153,14 @@ void IncrementalDerivationGraphViewInterface::dumpJsonInc(const std::string& fil
             bool neg = (i < negs.size()) ? negs[i] : false;
             json_array_append(bodies, Json::object{
                 {"negation", neg},
-                {"name", inputs[i]->getTuple().toString()}
+                {"name", inputs[i]->getTuple().toString()},
+                {"tuple", inputs[i]->getTuple().toJson()}
             });
         }
         NodePtr head = e->getOutput();
         return Json::object{
             {"head", head ? head->getTuple().toString() : std::string("<null-head>")},
+            {"headTuple", head ? head->getTuple().toJson() : Json()},
             {"probability", e->getProbability()},
             {"bodies", bodies}
         };
@@ -4259,17 +4247,16 @@ static inline UntypedTuple _parse_tuple(const std::string& s_in) {
     }
     std::string rel = _trim(s.substr(0, lp));
     std::string inside = s.substr(lp + 1, rp - lp - 1);
-    std::vector<souffle::RamDomain> fields;
-    std::stringstream ss(inside);
-    std::string tok;
-    while (std::getline(ss, tok, ',')) {
-        tok = _trim(tok);
-        if (tok.empty()) continue;
-        // Parse uniformly as integers (consistent with UntypedTuple::fields).
-        long long v = std::stoll(tok);
-        fields.push_back(static_cast<souffle::RamDomain>(v));
-    }
+    std::vector<souffle::RamDomain> fields = parseUntypedTupleFields(rel, inside);
     return UntypedTuple{rel, fields};
+}
+
+static inline UntypedTuple _parse_tuple_json_or_string(
+        const json11::Json& tupleJson, const std::string& rendered) {
+    if (tupleJson.is_object()) {
+        return parseUntypedTupleJson(tupleJson);
+    }
+    return _parse_tuple(rendered);
 }
 
 static EdgePtr _find_edge_by_structure(
@@ -4329,7 +4316,7 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
     for (const auto& jf : arr_or(root["facts"])) {
         auto name = jf["name"].string_value();
         double p  = jf["probability"].number_value();
-        UntypedTuple t = _parse_tuple(name);
+        UntypedTuple t = _parse_tuple_json_or_string(jf["tuple"], name);
         NodePtr n = g->createNode(t);
         n->isFact = true;
         n->setProbability(p);
@@ -4341,13 +4328,13 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
         auto headName = je["head"].string_value();
         double p      = je["probability"].number_value();
 
-        UntypedTuple ht = _parse_tuple(headName);
+        UntypedTuple ht = _parse_tuple_json_or_string(je["headTuple"], headName);
         NodePtr head = g->createNode(ht);
 
         std::vector<NodePtr> inputs;
         std::vector<bool>    negs;
         for (const auto& jb : arr_or(je["bodies"])) {
-            UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+            UntypedTuple bt = _parse_tuple_json_or_string(jb["tuple"], jb["name"].string_value());
             bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
             inputs.push_back(g->createNode(bt));
             negs.push_back(neg);
@@ -4360,7 +4347,7 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
     const Json& jdelta      = root["delta"];
     const Json& jins        = jdelta["insert"];
     for (const auto& jf : arr_or(jins["facts"])) {
-        UntypedTuple t = _parse_tuple(jf["name"].string_value());
+        UntypedTuple t = _parse_tuple_json_or_string(jf["tuple"], jf["name"].string_value());
         double p = jf["probability"].number_value();
         NodePtr n = g->createNode(t);
         n->isFact = true; n->setProbability(p);
@@ -4373,14 +4360,14 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
         g->deltaInsertNodes.insert(n);
     }
     for (const auto& je : arr_or(jins["edges"])) {
-        UntypedTuple ht = _parse_tuple(je["head"].string_value());
+        UntypedTuple ht = _parse_tuple_json_or_string(je["headTuple"], je["head"].string_value());
         double p = je["probability"].number_value();
         NodePtr head = g->createNode(ht);
 
         std::vector<NodePtr> inputs;
         std::vector<bool>    negs;
         for (const auto& jb : arr_or(je["bodies"])) {
-            UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+            UntypedTuple bt = _parse_tuple_json_or_string(jb["tuple"], jb["name"].string_value());
             bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
             inputs.push_back(g->createNode(bt));
             negs.push_back(neg);
@@ -4398,7 +4385,7 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
     // ---------- 4) delta.delete ----------
     const Json& jdel = jdelta["delete"];
     for (const auto& jf : arr_or(jdel["facts"])) {
-        UntypedTuple t = _parse_tuple(jf["name"].string_value());
+        UntypedTuple t = _parse_tuple_json_or_string(jf["tuple"], jf["name"].string_value());
         double p = jf["probability"].number_value();
         NodePtr n = g->createNode(t);
         n->isFact = true; n->setProbability(p);
@@ -4412,14 +4399,14 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
         g->deltaDeleteNodes.insert(n);
     }
     for (const auto& je : arr_or(jdel["edges"])) {
-        UntypedTuple ht = _parse_tuple(je["head"].string_value());
+        UntypedTuple ht = _parse_tuple_json_or_string(je["headTuple"], je["head"].string_value());
         double p = je["probability"].number_value();
         NodePtr head = g->createNode(ht);
 
         std::vector<NodePtr> inputs;
         std::vector<bool>    negs;
         for (const auto& jb : arr_or(je["bodies"])) {
-            UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+            UntypedTuple bt = _parse_tuple_json_or_string(jb["tuple"], jb["name"].string_value());
             bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
             inputs.push_back(g->createNode(bt));
             negs.push_back(neg);
@@ -4446,12 +4433,12 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
     for (const auto& jmap : arr_or(jbdel["edges"])) {
         NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
         for (const auto& je : arr_or(jmap["impacted"])) {
-            UntypedTuple ht = _parse_tuple(je["head"].string_value());
+            UntypedTuple ht = _parse_tuple_json_or_string(je["headTuple"], je["head"].string_value());
             double p = je["probability"].number_value();
             NodePtr head = g->createNode(ht);
             std::vector<NodePtr> inputs; std::vector<bool> negs;
             for (const auto& jb : arr_or(je["bodies"])) {
-                UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+                UntypedTuple bt = _parse_tuple_json_or_string(jb["tuple"], jb["name"].string_value());
                 bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
                 inputs.push_back(g->createNode(bt)); negs.push_back(neg);
             }
@@ -4473,12 +4460,12 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
     for (const auto& jmap : arr_or(jbins["edges"])) {
         NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
         for (const auto& je : arr_or(jmap["impacted"])) {
-            UntypedTuple ht = _parse_tuple(je["head"].string_value());
+            UntypedTuple ht = _parse_tuple_json_or_string(je["headTuple"], je["head"].string_value());
             double p = je["probability"].number_value();
             NodePtr head = g->createNode(ht);
             std::vector<NodePtr> inputs; std::vector<bool> negs;
             for (const auto& jb : arr_or(je["bodies"])) {
-                UntypedTuple bt = _parse_tuple(jb["name"].string_value());
+                UntypedTuple bt = _parse_tuple_json_or_string(jb["tuple"], jb["name"].string_value());
                 bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
                 inputs.push_back(g->createNode(bt)); negs.push_back(neg);
             }

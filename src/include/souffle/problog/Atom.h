@@ -13,6 +13,12 @@
 #include <sstream>
 #include <map>
 #include "souffle/RamTypes.h"
+#include "souffle/SymbolTable.h"
+
+namespace souffle::problog {
+void setActiveSymbolTable(SymbolTable* symbolTable);
+SymbolTable* getActiveSymbolTable();
+}
 
 struct IntegerField {
     int value;
@@ -39,6 +45,9 @@ souffle::RamDomain evaluateAtomic(
 struct ExprField;
 using ExprFieldPtr = std::shared_ptr<ExprField>;
 using ExprFieldReal = std::variant<AtomicField, ExprFieldPtr>;
+souffle::RamDomain evaluateExprReal(
+        const ExprFieldReal& real, const std::vector<std::string>& vars,
+        const std::vector<souffle::RamDomain>& values);
 
 
 struct ExprField {
@@ -125,10 +134,6 @@ struct ExprField {
     }
 };
 
-souffle::RamDomain evaluateExprReal(
-        const ExprFieldReal& real, const std::vector<std::string>& vars,
-        const std::vector<souffle::RamDomain>& values);
-
 struct SymbolicField {
     std::variant<IntegerField,
                  FloatField,
@@ -168,6 +173,37 @@ struct SymbolicField {
         assert (false && "Unknown field type");
     }
 };
+
+inline souffle::RamDomain evaluateSymbolicField(
+        const SymbolicField& field, const std::vector<std::string>& vars,
+        const std::vector<souffle::RamDomain>& values) {
+    if (std::holds_alternative<IntegerField>(field.field)) {
+        return std::get<IntegerField>(field.field).value;
+    }
+    if (std::holds_alternative<FloatField>(field.field)) {
+        return souffle::ramBitCast<souffle::RamDomain>(
+                static_cast<souffle::RamFloat>(std::get<FloatField>(field.field).value));
+    }
+    if (std::holds_alternative<StringField>(field.field)) {
+        auto* symbolTable = souffle::problog::getActiveSymbolTable();
+        assert(symbolTable != nullptr && "Active symbol table required for StringField evaluation");
+        return symbolTable->encode(std::get<StringField>(field.field).value);
+    }
+    if (std::holds_alternative<VariableField>(field.field)) {
+        const std::string& varName = std::get<VariableField>(field.field).name;
+        for (size_t i = 0; i < vars.size(); ++i) {
+            if (vars[i] == varName) {
+                return values[i];
+            }
+        }
+        assert(false && "Variable not found in map");
+    }
+    if (std::holds_alternative<std::shared_ptr<ExprField>>(field.field)) {
+        return std::get<std::shared_ptr<ExprField>>(field.field)->evaluate(vars, values);
+    }
+    assert(false && "Unsupported symbolic field in evaluation");
+    return 0;
+}
 
 
 
@@ -220,33 +256,9 @@ public:
 
     std::vector<souffle::RamDomain> instantiatedFields(const std::vector<std::string>& vars,
             const std::vector<souffle::RamDomain>& values) const {
-        std::vector<souffle::RamDomain> result;  // TODO
+        std::vector<souffle::RamDomain> result;
         for (const auto& field : fields) {
-            if (std::holds_alternative<VariableField>(field.field)) {
-                const std::string& varName = std::get<VariableField>(field.field).name;
-                bool found = false;
-                for (size_t i = 0; i < vars.size(); ++i) {
-                    if (vars[i] == varName) {
-                        result.push_back(values[i]);
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    assert(false && "Variable not found in map");
-                }
-            } else if (std::holds_alternative<IntegerField>(field.field)) {
-                result.push_back(std::get<IntegerField>(field.field).value);
-            } else if (std::holds_alternative<FloatField>(field.field)) {
-                result.push_back(souffle::ramBitCast<souffle::RamDomain>(
-                        static_cast<souffle::RamFloat>(std::get<FloatField>(field.field).value)));
-            } else if (std::holds_alternative<std::shared_ptr<ExprField>>(field.field)) {
-                // Handle expression fields, if needed
-                result.push_back(
-                    std::get<std::shared_ptr<ExprField>>(field.field)->evaluate(vars, values));
-            } else {
-                assert(false && "Unsupported symbolic field in Atom::instantiatedFields");
-            }
+            result.push_back(evaluateSymbolicField(field, vars, values));
         }
         return result;
     }

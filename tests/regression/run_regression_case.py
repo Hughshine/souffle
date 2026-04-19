@@ -12,6 +12,7 @@ Each ctest case executes one scenario end-to-end:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import re
 import shutil
@@ -300,6 +301,58 @@ def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
         raise CaseFailure("det-force changed output tuple set compared to baseline")
 
 
+def case_problog_string_roundtrip(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("problog_string_roundtrip", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    out_dir = case_dir / "out_full"
+    run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_dir,
+        extra_args=["--dumpjson", "--logfile", "reglog"],
+    )
+
+    expected_key = 'reach("src","dst","path")'
+    probs = parse_prob_file(out_dir / "facts.prob")
+    if set(probs.keys()) != {expected_key}:
+        raise CaseFailure(
+            "problog_string_roundtrip: unexpected probability keys.\n"
+            f"keys={sorted(probs.keys())}"
+        )
+    if not math.isclose(probs[expected_key], 1.0, rel_tol=0.0, abs_tol=1e-12):
+        raise CaseFailure(
+            "problog_string_roundtrip: expected evidence-conditioned query probability 1.0.\n"
+            f"value={probs[expected_key]}"
+        )
+
+    derivation_json = out_dir / "derivation.json"
+    if not derivation_json.exists():
+        raise CaseFailure(f"problog_string_roundtrip: missing {derivation_json}")
+    payload = json.loads(derivation_json.read_text(encoding="utf-8"))
+    fact_names = {entry["name"] for entry in payload.get("facts", [])}
+    if 'edge("src","mid")' not in fact_names:
+        raise CaseFailure(
+            "problog_string_roundtrip: derivation.json did not preserve decoded string fact names.\n"
+            f"sample={sorted(fact_names)[:8]}"
+        )
+    rule_heads = {entry["head"] for entry in payload.get("rules", [])}
+    if expected_key not in rule_heads:
+        raise CaseFailure(
+            "problog_string_roundtrip: derivation.json did not preserve decoded string rule heads.\n"
+            f"sample={sorted(rule_heads)[:8]}"
+        )
+    tuple_fields = [
+        tuple_obj["fields"]
+        for entry in payload.get("facts", [])
+        if (tuple_obj := entry.get("tuple")) and tuple_obj.get("rel") == "edge"
+    ]
+    if ["src", "mid"] not in tuple_fields:
+        raise CaseFailure(
+            "problog_string_roundtrip: structured tuple fields did not preserve decoded strings.\n"
+            f"sample={tuple_fields[:8]}"
+        )
+
+
 def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("dump_outputs_contract", work_root)
     input_dir = case_dir / "input"
@@ -328,6 +381,7 @@ def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
 CASES = {
     "smoke_full_only": case_smoke_full_only,
     "rewrite_split_modes_equiv": case_rewrite_split_modes_equiv,
+    "problog_string_roundtrip": case_problog_string_roundtrip,
     "full_det_modes": case_full_det_modes,
     "dump_outputs_contract": case_dump_outputs_contract,
 }

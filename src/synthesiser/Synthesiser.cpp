@@ -143,6 +143,47 @@
 
 namespace souffle::synthesiser {
 
+namespace {
+std::string cppStringLiteral(const std::string& value) {
+    return "\"" + souffle::stringify(value) + "\"";
+}
+
+std::vector<std::string> splitRenderedTupleFieldsForCodegen(const std::string& renderedFields) {
+    std::vector<std::string> tokens;
+    std::string current;
+    bool inString = false;
+    bool escaping = false;
+    for (char c : renderedFields) {
+        if (inString) {
+            current.push_back(c);
+            if (escaping) {
+                escaping = false;
+            } else if (c == '\\') {
+                escaping = true;
+            } else if (c == '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (c == '"') {
+            inString = true;
+            current.push_back(c);
+            continue;
+        }
+        if (c == ',') {
+            tokens.push_back(current);
+            current.clear();
+            continue;
+        }
+        current.push_back(c);
+    }
+    if (!current.empty() || !renderedFields.empty()) {
+        tokens.push_back(current);
+    }
+    return tokens;
+}
+}
+
 using json11::Json;
 using ram::analysis::IndexAnalysis;
 using namespace ram;
@@ -429,7 +470,7 @@ void Synthesiser::emitRules (std::ostream& out) {
                     case 'U':
                         out << "SymbolicField{" << field << "}"; break;
                     case 'S':
-                        out << "SymbolicField{StringField{" << field << "}}"; break;
+                        out << "SymbolicField{StringField{" << cppStringLiteral(field) << "}}"; break;
                     case 'E':
                         out << "SymbolicField(std::shared_ptr<ExprField>(" << field << "))"; break;
                         // out << field << ", "; break;
@@ -505,7 +546,7 @@ void Synthesiser::emitRules (std::ostream& out) {
                             out << "SymbolicField{" << field << "}";
                             break;
                         case 'S':
-                            out << "SymbolicField{StringField{" << field << "}}";
+                            out << "SymbolicField{StringField{" << cppStringLiteral(field) << "}}";
                             break;
                         case 'E':
                             out << "SymbolicField(std::shared_ptr<ExprField>(" << field << "))";
@@ -576,7 +617,7 @@ void Synthesiser::emitRules (std::ostream& out) {
                             out << "SymbolicField{" << field << "}";
                             break;
                         case 'S':
-                            out << "SymbolicField{StringField{" << field << "}}";
+                            out << "SymbolicField{StringField{" << cppStringLiteral(field) << "}}";
                             break;
                         case 'E':
                             out << "SymbolicField(std::shared_ptr<ExprField>(" << field << "))";
@@ -645,7 +686,7 @@ void Synthesiser::emitRules (std::ostream& out) {
                 fieldStrs.push_back("SymbolicField{" + c->getConstant() + "}");
             } else if (isA<ast::StringConstant>(arg)) {
                 auto s = as<ast::StringConstant>(arg);
-                fieldStrs.push_back("SymbolicField{StringField{" + s->getConstant() + "}}");
+                fieldStrs.push_back("SymbolicField{StringField{" + cppStringLiteral(s->getConstant()) + "}}");
             } else if (isA<ast::IntrinsicFunctor>(arg)) {
                 auto f = as<ast::IntrinsicFunctor>(arg);
                 fieldStrs.push_back("SymbolicField(std::shared_ptr<ExprField>(" + f->serialize() + "))");
@@ -3825,16 +3866,51 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         ss << "std::vector<std::pair<UntypedTuple,bool>> evidences = {\n";
 
         for (const auto& evi : prog.getEvidences()) {
-            const auto& tupleStr = evi->getTupleString();
-            const auto& relName = evi->getRelation();
-            const auto& value = evi->getValue();
-
-            size_t l = tupleStr.find("(");
-            size_t r = tupleStr.find(")");
-            std::string field = tupleStr.substr(l+1, r - l -1);
-
-            ss << "    {UntypedTuple{\"" << relName << "\", {" << field
-               << "}}, " << (value ? "true" : "false") << "},\n";
+            const auto* relDecl = lookup(evi->getRelation());
+            assert(relDecl != nullptr && "Evidence relation must be declared");
+            std::string tupleText = evi->getTupleString();
+            auto lp = tupleText.find('(');
+            auto rp = tupleText.rfind(')');
+            if (lp != std::string::npos && rp != std::string::npos && rp > lp) {
+                tupleText = tupleText.substr(lp + 1, rp - lp - 1);
+            }
+            const auto tupleFields = splitRenderedTupleFieldsForCodegen(tupleText);
+            assert(tupleFields.size() == relDecl->getArity() &&
+                    "Evidence arity must match declared relation arity");
+            ss << "    {UntypedTuple{\"" << evi->getRelation() << "\", {";
+            for (std::size_t i = 0; i < tupleFields.size(); ++i) {
+                std::string token = tupleFields[i];
+                const auto first = token.find_first_not_of(" \t\r\n");
+                assert(first != std::string::npos && "Evidence fields must be non-empty");
+                token.erase(0, first);
+                const auto last = token.find_last_not_of(" \t\r\n");
+                token.erase(last + 1);
+                const auto typeAttr = relDecl->getAttributeTypes()[i];
+                switch (typeAttr[0]) {
+                    case 's': {
+                        std::string err;
+                        auto parsed = json11::Json::parse(token, err);
+                        assert(err.empty() && parsed.is_string() &&
+                                "Symbolic evidence fields must be quoted strings");
+                        ss << "souffle::RamSigned(" << convertSymbol2Idx(parsed.string_value()) << ")";
+                        break;
+                    }
+                    case 'f':
+                        ss << "souffle::ramBitCast<souffle::RamDomain>(static_cast<souffle::RamFloat>("
+                           << token << "))";
+                        break;
+                    case 'u':
+                    case 'i':
+                        ss << token;
+                        break;
+                    default:
+                        assert(false && "Evidence codegen only supports primitive ground fields");
+                }
+                if (i + 1 != tupleFields.size()) {
+                    ss << ", ";
+                }
+            }
+            ss << "}}, " << (evi->getValue() ? "true" : "false") << "},\n";
         }
 
         ss << "};\n";
@@ -4552,34 +4628,83 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "relationHasProbFact.clear();\n";
     for (auto input : loadIOs) {
         auto rel = input->getRelation();
+        auto relArity = lookup(rel)->getArity();
+        const auto& directives = input->getDirectives();
         hook << "{\n";
         hook << "std::string rel = \"" << rel << "\";\n";
+        hook << "std::map<std::string, std::string> directiveMap(";
+        printDirectives(hook, directives);
+        hook << ");\n";
+        hook << "if (!opt.getInputFileDir().empty()) {\n";
+        hook << "    directiveMap[\"fact-dir\"] = opt.getInputFileDir();\n";
+        hook << "}\n";
+        hook << "auto toFileRel = [&](std::string r) {\n"
+             << "  if (r.rfind(\"@magic.\", 0) == 0) return r; \n"
+             << "  if (r.rfind(\"@neglabel.\", 0) == 0) return r; \n"
+             << "\n"
+             << "  for (;;) {\n"
+             << "    bool changed = false;\n"
+             << "    auto strip = [&](const std::string& p) {\n"
+             << "      if (r.rfind(p, 0) == 0) { r = r.substr(p.size()); changed = true; }\n"
+             << "    };\n"
+             << "    strip(\"@split_in.\");\n"
+             << "    strip(\"@interm_in.\");\n"
+             << "    strip(\"@interm_out.\");\n"
+             << "    if (r.rfind(\"@poscopy_\", 0) == 0) {\n"
+             << "      auto dot = r.find('.');\n"
+             << "      if (dot != std::string::npos) { r = r.substr(dot + 1); changed = true; }\n"
+             << "    }\n"
+             << "    if (!changed) break;\n"
+             << "  }\n"
+             << "\n"
+             << "  if (!r.empty()) {\n"
+             << "    auto dot = r.rfind('.');\n"
+             << "    if (dot != std::string::npos) {\n"
+             << "      auto last = r.substr(dot + 1);\n"
+             << "      if (last.size() >= 2 && last.front() == '{' && last.back() == '}') {\n"
+             << "        bool ok = true;\n"
+             << "        for (size_t i = 1; i + 1 < last.size(); ++i) {\n"
+             << "          if (last[i] != 'b' && last[i] != 'f') { ok = false; break; }\n"
+             << "        }\n"
+             << "        if (ok) r = r.substr(0, dot);\n"
+             << "      }\n"
+             << "    }\n"
+             << "  }\n"
+             << "  return r;\n"
+             << "};\n";
+        hook << "std::string fileRel = toFileRel(rel);\n";
+        hook << "directiveMap[\"name\"] = fileRel;\n";
+        hook << "directiveMap[\"filename\"] = fileRel + \".facts\";\n";
         hook << "relationHasProbFact[rel] = false;\n";
-        hook << "std::cout << \"reading: \" << opt.getInputFileDir() << \"/\" << rel << \".facts and \" << opt.getInputFileDir() << \"/\" << rel << \".prob\" << std::endl;\n";
-        hook << "std::ifstream factFile(opt.getInputFileDir() + \"/\" + rel + \".facts\");";
-        hook << "std::ifstream probFile(opt.getInputFileDir() + \"/\" + rel + \".prob\");\n";
+        hook << "std::cout << \"reading: \" << opt.getInputFileDir() << \"/\" << fileRel << \".facts and \" << opt.getInputFileDir() << \"/\" << fileRel << \".prob\" << std::endl;\n";
+        hook << "std::ifstream factFile(opt.getInputFileDir() + \"/\" + fileRel + \".facts\");";
+        hook << "std::ifstream probFile(opt.getInputFileDir() + \"/\" + fileRel + \".prob\");\n";
         hook << "if (!factFile.is_open()) {\n";
-        hook << "    std::cerr << \"Missing facts file for relation: \" << rel << std::endl;\n";
+        hook << "    std::cerr << \"Missing facts file for relation: \" << fileRel << \" (ioRel=\" << rel << \")\" << std::endl;\n";
         hook << "    assert(false && \"facts file not found\");\n";
         hook << "}\n";
         hook << "bool probExists = probFile.is_open();\n";
         hook << "if (!probExists) {\n";
-        hook << "    std::cerr << \"[Warning] Missing prob file for relation: \" << rel << \", defaulting probabilities to 1.0\" << std::endl;\n";
+        hook << "    std::cerr << \"[Warning] Missing prob file for relation: \" << fileRel << \" (ioRel=\" << rel << \"), defaulting probabilities to 1.0\" << std::endl;\n";
         hook << "}\n";
-        hook << "std::string factLine, probLine;\n";
-        hook << "while (std::getline(factFile, factLine)) {\n";
-        hook << "std::istringstream fs(factLine);";
+        hook << "std::string probLine;\n";
+        hook << "struct ProbFactCollector {\n";
+        hook << "    std::vector<std::vector<souffle::RamDomain>> rows;\n";
+        hook << "    void insert(const souffle::RamDomain* tuple) {\n";
+        hook << "        rows.emplace_back(tuple, tuple + " << relArity << ");\n";
+        hook << "    }\n";
+        hook << "} parsedFacts;\n";
+        hook << "souffle::IOSystem::getInstance().getReader(\n";
+        hook << "        directiveMap, obj.getSymbolTable(), obj.getRecordTable())->readAll(parsedFacts);\n";
+        hook << "for (const auto& fields : parsedFacts.rows) {\n";
         hook << "    double prob = 1.0;\n";
         hook << "    if (probExists && std::getline(probFile, probLine)) {\n";
         hook << "        std::istringstream ps(probLine);\n";
         hook << "        if (!(ps >> prob) || prob < 0 || prob > 1) {\n";
-        hook << "            std::cerr << \"[Warning] Invalid probability in \" << rel << \".prob, defaulting to 1.0\" << std::endl;\n";
+        hook << "            std::cerr << \"[Warning] Invalid probability in \" << fileRel << \".prob, defaulting to 1.0\" << std::endl;\n";
         hook << "            prob = 1.0;\n";
         hook << "        }\n";
         hook << "    }\n";
-        hook << "souffle::RamDomain field;\n";
-        hook << "std::vector<souffle::RamDomain> fields;\n";
-        hook << "while (fs >> field) {fields.push_back(field);}\n";
         hook << "UntypedTuple tuple{rel, fields};\n";
         hook << "fact_prob[tuple] = prob;\n";
         hook << "if (prob > 0.0 && prob < 1.0) { relationHasProbFact[rel] = true; }\n";
@@ -4672,9 +4797,17 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "FunctionTimer timer(\"Reading fact probability from \" + opt.getInputFileDir());\n";
      for (auto input : loadIOs) {
         auto rel = input->getRelation();
+        auto relArity = lookup(rel)->getArity();
+        const auto& directives = input->getDirectives();
         hook << "{\n";
 
         hook << "std::string ioRel = \"" << rel << "\";\n";
+        hook << "std::map<std::string, std::string> directiveMap(";
+        printDirectives(hook, directives);
+        hook << ");\n";
+        hook << "if (!opt.getInputFileDir().empty()) {\n";
+        hook << "  directiveMap[\"fact-dir\"] = opt.getInputFileDir();\n";
+        hook << "}\n";
 
          hook << "auto toFileRel = [&](std::string r) {\n"
               << "  if (r.rfind(\"@magic.\", 0) == 0) return r; \n"
@@ -4711,6 +4844,8 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
               << "  return r;\n"
               << "};\n"
               << "std::string fileRel = toFileRel(ioRel);\n";
+        hook << "directiveMap[\"name\"] = fileRel;\n";
+        hook << "directiveMap[\"filename\"] = fileRel + \".facts\";\n";
 
         hook << "std::cout << \"reading: \" << opt.getInputFileDir() << \"/\" << fileRel"
              << " << \".facts and \" << opt.getInputFileDir() << \"/\" << fileRel"
@@ -4732,17 +4867,21 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
              << "            << \", defaulting probabilities to 1.0\" << std::endl;\n";
         hook << "}\n";
 
-        hook << "std::string factLine, probLine;\n";
-        hook << "while (std::getline(factFile, factLine)) {\n";
-        hook << "  std::istringstream fs(factLine);\n";
+        hook << "std::string probLine;\n";
+        hook << "struct ProbFactCollector {\n";
+        hook << "  std::vector<std::vector<souffle::RamDomain>> rows;\n";
+        hook << "  void insert(const souffle::RamDomain* tuple) {\n";
+        hook << "    rows.emplace_back(tuple, tuple + " << relArity << ");\n";
+        hook << "  }\n";
+        hook << "} parsedFacts;\n";
+        hook << "souffle::IOSystem::getInstance().getReader(\n";
+        hook << "    directiveMap, obj.getSymbolTable(), obj.getRecordTable())->readAll(parsedFacts);\n";
+        hook << "for (const auto& fields : parsedFacts.rows) {\n";
         hook << "  double prob = 1.0;\n";
         hook << "  if (probExists && std::getline(probFile, probLine)) {\n";
         hook << "    std::istringstream ps(probLine);\n";
         hook << "    if (!(ps >> prob) || prob < 0 || prob > 1) prob = 1.0;\n";
         hook << "  }\n";
-        hook << "  souffle::RamDomain field;\n";
-        hook << "  std::vector<souffle::RamDomain> fields;\n";
-        hook << "  while (fs >> field) fields.push_back(field);\n";
         hook << "  UntypedTuple tuple{ioRel, fields};\n";
         hook << "  fact_prob[tuple] = prob;\n";
         hook << "}\n";
