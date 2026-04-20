@@ -1,7 +1,8 @@
 #include "souffle/problog/Rule.h"
 
 Rule::Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms, std::vector<std::string> vars,
-        double probability, bool recursive, bool recursiveStratum, bool isEqrelHead)
+        double probability, bool recursive, bool recursiveStratum, bool isEqrelHead,
+        std::vector<AggregateSpec> aggregates)
         : ruleId(ruleId),
           head(std::move(head)),
           bodyAtoms(std::move(bodyAtoms)),
@@ -9,7 +10,8 @@ Rule::Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms, std::vect
           probability(probability),
           recursive(recursive),
           recursiveStratum(recursiveStratum),
-          isEqrelRelation(isEqrelHead) {}
+          isEqrelRelation(isEqrelHead),
+          aggregates(std::move(aggregates)) {}
 
 const Atom& Rule::getHead() const {
     return head;

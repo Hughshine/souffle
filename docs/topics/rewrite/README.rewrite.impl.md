@@ -61,6 +61,9 @@ SISO rewrite (`--rewrite`) and the newer implicit-split pipeline
 - The implicit pipeline records `rewrite_engine=implicit` in the hybrid stage
   metadata and logs overlay/materialization timing such as
   `implicit_overlay_prep_ms` and `implicit_graph_rewrite_ms`.
+- In the current-source compiler, implicit full-mode always keeps the overlay
+  `all-facts` fast path enabled. Alternative gating / disable switches are no
+  longer part of the maintained behavior.
 - The pipeline carries precomputed tuple probabilities from the implicit split
   pass into the final output map so correctness checks can compare implicit and
   non-rewrite runs directly on `facts.prob`.

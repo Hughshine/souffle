@@ -15,12 +15,31 @@
 #include "souffle/RamTypes.h"
 #include "souffle/problog/Atom.h"
 
+struct AggregateSpec {
+    std::string op = "sum";
+    std::string resultVar;
+    Atom witnessAtom;
+    SymbolicField weightExpr;
+
+    AggregateSpec(std::string op, std::string resultVar, Atom witnessAtom, SymbolicField weightExpr)
+            : op(op),
+              resultVar(std::move(resultVar)),
+              witnessAtom(std::move(witnessAtom)),
+              weightExpr(std::move(weightExpr)) {}
+};
+
 class Rule {
 public:
-    Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms = {}, std::vector<std::string> vars = {}, double probability = 1.0, bool recursive = false, bool recursiveStratum = false, bool isEqrelHead = false);
+    Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms = {},
+            std::vector<std::string> vars = {}, double probability = 1.0,
+            bool recursive = false, bool recursiveStratum = false,
+            bool isEqrelHead = false, std::vector<AggregateSpec> aggregates = {});
 
     const Atom& getHead() const;
     const std::vector<Atom>& getBodyAtoms() const;
+    const std::vector<AggregateSpec>& getAggregates() const {
+        return aggregates;
+    }
     std::size_t getRuleId() const;
     double getProbability() const;
     bool isFact() const;
@@ -49,6 +68,7 @@ private:
     bool recursive;
     bool recursiveStratum;
     bool isEqrelRelation;
+    std::vector<AggregateSpec> aggregates;
     void addBodyAtom(Atom atom);
 };
 
