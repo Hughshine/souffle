@@ -353,6 +353,68 @@ def case_problog_string_roundtrip(souffle_bin: Path, work_root: Path) -> None:
         )
 
 
+def case_problog_symbol_aggregate_roundtrip(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("problog_symbol_aggregate_roundtrip", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    out_dir = case_dir / "out_full"
+    run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_dir,
+        extra_args=["--dumpjson", "--logfile", "reglog"],
+    )
+
+    expected_key = 'rich("src","many")'
+    probs = parse_prob_file(out_dir / "facts.prob")
+    if set(probs.keys()) != {expected_key}:
+        raise CaseFailure(
+            "problog_symbol_aggregate_roundtrip: unexpected probability keys.\n"
+            f"keys={sorted(probs.keys())}"
+        )
+    if not math.isclose(probs[expected_key], 0.8, rel_tol=0.0, abs_tol=1e-12):
+        raise CaseFailure(
+            "problog_symbol_aggregate_roundtrip: unexpected aggregate probability.\n"
+            f"value={probs[expected_key]}"
+        )
+
+    derivation_json = out_dir / "derivation.json"
+    if not derivation_json.exists():
+        raise CaseFailure(f"problog_symbol_aggregate_roundtrip: missing {derivation_json}")
+    payload = json.loads(derivation_json.read_text(encoding="utf-8"))
+
+    fact_names = {entry["name"] for entry in payload.get("facts", [])}
+    if 'bucket("many")' not in fact_names or 'edge("src","mid")' not in fact_names:
+        raise CaseFailure(
+            "problog_symbol_aggregate_roundtrip: derivation.json lost decoded symbolic facts.\n"
+            f"sample={sorted(fact_names)[:8]}"
+        )
+
+    rich_rules = [entry for entry in payload.get("rules", []) if entry.get("head") == expected_key]
+    if len(rich_rules) != 2:
+        raise CaseFailure(
+            "problog_symbol_aggregate_roundtrip: expected two derivations for the aggregate result.\n"
+            f"count={len(rich_rules)}"
+        )
+
+    head_tuples = [entry.get("headTuple") for entry in rich_rules]
+    if not all(tuple_obj and tuple_obj.get("fields") == ["src", "many"] for tuple_obj in head_tuples):
+        raise CaseFailure(
+            "problog_symbol_aggregate_roundtrip: decoded symbolic head tuple mismatch.\n"
+            f"headTuples={head_tuples}"
+        )
+
+    body_name_sets = [{body["name"] for body in entry.get("bodies", [])} for entry in rich_rules]
+    expected_bodies = [
+        {'bucket("many")', 'edge("src","mid")'},
+        {'bucket("many")', 'edge("src","dst")'},
+    ]
+    if sorted(body_name_sets, key=lambda s: sorted(s)) != sorted(expected_bodies, key=lambda s: sorted(s)):
+        raise CaseFailure(
+            "problog_symbol_aggregate_roundtrip: decoded aggregate derivations mismatch.\n"
+            f"bodies={body_name_sets}"
+        )
+
+
 def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("dump_outputs_contract", work_root)
     input_dir = case_dir / "input"
@@ -382,6 +444,7 @@ CASES = {
     "smoke_full_only": case_smoke_full_only,
     "rewrite_split_modes_equiv": case_rewrite_split_modes_equiv,
     "problog_string_roundtrip": case_problog_string_roundtrip,
+    "problog_symbol_aggregate_roundtrip": case_problog_symbol_aggregate_roundtrip,
     "full_det_modes": case_full_det_modes,
     "dump_outputs_contract": case_dump_outputs_contract,
 }

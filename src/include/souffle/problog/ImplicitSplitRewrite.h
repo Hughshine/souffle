@@ -99,7 +99,7 @@ struct OverlayFactCommit {
 
 struct OverlayEdgeCommit {
     EdgePtr baseEdge;
-    std::vector<NodePtr> inputs;
+    std::vector<SplitNodeRef> inputs;
     std::vector<bool> negations;
     NodePtr output;
     double probability = 1.0;
@@ -110,6 +110,8 @@ struct OverlayEdgeCommit {
 struct OverlayGraphStats {
     std::size_t activeEdges = 0;
     std::size_t activeAliases = 0;
+    std::size_t activeAliasRefs = 0;
+    std::size_t activeAliasedEdges = 0;
     std::size_t derivedFactOverrides = 0;
 };
 
@@ -150,6 +152,8 @@ struct ImplicitSplitPipelineOptions {
 
 struct ImplicitSplitPipelineStats {
     ImplicitSplitOverlayStats overlayStats;
+    std::size_t activeAliasRefs = 0;
+    std::size_t activeAliasedEdges = 0;
     RewritePatternCounts materializedDetectedBefore;
     RewritePatternCounts materializedDetectedAfter;
     GraphRewriteStats graphRewriteStats;
@@ -198,6 +202,9 @@ public:
     std::string summarize() const;
     MaterializedImplicitSplitGraph materializeToGraph(
             const std::unordered_set<NodePtr>* skippedOutputNodes = nullptr) const;
+
+    std::size_t countNodesByRelationAndFactState(const std::string& relationName, bool currentIsFact) const;
+    std::size_t countActiveEdgesByOutputRelation(const std::string& relationName) const;
 
     const std::vector<NodePtr>& getOutputs() const {
         return outputs_;

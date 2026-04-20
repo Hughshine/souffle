@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <deque>
@@ -15,6 +16,7 @@
 #include <stdexcept>
 #include <unordered_set>
 
+#include "souffle/problog/ConstAnalysis.h"
 #include "souffle/problog/GraphRewriter.h"
 
 namespace souffle::problog {
@@ -48,6 +50,232 @@ std::size_t canonicalFactIdForGraphNode(const NodePtr& node) {
         return 0;
     }
     return node->getSemanticFactId();
+}
+
+bool evaluateOutputTruthUnderAssignment(const IncrementalDerivationGraphViewInterface& view, NodePtr output,
+        const std::unordered_map<std::size_t, bool>& factTruth,
+        const std::unordered_map<EdgePtr, bool>& edgeTruth) {
+    if (!output) {
+        return false;
+    }
+
+    std::queue<NodePtr> trueWork;
+    std::queue<NodePtr> falseWork;
+    std::unordered_map<NodePtr, ConstTruth> nodeTruth;
+    std::unordered_map<NodePtr, std::size_t> remainingNonFalseIncoming;
+
+    struct EdgeTruthInfo {
+        ConstTruth state = ConstTruth::Unknown;
+        std::size_t unresolvedTrueLits = 0;
+        std::size_t falseLits = 0;
+        bool baseTrue = false;
+        bool baseFalse = false;
+    };
+
+    std::unordered_map<EdgePtr, EdgeTruthInfo> edgeInfo;
+
+    auto markNodeTrue = [&](NodePtr node) {
+        if (!node) {
+            return;
+        }
+        auto it = nodeTruth.find(node);
+        if (it == nodeTruth.end() || it->second != ConstTruth::Unknown) {
+            return;
+        }
+        it->second = ConstTruth::True;
+        trueWork.push(node);
+    };
+
+    auto markNodeFalse = [&](NodePtr node) {
+        if (!node) {
+            return;
+        }
+        auto it = nodeTruth.find(node);
+        if (it == nodeTruth.end() || it->second != ConstTruth::Unknown) {
+            return;
+        }
+        it->second = ConstTruth::False;
+        falseWork.push(node);
+    };
+
+    auto maybeMarkNodeFalse = [&](NodePtr node) {
+        if (!node) {
+            return;
+        }
+        auto it = nodeTruth.find(node);
+        if (it == nodeTruth.end() || it->second != ConstTruth::Unknown) {
+            return;
+        }
+        auto countIt = remainingNonFalseIncoming.find(node);
+        if (countIt == remainingNonFalseIncoming.end() || countIt->second == 0) {
+            markNodeFalse(node);
+        }
+    };
+
+    auto resolveEdge = [&](EdgePtr edge, EdgeTruthInfo& info) {
+        if (!edge || info.state != ConstTruth::Unknown) {
+            return;
+        }
+        if (info.baseFalse || info.falseLits > 0) {
+            info.state = ConstTruth::False;
+            NodePtr out = view.getOutput(edge);
+            if (out) {
+                auto it = remainingNonFalseIncoming.find(out);
+                if (it != remainingNonFalseIncoming.end() && it->second > 0) {
+                    it->second -= 1;
+                }
+                if (it == remainingNonFalseIncoming.end()) {
+                    remainingNonFalseIncoming[out] = 0;
+                }
+                maybeMarkNodeFalse(out);
+            }
+            return;
+        }
+        if (info.baseTrue && info.unresolvedTrueLits == 0) {
+            info.state = ConstTruth::True;
+            NodePtr out = view.getOutput(edge);
+            if (out) {
+                markNodeTrue(out);
+            }
+        }
+    };
+
+    // Interpret the sampled assignment as a partial constant environment:
+    // sampled probabilistic facts/edges become fixed true/false, while the
+    // rest of the graph is resolved with the same true/false propagation used
+    // by plain FC. This is crucial for negated literals: a placeholder node
+    // with no supporting edges must become false under the closed-world
+    // assumption so that its negation evaluates to true, rather than stalling
+    // or being handled by a monotone "false->true only" loop.
+    for (const auto& node : view.getNodes()) {
+        if (!node) {
+            continue;
+        }
+        nodeTruth.emplace(node, ConstTruth::Unknown);
+        if (!node->isFact) {
+            continue;
+        }
+        const auto canonicalId = canonicalFactIdForGraphNode(node);
+        auto itTruth = factTruth.find(canonicalId);
+        if (itTruth != factTruth.end()) {
+            if (itTruth->second) {
+                nodeTruth[node] = ConstTruth::True;
+                trueWork.push(node);
+            } else {
+                nodeTruth[node] = ConstTruth::False;
+                falseWork.push(node);
+            }
+            continue;
+        }
+        if (nearlyOne(node->getProbability())) {
+            nodeTruth[node] = ConstTruth::True;
+            trueWork.push(node);
+        } else if (nearlyZero(node->getProbability())) {
+            nodeTruth[node] = ConstTruth::False;
+            falseWork.push(node);
+        }
+    }
+
+    for (const auto& edge : view.getEdges()) {
+        if (!edge) {
+            continue;
+        }
+        NodePtr out = view.getOutput(edge);
+        if (!out) {
+            continue;
+        }
+        remainingNonFalseIncoming[out] += 1;
+        EdgeTruthInfo info;
+        auto itEdgeTruth = edgeTruth.find(edge);
+        if (itEdgeTruth != edgeTruth.end()) {
+            info.baseTrue = itEdgeTruth->second;
+            info.baseFalse = !itEdgeTruth->second;
+        } else if (edge->isDeterministic() || nearlyOne(edge->getProbability())) {
+            info.baseTrue = true;
+        } else if (nearlyZero(edge->getProbability())) {
+            info.baseFalse = true;
+        }
+        const auto inputs = view.getInputs(edge);
+        const auto negs = view.getBodyNegations(edge);
+        for (std::size_t i = 0; i < inputs.size(); ++i) {
+            ConstTruth inputTruth = ConstTruth::Unknown;
+            auto it = nodeTruth.find(inputs[i]);
+            if (it != nodeTruth.end()) {
+                inputTruth = it->second;
+            }
+            ConstTruth lit = literalTruth(inputTruth, negs[i]);
+            if (lit != ConstTruth::True) {
+                info.unresolvedTrueLits += 1;
+            }
+            if (lit == ConstTruth::False) {
+                info.falseLits += 1;
+            }
+        }
+        edgeInfo.emplace(edge, info);
+    }
+
+    for (auto& [edge, info] : edgeInfo) {
+        resolveEdge(edge, info);
+    }
+    for (const auto& node : view.getNodes()) {
+        maybeMarkNodeFalse(node);
+    }
+
+    auto updateEdgesForNode = [&](NodePtr node, ConstTruth newTruth) {
+        const auto oldTruth = ConstTruth::Unknown;
+        for (const auto& edge : view.getOutgoingEdges(node)) {
+            auto it = edgeInfo.find(edge);
+            if (it == edgeInfo.end()) {
+                continue;
+            }
+            EdgeTruthInfo& info = it->second;
+            if (info.state != ConstTruth::Unknown) {
+                continue;
+            }
+            const auto& inputs = view.getInputs(edge);
+            const auto& negs = view.getBodyNegations(edge);
+            for (std::size_t i = 0; i < inputs.size(); ++i) {
+                if (inputs[i] != node) {
+                    continue;
+                }
+                ConstTruth oldLit = literalTruth(oldTruth, negs[i]);
+                ConstTruth newLit = literalTruth(newTruth, negs[i]);
+                if (oldLit == newLit) {
+                    continue;
+                }
+                if (oldLit == ConstTruth::True) {
+                    info.unresolvedTrueLits += 1;
+                } else if (oldLit == ConstTruth::False) {
+                    if (info.falseLits > 0) {
+                        info.falseLits -= 1;
+                    }
+                }
+                if (newLit == ConstTruth::True) {
+                    if (info.unresolvedTrueLits > 0) {
+                        info.unresolvedTrueLits -= 1;
+                    }
+                } else if (newLit == ConstTruth::False) {
+                    info.falseLits += 1;
+                }
+            }
+            resolveEdge(edge, info);
+        }
+    };
+
+    while (!trueWork.empty() || !falseWork.empty()) {
+        if (!trueWork.empty()) {
+            NodePtr node = trueWork.front();
+            trueWork.pop();
+            updateEdgesForNode(node, ConstTruth::True);
+        } else {
+            NodePtr node = falseWork.front();
+            falseWork.pop();
+            updateEdgesForNode(node, ConstTruth::False);
+        }
+    }
+
+    auto it = nodeTruth.find(output);
+    return it != nodeTruth.end() && it->second == ConstTruth::True;
 }
 
 using Clock = std::chrono::steady_clock;
@@ -682,6 +910,14 @@ void ImplicitSplitOverlay::applyEdgeGroupsAsAliases(const NodePtr& fact,
 bool ImplicitSplitOverlay::applySplit(ImplicitSplitMode mode, ImplicitSplitOverlayStats* stats) {
     if (mode == ImplicitSplitMode::None) {
         return false;
+    }
+    if (mode == ImplicitSplitMode::Complete) {
+        // The implicit overlay implementation only supports the cheap naive
+        // split heuristic in production. "Complete" split is an exploratory
+        // path with superlinear reachability/overlap work that is easy to
+        // misuse in benchmarks, so reject it here even for direct callers.
+        assert(false && "implicit complete-split is disabled; use naive-split");
+        throw std::logic_error("implicit complete-split is disabled; use naive-split");
     }
     bool changed = false;
     auto sameEdgeSet = [](const std::vector<std::size_t>& a, const std::vector<std::size_t>& b) {
@@ -1703,17 +1939,6 @@ std::vector<OverlayOutputProbability> ImplicitSplitOverlay::computeOutputMargina
         if (nearlyZero(weight)) {
             continue;
         }
-
-        std::unordered_map<NodePtr, bool> nodeTruth;
-        for (const auto& [node, state] : nodeState_) {
-            bool value = false;
-            if (state.currentIsFact) {
-                const double probability = factProbabilityOf(SplitNodeRef{node, 0});
-                auto itTruth = baseFactTruth.find(node);
-                value = (itTruth != baseFactTruth.end()) ? itTruth->second : (probability >= 1.0 - kImplicitSplitEps);
-            }
-            nodeTruth[node] = value;
-        }
         std::unordered_map<const ImplicitSplitOverlayEdge*, bool> edgeTruth;
         edgeTruth.reserve(activeEdges.size());
         for (const auto* edge : activeEdges) {
@@ -1733,14 +1958,29 @@ std::vector<OverlayOutputProbability> ImplicitSplitOverlay::computeOutputMargina
             continue;
         }
 
-        bool changed = true;
-        std::size_t rounds = 0;
-        while (changed && rounds <= nodeState_.size() + activeEdges.size()) {
-            changed = false;
-            ++rounds;
+        std::unordered_map<NodePtr, bool> fixedTruth;
+        fixedTruth.reserve(nodeState_.size());
+        for (const auto& [node, state] : nodeState_) {
+            bool value = false;
+            if (state.currentIsFact) {
+                const double probability = factProbabilityOf(SplitNodeRef{node, 0});
+                auto itTruth = baseFactTruth.find(node);
+                value = (itTruth != baseFactTruth.end()) ? itTruth->second : (probability >= 1.0 - kImplicitSplitEps);
+            }
+            fixedTruth[node] = value;
+        }
+        std::unordered_map<NodePtr, bool> nodeTruth = fixedTruth;
+        const std::size_t roundCap = nodeState_.size() + activeEdges.size() + 1;
+        bool converged = false;
+        for (std::size_t round = 0; round < roundCap; ++round) {
+            // Evaluate each round from the previous round's truth map. Starting
+            // from the sampled facts every time allows true->false retractions
+            // when a negated dependency becomes true later; the old monotone
+            // loop could only latch outputs to true and was therefore unsound
+            // for any graph containing negated body literals.
+            auto nextTruth = fixedTruth;
             for (const auto* edge : activeEdges) {
-                const bool edgeEnabled = edgeTruth[edge];
-                if (!edgeEnabled) {
+                if (!edgeTruth[edge]) {
                     continue;
                 }
                 bool bodyTrue = true;
@@ -1752,7 +1992,8 @@ std::vector<OverlayOutputProbability> ImplicitSplitOverlay::computeOutputMargina
                         auto itTruth = baseFactTruth.find(input.base);
                         value = (itTruth != baseFactTruth.end()) ? itTruth->second : (probability >= 1.0 - kImplicitSplitEps);
                     } else {
-                        value = nodeTruth[input.base];
+                        auto itTruth = nodeTruth.find(input.base);
+                        value = itTruth != nodeTruth.end() ? itTruth->second : false;
                     }
                     if (i < edge->negations.size() && edge->negations[i]) {
                         value = !value;
@@ -1762,11 +2003,19 @@ std::vector<OverlayOutputProbability> ImplicitSplitOverlay::computeOutputMargina
                         break;
                     }
                 }
-                if (bodyTrue && !nodeTruth[edge->output]) {
-                    nodeTruth[edge->output] = true;
-                    changed = true;
+                if (bodyTrue) {
+                    nextTruth[edge->output] = true;
                 }
             }
+            if (nextTruth == nodeTruth) {
+                converged = true;
+                break;
+            }
+            nodeTruth.swap(nextTruth);
+        }
+        if (!converged) {
+            throw std::runtime_error(
+                    "implicit split exact evaluator failed to converge; negated recursion is unsupported");
         }
 
         for (const auto& output : outputs_) {
@@ -1857,7 +2106,11 @@ std::vector<OverlayEdgeCommit> ImplicitSplitOverlay::collectEdgeCommits() const 
                     (std::abs(edge.baseEdge->getProbability() - edge.probability) <= kImplicitSplitEps);
             if (preserveBaseEdge) {
                 for (std::size_t i = 0; i < baseInputs.size(); ++i) {
-                    if (edge.inputs[i].base != baseInputs[i]) {
+                    // Alias shadows are semantically distinct inputs. If the overlay edge
+                    // still references the same base fact but through a non-zero alias, the
+                    // direct-commit path must recreate the edge instead of silently keeping
+                    // the original base-edge wiring.
+                    if (edge.inputs[i].alias != 0 || edge.inputs[i].base != baseInputs[i]) {
                         preserveBaseEdge = false;
                         break;
                     }
@@ -1876,7 +2129,7 @@ std::vector<OverlayEdgeCommit> ImplicitSplitOverlay::collectEdgeCommits() const 
         commit.supportTokens = std::vector<SupportToken>(edgeSupportTokensOf(edge));
         commit.inputs.reserve(edge.inputs.size());
         for (const auto& input : edge.inputs) {
-            commit.inputs.push_back(input.base);
+            commit.inputs.push_back(input);
         }
         result.push_back(std::move(commit));
     }
@@ -1914,6 +2167,22 @@ OverlayGraphStats ImplicitSplitOverlay::computeStats() const {
     for (const auto& [_, aliases] : aliasesByFact_) {
         stats.activeAliases += aliases.size();
     }
+    for (const auto& edge : edges_) {
+        if (!edge.active) {
+            continue;
+        }
+        bool edgeUsesAlias = false;
+        for (const auto& input : edge.inputs) {
+            if (input.alias == 0) {
+                continue;
+            }
+            ++stats.activeAliasRefs;
+            edgeUsesAlias = true;
+        }
+        if (edgeUsesAlias) {
+            ++stats.activeAliasedEdges;
+        }
+    }
     for (const auto& [_, state] : nodeState_) {
         if (!state.originalIsFact && state.currentIsFact) {
             ++stats.derivedFactOverrides;
@@ -1928,8 +2197,31 @@ std::string ImplicitSplitOverlay::summarize() const {
     oss << "[implicit-split-overlay] outputs=" << outputs_.size()
         << " active_edges=" << stats.activeEdges
         << " aliases=" << stats.activeAliases
+        << " active_alias_refs=" << stats.activeAliasRefs
+        << " active_aliased_edges=" << stats.activeAliasedEdges
         << " derived_fact_overrides=" << stats.derivedFactOverrides;
     return oss.str();
+}
+
+std::size_t ImplicitSplitOverlay::countNodesByRelationAndFactState(
+        const std::string& relationName, bool currentIsFact) const {
+    std::size_t count = 0;
+    for (const auto& [node, state] : nodeState_) {
+        if (node && node->getTuple().relation_name == relationName && state.currentIsFact == currentIsFact) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+std::size_t ImplicitSplitOverlay::countActiveEdgesByOutputRelation(const std::string& relationName) const {
+    std::size_t count = 0;
+    for (const auto& edge : edges_) {
+        if (edge.active && edge.output && edge.output->getTuple().relation_name == relationName) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 MaterializedImplicitSplitGraph ImplicitSplitOverlay::materializeToGraph(
@@ -1981,6 +2273,7 @@ MaterializedImplicitSplitGraph ImplicitSplitOverlay::materializeToGraph(
         shadow->setOriginalFact(nodeState_.at(ref.base).originalIsFact);
         shadow->setProbability(factProbabilityOf(ref));
         shadow->setSemanticFactId(ref.base->getSemanticFactId());
+        shadow->setProbabilisticSupportTokens(ref.base->getProbabilisticSupportTokens());
         refNodeMap.emplace(ref, shadow);
         ++out.aliasNodes;
         return shadow;
@@ -2103,24 +2396,6 @@ std::vector<OverlayOutputProbability> computeGraphOutputMarginalsExact(
             weight *= value ? probability : (1.0 - probability);
             factTruth[canonicalId] = value;
         }
-        std::unordered_map<NodePtr, bool> nodeTruth;
-        for (const auto& node : view.getNodes()) {
-            if (!node) {
-                continue;
-            }
-            bool value = false;
-            if (node->isFact) {
-                const auto canonicalId = canonicalFactIdForGraphNode(node);
-                const double probability = node->getProbability();
-                auto itTruth = factTruth.find(canonicalId);
-                if (itTruth != factTruth.end()) {
-                    value = itTruth->second;
-                } else {
-                    value = probability >= 1.0 - kImplicitSplitEps;
-                }
-            }
-            nodeTruth[node] = value;
-        }
         if (nearlyZero(weight)) {
             continue;
         }
@@ -2146,44 +2421,8 @@ std::vector<OverlayOutputProbability> computeGraphOutputMarginalsExact(
             continue;
         }
 
-        bool changed = true;
-        std::size_t rounds = 0;
-        while (changed && rounds <= view.getNodes().size() + view.getEdges().size()) {
-            changed = false;
-            ++rounds;
-            for (const auto& edge : view.getEdges()) {
-                if (!edge) {
-                    continue;
-                }
-                const bool edgeEnabled = edgeTruth[edge];
-                if (!edgeEnabled) {
-                    continue;
-                }
-                bool bodyTrue = true;
-                const auto inputs = view.getInputs(edge);
-                const auto negs = view.getBodyNegations(edge);
-                for (std::size_t i = 0; i < inputs.size(); ++i) {
-                    bool value = nodeTruth[inputs[i]];
-                    if (i < negs.size() && negs[i]) {
-                        value = !value;
-                    }
-                    if (!value) {
-                        bodyTrue = false;
-                        break;
-                    }
-                }
-                if (bodyTrue) {
-                    NodePtr output = view.getOutput(edge);
-                    if (output && !nodeTruth[output]) {
-                        nodeTruth[output] = true;
-                        changed = true;
-                    }
-                }
-            }
-        }
-
         for (const auto& output : activeOutputs) {
-            if (nodeTruth[output]) {
+            if (evaluateOutputTruthUnderAssignment(view, output, factTruth, edgeTruth)) {
                 marginals[output] += weight;
             }
         }
@@ -2359,8 +2598,14 @@ ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
     }
 
     const auto& overlayStats = result.stats.overlayStats;
+    result.stats.activeAliasRefs = overlayGraphStats.activeAliasRefs;
+    result.stats.activeAliasedEdges = overlayGraphStats.activeAliasedEdges;
     const bool canCommitOverlayInPlace =
-            !result.factCommits.empty() || !result.edgeCommits.empty() || !result.inactiveBaseEdges.empty();
+            // Runtime full-mode can now preserve live aliases in-place by
+            // materializing only the shadow fact nodes referenced by committed
+            // edges. Keep the cheaper direct-commit handoff available whenever
+            // the overlay still has residual graph state to commit.
+            (!result.factCommits.empty() || !result.edgeCommits.empty() || !result.inactiveBaseEdges.empty());
     if (canCommitOverlayInPlace && !options.computeOutputMarginals && !options.collectPatternStats) {
         precomputedProbResult.clear();
         precomputedTupleProbResult.clear();
@@ -2379,6 +2624,32 @@ ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
     }
     for (const auto& [tupleStr, prob] : result.carriedPrecomputedTupleProbs) {
         precomputedTupleProbResult.emplace(tupleStr, prob);
+    }
+
+    if (std::getenv("SOUFFLE_IMPLICIT_DEBUG_DDISASM") != nullptr) {
+        std::cerr << "[implicit-ddisasm-debug] overlay candidate_block active_edges="
+                  << overlay.countActiveEdgesByOutputRelation("candidate_block") << " factified="
+                  << overlay.countNodesByRelationAndFactState("candidate_block", true)
+                  << " nonfact=" << overlay.countNodesByRelationAndFactState("candidate_block", false)
+                  << " block_after_no_fallthrough active_edges="
+                  << overlay.countActiveEdgesByOutputRelation("block_after_no_fallthrough")
+                  << " factified="
+                  << overlay.countNodesByRelationAndFactState("block_after_no_fallthrough", true)
+                  << " nonfact="
+                  << overlay.countNodesByRelationAndFactState("block_after_no_fallthrough", false)
+                  << " block_in_padding active_edges="
+                  << overlay.countActiveEdgesByOutputRelation("block_in_padding")
+                  << " factified="
+                  << overlay.countNodesByRelationAndFactState("block_in_padding", true)
+                  << " nonfact="
+                  << overlay.countNodesByRelationAndFactState("block_in_padding", false)
+                  << " fallthrough active_edges="
+                  << overlay.countActiveEdgesByOutputRelation("fallthrough")
+                  << " factified="
+                  << overlay.countNodesByRelationAndFactState("fallthrough", true)
+                  << " nonfact="
+                  << overlay.countNodesByRelationAndFactState("fallthrough", false)
+                  << std::endl;
     }
 
     const auto materializeStart = Clock::now();

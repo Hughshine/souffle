@@ -13,6 +13,7 @@
 #include "souffle/problog/formula/SddManager.h"
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -127,7 +128,9 @@ static bool canUseImplicitOverlayCommit(const ImplicitSplitPipelineResult& resul
     if (!result.needsResidualGraph) {
         return false;
     }
-    return !result.factCommits.empty() || !result.edgeCommits.empty() || !result.inactiveBaseEdges.empty();
+    return result.materialized.graph == nullptr &&
+            (!result.factCommits.empty() || !result.edgeCommits.empty() ||
+                    !result.inactiveBaseEdges.empty());
 }
 
 struct ImplicitOverlayCommitSummary {
@@ -156,6 +159,34 @@ static ImplicitOverlayCommitSummary applyImplicitOverlayCommit(
         ++summary.factNodes;
     }
 
+    std::unordered_map<SplitNodeRef, NodePtr, SplitNodeRefHash> shadowAliasNodes;
+    shadowAliasNodes.reserve(result.stats.activeAliasRefs);
+    auto ensureCommittedInputNode = [&](const SplitNodeRef& ref) -> NodePtr {
+        if (ref.alias == 0) {
+            return ref.base;
+        }
+        auto it = shadowAliasNodes.find(ref);
+        if (it != shadowAliasNodes.end()) {
+            return it->second;
+        }
+        if (!ref.base) {
+            throw std::runtime_error("implicit overlay commit encountered null aliased input");
+        }
+        UntypedTuple shadowTuple = ref.base->getTuple();
+        shadowTuple.relation_name = std::string("_split_shadow_") +
+                std::to_string(ref.base->getId()) + "_alias" + std::to_string(ref.alias);
+        NodePtr shadow = graph.createNode(shadowTuple, ref.base->getProbability());
+        shadow->isFact = true;
+        shadow->isShadow = true;
+        shadow->setOriginalFact(ref.base->isOriginalFactNode());
+        shadow->setProbability(ref.base->getProbability());
+        shadow->setProbabilisticSupportTokens(ref.base->getProbabilisticSupportTokens());
+        shadow->setSemanticFactId(ref.base->getSemanticFactId());
+        view.mutableNodes().insert(shadow);
+        shadowAliasNodes.emplace(ref, shadow);
+        return shadow;
+    };
+
     auto& edges = view.mutableEdges();
     for (const auto& edge : result.inactiveBaseEdges) {
         if (!edge) {
@@ -170,7 +201,16 @@ static ImplicitOverlayCommitSummary applyImplicitOverlayCommit(
         if (!commit.output) {
             continue;
         }
-        EdgePtr newEdge = graph.createHyperedge(commit.inputs, commit.output, nullptr, commit.negations);
+        std::vector<NodePtr> inputs;
+        inputs.reserve(commit.inputs.size());
+        for (const auto& input : commit.inputs) {
+            NodePtr committedInput = ensureCommittedInputNode(input);
+            if (!committedInput) {
+                throw std::runtime_error("implicit overlay commit failed to map edge input");
+            }
+            inputs.push_back(committedInput);
+        }
+        EdgePtr newEdge = graph.createHyperedge(inputs, commit.output, nullptr, commit.negations);
         if (!newEdge) {
             throw std::runtime_error("implicit overlay commit failed to create hyperedge");
         }
@@ -250,7 +290,14 @@ static ImplicitSplitMode resolveImplicitSplitMode(const std::string& splitMode) 
         return ImplicitSplitMode::None;
     }
     if (splitMode == "complete-split") {
-        return ImplicitSplitMode::Complete;
+        // The implicit overlay path is engineered around the cheap, local
+        // naive partitioning heuristic. The old "complete" partitioner runs
+        // repeated graph traversals and pairwise overlap checks per fact, which
+        // is not production-ready and has already caused misleading benchmark
+        // results when enabled accidentally. Keep the failure loud instead of
+        // silently selecting a pathological mode.
+        assert(false && "implicit complete-split is disabled; use naive-split");
+        throw std::logic_error("implicit complete-split is disabled; use naive-split");
     }
     return ImplicitSplitMode::Naive;
 }
@@ -990,8 +1037,16 @@ static void runBddPipeline(
                 hybridStage->logMessage(Level::INFO, "rand_vars=" + std::to_string(varEstimate));
             }
 
+            auto componentsBuildStart = std::chrono::steady_clock::now();
             auto components = buildComponentSubgraphs(view);
+            auto componentsBuildMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now() - componentsBuildStart)
+                                             .count();
+            auto analysesStart = std::chrono::steady_clock::now();
             auto analyses = analyzeComponents(view, std::move(components));
+            auto analysesMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - analysesStart)
+                                      .count();
             long long initMsTotal = 0;
             long long initMsMax = 0;
             long long buildMs = 0;
@@ -999,7 +1054,12 @@ static void runBddPipeline(
             auto t2 = std::chrono::steady_clock::now();
             auto resolvedEvs = applyEvidence(graph, evidences);
             auto t3 = std::chrono::steady_clock::now();
+            auto evidenceApplyMs = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+            auto evidenceGroupStart = std::chrono::steady_clock::now();
             auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
+            auto evidenceGroupMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now() - evidenceGroupStart)
+                                           .count();
             long long evidenceBuildMs = 0;
             long long evidenceWmcMs = 0;
             long long perNodeWmcMs = 0;
@@ -1046,11 +1106,13 @@ static void runBddPipeline(
             std::vector<ConjComponentEval> conjComponents;
             std::vector<SlowComponentEval> slowEvals;
             const bool logFastReasons = opt.isDumpDotEnabled();
+            const bool logComponentDetails = opt.isFcProfileEnabled();
             std::vector<ComponentDecision> decisions;
             decisions.reserve(analyses.size());
 
             probResult.clear();
             const bool enableFast = opt.isSingleRandFastEnabled();
+            auto classifyStart = std::chrono::steady_clock::now();
             for (auto& analysis : analyses) {
                 const auto& comp = analysis.comp;
                 const auto& compEvs = evidencesByComponent[comp.id];
@@ -1148,16 +1210,18 @@ static void runBddPipeline(
                     fastStats.evalMs += eval.evalMsTrue + eval.evalMsFalse;
                     decision.mode = "fast_single";
                     decisions.push_back(decision);
-                    std::cout << "[fc-component] id=" << eval.comp.id
-                              << " fast_path=1"
-                              << " nodes=" << eval.comp.nodes.size()
-                              << " edges=" << eval.comp.edges.size()
-                              << " rand_vars=" << analysis.randVars
-                              << " eval_ms_true=" << eval.evalMsTrue
-                              << " eval_ms_false=" << eval.evalMsFalse
-                              << " total_ms=" << (eval.evalMsTrue + eval.evalMsFalse)
-                              << std::endl;
-                    if (hybridStage) {
+                    if (logComponentDetails) {
+                        std::cout << "[fc-component] id=" << eval.comp.id
+                                  << " fast_path=1"
+                                  << " nodes=" << eval.comp.nodes.size()
+                                  << " edges=" << eval.comp.edges.size()
+                                  << " rand_vars=" << analysis.randVars
+                                  << " eval_ms_true=" << eval.evalMsTrue
+                                  << " eval_ms_false=" << eval.evalMsFalse
+                                  << " total_ms=" << (eval.evalMsTrue + eval.evalMsFalse)
+                                  << std::endl;
+                    }
+                    if (hybridStage && logComponentDetails) {
                         hybridStage->logMessage(Level::INFO,
                                 "component id=" + std::to_string(eval.comp.id) +
                                         " fast_path=single" +
@@ -1200,15 +1264,17 @@ static void runBddPipeline(
                     conjStats.evalMs += eval.evalMs;
                     decision.mode = "fast_conj";
                     decisions.push_back(decision);
-                    std::cout << "[fc-component] id=" << eval.comp.id
-                              << " fast_path=conj"
-                              << " nodes=" << eval.comp.nodes.size()
-                              << " edges=" << eval.comp.edges.size()
-                              << " rand_vars=" << analysis.randVars
-                              << " eval_ms=" << eval.evalMs
-                              << " total_ms=" << eval.evalMs
-                              << std::endl;
-                    if (hybridStage) {
+                    if (logComponentDetails) {
+                        std::cout << "[fc-component] id=" << eval.comp.id
+                                  << " fast_path=conj"
+                                  << " nodes=" << eval.comp.nodes.size()
+                                  << " edges=" << eval.comp.edges.size()
+                                  << " rand_vars=" << analysis.randVars
+                                  << " eval_ms=" << eval.evalMs
+                                  << " total_ms=" << eval.evalMs
+                                  << std::endl;
+                    }
+                    if (hybridStage && logComponentDetails) {
                         hybridStage->logMessage(Level::INFO,
                                 "component id=" + std::to_string(eval.comp.id) +
                                         " fast_path=conj" +
@@ -1237,6 +1303,9 @@ static void runBddPipeline(
                 slow.comp = std::move(analysis.comp);
                 slowEvals.push_back(std::move(slow));
             }
+            auto classifyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - classifyStart)
+                                      .count();
 
             std::sort(slowEvals.begin(), slowEvals.end(),
                     [](const SlowComponentEval& a, const SlowComponentEval& b) {
@@ -1284,6 +1353,11 @@ static void runBddPipeline(
             }
 
             debugger.addInfo("slow_components", std::to_string(slowEvals.size()));
+            debugger.addInfo("component_build_subgraphs_ms", std::to_string(componentsBuildMs));
+            debugger.addInfo("component_analyze_ms", std::to_string(analysesMs));
+            debugger.addInfo("evidence_apply_ms", std::to_string(evidenceApplyMs));
+            debugger.addInfo("evidence_group_ms", std::to_string(evidenceGroupMs));
+            debugger.addInfo("component_classify_ms", std::to_string(classifyMs));
             debugger.addInfo("fastpath_components", std::to_string(fastStats.used));
             debugger.addInfo("fastpath_candidates", std::to_string(fastStats.candidates));
             debugger.addInfo("fastpath_skipped", std::to_string(fastStats.skipped));
@@ -1294,6 +1368,16 @@ static void runBddPipeline(
             debugger.addInfo("fastpath_conj_eval_ms", std::to_string(conjStats.evalMs));
 
             if (hybridStage) {
+                hybridStage->logMessage(Level::INFO, "component_build_subgraphs_ms=" +
+                        std::to_string(componentsBuildMs));
+                hybridStage->logMessage(Level::INFO, "component_analyze_ms=" +
+                        std::to_string(analysesMs));
+                hybridStage->logMessage(Level::INFO, "evidence_apply_ms=" +
+                        std::to_string(evidenceApplyMs));
+                hybridStage->logMessage(Level::INFO, "evidence_group_ms=" +
+                        std::to_string(evidenceGroupMs));
+                hybridStage->logMessage(Level::INFO, "component_classify_ms=" +
+                        std::to_string(classifyMs));
                 hybridStage->logMessage(Level::INFO, "slow_components=" +
                         std::to_string(slowEvals.size()));
                 hybridStage->logMessage(Level::INFO, "fastpath_components=" +
@@ -1460,17 +1544,19 @@ static void runBddPipeline(
                 auto compTotalMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                            std::chrono::steady_clock::now() - compStart)
                                            .count();
-                std::cout << "[fc-component] id=" << compId
-                          << " fast_path=0"
-                          << " nodes=" << nodeCount
-                          << " edges=" << edgeCount
-                          << " rand_vars=" << randVars
-                          << " build_ms=" << buildMsComp
-                          << " evidence_build_ms=" << evidenceBuildMsComp
-                          << " evidence_wmc_ms=" << evidenceWmcMsComp
-                          << " per_node_wmc_ms=" << perNodeWmcMsComp
-                          << " total_ms=" << compTotalMs
-                          << std::endl;
+                if (logComponentDetails) {
+                    std::cout << "[fc-component] id=" << compId
+                              << " fast_path=0"
+                              << " nodes=" << nodeCount
+                              << " edges=" << edgeCount
+                              << " rand_vars=" << randVars
+                              << " build_ms=" << buildMsComp
+                              << " evidence_build_ms=" << evidenceBuildMsComp
+                              << " evidence_wmc_ms=" << evidenceWmcMsComp
+                              << " per_node_wmc_ms=" << perNodeWmcMsComp
+                              << " total_ms=" << compTotalMs
+                              << std::endl;
+                }
             }
             for (const auto& [node, prob] : precomputedProbResult) {
                 probResult.emplace(node, prob);
@@ -1484,9 +1570,11 @@ static void runBddPipeline(
             debugger.addInfo("per_node_wmc_ms", std::to_string(perNodeWmcMs));
             debugger.addInfo("fastpath_wmc_ms", std::to_string(fastPathMs));
             std::cout << "[pipeline] BDD formula build took " << buildMs << " ms\n";
-            std::cout << "[pipeline] evidence resolve/tag took "
-                      << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
-                      << " ms\n";
+            std::cout << "[pipeline] component subgraph build took " << componentsBuildMs << " ms\n";
+            std::cout << "[pipeline] component analysis took " << analysesMs << " ms\n";
+            std::cout << "[pipeline] evidence resolve/tag took " << evidenceApplyMs << " ms\n";
+            std::cout << "[pipeline] evidence grouping took " << evidenceGroupMs << " ms\n";
+            std::cout << "[pipeline] component classification took " << classifyMs << " ms\n";
             std::cout << "[pipeline] evidence BDD build took " << evidenceBuildMs << " ms\n";
             std::cout << "[pipeline] evidence WMC took " << evidenceWmcMs << " ms\n";
             std::cout << "[pipeline] per-node conditional WMC took " << perNodeWmcMs << " ms\n";
@@ -1751,13 +1839,26 @@ static void runSddPipeline(
                 hybridStage->logMessage(Level::INFO, "rand_vars=" + std::to_string(varEstimate));
             }
 
+            auto componentsBuildStart = std::chrono::steady_clock::now();
             auto components = buildComponentSubgraphs(view);
+            auto componentsBuildMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now() - componentsBuildStart)
+                                             .count();
+            auto analysesStart = std::chrono::steady_clock::now();
             auto analyses = analyzeComponents(view, std::move(components));
+            auto analysesMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - analysesStart)
+                                      .count();
 
             auto t2 = std::chrono::steady_clock::now();
             auto resolvedEvs = applyEvidence(graph, evidences);
             auto t3 = std::chrono::steady_clock::now();
+            auto evidenceApplyMs = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+            auto evidenceGroupStart = std::chrono::steady_clock::now();
             auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
+            auto evidenceGroupMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now() - evidenceGroupStart)
+                                           .count();
 
             std::vector<FastComponentEval> fastComponents;
             std::vector<ConjComponentEval> conjComponents;
@@ -1769,6 +1870,7 @@ static void runSddPipeline(
             decisions.reserve(analyses.size());
 
             const bool enableFast = opt.isSingleRandFastEnabled();
+            auto classifyStart = std::chrono::steady_clock::now();
             for (auto& analysis : analyses) {
                 const auto& comp = analysis.comp;
                 const auto& compEvs = evidencesByComponent[comp.id];
@@ -1902,6 +2004,9 @@ static void runSddPipeline(
                 decisions.push_back(decision);
                 slowComponents.push_back(std::move(analysis.comp));
             }
+            auto classifyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - classifyStart)
+                                      .count();
 
             long long initMsTotal = 0;
             long long initMsMax = 0;
@@ -1931,6 +2036,11 @@ static void runSddPipeline(
             debugger.addInfo("manager_init_ms_max", std::to_string(initMsMax));
             debugger.addInfo("manager_init_components", std::to_string(bundles.size()));
             debugger.addInfo("live_nodes", std::to_string(liveNodesSum));
+            debugger.addInfo("component_build_subgraphs_ms", std::to_string(componentsBuildMs));
+            debugger.addInfo("component_analyze_ms", std::to_string(analysesMs));
+            debugger.addInfo("evidence_apply_ms", std::to_string(evidenceApplyMs));
+            debugger.addInfo("evidence_group_ms", std::to_string(evidenceGroupMs));
+            debugger.addInfo("component_classify_ms", std::to_string(classifyMs));
             debugger.addInfo("fastpath_components", std::to_string(fastStats.used));
             debugger.addInfo("fastpath_candidates", std::to_string(fastStats.candidates));
             debugger.addInfo("fastpath_skipped", std::to_string(fastStats.skipped));
@@ -1945,6 +2055,16 @@ static void runSddPipeline(
                 hybridStage->logMessage(Level::INFO, "manager_init_components=" +
                         std::to_string(bundles.size()));
                 hybridStage->logMessage(Level::INFO, "live_nodes=" + std::to_string(liveNodesSum));
+                hybridStage->logMessage(Level::INFO, "component_build_subgraphs_ms=" +
+                        std::to_string(componentsBuildMs));
+                hybridStage->logMessage(Level::INFO, "component_analyze_ms=" +
+                        std::to_string(analysesMs));
+                hybridStage->logMessage(Level::INFO, "evidence_apply_ms=" +
+                        std::to_string(evidenceApplyMs));
+                hybridStage->logMessage(Level::INFO, "evidence_group_ms=" +
+                        std::to_string(evidenceGroupMs));
+                hybridStage->logMessage(Level::INFO, "component_classify_ms=" +
+                        std::to_string(classifyMs));
                 hybridStage->logMessage(Level::INFO, "fastpath_components=" + std::to_string(fastStats.used));
                 hybridStage->logMessage(Level::INFO, "fastpath_candidates=" + std::to_string(fastStats.candidates));
                 hybridStage->logMessage(Level::INFO, "fastpath_skipped=" + std::to_string(fastStats.skipped));
@@ -2086,9 +2206,11 @@ static void runSddPipeline(
             }
 
             view.dumpStatistics(std::cout);
-            std::cout << "[pipeline] evidence resolve/tag took "
-                      << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
-                      << " ms\n";
+            std::cout << "[pipeline] component subgraph build took " << componentsBuildMs << " ms\n";
+            std::cout << "[pipeline] component analysis took " << analysesMs << " ms\n";
+            std::cout << "[pipeline] evidence resolve/tag took " << evidenceApplyMs << " ms\n";
+            std::cout << "[pipeline] evidence grouping took " << evidenceGroupMs << " ms\n";
+            std::cout << "[pipeline] component classification took " << classifyMs << " ms\n";
             std::cout << "[pipeline] component evidence build took " << evidenceBuildMs << " ms\n";
             std::cout << "[pipeline] component evidence WMC took " << evidenceWmcMs << " ms\n";
             std::cout << "[pipeline] per-node conditional WMC took " << perNodeWmcMs << " ms\n";
@@ -2309,6 +2431,13 @@ void runPipeline(
             } else {
                 rewriteFlags.splitMode = SplitMode::Naive;
             }
+            // Keep the graph-level rewrite policy aligned with the CLI. Without
+            // threading this flag through, implicit full-mode runs silently fall
+            // back to dirty-frontier detect even when the user explicitly asks
+            // for a full-graph SISO scan, which makes diagnosis of post-commit
+            // rewrite behavior misleading.
+            rewriteFlags.forceCompleteSisoDetect = opt.isForceCompleteSisoDetectEnabled();
+            rewriteFlags.relaxCompactionDirty = opt.isRelaxCompactionDirtyEnabled();
             rewriteStats = rewriter.rewriteUntilFixpoint(*graph, view, opt.isProfiling(), rewriteFlags);
         };
         if (opt.isImplicitRewriteEnabled()) {
@@ -2389,6 +2518,8 @@ void runPipeline(
                       << " graph_rewrite_ms=" << implicitResult.stats.graphRewriteMs
                       << " graph_bdd_compile_ms=" << implicitResult.stats.graphRewriteStats.totalBddBuildMs
                       << " overlay_aliases=" << implicitResult.stats.overlayStats.aliasesCreated
+                      << " overlay_active_alias_refs=" << implicitResult.stats.activeAliasRefs
+                      << " overlay_active_aliased_edges=" << implicitResult.stats.activeAliasedEdges
                       << " overlay_edges_aliased=" << implicitResult.stats.overlayStats.edgesAliased
                       << " overlay_all_facts=" << implicitResult.stats.overlayStats.allFactsRewrites
                       << " overlay_single=" << implicitResult.stats.overlayStats.singleHyperedgeRewrites
@@ -2410,6 +2541,16 @@ void runPipeline(
                 addImplicitInfo("implicit_overlay_prep_ms", implicitResult.stats.overlayPrepMs);
                 addImplicitInfo("implicit_overlay_split_ms", implicitResult.stats.overlaySplitMs);
                 addImplicitInfo("implicit_overlay_fastpath_ms", implicitResult.stats.overlayFastPathMs);
+                debugger.addInfo("implicit_overlay_active_alias_refs",
+                        std::to_string(implicitResult.stats.activeAliasRefs));
+                rewriteHybridStage->logMessage(Level::INFO,
+                        "implicit_overlay_active_alias_refs=" +
+                                std::to_string(implicitResult.stats.activeAliasRefs));
+                debugger.addInfo("implicit_overlay_active_aliased_edges",
+                        std::to_string(implicitResult.stats.activeAliasedEdges));
+                rewriteHybridStage->logMessage(Level::INFO,
+                        "implicit_overlay_active_aliased_edges=" +
+                                std::to_string(implicitResult.stats.activeAliasedEdges));
                 addImplicitInfo("implicit_overlay_siso_detect_ms",
                         implicitResult.stats.overlayStats.fastPathDetectMs);
                 addImplicitInfo("implicit_overlay_siso_summarize_ms",
@@ -2471,12 +2612,39 @@ void runPipeline(
         if (rewriteHybridStage) {
             debugger.addInfo("rewrite_engine", opt.isImplicitRewriteEnabled() ? "implicit" : "legacy");
             debugger.addInfo("rewrite_ms", std::to_string(rewriteMs));
+            debugger.addInfo("rewrite_initial_count_random_vars_ms",
+                    std::to_string(rewriteStats.initialCountRandomVarsMs));
+            debugger.addInfo("rewrite_collect_evidence_affected_ms",
+                    std::to_string(rewriteStats.initialEvidenceAffectedMs));
+            debugger.addInfo("rewrite_detect_total_ms", std::to_string(rewriteStats.totalDetectMs));
+            debugger.addInfo("rewrite_bdd_manager_init_ms",
+                    std::to_string(rewriteStats.totalBddManagerInitMs));
+            debugger.addInfo("rewrite_bdd_compile_ms", std::to_string(rewriteStats.totalBddBuildMs));
+            debugger.addInfo("rewrite_bdd_wmc_ms", std::to_string(rewriteStats.totalBddWmcMs));
+            debugger.addInfo("rewrite_apply_total_ms", std::to_string(rewriteStats.totalApplyMs));
             rewriteHybridStage->logMessage(Level::INFO,
                     std::string("rewrite_engine=") + (opt.isImplicitRewriteEnabled() ? "implicit" : "legacy"));
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_ms=" + std::to_string(rewriteMs));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_initial_count_random_vars_ms=" +
+                    std::to_string(rewriteStats.initialCountRandomVarsMs));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_collect_evidence_affected_ms=" +
+                    std::to_string(rewriteStats.initialEvidenceAffectedMs));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_detect_total_ms=" +
+                    std::to_string(rewriteStats.totalDetectMs));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_bdd_manager_init_ms=" +
+                    std::to_string(rewriteStats.totalBddManagerInitMs));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_bdd_compile_ms=" +
+                    std::to_string(rewriteStats.totalBddBuildMs));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_bdd_wmc_ms=" +
+                    std::to_string(rewriteStats.totalBddWmcMs));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_apply_total_ms=" +
+                    std::to_string(rewriteStats.totalApplyMs));
         }
         if (opt.isDumpDotEnabled()) {
             view.dumpDot(makeOutputPath(opt, "rewrite_final.dot"));
+        }
+        if (opt.isDumpJsonEnabled()) {
+            view.dumpJson(makeOutputPath(opt, "rewrite_final.json"));
         }
     } else if (opt.isRewriteEnabled() && opt.isDerivationOnly()) {
         std::cout << "[pipeline] derivation-only mode; skip rewrite" << std::endl;

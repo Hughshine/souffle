@@ -904,7 +904,602 @@ same dead ends.
   analogue tried here did not produce workload-backed evidence strong enough to
   keep
 
+### 2026-04-19: Aggregate-result symbol replay is now regression-guarded
+- scope:
+  close the remaining derivation/provenance replay gap for symbol-heavy rules
+  whose only top-level numeric variable is introduced through an aggregate
+- implementation reading:
+  - `Clause::variables` now includes top-level constraint variables while
+    treating each `Aggregator` as a frontier, so aggregate body locals do not
+    leak into replay metadata
+  - `ClauseTranslator::getClauseVars()` backfills the resulting clause-level
+    inventory so `RecordDerivation.varExprs` stays aligned with `Rule.vars`
+- maintained verification:
+  - new regression case:
+    `problog_symbol_aggregate_roundtrip`
+  - witness rule shape:
+    `rich(Src, Label) :- Count = count : { edge(Src, Dst) }, Count >= 2, bucket(Label), edge(Src, _).`
+  - checked end-to-end surfaces:
+    - `facts.prob` emits `rich("src","many") : 0.8`
+    - `derivation.json` preserves decoded symbolic fact tuples and symbolic
+      rule heads
+    - the full pipeline no longer asserts while replaying aggregate-result vars
+- conclusion:
+  the maintained path now covers both symbolic constants and aggregate-result
+  variables during derivation/provenance replay; the earlier DDisasm-style
+  crash class is now locked by regression rather than just locally worked
+  around
+
+### 2026-04-19: DDisasm pass exploration — symbolization is the best current host
+- scope:
+  evaluate representative DDisasm-inspired `.dl` slices under the maintained
+  `full-artifact-opt` binary to determine whether the task family is suitable
+  for inclusion as a rewrite benchmark
+- task reading from the original project/paper:
+  DDisasm is a Datalog-based disassembler for stripped binaries that first
+  decodes a superset of possible instructions, then uses Datalog analyses to
+  recover code locations, symbolization, and function boundaries before
+  emitting GTIRB / reassembleable assembly
+- pass-level reading:
+  - `function_inference`: poor host; dominated by shared `next_block` /
+    reachability / ownership propagation, not weakly shared local proof cones
+  - `code_inference` heuristic slice: not useful in the current probabilistic
+    benchmark form; exact inference collapses to deterministic/precomputed
+    outputs and does not exercise the intended rewrite effect
+  - `symbolization` data-object slice: best current host; it models the real
+    uncertainty in binary recovery (literal vs. symbol/data-object
+    interpretation) and rewrite is structurally useful on it
+- host caveat / TODO:
+  the extracted DDisasm symbolization host currently uses a temporary
+  numeric encoding for some string-valued `type` / `reason` style fields to
+  stay off the remaining `symbol`-typed variable gap in the maintained
+  ProbLog derivation/runtime path. Once native end-to-end `symbol/string`
+  support is fully restored for those variable-bearing paths, revert this host
+  back to its original string-native representation instead of keeping the
+  numeric surrogate encoding.
+- representative maintained experiments:
+  - `symbolization_data_object / symbol_medium`
+    - plain: `0.11s`
+    - implicit: `0.10s`
+    - outputs equal
+    - no graph-level regions / no RV shrink, but rewrite decomposes one larger
+      FC problem into many tiny components
+  - larger `symbolization_data_object` synthetic inputs after the FC
+    placeholder-negation fix:
+    - `num_slots=12000`
+      - plain: `7.26s`
+      - implicit: `7.64s`
+      - outputs equal
+      - `randomVars 17000 -> 17000`
+    - `num_slots=30000`
+      - plain: `20.16s`
+      - implicit: `21.64s`
+      - legacy `--rewrite`: `18.41s`
+      - outputs equal across all three modes
+      - `randomVars` stay fixed (`42500`)
+    - `num_slots=60000`
+      - plain: `44.37s`
+      - implicit: `46.24s`
+      - legacy `--rewrite`: `40.98s`
+      - outputs equal across all three modes
+      - `randomVars` stay fixed (`85000`)
+    - interpretation:
+      on this host, rewrite usefulness comes from structural
+      factorization/decomposition rather than from reducing the number of
+      probabilistic variables. The maintained implicit pipeline is near parity
+      but not yet better than plain, while explicit/legacy rewrite becomes a
+      genuine end-to-end win on the larger symbolization-shaped inputs
+  - `code_inference_heuristic / codeinf_medium`
+    - plain: `0.04s`
+    - implicit: `0.05s`
+    - outputs equal
+    - exact lane effectively sees `random_vars=0` after pruning/precomputation
+- conclusion:
+  if DDisasm contributes a benchmark to this work, it should come from a
+  symbolization-style recovery host, not from function-boundary propagation or
+  the currently extracted code-inference heuristic slice. The most defensible
+  claim is therefore: DDisasm exposes naturally uncertain binary-recovery
+  tasks, and a representative symbolization-oriented Datalog host is
+  compatible with this work. On that host, rewrite is effective because it
+  structurally factorizes the exact evaluation problem even though random
+  variable counts stay fixed; in the maintained line this benefit is already
+  visible end-to-end for explicit rewrite on the larger extracted cases.
+- caveat / TODO:
+  the current DDisasm-derived benchmark line still uses synthetic/generated
+  case families (`synthetic_originalish`, `synthetic_symbolization_data_object`,
+  etc.), not real DDisasm facts extracted from the original toolchain. This is
+  sufficient for host-shape exploration, but not sufficient for a final paper
+  claim that the benchmark is a real binary-recovery workload.
+- paper grounding:
+  the original DDisasm paper evaluates on `200` benchmark programs:
+  `106` Coreutils, `69` DARPA CGC binaries, and `25` real-world open-source
+  applications. Compiled across the reported compiler/optimization matrix,
+  this becomes `7658` binaries totaling `888 MB` of input data. The paper's
+  whole-tool timing claim is that DDisasm is faster than Ramblr on all but
+  `294` of `7658` binaries and is `4.9x` faster on average.
+- concrete next-step TODO:
+  replace at least a small representative subset of the synthetic
+  symbolization-oriented cases with real DDisasm example/test binaries and
+  their exported Souffle relations. The most promising local candidates in
+  `/tmp/ddisasm` are:
+  - `examples/asm_examples/ex_symbolic_operand_heuristics`
+  - `examples/asm_examples/ex_referred_string`
+  - `examples/ex_symbol_selection`
+  - `examples/ex_pointerReattribution3`
+  - `examples/ex_confusing_data`
+  The local DDisasm tests already expose the right extraction mechanism via
+  `--with-souffle-relations`; the remaining blocker is environment/tooling
+  availability (`ddisasm`/`gtirb` not currently installed in this workspace),
+  not uncertainty about which real workloads to use.
+
+### 2026-04-19: DDisasm symbolization — alias-aware direct commit keeps implicit close to explicit
+- scope:
+  continue the representative synthetic `symbolization_data_object /
+  num_slots=60000` host until plain, explicit, and implicit are compared on
+  the same freshly recompiled `compute`, same binary lineage, same input, and
+  no concurrent profiling noise
+- old blind spot:
+  the first `full-artifact-opt` direct-commit path flattened overlay
+  `SplitNodeRef{base, alias}` inputs back to plain base `NodePtr`s before the
+  committed graph reached later exact evaluation. That preserved semantics but
+  discarded the alias-separated graph shape that the materialized path kept
+  alive via `_split_shadow_*` nodes.
+- kept fix:
+  direct commit is now alias-aware. `OverlayEdgeCommit` preserves full
+  `SplitNodeRef` inputs, and `applyImplicitOverlayCommit()` creates local
+  shadow fact nodes on demand for aliased inputs before reconstructing the
+  committed hyperedges.
+- follow-up review fix:
+  subagent review found two additional alias-path correctness risks, both now
+  fixed in the FAOPT worktree:
+  - `collectEdgeCommits()` no longer treats an alias-only input rewrite as
+    “unchanged”; non-zero alias ids now force the edge back through the
+    direct-commit patch set
+  - `materializeToGraph()` shadow fact nodes now copy probabilistic support
+    tokens from the base fact, keeping the materialized alias path aligned
+    with direct commit
+- matched full exact run on the representative host:
+  - plain:
+    - total `49.35s`
+    - `CREATE_GRAPH_FULL = 10.50s`
+    - `FORWARD_COMPILATION_FULL = 32.78s`
+    - `manager_init_vars = 170000`
+    - `memory_usage_mb = 2989.59`
+    - `reordering_runtime = 17.970`
+  - explicit / legacy:
+    - total `28.94s`
+    - `FC_WMC_HYBRID = 12.75s`
+    - `rewrite_ms = 6006`
+    - `rewrite_detect_total_ms = 3820.30`
+    - `component_build_subgraphs_ms = 4514`
+    - `manager_init_vars = 8`
+    - `total_nodes = 49`
+    - `memory_usage_mb = 16.07`
+  - implicit / alias-aware direct commit:
+    - total `32.30s`
+    - `FC_WMC_HYBRID = 18.23s`
+    - `rewrite_ms = 10845`
+    - `implicit_total_ms = 4272.74`
+    - `implicit_overlay_prep_ms = 4128.84`
+    - `implicit_overlay_split_ms = 414.50`
+    - `implicit_overlay_fastpath_ms = 2550.15`
+    - `implicit_materialize_ms = 0`
+    - `component_build_subgraphs_ms = 4836`
+    - `manager_init_vars = 8`
+    - `total_nodes = 49`
+    - `memory_usage_mb = 16.07`
+- correctness:
+  outputs match exactly across all three runs:
+  - `symbolic_data.csv`
+  - `labeled_ea.csv`
+- interpretation:
+  the direct-commit alias-loss was a real implementation gap. Once the commit
+  path preserves alias structure, implicit lands much closer to explicit and
+  the final exact problem size aligns (`manager_init_vars=8`, `total_nodes=49`)
+  without paying materialization cost.
+- current reading:
+  - the extracted symbolization host remains the best DDisasm-derived benchmark
+    candidate
+  - the remaining implicit/explicit gap is no longer about semantic handoff
+    blind spots
+  - it is now primarily an implementation-cost gap:
+    - overlay prep / fastpath bookkeeping
+    - a still-necessary post-commit graph rewrite/split tail
+    - slightly higher component build / classification cost
+- probe result:
+  skipping the post-commit `runLegacyRewrite()` after alias-aware direct
+  commit looked tempting because it reduced `rewrite_ms` from `10845` to
+  `7770`, but it is not valid. On the same host:
+  - total regressed to `42.34s`
+  - `FC_WMC_HYBRID` regressed to `28.74s`
+  - `manager_init_vars` jumped back to `80000`
+  - `total_nodes` jumped to `35016`
+  - `fc_build_ms` jumped to `9816`
+  So the post-commit graph rewrite is still doing necessary structural
+  cleanup; it cannot simply be removed to close the gap.
+- TODO:
+  `CREATE_GRAPH_FULL` is now a recurring fixed cost on the larger DDisasm
+  symbolization hosts (about `9.8s` on the representative `num_slots=60000`
+  run) and should be treated as a separate optimization target rather than
+  something rewrite can hide.
+- TODO:
+  the stage-level `rewrite_ms` reported by the pipeline is materially larger
+  than the `GraphRewriter` self-reported rewrite total on the same explicit
+  run. The remaining gap appears to come from pre/post rewrite work that is
+  outside the current `GraphRewriter` iteration timing, and the instrumentation
+  should be tightened before making stronger claims about rewrite-engine
+  overhead.
+
+### 2026-04-19: DDisasm symbolization — apples-to-apples profiling on the instrumented FAOPT binary
+- scope:
+  rebuild the representative `symbolization_data_object / num_slots=60000`
+  case with the same instrumented binary for plain, explicit `--rewrite`, and
+  implicit `--implicit-rewrite`, then explain where the time actually goes
+  using the stage JSON rather than ad hoc stdout summaries.
+- representative runs:
+  - plain:
+    - total `46.49s`
+    - `CREATE_GRAPH_FULL = 8.81s`
+    - `FORWARD_COMPILATION_FULL = 29.22s`
+    - `WEIGHTED_MODEL_COUNTING_FULL = 0.83s`
+  - explicit:
+    - total `43.68s`
+    - `CREATE_GRAPH_FULL = 9.11s`
+    - `FC_WMC_HYBRID = 27.13s`
+  - implicit:
+    - total `49.44s`
+    - `CREATE_GRAPH_FULL = 8.90s`
+    - `FC_WMC_HYBRID = 32.54s`
+- plain diagnosis:
+  - `rand_vars = 85000`
+  - `manager_init_vars = 170000`
+  - `memory_usage_mb = 2989.59`
+  - `reordering_runtime = 17.29s`
+  - `ForwardCompilation` itself reports `Insertion time: 22370 ms`
+  - interpretation:
+    plain is not “too light”; it survives because CUDD spends a large amount
+    of time reordering and inserting into a still-regular enough DD problem.
+- explicit diagnosis:
+  - final exact problem is almost gone:
+    - `manager_init_vars = 8`
+    - `total_nodes = 49`
+    - `memory_usage_mb = 16.07`
+    - `reordering_runtime = 0`
+  - the hybrid stage is still expensive because it is now dominated by
+    bookkeeping rather than DD work:
+    - `rewrite_ms = 15538`
+    - `component_build_subgraphs_ms = 4129`
+    - `component_analyze_ms = 277`
+    - `component_classify_ms = 1681`
+    - `fc_build_ms = 1`
+    - `wmc_ms = 5`
+  - the residual gap between `FC_WMC_HYBRID` and the sum of these counters is
+    about `5.5s`; the strongest current explanation is logging overhead.
+- implicit diagnosis:
+  - final exact problem also collapses to the same residual shape:
+    - `manager_init_vars = 8`
+    - `total_nodes = 49`
+    - `memory_usage_mb = 16.07`
+    - `reordering_runtime = 0`
+  - the hybrid stage is slower than explicit mainly because the overlay path
+    adds more rewrite-side bookkeeping:
+    - `rewrite_ms = 18352`
+    - `implicit_total_ms = 12095`
+    - `implicit_overlay_prep_ms = 3683`
+    - `implicit_overlay_split_ms = 366`
+    - `implicit_overlay_fastpath_ms = 2270`
+    - `implicit_materialize_ms = 2805`
+    - `implicit_graph_rewrite_ms = 5251`
+    - `component_build_subgraphs_ms = 5198`
+    - `component_analyze_ms = 329`
+    - `component_classify_ms = 1994`
+    - `fc_build_ms = 4`
+    - `wmc_ms = 2`
+- newly confirmed profiling issue:
+  both explicit and implicit hybrid runs currently emit enormous per-component
+  diagnostics inside the timed stage:
+  - `buildFormulasCyclewise()` logs three `INFO` strings per invocation
+    (`preConfig`, `Total rounds`, `Insertion time`)
+  - on this host that ends up being `60000` invocations and `180000` such
+    strings in one stage
+  - the hybrid stage also records `20000` per-component fast-path lines
+  - resulting stage JSONs are about `9.7 MB` each
+  - this logging is the best current explanation for most of the remaining
+    `5.5s–6.7s` residual inside `FC_WMC_HYBRID`
+- newly confirmed timing-boundary issue:
+  `--dumpjson` itself contributes several seconds that are currently outside the
+  main stage accounting:
+  - every mode writes `derivation.json` after pruning and before the hybrid/full
+    exact stage; on the representative case this file is about `216 MB`
+  - rewrite modes also write `rewrite_final.json` after rewrite and before the
+    exact solver work inside `FC_WMC_HYBRID`; on the representative case this is
+    about `178 MB` for explicit and `195 MB` for implicit
+  - these untimed dumps explain most of the `~4s` top-level gap between
+    `turn_total` and the sum of stage times, and part of the remaining hybrid
+    residual beyond the explicit `rewrite_ms` / component counters
+- current reading:
+  - rewrite is real and strong; both rewrite modes destroy the global DD
+    problem
+  - end-to-end speedup is still modest because:
+    - `CREATE_GRAPH_FULL` is a fixed `~9s` front cost
+    - rewrite/hybrid bookkeeping is expensive
+    - the current hybrid implementation is overspending on diagnostic logging
+- TODO:
+  gate the per-component and per-`buildFormulasCyclewise()` diagnostic logging
+  behind an explicit profiling/debug flag; it is currently polluting both
+  runtime and JSON size on large hybrid runs.
+
+### 2026-04-19 — timing cleanup for DDisasm symbolization host
+
+On the same `symbolization_data_object / 60000 slots` input, rerunning with
+the new defaults:
+- benchmark runner default `--dump=none`
+- hybrid/FC per-component logs gated behind `--fc-profile`
+- `buildFormulasCyclewise()` per-invocation INFO gated behind `--fc-profile`
+- per-component CUDD lifecycle prints gated behind `--fc-profile`
+
+produces much cleaner timing numbers:
+- plain:
+  - old `46.49s` -> new `40.73s`
+  - `FORWARD_COMPILATION_FULL 29.22s -> 26.88s`
+- explicit:
+  - old `43.68s` -> new `37.27s`
+  - `FC_WMC_HYBRID 27.13s -> 24.40s`
+- implicit:
+  - old `49.44s` -> new `43.60s`
+  - `FC_WMC_HYBRID 32.54s -> 30.01s`
+
+The stage JSONs shrink correspondingly:
+- explicit: `9.24 MB -> 0.003 MB`
+- implicit: `9.24 MB -> 0.005 MB`
+
+and the hybrid stage log counts collapse from roughly `200k` INFO entries to:
+- explicit: `31`
+- implicit: `53`
+
+This confirms the earlier concern: the old timing runs were materially polluted
+by JSON dump volume and generic per-component logging. The cleaned timings are
+now a much better approximation of actual engine cost.
+
+### 2026-04-19 — explicit rewrite profiling tightened on DDisasm symbolization
+
+Continuing to profile the representative DDisasm-derived
+`symbolization_data_object / 60000 slots` host on the cleaned timing path
+showed that explicit rewrite still spent too much time before the actual
+collapse work:
+
+- pre-fix explicit (`/tmp/ddisasm_symbol_nodump/explicit_out/...124517.json`)
+  - total `37.27s`
+  - `FC_WMC_HYBRID = 24.40s`
+  - `rewrite_ms = 17943`
+  - `rewrite_collect_evidence_affected_ms = 4671.051530`
+  - `rewrite_detect_total_ms = 6335.643894`
+
+The host uses no evidence at all, so the `4.67s` evidence-affected cost was
+pure overhead. `GraphRewriter::collectEvidenceAffectedNodes()` now short-circuits
+when `view.getEvidenceNodes().empty()`, avoiding SCC/dependency-graph
+construction in the common no-evidence case.
+
+After that fix, explicit improved to:
+- explicit (`/tmp/ddisasm_symbol_nodump2/explicit_out/...125910.json`)
+  - total `41.47s` on a noisier run with slower early stages
+  - `rewrite_ms = 14678`
+  - `rewrite_collect_evidence_affected_ms = 0.000073`
+  - `rewrite_detect_total_ms = 10171.671921`
+
+That exposed the next dominant cost: dirty-frontier detect itself. The
+frontier builder was expanding dirty seeds for two rounds. On this host, the
+first `60000` `all-facts` rewrites already seed the exact exits/adjacent edges
+needed to expose the second-round `linear-two-edge` regions; the second
+expansion round ballooned the frontier back toward a near-full scan.
+
+Reducing the dirty-frontier expansion from two rounds to one produced:
+- explicit (`/tmp/ddisasm_symbol_nodump3/explicit_out/...13452.json`)
+  - total `22.40s`
+  - `FC_WMC_HYBRID = 11.15s`
+  - `rewrite_ms = 5958`
+  - `rewrite_collect_evidence_affected_ms = 0.000073`
+  - `rewrite_detect_total_ms = 3730.811178`
+- implicit (`/tmp/ddisasm_symbol_nodump3/implicit_out/...13534.json`)
+  - total `30.97s`
+  - `FC_WMC_HYBRID = 19.52s`
+  - `rewrite_ms = 12053`
+  - `rewrite_collect_evidence_affected_ms = 0.000136`
+  - `rewrite_detect_total_ms = 1207.784897`
+
+Outputs remained identical to the plain baseline:
+- `symbolic_data.csv` diff: empty
+- `labeled_ea.csv` diff: empty
+
+Current reading:
+- explicit rewrite is still not "cheap", but the dominant waste is now much
+  better localized:
+  - first it was no-evidence SCC analysis
+  - then it was overly aggressive dirty-frontier expansion
+- both fixes are semantics-preserving on the maintained regression suite and on
+  the representative DDisasm host
+
+One more explicit rewrite cost remained in the final no-region iteration: the
+naive fan-out split pass still scanned the entire graph even though detect had
+already converged. Making `splitFanoutNaive()` seed from the previous dirty
+frontier instead of full-scanning every fact reduced that tail split from
+roughly `700 ms` to `130 ms` on the large symbolization host and brought the
+best clean timing down to:
+- explicit (`/tmp/ddisasm_symbol_profile_continue/explicit_large_out/...133922.json`)
+  - total `20.92s`
+  - `FC_WMC_HYBRID = 9.41s`
+  - `rewrite_ms = 4861`
+  - `rewrite_detect_total_ms = 3119.477589`
+  - `component_build_subgraphs_ms = 2527`
+- plain (`/tmp/ddisasm_symbol_profile_continue/plain_large_out/...134042.json`)
+  - total `38.97s`
+  - `FORWARD_COMPILATION_FULL = 26.35s`
+  - `reordering_runtime = 15.990`
+- implicit (`/tmp/ddisasm_symbol_profile_continue/implicit_large_out/...134115.json`)
+  - total `31.47s`
+  - `FC_WMC_HYBRID = 19.25s`
+  - `rewrite_ms = 12624`
+  - `implicit_total_ms = 7718.216526`
+
+The remaining explicit-rewrite bottlenecks are now:
+1. fast-path detection still pays for large zero-hit scans
+   - iter1: only `all-facts` matters, but `single+linear+parallel+fan-out`
+     still cost `~1.0s`
+   - iter2: only `linear-two-edge` matters, but the other detectors still cost
+     `~0.6s`
+   - iter3: no regions remain, but all detectors still run for `~0.16s`
+2. `component_build_subgraphs_ms`, which is now dominated by dependency-graph
+   construction rather than the final bucketing step
+   - `--profile-dep-graph` on the same run reports a root dep-graph build of
+     `3383 ms` for `380000` nodes / `295000` edges
+
+Remaining priorities now line up as:
+1. TODO: close the remaining implicit vs explicit gap
+2. continue debugging explicit rewrite cost (`detect` scheduling + dep-graph/component build)
+3. TODO: `CREATE_GRAPH_FULL`
+
+Additional profiling notes:
+- This `full-artifact-opt` line is effectively `online + full-only` by default.
+  `MainDriver.cpp` hardwires the online translation strategy and sets
+  `full-only` in config, so external runners should not expect
+  `--online/--full-only` CLI flags to exist on this branch.
+- `buildComponentSubgraphs()` reuses the dependency graph within a single
+  `DerivationGraphViewInterface` instance via `cachedCycleDependencyGraph_`.
+  The expensive `component_build_subgraphs_ms` on the representative host is
+  therefore first-touch dep-graph construction, not repeated dep-graph rebuilds
+  within the same view.
+- Two additional low-risk explicit optimizations were tried and reverted:
+  - reordering detector families to early-return on dominant batches
+  - pre-count/reserve component bucket sets
+  Neither produced a stable speedup on the `60000`-slot symbolization host.
+  The current checked-in state remains the best known clean explicit timing.
+- Timing/profiling caveat:
+  `problog-benchmark/benchmarks/ddisasm_funinfer/cli/ddisasm_funinfer_full.py`
+  currently appends `--derv-only` / `--derivation-only` during `run`, so its
+  `run` subcommand does not measure the full exact lane on this branch. Trusted
+  full timings for the representative synthetic DDisasm host therefore still
+  need to be collected by:
+  1. `compile --force` with the current repo-built `souffle` binary
+  2. manually invoking the freshly produced `compute` binary without
+     `--derv-only`
+  Reusing an already-built `compute` after runtime/header changes is also
+  invalid for profiling; the synthetic host must be recompiled for each kept
+  runtime experiment.
+- Two more dependency-graph / component-build micro-optimizations were tried
+  and reverted:
+  - lazily deferring edge-cycle/depth materialization in `CycleDependencyGraph`
+  - reducing `computeDependencies()` hash lookups and pre-reserving some
+    component-build containers
+  On a properly recompiled `60000`-slot symbolization host these changes either
+  regressed the explicit path badly or produced no stable gain. At this point,
+  low-risk dep-graph micro-patches appear close to exhausted; further progress
+  likely needs a more structural redesign rather than more container-level
+  tweaks.
+- TODO:
+  detector scheduling still looks promising, but it likely needs to be
+  iteration-aware rather than a global family reorder. The simple attempt that
+  moved dominant families earlier and early-returned on large batches regressed
+  the representative `60000`-slot symbolization host badly. The next try
+  should gate families by expected per-iteration shape instead:
+  - iter1: prioritize `all-facts` (and possibly `single-hyperedge`)
+  - iter2: prioritize `linear-two-edge`
+  - terminal pass: run the low-hit families once as a cleanup sweep
+  This remains TODO and should be tested against side-channel and taint before
+  promotion.
+
+### 2026-04-19: one-off sanity check on existing side-channel / taint workloads
+- scope:
+  run a minimal baseline-vs-current sanity comparison on representative
+  `full-artifact` benchmark cases using the original `full-artifact-opt` binary
+  (`2374561f9`) and the current FAOPT worktree binary (`ef803682b` + local
+  runtime changes). Because this branch defaults to `online + full-only`,
+  lightweight wrapper scripts were used to strip the legacy `--online` and
+  `--full-only` CLI flags from the benchmark runners without editing the
+  runners themselves.
+- side-channel:
+  `P19`, full-mode, `--implicit-rewrite --det-opt`
+  - baseline binary:
+    `compile = 35.12s`, `run = 3.553s`, `keys = 7255`
+  - current binary:
+    `compile = 38.20s`, `run = 3.356s`, `keys = 7255`
+  - `facts.prob` matched exactly between the two runs
+- taint:
+  `and-roc`, `pt-obj-dlog`, full pipeline, `--implicit-rewrite` (runner
+  auto-added `--det-opt`)
+  - baseline binary:
+    `run = 165.03s`, `keys = 11385`
+  - current binary:
+    `run = 132.53s`, `keys = 11385`
+  - `facts.prob` matched exactly for the checked `pt-obj-dlog` stage
+- interpretation:
+  this is not a controlled benchmark campaign, just a one-off sanity read, but
+  it is enough to say that the currently kept rewrite-side optimizations did
+  not obviously regress the representative checked side-channel and taint
+  workloads. The detector-scheduling idea still remains TODO rather than kept
+  behavior because it has only been tried in the DDisasm-derived host and
+  regressed there.
+
+### 2026-04-19: current plain/explicit/implicit trend sanity on representative side/taint workloads
+- scope:
+  check whether the *current* FAOPT binary still shows the expected
+  `plain / explicit / implicit` speedup trend on one representative
+  side-channel workload and one representative taint workload. Because another
+  heavy session was active on the same machine, treat the absolute wall times
+  as sanity readings only; the trusted comparison is the per-run debugger JSON
+  produced by the same binary on the same input.
+- side-channel:
+  whole-case `P17`, current FAOPT runtime, direct `compute` invocation on the
+  same freshly compiled binary and the same `input/`
+  - plain:
+    `turn = 4.709s`, `CREATE_GRAPH_FULL = 0.381s`,
+    `FORWARD_COMPILATION_FULL = 3.574s`,
+    `WEIGHTED_MODEL_COUNTING_FULL = 0.047s`
+  - explicit (`--rewrite`):
+    `turn = 2.043s`, `FC_WMC_HYBRID = 0.977s`, `rewrite_ms = 554`
+  - implicit (`--implicit-rewrite`):
+    `turn = 1.691s`, `FC_WMC_HYBRID = 0.662s`, `rewrite_ms = 469`,
+    `implicit_total_ms = 373.797575`
+  - output agreement:
+    `facts.prob`, `KEY_IND.csv`, `KEY_SENSITIVE.csv`, and the full non-log
+    output file set matched exactly across all three runs
+- taint:
+  representative heavy stage `yaaic / pt-obj-dlog`, direct `compute`
+  invocation on the same compiled stage binary and the same materialized
+  `pt-obj-dlog/input`
+  - rationale:
+    `yaaic` is a medium-sized real case in the prepared taint bundle and
+    `pt-obj-dlog` is its dominant exact stage (`15.454s` in the bundle's
+    stage report), so this is the cleanest representative place to compare
+    rewrite behavior without taint-runner orchestration noise
+  - plain:
+    `turn = 13.211s`, `CREATE_GRAPH_FULL = 1.066s`,
+    `FORWARD_COMPILATION_FULL = 11.487s`,
+    `WEIGHTED_MODEL_COUNTING_FULL = 0.018s`
+  - explicit (`--rewrite`):
+    `turn = 3.824s`, `FC_WMC_HYBRID = 1.589s`, `rewrite_ms = 173`
+  - implicit (`--implicit-rewrite`):
+    `turn = 3.834s`, `FC_WMC_HYBRID = 1.367s`, `rewrite_ms = 216`,
+    `implicit_total_ms = 148.629320`
+  - output agreement:
+    the full non-log output file set under the stage output directory matched
+    exactly across plain/explicit/implicit, including `facts.prob`
+- interpretation:
+  the representative checked side-channel and taint workloads still preserve
+  the qualitative trend we want:
+  - `plain` is the slowest path
+  - rewrite is clearly beneficial
+  - explicit and implicit stay in the same performance band
+  The exact ordering is not identical across domains: on checked side-channel
+  `P17`, implicit was slightly faster than explicit; on checked taint
+  `yaaic / pt-obj-dlog`, explicit and implicit were effectively tied. This is
+  still consistent with the claim that the current runtime changes did not
+  break the established rewrite speedup trend on the existing benchmark
+  families.
+
 ## Related commits
+- `UNCOMMITTED` — fix(problog): cover aggregate-result symbol replay with maintained regression
+- `UNCOMMITTED` — fix(implicit-rewrite): force materialized handoff when overlay split creates aliases
+- `UNCOMMITTED` — docs(research): record DDisasm pass exploration and symbolization host reading
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
 - `UNCOMMITTED` — docs(research): refresh curated rewrite status around the packaged full artifact
 - `00565d0` — feat(artifact): package maintained CAV full workflows
