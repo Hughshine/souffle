@@ -7,6 +7,10 @@
  */
 
 #include "ast/Clause.h"
+#include "ast/BinaryConstraint.h"
+#include "ast/Aggregator.h"
+#include "ast/Variable.h"
+#include "ast/utility/Visitor.h"
 #include "souffle/utility/ContainerUtil.h"
 #include "souffle/utility/MiscUtil.h"
 #include "souffle/utility/NodeMapperFwd.h"
@@ -25,28 +29,30 @@ struct ClauseVariableSummary {
 
 ClauseVariableSummary collectClauseVariables(const VecOwn<Literal>& bodyLiterals) {
     ClauseVariableSummary summary;
-    for (const auto& lit : bodyLiterals) {
-        Atom* atom = nullptr;
-        if (isA<Atom>(lit)) {
-            atom = as<Atom>(lit);
-        } else if (isA<Negation>(lit)) {
-            atom = as<Negation>(lit)->getAtom();
-        } else {
-            continue;
+    auto addVariable = [&](const std::string& name) {
+        if (std::find(summary.variables.begin(), summary.variables.end(), name) ==
+                summary.variables.end()) {
+            summary.variables.emplace_back(name);
         }
-        if (atom->isRederive) {
+    };
+    for (const auto& lit : bodyLiterals) {
+        if (isA<Atom>(lit) && as<Atom>(lit)->isRederive) {
             summary.hasRederive = true;
             continue;
         }
-        for (const auto* arg : atom->getArguments()) {
-            if (const auto* var = as<Variable>(arg)) {
-                const auto& varName = var->getName();
-                if (std::find(summary.variables.begin(), summary.variables.end(), varName) ==
-                        summary.variables.end()) {
-                    summary.variables.emplace_back(varName);
-                }
-            }
+        if (isA<Negation>(lit) && as<Negation>(lit)->getAtom()->isRederive) {
+            summary.hasRederive = true;
+            continue;
         }
+        visitFrontier(*lit, [&](const Node& node) {
+            if (as<Aggregator>(node)) {
+                return true;
+            }
+            if (const auto* var = as<Variable>(node)) {
+                addVariable(var->getName());
+            }
+            return false;
+        });
     }
     return summary;
 }

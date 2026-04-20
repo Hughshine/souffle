@@ -353,6 +353,156 @@ def case_problog_string_roundtrip(souffle_bin: Path, work_root: Path) -> None:
         )
 
 
+def case_problog_symbol_aggregate_roundtrip(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("problog_symbol_aggregate_roundtrip", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    out_dir = case_dir / "out_full"
+    run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_dir,
+        extra_args=["--dumpjson", "--logfile", "reglog"],
+    )
+
+    expected_key = 'rich("src","many")'
+    probs = parse_prob_file(out_dir / "facts.prob")
+    if set(probs.keys()) != {expected_key}:
+        raise CaseFailure(
+            "problog_symbol_aggregate_roundtrip: unexpected probability keys.\n"
+            f"keys={sorted(probs.keys())}"
+        )
+    if not math.isclose(probs[expected_key], 0.8, rel_tol=0.0, abs_tol=1e-12):
+        raise CaseFailure(
+            "problog_symbol_aggregate_roundtrip: unexpected aggregate probability.\n"
+            f"value={probs[expected_key]}"
+        )
+
+    derivation_json = out_dir / "derivation.json"
+    if not derivation_json.exists():
+        raise CaseFailure(f"problog_symbol_aggregate_roundtrip: missing {derivation_json}")
+    payload = json.loads(derivation_json.read_text(encoding="utf-8"))
+
+    fact_names = {entry["name"] for entry in payload.get("facts", [])}
+    if 'bucket("many")' not in fact_names or 'edge("src","mid")' not in fact_names:
+        raise CaseFailure(
+            "problog_symbol_aggregate_roundtrip: derivation.json lost decoded symbolic facts.\n"
+            f"sample={sorted(fact_names)[:8]}"
+        )
+
+    rich_rules = [entry for entry in payload.get("rules", []) if entry.get("head") == expected_key]
+    if len(rich_rules) != 2:
+        raise CaseFailure(
+            "problog_symbol_aggregate_roundtrip: expected two derivations for the aggregate result.\n"
+            f"count={len(rich_rules)}"
+        )
+
+    head_tuples = [entry.get("headTuple") for entry in rich_rules]
+    if not all(tuple_obj and tuple_obj.get("fields") == ["src", "many"] for tuple_obj in head_tuples):
+        raise CaseFailure(
+            "problog_symbol_aggregate_roundtrip: decoded symbolic head tuple mismatch.\n"
+            f"headTuples={head_tuples}"
+        )
+
+    body_name_sets = [{body["name"] for body in entry.get("bodies", [])} for entry in rich_rules]
+    expected_bodies = [
+        {'bucket("many")', 'edge("src","mid")'},
+        {'bucket("many")', 'edge("src","dst")'},
+    ]
+    if sorted(body_name_sets, key=lambda s: sorted(s)) != sorted(expected_bodies, key=lambda s: sorted(s)):
+        raise CaseFailure(
+            "problog_symbol_aggregate_roundtrip: decoded aggregate derivations mismatch.\n"
+            f"bodies={body_name_sets}"
+        )
+
+
+def case_problog_fact_prob_alignment(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("problog_fact_prob_alignment", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    out_dir = case_dir / "out_full"
+    run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_dir)
+
+    probs = parse_prob_file(out_dir / "facts.prob")
+    expected = {
+        'seen("a","y")': 0.2,
+        'seen("b","z")': 0.1,
+        'seen("c","x")': 0.3,
+    }
+    if set(probs.keys()) != set(expected.keys()):
+        raise CaseFailure(
+            "problog_fact_prob_alignment: unexpected tuple keys.\n"
+            f"expected={sorted(expected.keys())}\n"
+            f"actual={sorted(probs.keys())}"
+        )
+    for key, value in expected.items():
+        if not math.isclose(probs[key], value, rel_tol=0.0, abs_tol=1e-12):
+            raise CaseFailure(
+                "problog_fact_prob_alignment: fact/prob pairing was not preserved.\n"
+                f"key={key} expected={value} actual={probs[key]}"
+            )
+
+
+def case_problog_large_numeric_tuple_roundtrip(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("problog_large_numeric_tuple_roundtrip", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    out_dir = case_dir / "out_full"
+    run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_dir,
+        extra_args=["--dumpjson", "--logfile", "reglog"],
+    )
+
+    graph_json = json.loads((out_dir / "derivation.json").read_text(encoding="utf-8"))
+    big_fields = [
+        tuple_obj["fieldsRaw"]
+        for entry in graph_json.get("facts", [])
+        if (tuple_obj := entry.get("tuple")) and tuple_obj.get("rel") in {"big", "keep"}
+    ]
+    if [{"ram": "2147483647"}] not in big_fields and [2147483647] not in big_fields:
+        raise CaseFailure(
+            "problog_large_numeric_tuple_roundtrip: structured tuple JSON did not preserve the exact RamDomain value.\n"
+            f"sample={big_fields[:4]}"
+        )
+
+
+def case_problog_query_named_variable_equality(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("problog_query_named_variable_equality", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    out_dir = case_dir / "out_full"
+    run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_dir)
+
+    probs = parse_prob_file(out_dir / "facts.prob")
+    expected = {
+        'q("loop","loop")': 0.9,
+        'q("other","other")': 0.7,
+    }
+    if set(probs.keys()) != set(expected.keys()):
+        raise CaseFailure(
+            "problog_query_named_variable_equality: repeated-variable query matched the wrong tuples.\n"
+            f"keys={sorted(probs.keys())}"
+        )
+    for key, value in expected.items():
+        if not math.isclose(probs[key], value, rel_tol=0.0, abs_tol=1e-12):
+            raise CaseFailure(
+                "problog_query_named_variable_equality: unexpected probability.\n"
+                f"tuple={key} value={probs[key]}"
+            )
+
+
+def case_problog_constraint_variable_equality_chain(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("problog_constraint_variable_equality_chain", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    out_dir = case_dir / "out_full"
+    run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_dir)
+
+    keep_csv = (out_dir / "keep.csv").read_text(encoding="utf-8").strip().splitlines()
+    if keep_csv != ["10"]:
+        raise CaseFailure(
+            "problog_constraint_variable_equality_chain: chained variable equality did not propagate bound values.\n"
+            f"keep={keep_csv}"
+        )
+
+
 def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("dump_outputs_contract", work_root)
     input_dir = case_dir / "input"
@@ -382,6 +532,11 @@ CASES = {
     "smoke_full_only": case_smoke_full_only,
     "rewrite_split_modes_equiv": case_rewrite_split_modes_equiv,
     "problog_string_roundtrip": case_problog_string_roundtrip,
+    "problog_symbol_aggregate_roundtrip": case_problog_symbol_aggregate_roundtrip,
+    "problog_fact_prob_alignment": case_problog_fact_prob_alignment,
+    "problog_large_numeric_tuple_roundtrip": case_problog_large_numeric_tuple_roundtrip,
+    "problog_query_named_variable_equality": case_problog_query_named_variable_equality,
+    "problog_constraint_variable_equality_chain": case_problog_constraint_variable_equality_chain,
     "full_det_modes": case_full_det_modes,
     "dump_outputs_contract": case_dump_outputs_contract,
 }

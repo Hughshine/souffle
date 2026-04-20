@@ -114,14 +114,19 @@ std::string ClauseTranslator::getClauseAtomName(const ast::Clause& clause, const
 // TODO: change to heap
 std::map<std::string, Own<ram::Expression>> ClauseTranslator::getClauseVars(const ast::Clause& clause) const {
     std::map<std::string, Own<ram::Expression>> varExprMap{};
+    std::vector<std::pair<std::string, std::string>> equalityVarPairs;
+    auto rememberDefinedVariable = [&](const ast::Variable& var) {
+        const auto& varName = var.getName();
+        if (varExprMap.find(varName) == varExprMap.end()) {
+            if (!valueIndex->isDefined(varName)) {
+                return;
+            }
+            varExprMap.insert({varName, context.translateValue(*valueIndex, &var)});
+        }
+    };
     // iterate all body literals and translate it to expression
     for (const auto& lit: clause.getBodyLiterals()) {
-        ast::Atom* atom;
-        if (isA<ast::Atom>(lit)) {
-            atom = as<ast::Atom>(lit);
-        } else if (isA<ast::Negation>(lit)) {
-            atom = as<ast::Negation>(lit)->getAtom();
-        } else if (const auto* bc = as<ast::BinaryConstraint>(lit)) {
+        if (const auto* bc = as<ast::BinaryConstraint>(lit)) {
             if (bc->getBaseOperator() == BinaryConstraintOp::EQ) {
                 const auto* lhs = bc->getLHS();
                 const auto* rhs = bc->getRHS();
@@ -135,24 +140,53 @@ std::map<std::string, Own<ram::Expression>> ClauseTranslator::getClauseVars(cons
                     if (varExprMap.find(varName) == varExprMap.end()) {
                         varExprMap.insert({varName, context.translateValue(*valueIndex, rhsConst)});
                     }
+                } else if (lhsVar != nullptr && rhsVar != nullptr) {
+                    equalityVarPairs.emplace_back(lhsVar->getName(), rhsVar->getName());
+                    rememberDefinedVariable(*lhsVar);
+                    rememberDefinedVariable(*rhsVar);
+                } else if (lhsVar != nullptr) {
+                    const auto& varName = lhsVar->getName();
+                    if (varExprMap.find(varName) == varExprMap.end()) {
+                        varExprMap.insert({varName, context.translateValue(*valueIndex, lhsVar)});
+                    }
                 } else if (rhsVar != nullptr && lhsConst != nullptr) {
                     const auto& varName = rhsVar->getName();
                     if (varExprMap.find(varName) == varExprMap.end()) {
                         varExprMap.insert({varName, context.translateValue(*valueIndex, lhsConst)});
                     }
+                } else if (rhsVar != nullptr) {
+                    const auto& varName = rhsVar->getName();
+                    if (varExprMap.find(varName) == varExprMap.end()) {
+                        varExprMap.insert({varName, context.translateValue(*valueIndex, rhsVar)});
+                    }
                 }
             }
-            continue;
-        } else {
-            // assert(false && "constraints are not supported");
+        }
+        if (!isA<ast::Atom>(lit) && !isA<ast::Negation>(lit)) {
             continue;
         }
-        for (const auto* arg : atom->getArguments()) {
-            if (const auto& var = as<ast::Variable>(arg)) {
-                const auto& varName = var->getName();
-                if (varExprMap.find(varName) == varExprMap.end()) {
-                    varExprMap.insert({varName, context.translateValue(*valueIndex, var)});
-                }
+        visitFrontier(*lit, [&](const ast::Node& node) {
+            if (as<ast::Aggregator>(node)) {
+                return true;
+            }
+            if (const auto* var = as<ast::Variable>(node)) {
+                rememberDefinedVariable(*var);
+            }
+            return false;
+        });
+    }
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (const auto& [lhsName, rhsName]: equalityVarPairs) {
+            const auto lhsIt = varExprMap.find(lhsName);
+            const auto rhsIt = varExprMap.find(rhsName);
+            if (lhsIt != varExprMap.end() && rhsIt == varExprMap.end()) {
+                varExprMap.emplace(rhsName, lhsIt->second->cloning());
+                changed = true;
+            } else if (rhsIt != varExprMap.end() && lhsIt == varExprMap.end()) {
+                varExprMap.emplace(lhsName, rhsIt->second->cloning());
+                changed = true;
             }
         }
     }
@@ -164,7 +198,11 @@ std::vector<Own<ram::Expression>> ClauseTranslator::getClauseVarExprs(const ast:
     std::vector<Own<ram::Expression>> varExprs;
     // iterate all body literals and translate it to expression
     for (auto var: clause.getVariables()) {
-        varExprs.emplace_back(varExprMap[var]->cloning());
+        auto it = varExprMap.find(var);
+        if (it == varExprMap.end()) {
+            continue;
+        }
+        varExprs.emplace_back(it->second->cloning());
     }
     return varExprs;
 }

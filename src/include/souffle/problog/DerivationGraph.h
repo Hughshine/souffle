@@ -8,6 +8,7 @@
 #include "souffle/CompiledOptions.h"
 #include "souffle/RamTypes.h"
 #include "souffle/SouffleInterface.h"
+#include "souffle/datastructure/SymbolTableImpl.h"
 #include "souffle/problog/Rule.h"
 #include "souffle/problog/RuleManager.h"
 #include "souffle/problog/QueryManager.h"
@@ -4254,7 +4255,7 @@ static inline UntypedTuple _parse_tuple(const std::string& s_in) {
 static inline UntypedTuple _parse_tuple_json_or_string(
         const json11::Json& tupleJson, const std::string& rendered) {
     if (tupleJson.is_object()) {
-        return parseUntypedTupleJson(tupleJson);
+        return parseUntypedTupleJson(tupleJson, rendered);
     }
     return _parse_tuple(rendered);
 }
@@ -4303,6 +4304,21 @@ IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const st
     Json root = Json::parse(content, err);
     if (!err.empty()) {
         throw std::runtime_error("JSON parse error: " + err);
+    }
+
+    std::unique_ptr<souffle::SymbolTableImpl> localSymbolTable;
+    std::unique_ptr<ScopedUntypedTupleRenderingContext> tupleRenderingContext;
+    auto relationTypes = copyUntypedTupleRenderingRelationTypes();
+    if (relationTypes.empty()) {
+        relationTypes = inferRelationTypesFromGraphJson(root);
+    }
+    if (getUntypedTupleRenderingSymbolTable() == nullptr) {
+        localSymbolTable = std::make_unique<souffle::SymbolTableImpl>();
+        tupleRenderingContext = std::make_unique<ScopedUntypedTupleRenderingContext>(
+                localSymbolTable.get(), std::move(relationTypes));
+    } else if (!relationTypes.empty()) {
+        tupleRenderingContext = std::make_unique<ScopedUntypedTupleRenderingContext>(
+                getUntypedTupleRenderingSymbolTable(), std::move(relationTypes));
     }
 
     auto* g = new IncrementalDerivationGraph();
