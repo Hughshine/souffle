@@ -1448,7 +1448,53 @@ Additional profiling notes:
   break the established rewrite speedup trend on the existing benchmark
   families.
 
+## 2026-04-20 — SUM aggregate replay prototype and symbolization sanity
+
+- scope:
+  current-source `full-artifact-opt-string-port-wt`, after restoring implicit
+  full-mode to a single maintained `overlay all-facts = on` path
+- implementation:
+  added a minimal `SUM` aggregate replay path without changing `RuleApplication`
+  shape
+  - `Rule` now carries lightweight `AggregateSpec` metadata
+  - `Synthesiser` emits `AggregateSpec` for single-atom `SUM` clauses
+  - `DerivationGraph` reconstructs aggregate witnesses from replay-visible
+    tuples and builds a deterministic DP subgraph of synthetic
+    `__agg_sum_state(...)` nodes
+- correctness checks:
+  - new maintained regression case
+    `problog_sum_exact_roundtrip`
+  - tiny probe:
+    `base("a"), w("a",2)=0.5, w("a",3)=0.6, total(X,S) :- S = sum ...`
+    now yields `total("a",5) : 0.3`
+  - the pre-existing `problog_symbol_aggregate_roundtrip` regression still
+    passes unchanged
+- key bug fixes discovered while implementing:
+  - aggregate tuple indexing was initially using iterators from two different
+    temporary `rule->getVars()` vectors; fixing that removed a create-graph
+    crash
+  - synthetic hyperedges created with `rule=nullptr` were leaving edge
+    probability uninitialized; these edges are now deterministic (`1.0`)
+- symbolization status:
+  - after rewriting the extracted host's negated existential into a helper
+    relation, probabilistic symbolization cases can now reach the aggregate
+    replay path
+  - medium cases such as `gawk_balanced` and `grep_balanced` no longer show the
+    old `data_object_total_points` probability collapse to a single
+    relation-level constant; symbol candidates now exhibit combined values such
+    as `0.696256 = 0.86 * 0.88 * 0.92`
+  - larger cases such as `flex_balanced` still blow up in BDD construction
+    (`makeOrBalanced failed` after ~11M CUDD nodes), so the current DP
+    encoding is semantically better but not yet cost-robust for large
+    symbolization workloads
+- interpretation:
+  this is enough to say the current runtime can replay `SUM` witnesses
+  numerically on small/medium cases, but the aggregate support is still
+  prototype-level for benchmark-scale symbolization inputs because the
+  synthetic DP subgraph can expand too aggressively.
+
 ## Related commits
+- `UNCOMMITTED` — feat(problog): add minimal SUM aggregate replay regression and graph reconstruction
 - `UNCOMMITTED` — fix(problog): cover aggregate-result symbol replay with maintained regression
 - `UNCOMMITTED` — fix(implicit-rewrite): force materialized handoff when overlay split creates aliases
 - `UNCOMMITTED` — docs(research): record DDisasm pass exploration and symbolization host reading

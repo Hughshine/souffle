@@ -300,7 +300,6 @@ def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
     if base_keys != force_keys:
         raise CaseFailure("det-force changed output tuple set compared to baseline")
 
-
 def case_problog_string_roundtrip(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("problog_string_roundtrip", work_root)
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
@@ -311,7 +310,6 @@ def case_problog_string_roundtrip(souffle_bin: Path, work_root: Path) -> None:
         output_dir=out_dir,
         extra_args=["--dumpjson", "--logfile", "reglog"],
     )
-
     expected_key = 'reach("src","dst","path")'
     probs = parse_prob_file(out_dir / "facts.prob")
     if set(probs.keys()) != {expected_key}:
@@ -503,6 +501,79 @@ def case_problog_constraint_variable_equality_chain(souffle_bin: Path, work_root
         )
 
 
+def case_problog_sum_exact_roundtrip(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("problog_sum_exact_roundtrip", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    out_dir = case_dir / "out_full"
+    run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_dir,
+        extra_args=["--dumpjson", "--logfile", "reglog"],
+    )
+
+    expected_key = 'total("a",5)'
+    probs = parse_prob_file(out_dir / "facts.prob")
+    if set(probs.keys()) != {expected_key}:
+        raise CaseFailure(
+            "problog_sum_exact_roundtrip: unexpected probability keys.\n"
+            f"keys={sorted(probs.keys())}"
+        )
+    if not math.isclose(probs[expected_key], 0.3, rel_tol=0.0, abs_tol=1e-12):
+        raise CaseFailure(
+            "problog_sum_exact_roundtrip: unexpected aggregate probability.\n"
+            f"value={probs[expected_key]}"
+        )
+
+    derivation_json = out_dir / "derivation.json"
+    if not derivation_json.exists():
+        raise CaseFailure(f"problog_sum_exact_roundtrip: missing {derivation_json}")
+    payload = json.loads(derivation_json.read_text(encoding="utf-8"))
+
+    fact_names = {entry["name"] for entry in payload.get("facts", [])}
+    required_facts = {'base("a")', 'w("a",2)', 'w("a",3)'}
+    if not required_facts.issubset(fact_names):
+        raise CaseFailure(
+            "problog_sum_exact_roundtrip: derivation.json lost decoded input facts.\n"
+            f"missing={sorted(required_facts - fact_names)}"
+        )
+
+    total_rules = [entry for entry in payload.get("rules", []) if entry.get("head") == expected_key]
+    if len(total_rules) != 1:
+        raise CaseFailure(
+            "problog_sum_exact_roundtrip: expected exactly one derivation for total(\"a\",5).\n"
+            f"count={len(total_rules)}"
+        )
+
+    total_bodies = {body["name"] for body in total_rules[0].get("bodies", [])}
+    if 'base("a")' not in total_bodies or not any(name.startswith("__agg_sum_state(") for name in total_bodies):
+        raise CaseFailure(
+            "problog_sum_exact_roundtrip: expected total(\"a\",5) to depend on base and an aggregate state.\n"
+            f"bodies={sorted(total_bodies)}"
+        )
+
+    agg_rules = [
+        entry
+        for entry in payload.get("rules", [])
+        if entry.get("head", "").startswith("__agg_sum_state(")
+    ]
+    if len(agg_rules) != 2:
+        raise CaseFailure(
+            "problog_sum_exact_roundtrip: expected two aggregate-state derivations.\n"
+            f"count={len(agg_rules)}"
+        )
+    agg_witnesses = sorted(
+        body["name"]
+        for entry in agg_rules
+        for body in entry.get("bodies", [])
+        if body["name"].startswith('w("a",')
+    )
+    if agg_witnesses != ['w("a",2)', 'w("a",3)']:
+        raise CaseFailure(
+            "problog_sum_exact_roundtrip: aggregate witness replay mismatch.\n"
+            f"witnesses={agg_witnesses}"
+        )
+
 def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("dump_outputs_contract", work_root)
     input_dir = case_dir / "input"
@@ -537,6 +608,7 @@ CASES = {
     "problog_large_numeric_tuple_roundtrip": case_problog_large_numeric_tuple_roundtrip,
     "problog_query_named_variable_equality": case_problog_query_named_variable_equality,
     "problog_constraint_variable_equality_chain": case_problog_constraint_variable_equality_chain,
+    "problog_sum_exact_roundtrip": case_problog_sum_exact_roundtrip,
     "full_det_modes": case_full_det_modes,
     "dump_outputs_contract": case_dump_outputs_contract,
 }

@@ -21,6 +21,8 @@
 #include "Global.h"
 #include "RelationTag.h"
 #include "config.h"
+#include "ast/BinaryConstraint.h"
+#include "ast/IntrinsicAggregator.h"
 #include "ram/AbstractParallel.h"
 #include "ram/Aggregate.h"
 #include "ram/Aggregator.h"
@@ -403,6 +405,90 @@ void Synthesiser::emitRules (std::ostream& out) {
     std::vector<std::string> ruleNames;
     // const auto& initialClauses = this->initialAstProgram->getClauses();
     const auto& newClauses = this->newAstProgram->getClauses();
+    auto encodeArgumentField = [&](ast::Argument* field, std::size_t ruleId, std::size_t atomId,
+                                   std::size_t argIdx, const std::string& relName,
+                                   bool preserveUnnamed = false) -> std::pair<char, std::string> {
+        if (isA<ast::Variable>(field)) {
+            auto var = as<ast::Variable>(field);
+            return {'V', var->getName()};
+        }
+        if (isA<ast::UnnamedVariable>(field)) {
+            if (preserveUnnamed) {
+                return {'W', "_"};
+            }
+            return {'V', "__anon_" + std::to_string(ruleId) + "_" +
+                                 std::to_string(atomId) + "_" +
+                                 std::to_string(argIdx) + "_" +
+                                 std::to_string(anonVarCounter++)};
+        }
+        if (isA<ast::NumericConstant>(field)) {
+            auto constant = as<ast::NumericConstant>(field);
+            if (!constant->getFixedType().has_value()) {
+                return {'I', constant->getConstant()};
+            }
+            switch (constant->getFixedType().value()) {
+                case ast::NumericConstant::Type::Int: return {'I', constant->getConstant()};
+                case ast::NumericConstant::Type::Float: return {'F', constant->getConstant()};
+                case ast::NumericConstant::Type::Uint: return {'U', constant->getConstant()};
+            }
+        }
+        if (isA<ast::StringConstant>(field)) {
+            auto constant = as<ast::StringConstant>(field);
+            return {'S', constant->getConstant()};
+        }
+        if (isA<ast::IntrinsicFunctor>(field)) {
+            auto fieldFunctor = as<ast::IntrinsicFunctor>(field);
+            return {'E', fieldFunctor->serialize()};
+        }
+        std::cout << relName << std::endl;
+        assert(false && "Not impl yet, atom");
+        return {'I', "0"};
+    };
+    auto emitEncodedField = [&](std::ostream& os, const std::pair<char, std::string>& encoded) {
+        const auto& [tag, field] = encoded;
+        switch (tag) {
+            case 'V':
+                os << "SymbolicField::makeVariable(\"" << field << "\")";
+                break;
+            case 'W':
+                os << "SymbolicField::makeUnnamedVariable()";
+                break;
+            case 'I':
+            case 'F':
+            case 'U':
+                os << "SymbolicField{" << field << "}";
+                break;
+            case 'S':
+                os << "SymbolicField{StringField{" << cppStringLiteral(field) << "}}";
+                break;
+            case 'E':
+                os << "SymbolicField(std::shared_ptr<ExprField>(" << field << "))";
+                break;
+            default:
+                assert(false && "Unknown field type");
+        }
+    };
+    auto emitAtomInline = [&](std::ostream& os, const ast::Atom& atom, std::size_t ruleId,
+                              std::size_t atomId, bool preserveUnnamed = false) {
+        std::vector<std::pair<char, std::string>> fields;
+        const auto args = atom.getArguments();
+        for (std::size_t argIdx = 0; argIdx < args.size(); ++argIdx) {
+            fields.push_back(encodeArgumentField(
+                    args[argIdx], ruleId, atomId, argIdx, atom.getQualifiedName().toString(), preserveUnnamed));
+        }
+        os << "Atom{\"" << atom.getQualifiedName().toString() << "\", {";
+        for (size_t j = 0; j < fields.size(); ++j) {
+            emitEncodedField(os, fields[j]);
+            if (j + 1 != fields.size()) {
+                os << ", ";
+            }
+        }
+        os << "}}";
+    };
+    auto encodeArgumentAsSymbolicField = [&](ast::Argument* arg, std::size_t ruleId,
+                                             std::size_t atomId) -> std::pair<char, std::string> {
+        return encodeArgumentField(arg, ruleId, atomId, 0, "<aggregate-expr>", true);
+    };
     // assert (initialClauses.size() == newClauses.size() && "Initial and new program should have the same number of clauses; no optimization for now");
     for (size_t i = 0; i < newClauses.size(); ++i) {
         // auto& initClause = initialClauses[i];
@@ -414,6 +500,7 @@ void Synthesiser::emitRules (std::ostream& out) {
         auto ruleId = clause->getClauseId();
         std::size_t atomId = 0;
         std::vector<std::string> atomNames;
+        std::vector<std::string> aggregateNames;
         std::string headAtomName = "rule" + std::to_string(ruleId) + "_head";
         std::string headRelName;
         {
@@ -631,6 +718,42 @@ void Synthesiser::emitRules (std::ostream& out) {
                 }
                 out << "}, true};" << std::endl;
             } else if (isA<ast::Constraint>(bodyLiteral)) {
+                auto* constraint = as<ast::Constraint>(bodyLiteral);
+                if (auto* binary = as<ast::BinaryConstraint>(constraint)) {
+                    if (binary->getBaseOperator() == BinaryConstraintOp::EQ) {
+                        ast::IntrinsicAggregator* aggregate = nullptr;
+                        ast::Variable* resultVar = nullptr;
+                        if (isA<ast::IntrinsicAggregator>(binary->getLHS()) &&
+                                isA<ast::Variable>(binary->getRHS())) {
+                            aggregate = as<ast::IntrinsicAggregator>(binary->getLHS());
+                            resultVar = as<ast::Variable>(binary->getRHS());
+                        } else if (isA<ast::Variable>(binary->getLHS()) &&
+                                   isA<ast::IntrinsicAggregator>(binary->getRHS())) {
+                            aggregate = as<ast::IntrinsicAggregator>(binary->getRHS());
+                            resultVar = as<ast::Variable>(binary->getLHS());
+                        }
+                        if (aggregate != nullptr && resultVar != nullptr &&
+                                aggregate->getBaseOperator() == AggregateOp::SUM) {
+                            const auto aggBody = aggregate->getBodyLiterals();
+                            assert(aggBody.size() == 1 && "Only single-literal SUM aggregates are supported");
+                            assert(isA<ast::Atom>(aggBody[0]) && "Only positive-atom SUM aggregates are supported");
+                            auto* witnessAtom = as<ast::Atom>(aggBody[0]);
+                            assert(aggregate->getTargetExpression() != nullptr &&
+                                    "SUM aggregate target expression required");
+                            std::string aggregateName =
+                                    "agg_" + std::to_string(ruleId) + "_" + std::to_string(aggregateNames.size());
+                            aggregateNames.push_back(aggregateName);
+                            out << "const AggregateSpec " << aggregateName << " = AggregateSpec("
+                                << cppStringLiteral("sum") << ", "
+                                << cppStringLiteral(resultVar->getName()) << ", ";
+                            emitAtomInline(out, *witnessAtom, ruleId, atomId, true);
+                            out << ", ";
+                            emitEncodedField(out,
+                                    encodeArgumentAsSymbolicField(aggregate->getTargetExpression(), ruleId, atomId));
+                            out << ");" << std::endl;
+                        }
+                    }
+                }
                 continue;
             } else {
                 assert (false && "Not impl yet, atom");
@@ -652,6 +775,7 @@ void Synthesiser::emitRules (std::ostream& out) {
         << ", " << std::to_string(clause->isRecursive())
         << ", " << std::to_string(clause->isInRecursiveStratum())
         << ", " << (isEqrelHead ? "true" : "false")
+        << ", {" << join(aggregateNames, ", ") << "}"
         << ");" << std::endl;
     }
     std::vector<std::string> eqrelNames;

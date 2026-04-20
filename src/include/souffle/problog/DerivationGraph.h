@@ -127,6 +127,16 @@ inline std::vector<SupportToken> mergeSupportTokenLists(
     sortUniqueSupportTokens(merged);
     return merged;
 }
+
+struct RamDomainVectorHash {
+    std::size_t operator()(const std::vector<souffle::RamDomain>& values) const {
+        std::size_t seed = 0;
+        for (const auto& value : values) {
+            hash_combine(seed, value);
+        }
+        return seed;
+    }
+};
 // TODO: derivation graph now does not support negation...
 // TODO: MST GRAPH FUSE
 /** class Evidence {
@@ -427,6 +437,8 @@ private:
         : inputs(inputs), output(output), id(edgeId), rule(rule), ruleApp(ruleApp) {
         if (rule) {
             probability = rule->getProbability();
+        } else {
+            probability = 1.0;
         }
         if (bodyNegations.size() > 0) {
             assert (bodyNegations.size() == inputs.size());
@@ -1240,6 +1252,235 @@ public:
             }
         }
     }
+    struct AggregateTupleIndex {
+        const AggregateSpec* spec = nullptr;
+        std::unordered_map<std::vector<souffle::RamDomain>, std::vector<UntypedTuple>, RamDomainVectorHash>
+                tuplesByBoundKey;
+    };
+
+    struct AggregateMatchResult {
+        std::vector<std::string> localVarNames;
+        std::vector<souffle::RamDomain> localVarValues;
+        souffle::RamSigned weight = 0;
+    };
+
+    static bool isWildcardAggregateField(const SymbolicField& field) {
+        if (!std::holds_alternative<VariableField>(field.field)) {
+            return false;
+        }
+        return std::get<VariableField>(field.field).name == "_";
+    }
+
+    static std::optional<std::string> getAggregateVariableName(const SymbolicField& field) {
+        if (!std::holds_alternative<VariableField>(field.field)) {
+            return std::nullopt;
+        }
+        return std::get<VariableField>(field.field).name;
+    }
+
+    std::vector<souffle::RamDomain> buildAggregateBoundKeyFromTuple(
+            const AggregateSpec& spec, const UntypedTuple& tuple,
+            const std::unordered_set<std::string>& ruleVarSet) const {
+        std::vector<souffle::RamDomain> key;
+        const auto& fields = spec.witnessAtom.getFields();
+        assert(fields.size() == tuple.fields.size());
+        for (size_t i = 0; i < fields.size(); ++i) {
+            if (isWildcardAggregateField(fields[i])) {
+                continue;
+            }
+            if (const auto varName = getAggregateVariableName(fields[i]); varName.has_value()) {
+                if (ruleVarSet.count(*varName) == 0) {
+                    continue;
+                }
+            }
+            key.push_back(tuple.fields[i]);
+        }
+        return key;
+    }
+
+    std::vector<souffle::RamDomain> buildAggregateBoundKeyFromRuleApp(
+            const AggregateSpec& spec, const std::vector<std::string>& vars,
+            const std::vector<souffle::RamDomain>& values,
+            const std::unordered_set<std::string>& ruleVarSet) const {
+        std::vector<souffle::RamDomain> key;
+        const auto& fields = spec.witnessAtom.getFields();
+        for (const auto& field : fields) {
+            if (isWildcardAggregateField(field)) {
+                continue;
+            }
+            if (const auto varName = getAggregateVariableName(field); varName.has_value()) {
+                if (ruleVarSet.count(*varName) == 0) {
+                    continue;
+                }
+            }
+            key.push_back(evaluateSymbolicField(field, vars, values));
+        }
+        return key;
+    }
+
+    std::optional<AggregateMatchResult> matchAggregateWitnessTuple(
+            const AggregateSpec& spec, const std::vector<std::string>& vars,
+            const std::vector<souffle::RamDomain>& values, const UntypedTuple& tuple,
+            const std::unordered_set<std::string>& ruleVarSet) const {
+        const auto& fields = spec.witnessAtom.getFields();
+        if (fields.size() != tuple.fields.size()) {
+            return std::nullopt;
+        }
+        std::unordered_map<std::string, souffle::RamDomain> localBindings;
+        for (size_t i = 0; i < fields.size(); ++i) {
+            const auto& field = fields[i];
+            const auto tupleValue = tuple.fields[i];
+            if (isWildcardAggregateField(field)) {
+                continue;
+            }
+            if (const auto varName = getAggregateVariableName(field); varName.has_value()) {
+                if (ruleVarSet.count(*varName) > 0) {
+                    if (evaluateSymbolicField(field, vars, values) != tupleValue) {
+                        return std::nullopt;
+                    }
+                    continue;
+                }
+                auto [it, inserted] = localBindings.emplace(*varName, tupleValue);
+                if (!inserted && it->second != tupleValue) {
+                    return std::nullopt;
+                }
+                continue;
+            }
+            if (evaluateSymbolicField(field, vars, values) != tupleValue) {
+                return std::nullopt;
+            }
+        }
+
+        AggregateMatchResult result;
+        result.localVarNames.reserve(localBindings.size());
+        result.localVarValues.reserve(localBindings.size());
+        for (const auto& [name, value] : localBindings) {
+            result.localVarNames.push_back(name);
+            result.localVarValues.push_back(value);
+        }
+        std::vector<std::string> mergedVars = vars;
+        std::vector<souffle::RamDomain> mergedValues = values;
+        mergedVars.insert(mergedVars.end(), result.localVarNames.begin(), result.localVarNames.end());
+        mergedValues.insert(mergedValues.end(), result.localVarValues.begin(), result.localVarValues.end());
+        result.weight = souffle::ramBitCast<souffle::RamSigned>(
+                evaluateSymbolicField(spec.weightExpr, mergedVars, mergedValues));
+        return result;
+    }
+
+    UntypedTuple makeAggregateStateTuple(
+            souffle::RamDomain ruleId, size_t headNodeId, size_t aggregateIndex,
+            size_t step, souffle::RamSigned sum) const {
+        UntypedTuple tuple;
+        tuple.relation_name = "__agg_sum_state";
+        tuple.fields = {
+                static_cast<souffle::RamDomain>(ruleId),
+                static_cast<souffle::RamDomain>(headNodeId),
+                static_cast<souffle::RamDomain>(aggregateIndex),
+                static_cast<souffle::RamDomain>(step),
+                souffle::ramBitCast<souffle::RamDomain>(sum)};
+        return tuple;
+    }
+
+    NodePtr buildAggregateSumNode(
+            souffle::RamDomain ruleId, size_t aggregateIndex, NodePtr headNode,
+            const AggregateSpec& spec, const std::vector<std::string>& vars,
+            const std::vector<souffle::RamDomain>& values,
+            const std::unordered_set<std::string>& ruleVarSet) {
+        auto itPerRule = aggregateTupleIndices.find(static_cast<std::size_t>(ruleId));
+        if (itPerRule == aggregateTupleIndices.end() || aggregateIndex >= itPerRule->second.size()) {
+            return nullptr;
+        }
+        const auto& tupleIndex = itPerRule->second[aggregateIndex];
+        const auto lookupKey = buildAggregateBoundKeyFromRuleApp(spec, vars, values, ruleVarSet);
+        std::vector<std::pair<NodePtr, souffle::RamSigned>> witnesses;
+        if (auto it = tupleIndex.tuplesByBoundKey.find(lookupKey); it != tupleIndex.tuplesByBoundKey.end()) {
+            witnesses.reserve(it->second.size());
+            for (const auto& tuple : it->second) {
+                auto match = matchAggregateWitnessTuple(spec, vars, values, tuple, ruleVarSet);
+                if (!match.has_value()) {
+                    continue;
+                }
+                witnesses.emplace_back(createNode(tuple), match->weight);
+            }
+        }
+        std::sort(witnesses.begin(), witnesses.end(), [](const auto& lhs, const auto& rhs) {
+            return lhs.first->getTuple() < rhs.first->getTuple();
+        });
+
+        const auto targetSum = souffle::ramBitCast<souffle::RamSigned>(
+                evaluateSymbolicField(SymbolicField::makeVariable(spec.resultVar), vars, values));
+        std::map<souffle::RamSigned, NodePtr> currentStates;
+        auto baseNode = createNode(makeAggregateStateTuple(ruleId, headNode->getId(), aggregateIndex, 0, 0));
+        baseNode->isFact = true;
+        baseNode->setProbability(1.0);
+        currentStates.emplace(0, baseNode);
+
+        for (size_t i = 0; i < witnesses.size(); ++i) {
+            std::map<souffle::RamSigned, NodePtr> nextStates;
+            const auto& [witnessNode, weight] = witnesses[i];
+            auto ensureState = [&](souffle::RamSigned sum) -> NodePtr {
+                auto existing = nextStates.find(sum);
+                if (existing != nextStates.end()) {
+                    return existing->second;
+                }
+                auto node = createNode(makeAggregateStateTuple(
+                        ruleId, headNode->getId(), aggregateIndex, i + 1, sum));
+                nextStates.emplace(sum, node);
+                return node;
+            };
+            for (const auto& [sum, prevNode] : currentStates) {
+                auto skipNode = ensureState(sum);
+                createHyperedge({prevNode, witnessNode}, skipNode, nullptr, {false, true});
+                auto takeNode = ensureState(sum + weight);
+                createHyperedge({prevNode, witnessNode}, takeNode, nullptr, {false, false});
+            }
+            currentStates = std::move(nextStates);
+        }
+
+        auto finalIt = currentStates.find(targetSum);
+        if (finalIt == currentStates.end()) {
+            return nullptr;
+        }
+        return finalIt->second;
+    }
+
+    void buildAggregateTupleIndices(
+            const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps,
+            const std::unordered_map<UntypedTuple, double>& factProb,
+            const RuleManager& ruleManager) {
+        std::unordered_map<std::string, std::vector<UntypedTuple>> tuplesByRelation;
+        for (const auto& [tuple, _] : factProb) {
+            tuplesByRelation[tuple.relation_name].push_back(tuple);
+        }
+        for (const auto& [tuple, _] : ruleApps) {
+            tuplesByRelation[tuple.relation_name].push_back(tuple);
+        }
+        aggregateTupleIndices.clear();
+        for (const auto* rule : ruleManager.getAllRules()) {
+            if (rule == nullptr || rule->getAggregates().empty()) {
+                continue;
+            }
+            const auto ruleVars = rule->getVars();
+            const std::unordered_set<std::string> ruleVarSet(
+                    ruleVars.begin(), ruleVars.end());
+            std::vector<AggregateTupleIndex> perRule;
+            perRule.reserve(rule->getAggregates().size());
+            for (const auto& spec : rule->getAggregates()) {
+                AggregateTupleIndex index;
+                index.spec = &spec;
+                auto tuplesIt = tuplesByRelation.find(spec.witnessAtom.getRelation());
+                if (tuplesIt != tuplesByRelation.end()) {
+                    for (const auto& tuple : tuplesIt->second) {
+                        index.tuplesByBoundKey[buildAggregateBoundKeyFromTuple(spec, tuple, ruleVarSet)]
+                                .push_back(tuple);
+                    }
+                }
+                perRule.push_back(std::move(index));
+            }
+            aggregateTupleIndices.emplace(rule->getRuleId(), std::move(perRule));
+        }
+    }
+
     const std::vector<std::pair<UntypedTuple, bool>>& getEvidences() const {
         return evidences;
     }
@@ -1301,12 +1542,21 @@ public:
             // Create input nodes.
             std::vector<NodePtr> bodyNodes;
             std::vector<bool> bodyNegations;
+            const std::unordered_set<std::string> ruleVarSet(vars.begin(), vars.end());
             for (const auto& bodyAtom : rule->getBodyAtoms()) {
                 UntypedTuple bodyTuple{bodyAtom.getRelation(),
                         bodyAtom.instantiatedFields(vars, ruleApp.varValuesPure)};
                 auto bodyNode = createNode(bodyTuple);
                 bodyNodes.push_back(bodyNode);
                 bodyNegations.push_back(bodyAtom.isNegatedAtom());
+            }
+            for (size_t aggregateIndex = 0; aggregateIndex < rule->getAggregates().size(); ++aggregateIndex) {
+                auto aggNode = buildAggregateSumNode(
+                        ruleApp.ruleId, aggregateIndex, headNode, rule->getAggregates()[aggregateIndex],
+                        vars, ruleApp.varValuesPure, ruleVarSet);
+                assert(aggNode != nullptr && "Aggregate replay failed to reconstruct target sum");
+                bodyNodes.push_back(aggNode);
+                bodyNegations.push_back(false);
             }
             auto newEdge = createHyperedge(bodyNodes, headNode, rule, bodyNegations, ruleApp);
 
@@ -1359,6 +1609,7 @@ public:
         // Create input nodes.
         std::vector<NodePtr> bodyNodes;
         std::vector<bool> bodyNegations;
+        const std::unordered_set<std::string> ruleVarSet(vars.begin(), vars.end());
         size_t body_atoms = 0;
         double body_inst_s = 0.0;
         double body_node_s = 0.0;
@@ -1377,6 +1628,22 @@ public:
             body_inst_s += std::chrono::duration<double>(t_body_inst1 - t_body_inst0).count();
             body_node_s += std::chrono::duration<double>(t_body_node1 - t_body_inst1).count();
             body_neg_s += std::chrono::duration<double>(t_body_neg1 - t_body_neg0).count();
+            body_atoms++;
+        }
+        for (size_t aggregateIndex = 0; aggregateIndex < rule->getAggregates().size(); ++aggregateIndex) {
+            const auto t_body_inst0 = std::chrono::steady_clock::now();
+            auto aggNode = buildAggregateSumNode(
+                    ruleApp.ruleId, aggregateIndex, headNode, rule->getAggregates()[aggregateIndex],
+                    vars, ruleApp.varValuesPure, ruleVarSet);
+            const auto t_body_inst1 = std::chrono::steady_clock::now();
+            assert(aggNode != nullptr && "Aggregate replay failed to reconstruct target sum");
+            bodyNodes.push_back(aggNode);
+            const auto t_body_node1 = std::chrono::steady_clock::now();
+            bodyNegations.push_back(false);
+            const auto t_body_neg1 = std::chrono::steady_clock::now();
+            body_inst_s += std::chrono::duration<double>(t_body_inst1 - t_body_inst0).count();
+            body_node_s += std::chrono::duration<double>(t_body_node1 - t_body_inst1).count();
+            body_neg_s += std::chrono::duration<double>(t_body_neg1 - t_body_node1).count();
             body_atoms++;
         }
 //        std::cout << "creating hyperedge from ruleApp: " << ruleApp.ruleId << std::endl;
@@ -1477,6 +1744,7 @@ public:
                 node->setOriginalFact(true);
             }
         }
+        graph->buildAggregateTupleIndices(ruleApps, fact_prob, ruleManager);
         {
             FunctionTimer scopeTimer("create graph: build rule apps");
             for (const auto& [tuple, ruleAppSet] : ruleApps) {
@@ -1770,6 +2038,7 @@ protected:
 
     // Map edge keys to edges.
     std::map<std::string, EdgePtr> edgeKeyToEdgeMap;
+    std::unordered_map<std::size_t, std::vector<AggregateTupleIndex>> aggregateTupleIndices;
     std::vector<std::pair<UntypedTuple, bool>> evidences;
 
     // Create a unique key for an edge.
@@ -1891,6 +2160,7 @@ public:
                 node->setOriginalFact(true);
             }
         }
+        graph->buildAggregateTupleIndices(ruleApps, fact_prob, ruleManager);
         {
             FunctionTimer scopeTimer("create graph: build rule apps");
             for (const auto& [tuple, ruleAppSet] : ruleApps) {
