@@ -201,6 +201,13 @@ std::map<std::string, Own<ram::Expression>> ClauseTranslator::getClauseVars(cons
         ast::Variable var(varName);
         varExprMap.insert({varName, context.translateValue(*valueIndex, &var)});
     }
+    for (const auto& varName : clause.getVariables()) {
+        if (varExprMap.find(varName) != varExprMap.end()) {
+            continue;
+        }
+        ast::Variable var(varName);
+        varExprMap.insert({varName, context.translateValue(*valueIndex, &var)});
+    }
     return varExprMap;
 }
 

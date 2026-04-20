@@ -500,7 +500,6 @@ def case_problog_constraint_variable_equality_chain(souffle_bin: Path, work_root
             f"keep={keep_csv}"
         )
 
-
 def case_problog_sum_exact_roundtrip(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("problog_sum_exact_roundtrip", work_root)
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
@@ -512,7 +511,7 @@ def case_problog_sum_exact_roundtrip(souffle_bin: Path, work_root: Path) -> None
         extra_args=["--dumpjson", "--logfile", "reglog"],
     )
 
-    expected_key = 'total("a",5)'
+    expected_key = 'total(1,5)'
     probs = parse_prob_file(out_dir / "facts.prob")
     if set(probs.keys()) != {expected_key}:
         raise CaseFailure(
@@ -531,7 +530,7 @@ def case_problog_sum_exact_roundtrip(souffle_bin: Path, work_root: Path) -> None
     payload = json.loads(derivation_json.read_text(encoding="utf-8"))
 
     fact_names = {entry["name"] for entry in payload.get("facts", [])}
-    required_facts = {'base("a")', 'w("a",2)', 'w("a",3)'}
+    required_facts = {'base(1)', 'w(1,2)', 'w(1,3)'}
     if not required_facts.issubset(fact_names):
         raise CaseFailure(
             "problog_sum_exact_roundtrip: derivation.json lost decoded input facts.\n"
@@ -541,14 +540,14 @@ def case_problog_sum_exact_roundtrip(souffle_bin: Path, work_root: Path) -> None
     total_rules = [entry for entry in payload.get("rules", []) if entry.get("head") == expected_key]
     if len(total_rules) != 1:
         raise CaseFailure(
-            "problog_sum_exact_roundtrip: expected exactly one derivation for total(\"a\",5).\n"
+            "problog_sum_exact_roundtrip: expected exactly one derivation for total(1,5).\n"
             f"count={len(total_rules)}"
         )
 
     total_bodies = {body["name"] for body in total_rules[0].get("bodies", [])}
-    if 'base("a")' not in total_bodies or not any(name.startswith("__agg_sum_state(") for name in total_bodies):
+    if 'base(1)' not in total_bodies or not any(name.startswith("__agg_sum_state(") for name in total_bodies):
         raise CaseFailure(
-            "problog_sum_exact_roundtrip: expected total(\"a\",5) to depend on base and an aggregate state.\n"
+            "problog_sum_exact_roundtrip: expected total(1,5) to depend on base and an aggregate state.\n"
             f"bodies={sorted(total_bodies)}"
         )
 
@@ -566,9 +565,9 @@ def case_problog_sum_exact_roundtrip(souffle_bin: Path, work_root: Path) -> None
         body["name"]
         for entry in agg_rules
         for body in entry.get("bodies", [])
-        if body["name"].startswith('w("a",')
+        if body["name"].startswith('w(1,')
     )
-    if agg_witnesses != ['w("a",2)', 'w("a",3)']:
+    if agg_witnesses != ['w(1,2)', 'w(1,3)']:
         raise CaseFailure(
             "problog_sum_exact_roundtrip: aggregate witness replay mismatch.\n"
             f"witnesses={agg_witnesses}"

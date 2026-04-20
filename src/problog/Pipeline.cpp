@@ -2350,6 +2350,7 @@ void runPipeline(
         QueryManager& queryManager,
         const std::unordered_map<UntypedTuple, double>& factProb,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences) {
+    setActiveSymbolTable(&program.getSymbolTable());
     std::cout << std::fixed << std::setprecision(8);
     Debugger& debugger = Debugger::getInstance();
     configureUntypedTupleRenderingContext(
@@ -2379,6 +2380,7 @@ void runPipeline(
         dumpDeterministicProbabilities(opt, program);
         debugger.endTurn();
         dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter0.txt");
+        setActiveSymbolTable(nullptr);
         return;
     }
 
@@ -2719,6 +2721,7 @@ void runPipeline(
     } else {
         std::cerr << "Unknown knowledge representation" << std::endl;
     }
+    setActiveSymbolTable(nullptr);
 }
 
 }  // namespace souffle::problog

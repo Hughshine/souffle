@@ -204,9 +204,6 @@ inline souffle::RamDomain evaluateSymbolicField(
     assert(false && "Unsupported symbolic field in evaluation");
     return 0;
 }
-
-
-
 class Atom {
 public:
     Atom(std::string relation, std::vector<SymbolicField> fields, bool isNegated = false)

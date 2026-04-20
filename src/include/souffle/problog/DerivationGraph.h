@@ -1,7 +1,5 @@
 #ifndef DERIVATIONGRAPH_H
 #define DERIVATIONGRAPH_H
-
-#include <iostream>
 #pragma once
 
 #include "souffle/Derivation.h"
@@ -1283,7 +1281,9 @@ public:
             const std::unordered_set<std::string>& ruleVarSet) const {
         std::vector<souffle::RamDomain> key;
         const auto& fields = spec.witnessAtom.getFields();
-        assert(fields.size() == tuple.fields.size());
+        if (fields.size() != tuple.fields.size()) {
+            return key;
+        }
         for (size_t i = 0; i < fields.size(); ++i) {
             if (isWildcardAggregateField(fields[i])) {
                 continue;
@@ -1471,6 +1471,9 @@ public:
                 auto tuplesIt = tuplesByRelation.find(spec.witnessAtom.getRelation());
                 if (tuplesIt != tuplesByRelation.end()) {
                     for (const auto& tuple : tuplesIt->second) {
+                        if (spec.witnessAtom.getFields().size() != tuple.fields.size()) {
+                            continue;
+                        }
                         index.tuplesByBoundKey[buildAggregateBoundKeyFromTuple(spec, tuple, ruleVarSet)]
                                 .push_back(tuple);
                     }
