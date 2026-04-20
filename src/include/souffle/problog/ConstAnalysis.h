@@ -330,6 +330,7 @@ template<typename FormulaNodeRef>
 struct ConstFormulaAccess {
     const ConstAnalysisResult* info;
     FormulaManager<FormulaNodeRef>& formulaManager;
+    const DerivationGraphViewInterface* view = nullptr;
 
     bool edgeFormula(const EdgePtr& edge, FormulaNodeRef& out) const {
         if (!info || !edge) {
@@ -379,6 +380,36 @@ struct ConstFormulaAccess {
     bool inputLiteral(const std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
             const NodePtr& node, bool negated, FormulaNodeRef& out) const {
         if (nodeLiteral(node, negated, out)) {
+            return true;
+        }
+        // Body atoms are still materialized as graph nodes during derivation
+        // construction, even when the tuple never acquires any supporting rule in the
+        // current view. In that shape the node is just a closed-world placeholder:
+        // the positive atom is false, and its negation is true.
+        //
+        // Waiting for a formula here is pointless because no incoming support can
+        // ever arrive. That was the source of the large stall storms on DDisasm-like
+        // hosts after rewrite/materialization dropped zero-probability producer edges.
+        // We therefore short-circuit both polarities for exactly this placeholder
+        // shape:
+        //   positive atom  -> False
+        //   negated atom   -> True
+        //
+        // Restrict this to non-facts with no incoming support in the *current view*.
+        // Real facts or derived nodes with active incoming edges must still wait for
+        // their formulas. Using the current view is important because the raw graph
+        // node can remember edges that have been pruned or rewritten away.
+        const bool hasIncomingInView = [&]() {
+            if (!node) {
+                return false;
+            }
+            if (view != nullptr) {
+                return !view->getIncomingEdges(node).empty();
+            }
+            return !node->getIncomingEdges().empty();
+        }();
+        if (node && !node->isFact && !hasIncomingInView) {
+            out = negated ? formulaManager.getTrue() : formulaManager.getFalse();
             return true;
         }
         auto it = nodeFormulas.find(node);

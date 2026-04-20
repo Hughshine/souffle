@@ -98,7 +98,7 @@ void buildFormulas(
         std::cout << "[const-pre] tag=full-worklist took " << constMs << " ms" << std::endl;
         logConstAnalysis(constInfo, view, "full-worklist");
     }
-    ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager};
+    ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager, &view};
 
     // Initialize formulas for input facts (nodes)
     std::map<NodePtr, FormulaNodeRef> baseNodeFormulas;
@@ -326,8 +326,8 @@ void buildFormulasCyclewiseInternal(
     bool breakCyclesForScbf = false,
     ScbfCyclewiseStats* scbfStatsOut = nullptr
 ) {
-     FunctionTimer timer("Build Formulas Cyclewise using DAG + Depth");
      const bool fcProfile = fcProfileEnabled;
+     FunctionTimer timer("Build Formulas Cyclewise using DAG + Depth", fcProfile);
      using Clock = std::chrono::steady_clock;
      auto toMs = [](auto d) {
          return std::chrono::duration<double, std::milli>(d).count();
@@ -363,16 +363,18 @@ void buildFormulasCyclewiseInternal(
              logConstAnalysis(constInfo, view, "full-cyclewise");
          }
      }
-     ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager};
+     ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager, &view};
 
     auto preStart = Clock::now();
      setCuddPreConfigTag("full_cyclewise");
      formulaManager.preConfig(view);
      setCuddPreConfigTag("");
     auto preConfigMs = toMs(Clock::now() - preStart);
-    debugger.logMessage(Level::INFO,
-            "preConfig (cache clear + var scan/create + dyn-reorder setup) took " +
-                    std::to_string(preConfigMs) + " ms");
+    if (fcProfile) {
+        debugger.logMessage(Level::INFO,
+                "preConfig (cache clear + var scan/create + dyn-reorder setup) took " +
+                        std::to_string(preConfigMs) + " ms");
+    }
 
     auto depStart = Clock::now();
     auto& depGraph = view.getCycleDependencyGraph();
@@ -527,6 +529,37 @@ void buildFormulasCyclewiseInternal(
                             edgeFormulas[edge] = formulaManager.getFalse();
                             allAvailable = true;  // allow propagation of False to break the cycle
                         }
+                        // When a positive dependency exists but its formula has not been
+                        // produced yet, blindly requeueing the consumer at the same global
+                        // depth can starve the producer: the consumer keeps winning the
+                        // worklist race and repeatedly stalls until the hard cutoff.
+                        //
+                        // Requeue the missing producers first, and defer the current edge to
+                        // strictly after the deepest producer we can see in this SCC. This
+                        // preserves semantics while making the scheduler robust to edge
+                        // insertion-order differences between plain and implicit graphs.
+                        size_t deferredPriority = depth;
+                        if (input) {
+                            for (const auto& inEdge : view.getIncomingEdges(input)) {
+                                auto it = depGraph.edgeToCycleIndex.find(inEdge);
+                                if (it == depGraph.edgeToCycleIndex.end() || it->second != cid) {
+                                    continue;
+                                }
+                                auto depthIt = depGraph.edgeDepthsGlobal.find(inEdge);
+                                if (depthIt != depGraph.edgeDepthsGlobal.end()) {
+                                    deferredPriority =
+                                            std::max(deferredPriority, depthIt->second + 1);
+                                }
+                                if (!inWorklist.count(inEdge)) {
+                                    worklist.push({inEdge, depthIt != depGraph.edgeDepthsGlobal.end()
+                                                            ? depthIt->second
+                                                            : depth,
+                                            _seqId++});
+                                    inWorklist.insert(inEdge);
+                                }
+                            }
+                        }
+                        depth = deferredPriority;
                         break;
                     }
                     inputs.push_back(lit);
@@ -534,7 +567,7 @@ void buildFormulasCyclewiseInternal(
 
                 if (!allAvailable) {
 //                std::cout << "Not all inputs available for edge " << edge->getId() << ", re-adding to worklist.\n";
-                    worklist.push({edge, depGraph.edgeDepthsGlobal.at(edge), _seqId++});
+                    worklist.push({edge, depth, _seqId++});
                     inWorklist.insert(edge);
                     if (fcProfile) {
                         stats.edge_requeued++;
@@ -688,17 +721,19 @@ void buildFormulasCyclewiseInternal(
     for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
         debugger.addInfo(key, value);
     }
-    debugger.logMessage(Level::INFO, "Total rounds: " + std::to_string(round));
-    debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration) + " ms");
-    double overallMs = toMs(Clock::now() - overallStart);
-    std::cout << "[buildFormulasCyclewise] timings(ms): total=" << overallMs
-              << " preConfig=" << preConfigMs
-              << " depGraph=" << depMs
-              << " baseInit=" << baseInitMs
-              << " cycles=" << cycleMs
-              << " rounds=" << round
-              << std::endl;
     if (fcProfile) {
+        debugger.logMessage(Level::INFO, "Total rounds: " + std::to_string(round));
+        debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration) + " ms");
+    }
+    double overallMs = toMs(Clock::now() - overallStart);
+    if (fcProfile) {
+        std::cout << "[buildFormulasCyclewise] timings(ms): total=" << overallMs
+                  << " preConfig=" << preConfigMs
+                  << " depGraph=" << depMs
+                  << " baseInit=" << baseInitMs
+                  << " cycles=" << cycleMs
+                  << " rounds=" << round
+                  << std::endl;
         std::cout << "[fc-profile] stage=FORWARD_COMPILATION_FULL total_ms=" << overallMs
                   << " const_ms=" << constMs
                   << " preConfig_ms=" << preConfigMs
@@ -1229,14 +1264,16 @@ buildFormulasCyclewiseByComponentList(
                                std::chrono::steady_clock::now() - buildStart)
                                .count();
 
-        std::cout << "[fc-component] id=" << compId
-                  << " nodes=" << nodeCount
-                  << " edges=" << edgeCount
-                  << " rand_vars=" << randVars
-                  << " init_ms=" << initMs
-                  << " build_ms=" << buildMs
-                  << " total_ms=" << (initMs + buildMs)
-                  << std::endl;
+        if (fcProfileEnabled) {
+            std::cout << "[fc-component] id=" << compId
+                      << " nodes=" << nodeCount
+                      << " edges=" << edgeCount
+                      << " rand_vars=" << randVars
+                      << " init_ms=" << initMs
+                      << " build_ms=" << buildMs
+                      << " total_ms=" << (initMs + buildMs)
+                      << std::endl;
+        }
 
         bundles.push_back(ComponentFormulaBundle<ManagerT, FormulaRef>{
                 compId, std::move(manager), std::move(nodeFormulas)});

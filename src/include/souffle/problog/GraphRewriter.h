@@ -54,6 +54,8 @@ struct GraphRewriteStats {
     double totalBddBuildMs = 0.0;      ///< Total BDD build/compilation time across rewritten regions
     double totalBddWmcMs = 0.0;        ///< Total BDD WMC time across rewritten regions
     double totalApplyMs = 0.0;         ///< Total rewrite apply time for general regions
+    double initialCountRandomVarsMs = 0.0;   ///< Time spent counting random vars before rewrite
+    double initialEvidenceAffectedMs = 0.0;  ///< Time spent building evidence-affected node seed set
 };
 
 enum class SplitMode {
@@ -81,6 +83,7 @@ struct RewriteFeatureFlags {
     size_t splitMinGroupEdges = 1;          ///< complete-split threshold: min edges in a split group
     bool enableCleanupIsolated  = true;   ///< drop isolated fact/shadow nodes at end of iteration
     bool forceCompleteSisoDetect = false; ///< force full-graph SISO detect (disable dirty-frontier detect)
+    bool relaxCompactionDirty   = true;   ///< reseed only the surviving compacted edge endpoints
 };
 
 /**
@@ -119,9 +122,13 @@ public:
         const bool dumpDot = DerivationGraphViewInterface::isDumpDotEnabled();
         (void)debug;
 
+        auto initialCountStart = std::chrono::steady_clock::now();
         stats.randomVarsBefore = countRandomVarsInView(view);
+        stats.initialCountRandomVarsMs = toMs(std::chrono::steady_clock::now() - initialCountStart);
         stats.randomVarsAfter = stats.randomVarsBefore;
+        auto initialEvidenceStart = std::chrono::steady_clock::now();
         const auto evidenceAffectedNodes = collectEvidenceAffectedNodes(view);
+        stats.initialEvidenceAffectedMs = toMs(std::chrono::steady_clock::now() - initialEvidenceStart);
 
         // Only the first region should attribute manager init time; subsequent regions reuse the same manager.
         bool firstRegionTiming = true;
@@ -131,13 +138,16 @@ public:
         std::unordered_set<EdgePtr> detectDirtyEdges;
         bool hasDetectDirty = false;
 
-        auto runSplitPass = [&](std::unordered_set<NodePtr>* splitDirtyNodes,
+        auto runSplitPass = [&](const std::unordered_set<NodePtr>* splitSeedNodes,
+                                const std::unordered_set<EdgePtr>* splitSeedEdges,
+                                std::unordered_set<NodePtr>* splitDirtyNodes,
                                 std::unordered_set<EdgePtr>* splitDirtyEdges) -> bool {
             if (flags.splitMode == SplitMode::None) {
                 return false;
             }
             SplitStats splitStats = (flags.splitMode == SplitMode::Naive)
-                    ? splitFanoutNaive(graph, view, stats, evidenceAffectedNodes, splitDirtyNodes, splitDirtyEdges)
+                    ? splitFanoutNaive(graph, view, stats, evidenceAffectedNodes, splitSeedNodes,
+                              splitSeedEdges, splitDirtyNodes, splitDirtyEdges)
                     : splitFanoutComplete(
                               graph, view, stats, flags, evidenceAffectedNodes, splitDirtyNodes, splitDirtyEdges);
             std::cout << "[GraphRewriter]   split(" << splitModeToString(flags.splitMode)
@@ -306,7 +316,9 @@ public:
                     std::cout << "[GraphRewriter] No SISO regions found; rewrite fixpoint at iteration "
                               << stats.numIterations << std::endl;
                 }
-                if (runSplitPass(&iterDirtyNodes, &iterDirtyEdges)) {
+                const auto* splitSeedNodes = hasDetectDirty ? &detectDirtyNodes : nullptr;
+                const auto* splitSeedEdges = hasDetectDirty ? &detectDirtyEdges : nullptr;
+                if (runSplitPass(splitSeedNodes, splitSeedEdges, &iterDirtyNodes, &iterDirtyEdges)) {
                     hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
                     if (hasDetectDirty) {
                         detectDirtyNodes.swap(iterDirtyNodes);
@@ -1010,8 +1022,21 @@ public:
                     }
                     edges.insert(newEdge);
                     ++compactAddedEdges;
-                    markDirtyEdgeEndpoints(edge);
-                    markDirtyEdgeEndpoints(newEdge);
+                    if (flags.relaxCompactionDirty) {
+                        // Relaxed dirtying keeps the frontier tied to the
+                        // surviving compacted edge only. This avoids dragging
+                        // the removed edge neighborhood back into the next
+                        // detect pass after large deterministic compaction
+                        // waves, which is the dominant cost on dense hosts such
+                        // as the DDisasm function-inference benchmark.
+                        markDirtyEdgeEndpoints(newEdge);
+                    } else {
+                        // Conservative fallback: keep the pre-relax behavior
+                        // and dirty both the removed edge and the surviving
+                        // compacted edge endpoints.
+                        markDirtyEdgeEndpoints(edge);
+                        markDirtyEdgeEndpoints(newEdge);
+                    }
 
                     ++compactedEdges;
                 }
@@ -1135,7 +1160,9 @@ public:
                               << stats.numIterations << " (rewrite fixpoint reached in "
                               << iterMs << " ms)." << std::endl;
                 }
-                if (runSplitPass(&iterDirtyNodes, &iterDirtyEdges)) {
+                const auto* splitSeedNodes = hasDetectDirty ? &detectDirtyNodes : nullptr;
+                const auto* splitSeedEdges = hasDetectDirty ? &detectDirtyEdges : nullptr;
+                if (runSplitPass(splitSeedNodes, splitSeedEdges, &iterDirtyNodes, &iterDirtyEdges)) {
                     hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
                     if (hasDetectDirty) {
                         detectDirtyNodes.swap(iterDirtyNodes);
@@ -1243,6 +1270,12 @@ private:
 
     std::unordered_set<NodePtr> collectEvidenceAffectedNodes(const IncSubgraphView& view) const {
         std::unordered_set<NodePtr> affected;
+        // Most benchmark/timing runs do not use evidence at all. In that common
+        // case, avoid constructing the cycle-dependency graph just to discover
+        // that no SCC is evidence-constrained.
+        if (view.getEvidenceNodes().empty()) {
+            return affected;
+        }
         auto& depGraph = view.getCycleDependencyGraph();
         size_t componentCount = depGraph.getComponentCount();
         if (componentCount == 0) {
@@ -1362,13 +1395,50 @@ private:
     SplitStats splitFanoutNaive(IncrementalDerivationGraph& graph, IncSubgraphView& view,
             GraphRewriteStats& stats,
             const std::unordered_set<NodePtr>& evidenceAffectedNodes,
+            const std::unordered_set<NodePtr>* splitSeedNodes = nullptr,
+            const std::unordered_set<EdgePtr>* splitSeedEdges = nullptr,
             std::unordered_set<NodePtr>* dirtyNodes = nullptr,
             std::unordered_set<EdgePtr>* dirtyEdges = nullptr) const {
         SplitStats out;
         auto splitStart = std::chrono::steady_clock::now();
         constexpr size_t kMaxReachable = 50;
-        auto nodesList = view.getNodes();
-        for (auto fact : nodesList) {
+        std::vector<NodePtr> factScan;
+        if ((splitSeedNodes && !splitSeedNodes->empty()) || (splitSeedEdges && !splitSeedEdges->empty())) {
+            // Split opportunities only change near facts/edges rewritten in the
+            // previous iteration; re-scanning the whole graph here dominated the
+            // final no-region tail on large DDisasm-like hosts.
+            std::unordered_set<NodePtr> candidateFacts;
+            if (splitSeedNodes) {
+                for (auto node : *splitSeedNodes) {
+                    if (node && node->isFact && view.getNodes().count(node) > 0) {
+                        candidateFacts.insert(node);
+                    }
+                }
+            }
+            if (splitSeedEdges) {
+                for (auto edge : *splitSeedEdges) {
+                    if (!edge || view.getEdges().count(edge) == 0) continue;
+                    NodePtr outNode = view.getOutput(edge);
+                    if (outNode && outNode->isFact && view.getNodes().count(outNode) > 0) {
+                        candidateFacts.insert(outNode);
+                    }
+                    for (auto input : view.getInputs(edge)) {
+                        if (input && input->isFact && view.getNodes().count(input) > 0) {
+                            candidateFacts.insert(input);
+                        }
+                    }
+                }
+            }
+            factScan.assign(candidateFacts.begin(), candidateFacts.end());
+        } else {
+            factScan.reserve(view.getNodes().size());
+            for (auto node : view.getNodes()) {
+                if (node && node->isFact) {
+                    factScan.push_back(node);
+                }
+            }
+        }
+        for (auto fact : factScan) {
             if (!fact || !fact->isFact || fact->hasEvidence() || fact->needOutput) continue;
             if (evidenceAffectedNodes.count(fact)) continue;
             const auto& outs = view.getOutgoingEdges(fact);

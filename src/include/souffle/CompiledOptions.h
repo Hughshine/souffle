@@ -102,6 +102,7 @@ protected:
     bool reuse_var_index = true;  // reuse freed variable indices in CUDD (default on)
     bool single_rand_fast = true;  // enable single-randvar fast path in component FC
     bool force_complete_siso_detect = false;  // force full-graph SISO detection (disable dirty-frontier detect)
+    bool relax_compaction_dirty = true;  // dirty only the surviving compacted edge endpoints
     bool enable_scbf = false;  // enable experimental SCBF full pipeline
 public:
     // all argument constructor
@@ -228,6 +229,9 @@ public:
     bool isForceCompleteSisoDetectEnabled() const {
         return force_complete_siso_detect;
     }
+    bool isRelaxCompactionDirtyEnabled() const {
+        return relax_compaction_dirty;
+    }
     bool isScbfEnabled() const {
         return enable_scbf;
     }
@@ -287,6 +291,7 @@ public:
                 {"no-reuse-var-index", false, nullptr, 1008},
                 {"no-single-rand-fast", false, nullptr, 1001},
                 {"force-complete-siso-detect", false, nullptr, 1016},
+                {"no-relax-compaction-dirty", false, nullptr, 1020},
                 {"scbf", false, nullptr, 1018},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
@@ -443,6 +448,9 @@ public:
                 case 1016:
                     force_complete_siso_detect = true;
                     break;
+                case 1020:
+                    relax_compaction_dirty = false;
+                    break;
                 case 1018:
                     enable_scbf = true;
                     break;
@@ -497,6 +505,7 @@ private:
         std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
         std::cerr << "    --det-force                  -- Force deterministic mode (skip derivation graph; emit prob=1.0)\n";
         std::cerr << "    --force-complete-siso-detect -- Disable dirty-frontier SISO detect and always scan full graph\n";
+        std::cerr << "    --no-relax-compaction-dirty  -- Keep conservative dirtying after deterministic edge compaction\n";
         std::cerr << "    --scbf                       -- Enable experimental SCBF full pipeline (opt-in)\n";
         std::cerr << "    --no-reuse-var-index         -- Disable reuse of freed CUDD variable indices (reuse is unsafe unless deletion fully removes vars)\n";
         std::cerr << "    --no-single-rand-fast        -- Disable single-randvar fast path in component FC\n";

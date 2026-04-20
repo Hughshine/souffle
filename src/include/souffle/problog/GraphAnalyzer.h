@@ -194,9 +194,14 @@ private:
             addEdgeEndpoints(g, e, frontier.nodes);
         }
 
-        // Two-hop expansion around dirty seeds to capture local pattern changes:
-        // edge-local rewrites, SO-grouping, and small chain updates.
-        constexpr int kExpandRounds = 2;
+        // One-hop expansion around dirty seeds is enough for the current fast
+        // paths: we seed rewritten edge endpoints explicitly, so a single local
+        // expansion already reaches the adjacent chain/fan-out structure needed
+        // to re-detect follow-on opportunities. A second round makes large
+        // all-facts waves in DDisasm-like hosts balloon back toward full-graph
+        // scans, dominating rewrite time without exposing additional regions in
+        // the maintained workloads we care about.
+        constexpr int kExpandRounds = 1;
         for (int round = 0; round < kExpandRounds; ++round) {
             std::vector<NodePtr> nodeSnapshot(frontier.nodes.begin(), frontier.nodes.end());
             for (auto n : nodeSnapshot) {
@@ -277,7 +282,6 @@ private:
         std::vector<SISORegionInfo> regions;
         bool debug = std::getenv("SOUFFLE_SISO_FAST_DEBUG") != nullptr;
         std::vector<EdgePtr> edgeScan;
-        std::vector<NodePtr> nodeScan;
         if (candidateEdges) {
             edgeScan.reserve(candidateEdges->size());
             for (auto e : *candidateEdges) {
@@ -289,6 +293,7 @@ private:
                 if (e) edgeScan.push_back(e);
             }
         }
+        std::vector<NodePtr> nodeScan;
         if (candidateNodes) {
             nodeScan.reserve(candidateNodes->size());
             for (auto n : *candidateNodes) {
@@ -1393,26 +1398,44 @@ public:
             attemptedDirtyFrontier = true;
             seedNodes = dirtyNodes->size();
             seedEdges = dirtyEdges->size();
-            auto frontier = buildDetectionFrontier(g, *dirtyNodes, *dirtyEdges);
-            frontierNodes = frontier.nodes.size();
-            frontierEdges = frontier.edges.size();
-
-            const double nodeRatio = g.getNodes().empty()
-                                             ? 0.0
-                                             : static_cast<double>(frontierNodes) /
-                                                       static_cast<double>(g.getNodes().size());
-            const double edgeRatio = g.getEdges().empty()
-                                             ? 0.0
-                                             : static_cast<double>(frontierEdges) /
-                                                       static_cast<double>(g.getEdges().size());
+            const double seedNodeRatio = g.getNodes().empty()
+                                                 ? 0.0
+                                                 : static_cast<double>(seedNodes) /
+                                                           static_cast<double>(g.getNodes().size());
+            const double seedEdgeRatio = g.getEdges().empty()
+                                                 ? 0.0
+                                                 : static_cast<double>(seedEdges) /
+                                                           static_cast<double>(g.getEdges().size());
             // Dirty detection is only useful when frontier is materially smaller than full graph.
             constexpr double kFallbackRatio = 0.60;
-            if (frontierNodes == 0 || frontierEdges == 0 ||
-                    nodeRatio > kFallbackRatio || edgeRatio > kFallbackRatio) {
+            // If the seeds themselves already cover roughly half the graph,
+            // building an expanded frontier is usually pure overhead: the
+            // frontier tends to exceed the fallback ratio anyway on dense
+            // rewrite waves. Skip frontier construction entirely in that case
+            // and go straight to a full detect.
+            constexpr double kSkipFrontierSeedRatio = 0.50;
+            if (seedNodeRatio > kSkipFrontierSeedRatio || seedEdgeRatio > kSkipFrontierSeedRatio) {
                 fallbackToFull = true;
             } else {
-                usedDirtyFrontier = true;
-                regions = detectFastPathRegions(g, &fastStats, &frontier.edges, &frontier.nodes);
+                auto frontier = buildDetectionFrontier(g, *dirtyNodes, *dirtyEdges);
+                frontierNodes = frontier.nodes.size();
+                frontierEdges = frontier.edges.size();
+
+                const double nodeRatio = g.getNodes().empty()
+                                                 ? 0.0
+                                                 : static_cast<double>(frontierNodes) /
+                                                           static_cast<double>(g.getNodes().size());
+                const double edgeRatio = g.getEdges().empty()
+                                                 ? 0.0
+                                                 : static_cast<double>(frontierEdges) /
+                                                           static_cast<double>(g.getEdges().size());
+                if (frontierNodes == 0 || frontierEdges == 0 ||
+                        nodeRatio > kFallbackRatio || edgeRatio > kFallbackRatio) {
+                    fallbackToFull = true;
+                } else {
+                    usedDirtyFrontier = true;
+                    regions = detectFastPathRegions(g, &fastStats, &frontier.edges, &frontier.nodes);
+                }
             }
         }
 

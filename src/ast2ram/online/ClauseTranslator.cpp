@@ -156,6 +156,17 @@ std::map<std::string, Own<ram::Expression>> ClauseTranslator::getClauseVars(cons
             }
         }
     }
+    // Clause::getVariables() now also includes variables introduced only
+    // inside constraints/aggregates. Make sure the derivation/provenance
+    // variable map covers that full inventory so Rule.vars and the recorded
+    // RuleApplication values stay aligned during derivation-graph replay.
+    for (const auto& varName : clause.getVariables()) {
+        if (varExprMap.find(varName) != varExprMap.end()) {
+            continue;
+        }
+        ast::Variable var(varName);
+        varExprMap.insert({varName, context.translateValue(*valueIndex, &var)});
+    }
     return varExprMap;
 }
 
