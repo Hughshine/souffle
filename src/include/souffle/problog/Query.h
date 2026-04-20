@@ -52,10 +52,8 @@ public:
                 if (var.name == "_") {
                     continue;
                 }
-                auto it = bindings.find(var.name);
-                if (it == bindings.end()) {
-                    bindings.emplace(var.name, fields[i]);
-                } else if (it->second != fields[i]) {
+                auto [it, inserted] = bindings.emplace(var.name, fields[i]);
+                if (!inserted && it->second != fields[i]) {
                     return false;
                 }
                 continue;

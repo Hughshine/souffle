@@ -31,11 +31,31 @@ std::string basenameFromPath(const std::string& path);
 void configureUntypedTupleRenderingContext(souffle::SymbolTable* symbolTable,
         std::unordered_map<std::string, std::vector<char>> relationAttributeTypes);
 void clearUntypedTupleRenderingContext();
+souffle::SymbolTable* getUntypedTupleRenderingSymbolTable();
+std::unordered_map<std::string, std::vector<char>> copyUntypedTupleRenderingRelationTypes();
+class ScopedUntypedTupleRenderingContext {
+public:
+    ScopedUntypedTupleRenderingContext(souffle::SymbolTable* symbolTable,
+            std::unordered_map<std::string, std::vector<char>> relationAttributeTypes);
+    ~ScopedUntypedTupleRenderingContext();
+
+    ScopedUntypedTupleRenderingContext(const ScopedUntypedTupleRenderingContext&) = delete;
+    ScopedUntypedTupleRenderingContext& operator=(const ScopedUntypedTupleRenderingContext&) = delete;
+
+private:
+    souffle::SymbolTable* previousSymbolTable;
+    std::unordered_map<std::string, std::vector<char>> previousRelationTypes;
+};
 std::vector<souffle::RamDomain> parseUntypedTupleFields(
         const std::string& relationName, const std::string& renderedFields);
 std::vector<souffle::RamDomain> parseUntypedTupleJsonFields(
         const std::string& relationName, const json11::Json& renderedFields);
 UntypedTuple parseUntypedTupleJson(const json11::Json& tupleJson);
+UntypedTuple parseUntypedTupleJson(const json11::Json& tupleJson, const std::string& renderedTupleSpec);
+std::unordered_map<std::string, std::vector<char>> inferRelationTypesFromDerivationInfoJson(
+        const json11::Json& root);
+std::unordered_map<std::string, std::vector<char>> inferRelationTypesFromGraphJson(
+        const json11::Json& root);
 
 class FunctionTimer {
 private:
@@ -327,6 +347,8 @@ public:
     static void recordDetDeltaInsert(const UntypedTuple& tuple);
     static const std::unordered_set<UntypedTuple>& getDetDeltaDeleteTuples();
     static const std::unordered_set<UntypedTuple>& getDetDeltaInsertTuples();
+    static void freeRuleApplicationMap(
+            std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo);
 
     static std::uint64_t nowNanos() {
         return static_cast<std::uint64_t>(
