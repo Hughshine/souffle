@@ -1,10 +1,10 @@
-.decl w(x:symbol, v:number)
+.decl w(x:number, v:number)
 .input w
 
-.decl base(x:symbol)
-base("a").
+.decl base(x:number)
+base(1).
 
-.decl total(x:symbol, s:number)
+.decl total(x:number, s:number)
 .output total
 
 total(X, S) :-

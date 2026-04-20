@@ -7,6 +7,9 @@
  */
 
 #include "ast/Clause.h"
+#include "ast/Aggregator.h"
+#include "ast/Variable.h"
+#include "ast/utility/Visitor.h"
 #include "souffle/utility/ContainerUtil.h"
 #include "souffle/utility/MiscUtil.h"
 #include "souffle/utility/NodeMapperFwd.h"
@@ -26,27 +29,30 @@ struct ClauseVariableSummary {
 ClauseVariableSummary collectClauseVariables(const VecOwn<Literal>& bodyLiterals) {
     ClauseVariableSummary summary;
     for (const auto& lit : bodyLiterals) {
-        Atom* atom = nullptr;
-        if (isA<Atom>(lit)) {
-            atom = as<Atom>(lit);
-        } else if (isA<Negation>(lit)) {
-            atom = as<Negation>(lit)->getAtom();
-        } else {
-            continue;
+        if (const auto* atom = as<Atom>(lit)) {
+            if (atom->isRederive) {
+                summary.hasRederive = true;
+                continue;
+            }
+        } else if (const auto* neg = as<Negation>(lit)) {
+            if (neg->getAtom()->isRederive) {
+                summary.hasRederive = true;
+                continue;
+            }
         }
-        if (atom->isRederive) {
-            summary.hasRederive = true;
-            continue;
-        }
-        for (const auto* arg : atom->getArguments()) {
-            if (const auto* var = as<Variable>(arg)) {
+        visitFrontier(*lit, [&](const Node& node) {
+            if (isA<Aggregator>(node)) {
+                return true;
+            }
+            if (const auto* var = as<Variable>(&node)) {
                 const auto& varName = var->getName();
                 if (std::find(summary.variables.begin(), summary.variables.end(), varName) ==
                         summary.variables.end()) {
                     summary.variables.emplace_back(varName);
                 }
             }
-        }
+            return false;
+        });
     }
     return summary;
 }

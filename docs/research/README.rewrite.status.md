@@ -904,32 +904,6 @@ same dead ends.
   analogue tried here did not produce workload-backed evidence strong enough to
   keep
 
-### 2026-04-19: Aggregate-result symbol replay is now regression-guarded
-- scope:
-  close the remaining derivation/provenance replay gap for symbol-heavy rules
-  whose only top-level numeric variable is introduced through an aggregate
-- implementation reading:
-  - `Clause::variables` now includes top-level constraint variables while
-    treating each `Aggregator` as a frontier, so aggregate body locals do not
-    leak into replay metadata
-  - `ClauseTranslator::getClauseVars()` backfills the resulting clause-level
-    inventory so `RecordDerivation.varExprs` stays aligned with `Rule.vars`
-- maintained verification:
-  - new regression case:
-    `problog_symbol_aggregate_roundtrip`
-  - witness rule shape:
-    `rich(Src, Label) :- Count = count : { edge(Src, Dst) }, Count >= 2, bucket(Label), edge(Src, _).`
-  - checked end-to-end surfaces:
-    - `facts.prob` emits `rich("src","many") : 0.8`
-    - `derivation.json` preserves decoded symbolic fact tuples and symbolic
-      rule heads
-    - the full pipeline no longer asserts while replaying aggregate-result vars
-- conclusion:
-  the maintained path now covers both symbolic constants and aggregate-result
-  variables during derivation/provenance replay; the earlier DDisasm-style
-  crash class is now locked by regression rather than just locally worked
-  around
-
 ### 2026-04-19: DDisasm pass exploration — symbolization is the best current host
 - scope:
   evaluate representative DDisasm-inspired `.dl` slices under the maintained
@@ -1543,7 +1517,6 @@ Additional profiling notes:
 
 ## Related commits
 - `UNCOMMITTED` — feat(problog): add minimal SUM aggregate replay regression and graph reconstruction
-- `UNCOMMITTED` — fix(problog): cover aggregate-result symbol replay with maintained regression
 - `UNCOMMITTED` — fix(implicit-rewrite): force materialized handoff when overlay split creates aliases
 - `UNCOMMITTED` — docs(research): record DDisasm pass exploration and symbolization host reading
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
