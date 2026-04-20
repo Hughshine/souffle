@@ -1232,6 +1232,7 @@ public:
 
         // Add to the map.
         tupleToNodeMap[tuple] = node;
+        existingTuples.insert(tuple);
         return node;
     }
 
@@ -1533,6 +1534,10 @@ public:
     }
 
 
+    bool tupleExistsInUniverse(const UntypedTuple& tuple) const {
+        return existingTuples.find(tuple) != existingTuples.end();
+    }
+
     EdgePtr createHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& rm) {
         const bool timing = DerivationGraphViewInterface::isDumpStatsEnabled();
 
@@ -1565,6 +1570,9 @@ public:
             for (const auto& bodyAtom : rule->getBodyAtoms()) {
                 UntypedTuple bodyTuple{bodyAtom.getRelation(),
                         bodyAtom.instantiatedFields(vars, ruleApp.varValuesPure)};
+                if (bodyAtom.isNegatedAtom() && !tupleExistsInUniverse(bodyTuple)) {
+                    continue;
+                }
                 auto bodyNode = createNode(bodyTuple);
                 bodyNodes.push_back(bodyNode);
                 bodyNegations.push_back(bodyAtom.isNegatedAtom());
@@ -1638,6 +1646,10 @@ public:
             UntypedTuple bodyTuple{bodyAtom.getRelation(),
                     bodyAtom.instantiatedFields(vars, ruleApp.varValuesPure)};
             const auto t_body_inst1 = std::chrono::steady_clock::now();
+            if (bodyAtom.isNegatedAtom() && !tupleExistsInUniverse(bodyTuple)) {
+                body_inst_s += std::chrono::duration<double>(t_body_inst1 - t_body_inst0).count();
+                continue;
+            }
             auto bodyNode = createNode(bodyTuple);
             const auto t_body_node1 = std::chrono::steady_clock::now();
             bodyNodes.push_back(bodyNode);
@@ -1757,11 +1769,15 @@ public:
         {
             FunctionTimer scopeTimer("create graph: init fact nodes");
             for (const auto& [tuple, prob] : fact_prob) {
+                graph->existingTuples.insert(tuple);
                 auto node = graph->createNode(tuple);  // actually "find node" here
                 node->setProbability(prob);
                 node->isFact = true;
                 node->setOriginalFact(true);
             }
+        }
+        for (const auto& [tuple, _] : ruleApps) {
+            graph->existingTuples.insert(tuple);
         }
         graph->buildAggregateTupleIndices(ruleApps, fact_prob, ruleManager);
         {
@@ -2054,6 +2070,7 @@ protected:
 
     // Map tuples to nodes.
     std::map<UntypedTuple, NodePtr> tupleToNodeMap;
+    std::unordered_set<UntypedTuple> existingTuples;
 
     // Map edge keys to edges.
     std::map<std::string, EdgePtr> edgeKeyToEdgeMap;
@@ -2173,11 +2190,15 @@ public:
         {
             FunctionTimer scopeTimer("create graph: init fact nodes");
             for (const auto& [tuple, prob] : fact_prob) {
+                graph->existingTuples.insert(tuple);
                 auto node = graph->createNode(tuple);  // actually "find node" here
                 node->setProbability(prob);
                 node->isFact = true;
                 node->setOriginalFact(true);
             }
+        }
+        for (const auto& [tuple, _] : ruleApps) {
+            graph->existingTuples.insert(tuple);
         }
         graph->buildAggregateTupleIndices(ruleApps, fact_prob, ruleManager);
         {
@@ -2446,6 +2467,7 @@ void IncrementalDerivationGraph::applyDeltaInserts(
     {
         FunctionTimer scope("applyDeltaInserts: upsert facts");
         for (const auto& [tuple, prob] : fact_prob) {
+            existingTuples.insert(tuple);
             auto node = this->findNode(tuple);
             if (node == nullptr) {
                 node = createNode(tuple);
@@ -2461,6 +2483,9 @@ void IncrementalDerivationGraph::applyDeltaInserts(
 
     {
         FunctionTimer scope("applyDeltaInserts: add rule edges");
+        for (const auto& [tuple, _] : deltaInsertRuleApps) {
+            existingTuples.insert(tuple);
+        }
         for (const auto& [tuple, ruleAppSet] : deltaInsertRuleApps) {
             // Process each rule application associated with this tuple.
             for (const auto& ruleApp : *ruleAppSet) {
@@ -2663,6 +2688,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
         for (const auto& nodeToRemove : nodesToRemove) {
             // Remove from map.
             tupleToNodeMap.erase(nodeToRemove->getTuple());
+            existingTuples.erase(nodeToRemove->getTuple());
 //        std::cout << "removing node " << nodeToRemove->toString() << std::endl;
             // Remove from the node list.
 //        nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeToRemove), nodes.end());
@@ -2697,6 +2723,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
                         }
                     }
                 } else {
+                    existingTuples.erase(node->getTuple());
                     nodes.erase(node);
                     nodesToRemove.push_back(node);
                 }
