@@ -2546,7 +2546,10 @@ void runPipeline(
             } else {
                 rewriteFlags.splitMode = SplitMode::Naive;
             }
-            rewriteFlags.restrictCompactionToDirty = rewriteFlags.splitMode == SplitMode::None;
+            // Keep compaction global even for no-split: symbolization uses many
+            // deterministic aggregate witnesses, and dirty-only compaction can
+            // leave enough redundant deterministic structure to make CUDD blow up.
+            rewriteFlags.restrictCompactionToDirty = false;
             if (std::getenv("SOUFFLE_DISABLE_REWRITE_SINGLE")) {
                 rewriteFlags.enableSingleHyperedge = false;
             }

@@ -57,7 +57,7 @@ status layer above the deeper implementation notes in
 - compiler workspace:
   `.worktree/clones/full-artifact-opt-unified-wt`
 - branch:
-  `full-artifact-opt-unified`
+  `artifact-rewrite-followups-20260421`
 - base commit before local changes:
   `c306be2731b0 perf(fc): defer dep-graph depths until cyclewise build`
 - benchmark workspace:
@@ -84,62 +84,73 @@ Implemented in the local compiler checkpoint:
   fast path by default because on symbolization it moves many tiny exact
   computations into a slower per-component evaluator; the BDD path remains
   exact on the checked cases
+- restored global deterministic edge compaction for the no-split path. A
+  dirty-only compaction restriction introduced in the first smart-dispatch
+  checkpoint removed fewer redundant edges on symbolization and caused `troff`
+  to abort in CUDD formula construction.
 
 Current symbolization reading from
-`/tmp/symbolization_15_smart_20260421_024056`:
+`/tmp/symbolization_head_fix_20260421/full_rerun/summary.tsv`:
 - cases:
-  `bison, cluster, flex, gawk, gcc11, gpgsm, gpp11, gvmap, llvm-config,
-  llvm-pdbutil, readelf, tc, tmux, troff, wget`
+  selected table uses `bison, cluster, flex, gawk, gcc11, gpgsm, gpp11,
+  gvmap, llvm-config, llvm-pdbutil, readelf, tc, tmux, troff, wget`; `sshd`
+  is kept as an extra small smoke input.
 - bare `--rewrite` dispatch:
   all symbolization stages selected `auto-legacy-no-split` because the rules are
   deterministic; input facts remain probabilistic
 - completion:
-  rewrite completed `14/15`; plain completed `10/15`; `troff` failed in both
-  modes
+  rewrite completed `15/15` selected cases; plain completed `10/15`; plain
+  aborted on `flex, gcc11, gpp11, tmux, troff`
 - among cases where both modes completed:
-  rewrite was faster on `9/10`, with geometric-mean speedup `1.58x`
+  rewrite was faster on `10/10`, with geometric-mean speedup `1.75x`
 - plain aborted while rewrite completed on:
-  `flex, gcc11, gpp11, tmux`
-- `troff` failure:
-  CUDD `makeOrBalanced` returned null during BDD formula construction; explicit
-  no-split with single-rand fast path still failed, so this is not caused by the
-  auto-disable single-rand policy
-- weak or negative symbolization cases:
-  `gvmap` regressed (`5.63s -> 7.30s`) and `llvm-config` was essentially flat
-  (`9.70s -> 9.65s`)
+  `flex, gcc11, gpp11, tmux, troff`
+- root cause of the transient `troff` regression:
+  the SUM aggregate replay increased the graph load, but `c306be273` and the
+  fixed branch both completed. The abort was introduced by dirty-only
+  no-split compaction in `33a7b3912`; it left `edgesRemoved=60218` /
+  `edgesAdded=46568` after rewrite instead of the working
+  `edgesRemoved=68712` / `edgesAdded=55062` shape.
 - representative positive cases:
-  `tc 6.54s -> 1.18s`, `readelf 15.33s -> 10.00s`,
-  `wget 20.98s -> 8.57s`
+  `llvm-config 11.86s -> 4.85s`, `llvm-pdbutil 8.95s -> 4.29s`,
+  `readelf 17.73s -> 9.36s`, `troff plain abort -> 37.14s`,
+  `wget 20.61s -> 7.89s`
 - correctness:
-  all both-completed cases had identical output keys; most were byte-exact;
+  all both-completed cases had identical output keys; most were byte-exact.
   `readelf` had two values and `wget` had one value differing by `1e-8`, i.e.
-  the last printed decimal under the current 8-decimal output format
+  the last printed decimal under the current 8-decimal output format. This
+  still needs an audit before claiming bitwise equality.
 
 Current side-channel smoke from
-`/tmp/side_smart_dispatch_20260421_025655`:
+`/tmp/cavfull_smoke_smart_script_20260421`:
 - case:
-  `P19`
+  `P1` technical smoke, after migrating the CAV-FULL script from
+  `--implicit-rewrite` to bare `--rewrite`
 - bare `--rewrite` dispatch:
-  `auto-implicit split_mode=naive-split total_rules=42 probabilistic_rules=28`
+  `auto-implicit split_mode=naive-split`; standard RQ2 had
+  `total_rules=19 probabilistic_rules=1`
 - output:
-  `facts.prob` byte-exact against plain
+  `bdd_r` matched `bdd` with `max|delta|=0`
 - time:
-  `15.30s -> 3.98s`
+  standard RQ2 `0.015s -> 0.012s`; probabilistic-enhanced RQ2 remained
+  consistent (`max|delta|=0`) with essentially equal wall time on this tiny
+  smoke case
 
 Current taint smoke from
-`/tmp/taint_manual_app018_20260421_030655`:
+`/tmp/cavfull_smoke_smart_script_20260421`:
 - case:
-  `app-018`
+  `angulo` technical smoke, after migrating the `implicit_rewrite` variant from
+  `--implicit-rewrite` to bare `--rewrite`
 - full stage chain:
   `cipt-cg-dlog, pre-dlog, typefilter-dlog, pt-obj-dlog, taint-lim-dlog`
 - bare `--rewrite` dispatch:
-  deterministic stages selected `auto-legacy-no-split`; `pt-obj-dlog` selected
-  `auto-implicit split_mode=naive-split total_rules=37 probabilistic_rules=25`
+  probabilistic taint stages selected `auto-implicit split_mode=naive-split`;
+  `pt-obj-dlog` had `total_rules=37 probabilistic_rules=37`
 - output:
-  `pt-obj-dlog/facts.prob` was byte-exact (`164871` rows); all other checked
-  stages were exact/empty consistently
+  `implicit_rewrite` consistency vs `no_rewrite`: yes across 5 checked stages,
+  `max|delta|=0`
 - time:
-  full chain `76.64s -> 7.52s`, dominated by `pt-obj-dlog 76.38s -> 7.28s`
+  `0.59s -> 0.25s` on this small smoke case
 
 Current interpretation:
 - side-channel and taint validate the intended smart-dispatch shape:
@@ -148,10 +159,10 @@ Current interpretation:
   component-wise processing, but raw SISO rewrite is not the main source of
   speedup there; the useful effect is deterministic/independence decomposition
   plus component-specialized evaluation
-- symbolization still needs more engineering before claiming a uniform `2x`
-  speedup: small deterministic cases need a skip/threshold policy, and the
-  `1e-8` last-digit difference should be explained or eliminated before final
-  artifact freeze
+- symbolization now shows a useful selected-case optimized path, including
+  cases where plain aborts, but still needs more engineering before claiming a
+  uniform `2x` speedup. The `1e-8` last-digit difference should be explained or
+  eliminated before final artifact freeze.
 
 ## Trusted Side-Channel Reading
 From the shipped reference bundle
@@ -1733,7 +1744,8 @@ Additional profiling notes:
 - fixed benchmark-facing output relations remain only:
   `data_object`, `symbolic_data`, and `labeled_ea`.
 - current fastest tested symbolization path:
-  `--det-opt --rewrite --split-mode=no-split`
+  bare `--det-opt --rewrite`; the smart dispatcher selects the no-split legacy
+  path automatically because the symbolization rules are deterministic
   - this is not pure SISO probabilistic precomputation
   - global random variable count usually does not decrease on these cases
   - nevertheless, no-split SISO structural rewrites compress the graph and
@@ -1782,14 +1794,9 @@ Additional profiling notes:
     arithmetic differences and need a focused audit before claiming exact
     equality.
 - next optimization targets:
-  - make artifact-facing `--rewrite` a smart dispatcher:
-    default to implicit rewrite with naive split for workloads with
-    probabilistic rules, matching the side-channel and taint winners; for
-    workloads whose rules are all deterministic/non-probabilistic, select a
-    no-split explicit-style pipeline, matching the current symbolization
-    winner. Diagnostic parameters such as `--implicit-rewrite` or
-    `--split-mode=no-split` can remain available, but artifact evaluation
-    should only need `--rewrite`.
+  - keep artifact-facing `--rewrite` as the only required optimized command in
+    benchmark instructions; retain `--implicit-rewrite` and `--split-mode=*`
+    only as diagnostic controls
   - remove or avoid the final no-op SISO detection pass on symbolization-style
     runs
   - keep the useful no-split structural rewrites, but make their detector

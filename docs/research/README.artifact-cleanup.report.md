@@ -38,10 +38,11 @@ This report records the current cleanup plan for turning the local
   should stay removed.
 - Old all-facts-on/off and implicit sub-variant instructions should be removed
   from benchmark READMEs unless they are explicitly labeled historical.
-- CAV-FULL side-channel RQ2 still encodes `_r` as `--implicit-rewrite`; final
-  artifact scripts should call bare `--rewrite` instead.
-- CAV-FULL symbolization README currently documents a temporary best pipeline;
-  update it once smart `--rewrite` is the only required optimized command.
+- CAV-FULL side-channel RQ2/RQ3 now encode `_r` as bare `--rewrite`; keep the
+  older `--implicit-rewrite` spelling out of artifact-facing instructions.
+- CAV-FULL taint still keeps the historical `implicit_rewrite` variant label,
+  but that variant now calls bare `--rewrite`; the explicit diagnostic variant
+  forces legacy rewrite via `--rewrite --split-mode=naive-split`.
 - Avoid exposing local environment-variable probes as user-facing evaluation
   modes.
 
@@ -52,9 +53,9 @@ This report records the current cleanup plan for turning the local
   benchmark outputs.
 - Decide whether the no-split detector-mask heuristic should be permanent or
   guarded by a clearer dispatch-policy name.
-- Revisit dirty-only compaction. The current thresholded implementation can help
-  local no-split passes but showed high variance on `readelf`; keep only if the
-  multi-case data justifies it.
+- Do not enable dirty-only compaction in the artifact no-split path. On
+  symbolization `troff`, the dirty-only restriction removed about `8.5k` fewer
+  edges after rewrite and reintroduced a CUDD formula-build abort.
 - Investigate `component_build_subgraphs_ms`; it is still a major cost on
   symbolization after rewrite.
 - Investigate the symbolization `1e-8` last-digit differences before final
@@ -67,8 +68,8 @@ This report records the current cleanup plan for turning the local
   branch.
 - Keep symbolization benchmark assets under `symbolization_benchmark/` only:
   `.dl`, `.facts`, `.prob`, and README are sufficient.
-- Drop `troff` from the current symbolization performance table unless the CUDD
-  formula-build failure is fixed.
+- Keep `troff` in the current symbolization performance table: plain still
+  aborts, but the fixed bare `--rewrite` path completes.
 - For symbolization tables, keep both categories visible:
   cases where plain and rewrite both complete, and cases where plain aborts but
   rewrite completes.
@@ -89,11 +90,10 @@ This report records the current cleanup plan for turning the local
 - Build:
   `cmake --build build -j2 --target souffle` succeeds.
 - Symbolization:
-  `/tmp/symbolization_15_smart_20260421_024056`.
-- Side-channel smoke:
-  `/tmp/side_smart_dispatch_20260421_025655`.
-- Taint smoke:
-  `/tmp/taint_manual_app018_20260421_030655`.
+  `/tmp/symbolization_head_fix_20260421/full_rerun/summary.tsv`.
+- CAV-FULL side-channel and taint smoke after script migration to bare
+  `--rewrite`:
+  `/tmp/cavfull_smoke_smart_script_20260421`.
 
 ## Current Local Checks
 - Final compiler check:
@@ -102,16 +102,17 @@ This report records the current cleanup plan for turning the local
   `rg rewrite-compaction-only src docs/USAGE.md docs/topics` returns no source
   implementation references.
 - Benchmark smoke checks:
-  side-channel P19 and taint `app-018` both dispatch through bare `--rewrite`
-  and preserve output equality in the checked runs.
+  CAV-FULL smoke passes on side-channel `P1` and taint `angulo`; `_r` and
+  `implicit_rewrite` both dispatch through bare `--rewrite` to
+  `auto-implicit` and preserve output equality in the checked runs.
 
 ## Remaining Follow-Up
-- Decide whether to keep thresholded dirty-only compaction based on more than
-  one symbolization case.
-- Update CAV-FULL scripts to use bare `--rewrite` once the compiler branch is
-  committed and pushed.
 - Audit the symbolization `1e-8` output differences before making bitwise
   equality claims.
+- Continue optimizing symbolization overhead, especially SISO detection
+  scheduling and `component_build_subgraphs_ms`.
+- Investigate whether SUM aggregate subgraphs need a specialized exact
+  evaluator before making claims on the largest symbolization stress cases.
 
 ## Related commits
 - `UNCOMMITTED` — perf(problog): make bare rewrite dispatch benchmark-aware
