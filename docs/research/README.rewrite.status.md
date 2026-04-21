@@ -1858,6 +1858,49 @@ Additional profiling notes:
     what should be removed, archived, hidden behind diagnostics, or kept before
     cutting the final artifact-evaluation version.
 
+### 2026-04-21 — Side-channel and taint smoke after rewrite-overhead cleanup
+
+- compiler checkpoint:
+  `artifact-rewrite-followups-20260421` at
+  `beb581c24 perf(problog): reduce symbolization rewrite overhead`
+- side-channel smoke:
+  `CAV-FULL` standard `RQ2 P19`, one run, full rules, current repo-built
+  `souffle`, generated under `/tmp/cavfull_side_p19_beb581c24`
+  - plain `bdd`: elapsed `15.111s`, `Avg_Overall_s=12.349266197`,
+    `Avg_LiveNodes=395972`
+  - default optimized `bdd_r` (`--det-opt --rewrite --knowledge bdd`):
+    elapsed `3.506s`, `Avg_Overall_s=1.104612295`, `Avg_LiveNodes=0`
+  - output agreement:
+    `bdd_r` matched `bdd` exactly (`mismatches=0`, `max|delta|=0`)
+  - direct diagnostic `--explicit-rewrite` on the same compiled `compute_rq2`
+    also matched `bdd` exactly; its hybrid stage was `1.132599484s`, close to
+    the default optimized path
+- taint smoke:
+  `CAV-FULL` appendix bundle case `app-018`, one full-pipeline run, current
+  repo-built `souffle`, generated under
+  `/tmp/cavfull_taint_app018_all_beb581c24`
+  - `no_rewrite`: `81.97s`
+  - `explicit_rewrite`: `102.13s`
+  - default optimized `implicit_rewrite` (`--rewrite`): `13.16s`
+  - output agreement:
+    explicit and implicit both matched `no_rewrite` on all five checked stages
+    (`max|delta|=0`)
+  - default optimized speedup:
+    `no_rewrite / implicit_rewrite = 6.23x`
+- important diagnostic note:
+  forced `--explicit-rewrite` is still not a safe artifact default for taint.
+  On `app-018 / typefilter-dlog`, explicit spent
+  `explicit_graph_rewrite_ms=87014` even though that stage had `rand_vars=0`;
+  default `--rewrite` selected `auto-implicit` and finished the same stage in
+  `0.423s`. This reinforces the current artifact policy: expose `--rewrite`
+  as the optimized path and keep explicit/implicit/split flags as diagnostics.
+- interpretation:
+  the rewrite-overhead cleanup did not regress the checked representative
+  side-channel or taint default `--rewrite` behavior. Side-channel keeps a
+  strong optimized-path win, and taint retains the expected large
+  `no_rewrite / implicit_rewrite` speedup on a representative high-speedup
+  case.
+
 ## Related commits
 - `UNCOMMITTED` — feat(problog): add minimal SUM aggregate replay regression and graph reconstruction
 - `UNCOMMITTED` — perf(problog): remove compaction-only probe and keep fast-single component evaluator optimization
