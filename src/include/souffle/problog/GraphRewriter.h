@@ -146,6 +146,7 @@ public:
         std::unordered_set<EdgePtr> detectDirtyEdges;
         bool hasDetectDirty = false;
         bool previousPassOnlyLinearParallel = false;
+        bool previousPassOnlyFactAbsorption = false;
 
         auto runSplitPass = [&](const std::unordered_set<NodePtr>* splitSeedNodes,
                                 const std::unordered_set<EdgePtr>* splitSeedEdges,
@@ -246,23 +247,50 @@ public:
                 }
             }
             auto detectStart = std::chrono::steady_clock::now();
-            GraphAnalyzer::FastPathDetectOptions detectOptions;
-            detectOptions.enableSingleHyperedge = flags.enableSingleHyperedge;
-            detectOptions.enableLinearTwoEdge = flags.enableLinearTwoEdge;
-            detectOptions.enableParallelEdge = flags.enableParallelEdge;
-            detectOptions.enableAllFactsToSO = flags.enableAllFactsToSO;
-            detectOptions.enableFanOutConverge = flags.enableFanOutConverge;
+            GraphAnalyzer::FastPathDetectOptions fullDetectOptions;
+            fullDetectOptions.enableSingleHyperedge = flags.enableSingleHyperedge;
+            fullDetectOptions.enableLinearTwoEdge = flags.enableLinearTwoEdge;
+            fullDetectOptions.enableParallelEdge = flags.enableParallelEdge;
+            fullDetectOptions.enableAllFactsToSO = flags.enableAllFactsToSO;
+            fullDetectOptions.enableFanOutConverge = flags.enableFanOutConverge;
+            GraphAnalyzer::FastPathDetectOptions detectOptions = fullDetectOptions;
+            bool primaryDetectMask = false;
+            bool primaryDetectCanFallback = false;
             if (flags.splitMode == SplitMode::None && previousPassOnlyLinearParallel) {
                 detectOptions.enableSingleHyperedge = false;
                 detectOptions.enableAllFactsToSO = false;
                 detectOptions.enableFanOutConverge = false;
+                primaryDetectMask = true;
             }
-            auto regions = hasDetectDirty
+            if (flags.splitMode == SplitMode::None && previousPassOnlyFactAbsorption) {
+                detectOptions.enableSingleHyperedge = false;
+                detectOptions.enableAllFactsToSO = false;
+                detectOptions.enableFanOutConverge = false;
+                primaryDetectMask = true;
+                primaryDetectCanFallback = true;
+            }
+            if (flags.splitMode == SplitMode::None && stats.numIterations == 1 && !hasDetectDirty) {
+                detectOptions.enableLinearTwoEdge = false;
+                detectOptions.enableParallelEdge = false;
+                detectOptions.enableFanOutConverge = false;
+                primaryDetectMask = detectOptions.enableSingleHyperedge != fullDetectOptions.enableSingleHyperedge ||
+                        detectOptions.enableLinearTwoEdge != fullDetectOptions.enableLinearTwoEdge ||
+                        detectOptions.enableParallelEdge != fullDetectOptions.enableParallelEdge ||
+                        detectOptions.enableAllFactsToSO != fullDetectOptions.enableAllFactsToSO ||
+                        detectOptions.enableFanOutConverge != fullDetectOptions.enableFanOutConverge;
+                primaryDetectCanFallback = primaryDetectMask;
+            }
+            auto detectRegions = [&](const GraphAnalyzer::FastPathDetectOptions& opts) {
+                return hasDetectDirty
                     ? GraphAnalyzer::detectAllSISOStrictFromExit(
-                              view, &detectDirtyNodes, &detectDirtyEdges, flags.forceCompleteSisoDetect,
-                              &detectOptions)
+                              view, &detectDirtyNodes, &detectDirtyEdges, flags.forceCompleteSisoDetect, &opts)
                     : GraphAnalyzer::detectAllSISOStrictFromExit(
-                              view, nullptr, nullptr, flags.forceCompleteSisoDetect, &detectOptions);
+                              view, nullptr, nullptr, flags.forceCompleteSisoDetect, &opts);
+            };
+            auto regions = detectRegions(detectOptions);
+            if (regions.empty() && primaryDetectMask && primaryDetectCanFallback) {
+                regions = detectRegions(fullDetectOptions);
+            }
             // Filter by enabled flags.
             if (!flags.enableSingleHyperedge || !flags.enableAllFactsToSO ||
                     !flags.enableLinearTwoEdge || !flags.enableParallelEdge ||
@@ -343,6 +371,7 @@ public:
                 const auto* splitSeedEdges = hasDetectDirty ? &detectDirtyEdges : nullptr;
                 if (runSplitPass(splitSeedNodes, splitSeedEdges, &iterDirtyNodes, &iterDirtyEdges)) {
                     previousPassOnlyLinearParallel = false;
+                    previousPassOnlyFactAbsorption = false;
                     hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
                     if (hasDetectDirty) {
                         detectDirtyNodes.swap(iterDirtyNodes);
@@ -1239,6 +1268,7 @@ public:
                 const auto* splitSeedEdges = hasDetectDirty ? &detectDirtyEdges : nullptr;
                 if (runSplitPass(splitSeedNodes, splitSeedEdges, &iterDirtyNodes, &iterDirtyEdges)) {
                     previousPassOnlyLinearParallel = false;
+                    previousPassOnlyFactAbsorption = false;
                     hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
                     if (hasDetectDirty) {
                         detectDirtyNodes.swap(iterDirtyNodes);
@@ -1256,6 +1286,9 @@ public:
             previousPassOnlyLinearParallel = rewrittenThisRound > 0 && detectedSingle == 0 &&
                     detectedAllFacts == 0 && detectedFan == 0 && detectedGeneral == 0 &&
                     detectedLinear + detectedParallel == rewrittenThisRound;
+            previousPassOnlyFactAbsorption = rewrittenThisRound > 0 && detectedLinear == 0 &&
+                    detectedParallel == 0 && detectedFan == 0 && detectedGeneral == 0 &&
+                    detectedSingle + detectedAllFacts == rewrittenThisRound;
             if (hasDetectDirty) {
                 detectDirtyNodes.swap(iterDirtyNodes);
                 detectDirtyEdges.swap(iterDirtyEdges);

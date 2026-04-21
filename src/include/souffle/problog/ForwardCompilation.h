@@ -859,32 +859,95 @@ inline std::size_t countComponentRandomVars(const ComponentSubgraph& comp) {
 }
 
 inline std::vector<ComponentSubgraph> buildComponentSubgraphs(const DerivationGraphViewInterface& view) {
-    auto& depGraph = view.getCycleDependencyGraph();
-    const size_t componentCount = depGraph.getComponentCount();
-    std::vector<std::unordered_set<NodePtr>> nodesByComponent(componentCount);
-    std::vector<std::unordered_set<EdgePtr>> edgesByComponent(componentCount);
-
+    std::vector<NodePtr> nodes;
+    nodes.reserve(view.getNodes().size());
+    std::unordered_map<NodePtr, std::size_t> nodeIndex;
+    nodeIndex.reserve(view.getNodes().size());
     for (const auto& node : view.getNodes()) {
-        size_t cid = depGraph.getComponentId(node);
-        nodesByComponent[cid].insert(node);
+        if (!node) {
+            continue;
+        }
+        nodeIndex.emplace(node, nodes.size());
+        nodes.push_back(node);
+    }
+
+    std::vector<std::size_t> parent(nodes.size());
+    std::vector<unsigned char> rank(nodes.size(), 0);
+    for (std::size_t i = 0; i < parent.size(); ++i) {
+        parent[i] = i;
+    }
+
+    auto findRoot = [&](std::size_t idx) {
+        std::size_t root = idx;
+        while (parent[root] != root) {
+            root = parent[root];
+        }
+        while (parent[idx] != idx) {
+            std::size_t next = parent[idx];
+            parent[idx] = root;
+            idx = next;
+        }
+        return root;
+    };
+    auto unite = [&](std::size_t a, std::size_t b) {
+        std::size_t ra = findRoot(a);
+        std::size_t rb = findRoot(b);
+        if (ra == rb) {
+            return;
+        }
+        if (rank[ra] < rank[rb]) {
+            std::swap(ra, rb);
+        }
+        parent[rb] = ra;
+        if (rank[ra] == rank[rb]) {
+            ++rank[ra];
+        }
+    };
+
+    for (const auto& edge : view.getEdges()) {
+        if (!edge) {
+            continue;
+        }
+        NodePtr out = view.getOutput(edge);
+        auto outIt = nodeIndex.find(out);
+        if (outIt == nodeIndex.end()) {
+            continue;
+        }
+        const std::size_t outIdx = outIt->second;
+        for (const auto& input : view.getInputs(edge)) {
+            auto inIt = nodeIndex.find(input);
+            if (inIt != nodeIndex.end()) {
+                unite(outIdx, inIt->second);
+            }
+        }
+    }
+
+    std::unordered_map<std::size_t, std::size_t> rootToComponent;
+    rootToComponent.reserve(nodes.size());
+    std::vector<ComponentSubgraph> components;
+    auto componentForRoot = [&](std::size_t root) -> ComponentSubgraph& {
+        auto [it, inserted] = rootToComponent.emplace(root, components.size());
+        if (inserted) {
+            components.push_back(ComponentSubgraph{it->second, {}, {}});
+        }
+        return components[it->second];
+    };
+
+    for (std::size_t idx = 0; idx < nodes.size(); ++idx) {
+        auto& component = componentForRoot(findRoot(idx));
+        component.nodes.insert(nodes[idx]);
     }
     for (const auto& edge : view.getEdges()) {
+        if (!edge) {
+            continue;
+        }
         NodePtr out = view.getOutput(edge);
-        if (!out) {
+        auto outIt = nodeIndex.find(out);
+        if (outIt == nodeIndex.end()) {
             continue;
         }
-        size_t cid = depGraph.getComponentId(out);
-        edgesByComponent[cid].insert(edge);
-    }
-
-    std::vector<ComponentSubgraph> components;
-    components.reserve(componentCount);
-    for (size_t cid = 0; cid < componentCount; ++cid) {
-        if (nodesByComponent[cid].empty() && edgesByComponent[cid].empty()) {
-            continue;
-        }
-        components.push_back(ComponentSubgraph{cid, std::move(nodesByComponent[cid]),
-                std::move(edgesByComponent[cid])});
+        auto& component = componentForRoot(findRoot(outIt->second));
+        component.edges.insert(edge);
     }
     return components;
 }

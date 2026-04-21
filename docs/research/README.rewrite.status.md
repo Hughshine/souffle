@@ -81,6 +81,18 @@ Implemented in the local compiler checkpoint:
 - added a no-split follow-up heuristic:
   after a pass that rewrites only linear/parallel regions, the next detector
   pass skips fact-oriented detectors
+- added a no-split primary detector mask:
+  deterministic no-split rewrite starts with fact-absorption patterns and falls
+  back to the full detector only on zero-hit passes, avoiding initial
+  linear/parallel/fan-out scans on symbolization-shaped graphs
+- changed component subgraph partitioning from full SCC dependency-graph
+  construction to direct weak-component partitioning over the final derivation
+  view; SCC scheduling is still built inside slow components when formulas are
+  actually compiled
+- changed evidence grouping to use the already-built component ids, with an
+  empty-evidence fast return
+- when component fast paths are disabled, component analysis skips detailed
+  directed-cycle classification that is only needed to guard those fast paths
 - split component classification timing into pure classification and fast
   component evaluation wall time
 - for deterministic no-split auto-dispatch, disabled the single-rand component
@@ -126,6 +138,32 @@ Current symbolization reading from
   one string object and two symbolic-data supports, with the exact decimal
   value landing on an 8-digit rounding boundary. Example:
   `1 - (1 - 0.95) * (1 - 0.2491) * (1 - 0.275) = 0.972779875`.
+
+2026-04-21 follow-up optimization on `readelf`
+(`/tmp/symbolization_opt12_20260421`):
+- command:
+  `compute_final -F .../symbolization_benchmark/data/inputs/readelf -D /tmp/symbolization_opt12_20260421/readelf_final --det-opt --rewrite`
+- output check:
+  `facts.prob` matched the earlier optimized run byte-for-byte
+- detector scheduling effect:
+  iteration 1 skipped linear/parallel/fan-out scans and detected the same
+  `21523` single-hyperedge plus `19700` all-facts regions; iteration 3 kept
+  the previous linear/parallel-only zero-hit check without falling back to full
+  detection
+- representative final timing:
+  `rewrite took 1673 ms`, down from the pre-optimization profiled
+  `2133 ms` on the same `readelf` host shape
+- component partition effect:
+  `component subgraph build took 472 ms` in the final rerun, compared with the
+  earlier SCC dependency-graph-backed profile of `1551 ms`
+- other final fields:
+  `BDD formula build 108 ms`, `component analysis 139 ms`,
+  `evidence grouping 0 ms`, `component classification 12 ms`,
+  `per-node conditional WMC 20 ms`
+- rejected micro-optimization:
+  pre-counting component node/edge sizes to reserve `unordered_set`s increased
+  component subgraph build time (`391 ms -> 525 ms` in local reruns), so it was
+  reverted.
 
 Current side-channel smoke from
 `/tmp/cavfull_smoke_smart_script_20260421`:

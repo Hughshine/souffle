@@ -545,35 +545,6 @@ static std::string join(const std::vector<std::string>& parts, const char* sep) 
     return out;
 }
 
-static std::vector<std::vector<std::pair<NodePtr, bool>>> groupEvidencesByComponent(
-        const DerivationGraphViewInterface& view,
-        const std::vector<std::pair<NodePtr, bool>>& evidences) {
-    auto& depGraph = view.getCycleDependencyGraph();
-    const size_t componentCount = depGraph.getComponentCount();
-    std::vector<std::vector<std::pair<NodePtr, bool>>> byComponent(componentCount);
-    std::vector<std::unordered_map<NodePtr, bool>> seen(componentCount);
-
-    for (const auto& ev : evidences) {
-        const NodePtr& node = ev.first;
-        if (!node || view.getNodes().count(node) == 0) {
-            throw std::runtime_error("Evidence node not found in view: " +
-                    (node ? node->toString() : std::string("null")));
-        }
-        size_t cid = depGraph.getComponentId(node);
-        auto& seenMap = seen[cid];
-        auto it = seenMap.find(node);
-        if (it != seenMap.end()) {
-            if (it->second != ev.second) {
-                throw std::runtime_error("Conflicting evidence for node: " + node->toString());
-            }
-            continue;
-        }
-        seenMap.emplace(node, ev.second);
-        byComponent[cid].push_back(ev);
-    }
-    return byComponent;
-}
-
 struct FastComponentEval {
     ComponentSubgraph comp;
     SingleRandVarInfo var;
@@ -629,6 +600,77 @@ struct ComponentDecision {
     std::string mode;
     std::string reason;
 };
+
+static std::vector<std::vector<std::pair<NodePtr, bool>>> groupEvidencesByComponentMap(
+        std::size_t componentCount,
+        const std::unordered_map<NodePtr, std::size_t>& nodeToComponent,
+        const std::vector<std::pair<NodePtr, bool>>& evidences) {
+    std::vector<std::vector<std::pair<NodePtr, bool>>> byComponent(componentCount);
+    std::vector<std::unordered_map<NodePtr, bool>> seen(componentCount);
+
+    for (const auto& ev : evidences) {
+        const NodePtr& node = ev.first;
+        auto compIt = nodeToComponent.find(node);
+        if (!node || compIt == nodeToComponent.end()) {
+            throw std::runtime_error("Evidence node not found in component map: " +
+                    (node ? node->toString() : std::string("null")));
+        }
+        const std::size_t cid = compIt->second;
+        auto& seenMap = seen[cid];
+        auto it = seenMap.find(node);
+        if (it != seenMap.end()) {
+            if (it->second != ev.second) {
+                throw std::runtime_error("Conflicting evidence for node: " + node->toString());
+            }
+            continue;
+        }
+        seenMap.emplace(node, ev.second);
+        byComponent[cid].push_back(ev);
+    }
+    return byComponent;
+}
+
+static std::vector<std::vector<std::pair<NodePtr, bool>>> groupEvidencesByComponent(
+        const std::vector<ComponentSubgraph>& components,
+        const std::vector<std::pair<NodePtr, bool>>& evidences) {
+    if (evidences.empty()) {
+        std::size_t componentCount = 0;
+        for (const auto& comp : components) {
+            componentCount = std::max(componentCount, comp.id + 1);
+        }
+        return std::vector<std::vector<std::pair<NodePtr, bool>>>(componentCount);
+    }
+    std::unordered_map<NodePtr, std::size_t> nodeToComponent;
+    std::size_t componentCount = 0;
+    for (const auto& comp : components) {
+        componentCount = std::max(componentCount, comp.id + 1);
+        for (const auto& node : comp.nodes) {
+            nodeToComponent.emplace(node, comp.id);
+        }
+    }
+    return groupEvidencesByComponentMap(componentCount, nodeToComponent, evidences);
+}
+
+static std::vector<std::vector<std::pair<NodePtr, bool>>> groupEvidencesByComponent(
+        const std::vector<ComponentAnalysis>& analyses,
+        const std::vector<std::pair<NodePtr, bool>>& evidences) {
+    if (evidences.empty()) {
+        std::size_t componentCount = 0;
+        for (const auto& analysis : analyses) {
+            componentCount = std::max(componentCount, analysis.comp.id + 1);
+        }
+        return std::vector<std::vector<std::pair<NodePtr, bool>>>(componentCount);
+    }
+    std::unordered_map<NodePtr, std::size_t> nodeToComponent;
+    std::size_t componentCount = 0;
+    for (const auto& analysis : analyses) {
+        componentCount = std::max(componentCount, analysis.comp.id + 1);
+        for (const auto& node : analysis.comp.nodes) {
+            nodeToComponent.emplace(node, analysis.comp.id);
+        }
+    }
+    return groupEvidencesByComponentMap(componentCount, nodeToComponent, evidences);
+}
 
 static bool evaluateZeroRandConjComponent(
         const ComponentSubgraph& comp,
@@ -727,11 +769,11 @@ static bool evaluateZeroRandConjComponent(
 
 static std::vector<ComponentAnalysis> analyzeComponents(
         const DerivationGraphViewInterface& view,
-        std::vector<ComponentSubgraph> components) {
+        std::vector<ComponentSubgraph> components,
+        bool needCycleInfo = true) {
     auto isSemanticRandomProb = [](double p) {
         return p > 0.0 && p < 1.0;
     };
-    auto& depGraph = view.getCycleDependencyGraph();
     std::vector<ComponentAnalysis> analyses;
     analyses.reserve(components.size());
 
@@ -749,12 +791,6 @@ static std::vector<ComponentAnalysis> analyzeComponents(
                     analysis.singleRand.node = node;
                     analysis.singleRand.edge.reset();
                     analysis.singleRand.probability = node->getProbability();
-                }
-            }
-            auto it = depGraph.nodeToCycleIndex.find(node);
-            if (it != depGraph.nodeToCycleIndex.end()) {
-                if (depGraph.nodeCycles[it->second].size() > 1) {
-                    analysis.hasCycle = true;
                 }
             }
         }
@@ -785,6 +821,60 @@ static std::vector<ComponentAnalysis> analyzeComponents(
                     }
                 }
             }
+        }
+
+        if (needCycleInfo && !analysis.hasCycle) {
+            std::unordered_map<NodePtr, std::size_t> indegree;
+            indegree.reserve(analysis.comp.nodes.size());
+            for (const auto& node : analysis.comp.nodes) {
+                indegree.emplace(node, 0);
+            }
+            for (const auto& edge : analysis.comp.edges) {
+                NodePtr out = view.getOutput(edge);
+                auto outIt = indegree.find(out);
+                if (outIt == indegree.end()) {
+                    continue;
+                }
+                for (const auto& in : view.getInputs(edge)) {
+                    if (indegree.count(in) > 0) {
+                        ++outIt->second;
+                    }
+                }
+            }
+            std::queue<NodePtr> ready;
+            for (const auto& [node, degree] : indegree) {
+                if (degree == 0) {
+                    ready.push(node);
+                }
+            }
+            std::size_t visited = 0;
+            while (!ready.empty()) {
+                NodePtr node = ready.front();
+                ready.pop();
+                ++visited;
+                for (const auto& edge : view.getOutgoingEdges(node)) {
+                    NodePtr out = view.getOutput(edge);
+                    auto outIt = indegree.find(out);
+                    if (outIt == indegree.end()) {
+                        continue;
+                    }
+                    bool dependsOnNode = false;
+                    for (const auto& in : view.getInputs(edge)) {
+                        if (in == node) {
+                            dependsOnNode = true;
+                            break;
+                        }
+                    }
+                    if (!dependsOnNode || outIt->second == 0) {
+                        continue;
+                    }
+                    --outIt->second;
+                    if (outIt->second == 0) {
+                        ready.push(out);
+                    }
+                }
+            }
+            analysis.hasCycle = visited != analysis.comp.nodes.size();
         }
 
         for (const auto& node : analysis.comp.nodes) {
@@ -1089,13 +1179,14 @@ static void runBddPipeline(
                 hybridStage->logMessage(Level::INFO, "rand_vars=" + std::to_string(varEstimate));
             }
 
+            const bool enableFast = opt.isSingleRandFastEnabled() && !autoDisableSingleRandFast;
             auto componentsBuildStart = std::chrono::steady_clock::now();
             auto components = buildComponentSubgraphs(view);
             auto componentsBuildMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                              std::chrono::steady_clock::now() - componentsBuildStart)
                                              .count();
             auto analysesStart = std::chrono::steady_clock::now();
-            auto analyses = analyzeComponents(view, std::move(components));
+            auto analyses = analyzeComponents(view, std::move(components), enableFast);
             auto analysesMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       std::chrono::steady_clock::now() - analysesStart)
                                       .count();
@@ -1108,7 +1199,7 @@ static void runBddPipeline(
             auto t3 = std::chrono::steady_clock::now();
             auto evidenceApplyMs = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
             auto evidenceGroupStart = std::chrono::steady_clock::now();
-            auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
+            auto evidencesByComponent = groupEvidencesByComponent(analyses, resolvedEvs);
             auto evidenceGroupMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                            std::chrono::steady_clock::now() - evidenceGroupStart)
                                            .count();
@@ -1163,7 +1254,6 @@ static void runBddPipeline(
             decisions.reserve(analyses.size());
 
             probResult.clear();
-            const bool enableFast = opt.isSingleRandFastEnabled() && !autoDisableSingleRandFast;
             double componentFastEvalTotalMs = 0.0;
             auto classifyStart = std::chrono::steady_clock::now();
             for (auto& analysis : analyses) {
@@ -1724,7 +1814,7 @@ static void runBddPipeline(
             auto t3 = std::chrono::steady_clock::now();
 
             auto components = buildComponentSubgraphs(view);
-            auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
+            auto evidencesByComponent = groupEvidencesByComponent(components, resolvedEvs);
             long long evidenceBuildMs = 0;
             long long evidenceWmcMs = 0;
             long long perNodeWmcMs = 0;
@@ -1909,13 +1999,14 @@ static void runSddPipeline(
                 hybridStage->logMessage(Level::INFO, "rand_vars=" + std::to_string(varEstimate));
             }
 
+            const bool enableFast = opt.isSingleRandFastEnabled() && !autoDisableSingleRandFast;
             auto componentsBuildStart = std::chrono::steady_clock::now();
             auto components = buildComponentSubgraphs(view);
             auto componentsBuildMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                              std::chrono::steady_clock::now() - componentsBuildStart)
                                              .count();
             auto analysesStart = std::chrono::steady_clock::now();
-            auto analyses = analyzeComponents(view, std::move(components));
+            auto analyses = analyzeComponents(view, std::move(components), enableFast);
             auto analysesMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       std::chrono::steady_clock::now() - analysesStart)
                                       .count();
@@ -1925,7 +2016,7 @@ static void runSddPipeline(
             auto t3 = std::chrono::steady_clock::now();
             auto evidenceApplyMs = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
             auto evidenceGroupStart = std::chrono::steady_clock::now();
-            auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
+            auto evidencesByComponent = groupEvidencesByComponent(analyses, resolvedEvs);
             auto evidenceGroupMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                            std::chrono::steady_clock::now() - evidenceGroupStart)
                                            .count();
@@ -1939,7 +2030,6 @@ static void runSddPipeline(
             std::vector<ComponentDecision> decisions;
             decisions.reserve(analyses.size());
 
-            const bool enableFast = opt.isSingleRandFastEnabled() && !autoDisableSingleRandFast;
             double componentFastEvalTotalMs = 0.0;
             auto classifyStart = std::chrono::steady_clock::now();
             for (auto& analysis : analyses) {
@@ -2342,7 +2432,7 @@ static void runSddPipeline(
             auto t3 = std::chrono::steady_clock::now();
 
             auto components = buildComponentSubgraphs(view);
-            auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
+            auto evidencesByComponent = groupEvidencesByComponent(components, resolvedEvs);
             long long evidenceBuildMs = 0;
             long long evidenceWmcMs = 0;
             long long perNodeWmcMs = 0;
