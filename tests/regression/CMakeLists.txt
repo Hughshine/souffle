@@ -20,7 +20,7 @@ function(add_regression_case test_name case_id timeout_sec)
 endfunction()
 
 add_regression_case(smoke smoke_full_only 120)
-add_regression_case(rewrite_split rewrite_split_modes_equiv 180)
+add_regression_case(rewrite_dispatch rewrite_dispatch_equiv 180)
 add_regression_case(problog_string_roundtrip problog_string_roundtrip 180)
 add_regression_case(problog_symbol_aggregate_roundtrip problog_symbol_aggregate_roundtrip 180)
 add_regression_case(problog_fact_prob_alignment problog_fact_prob_alignment 180)

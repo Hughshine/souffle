@@ -1,29 +1,25 @@
-# Module Map (Whole Project)
+# Module Map
 
-This map is organized by code responsibility, not by experiment workflow.
-`Type` indicates whether the area is mostly upstream Souffle, fork-specific,
-or an upstream area extended by this fork.
+This map is scoped to the full-mode probabilistic artifact in this AE branch.
 
-| Module | Key paths | Type | Responsibility | Primary docs |
-| --- | --- | --- | --- | --- |
-| Driver and compiler entry | `src/souffle.cpp`<br>`src/MainDriver.cpp` | Upstream + fork extension | CLI entry, parse/build flow, default online behavior, compile/run mode gating | `docs/USAGE.md`<br>`docs/ARCHITECTURE.md`<br>`docs/project/PROBLOG_EXTENSION_STACK.md` |
-| Parser and AST front-end | `src/parser/*`<br>`src/ast/*` | Upstream + fork extension | Parse Datalog, build AST, include probabilistic/evidence AST nodes | `docs/ARCHITECTURE.md`<br>`docs/project/PROBLOG_EXTENSION_STACK.md` |
-| AST analyses and transforms | `src/ast/analysis/*`<br>`src/ast/transform/*` | Mostly upstream + fork touches | Semantic checks and rewrites before RAM lowering | `docs/ARCHITECTURE.md` |
-| AST-to-RAM lowering (core) | `src/ast2ram/*` | Mostly upstream | Lower AST to RAM and apply translation strategy | `docs/topics/pipeline/README.souffle.opt.md` |
-| AST-to-RAM lowering (online/incremental) | `src/ast2ram/online/*` | Fork extension | Generate incremental `_inc` strata and delta relations | `docs/topics/pipeline/README.dred.md`<br>`docs/project/PROBLOG_EXTENSION_STACK.md` |
-| RAM IR and RAM transforms | `src/ram/*` | Mostly upstream + fork extension | Runtime algebra, incremental operators, execution plan IR | `docs/ARCHITECTURE.md`<br>`docs/project/PROBLOG_EXTENSION_STACK.md` |
-| C++ synthesis and runtime glue | `src/synthesiser/*` | Mostly upstream + fork touches | Emit generated C++ and wire compiled runtime options | `docs/USAGE.md`<br>`docs/project/PROBLOG_EXTENSION_STACK.md` |
-| Probabilistic pipeline | `src/problog/*`<br>`src/include/souffle/problog/*` | Fork extension | Derivation graph, prune, rewrite, FC/WMC, incremental/regional logic | `docs/topics/pipeline/README.inc.region.md`<br>`docs/topics/rewrite/README.rewrite.impl.md`<br>`docs/project/PROBLOG_EXTENSION_STACK.md` |
-| Knowledge backends | `src/include/souffle/problog/formula/*` | Fork extension | BDD/SDD manager and formula operations used by FC/WMC | `docs/topics/backends/README.cudd.md`<br>`docs/topics/backends/README.sdd.md` |
-| Incremental command interface | `src/include/souffle/cli/Cli.h` | Fork extension | Interactive/batch `insert/delete/commit`, mode switching, output naming | `docs/USAGE.md`<br>`docs/topics/pipeline/README.inc.region.md`<br>`docs/project/PROBLOG_EXTENSION_STACK.md` |
-| Reporting and debug output | `src/reports/*`<br>`src/problog/debug/*` | Upstream + fork extension | JSON/DOT/stats dumps, runtime logs, diagnostics | `docs/topics/runtime/README.dump.md` |
-| Tests and validation artifacts | `tests/regression/*`<br>`src/tests/*` | Mixed (regression + unit) | Maintained regression checks and runtime/unit validation helpers | `docs/TESTING.md` |
-| Benchmarks and experiment tooling | `problog-benchmark/*`<br>`examples/*` | Fork extension | Reproducible benchmark generation, run orchestration, artifact collection | `docs/topics/evaluation/README.md`<br>`archive/README.md` |
+| Module | Key paths | Responsibility | Primary docs |
+| --- | --- | --- | --- |
+| Driver and compiler entry | `src/souffle.cpp`, `src/MainDriver.cpp` | CLI entry, parse/build flow, generated binary synthesis | `docs/USAGE.md`, `docs/ARCHITECTURE.md` |
+| Parser and AST front-end | `src/parser/*`, `src/ast/*` | Parse Datalog plus probabilistic/evidence syntax | `docs/project/PROBLOG_EXTENSION_STACK.md` |
+| RAM IR and transforms | `src/ram/*`, `src/ast2ram/*` | Lowering and runtime algebra used by generated programs | `docs/ARCHITECTURE.md` |
+| C++ synthesis | `src/synthesiser/*` | Emit generated C++ and wire compiled runtime options | `docs/USAGE.md` |
+| Probabilistic pipeline | `src/problog/*`, `src/include/souffle/problog/*` | Derivation graph, pruning, rewrite, FC/WMC | `docs/topics/rewrite/README.rewrite.impl.md` |
+| Knowledge backend | `src/include/souffle/problog/formula/*` | BDD manager and formula operations used by FC/WMC | `docs/topics/backends/README.cudd.md` |
+| Reporting and debug output | `src/reports/*`, `src/problog/debug/*` | JSON/DOT/stats dumps and runtime logs | `docs/topics/runtime/README.dump.md` |
+| Tests | `tests/regression/*`, `src/tests/*` | Maintained regression checks and runtime/unit helpers | `docs/TESTING.md` |
 
 ## Source references
-- [src/MainDriver.cpp](src/MainDriver.cpp)
-- [src/ast2ram/online/UnitTranslator.cpp](src/ast2ram/online/UnitTranslator.cpp)
-- [src/include/souffle/problog/Pipeline.h](src/include/souffle/problog/Pipeline.h)
-- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+- [../../src/MainDriver.cpp](../../src/MainDriver.cpp)
+- [../../src/problog/Pipeline.cpp](../../src/problog/Pipeline.cpp)
+- [../../src/include/souffle/problog/Pipeline.h](../../src/include/souffle/problog/Pipeline.h)
+- [../../src/include/souffle/CompiledOptions.h](../../src/include/souffle/CompiledOptions.h)
 
 ## Related commits
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface
+- `f78f1cade` — docs(rewrite): record artifact smoke verification
+- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

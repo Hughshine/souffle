@@ -10,16 +10,15 @@
 ## Artifact Contract
 - Full-mode runs do not rewrite unless `--rewrite` is passed.
 - Artifact optimized runs use bare `--rewrite` with `--det-opt`.
-- Artifact commands must not pass `--split-mode`; explicit split controls are
-  diagnostics and bypass the smart dispatcher.
-- `--knowledge bdd` is the expected backend.
+- The generated binary chooses the rewrite implementation internally; AE
+  commands do not pass explicit rewrite or split policy flags.
+- BDD is the artifact backend and generated-program default.
 
 ## Smart Dispatch
 `--rewrite` calls the dispatcher in [Pipeline.cpp](../../../src/problog/Pipeline.cpp).
 
 The dispatcher records stable metadata:
-- `rewrite_strategy`: `default` for bare `--rewrite`, `diagnostic` for forced
-  modes.
+- `rewrite_strategy`: `default`.
 - `rewrite_impl`: `implicit_split` or `graph_rewrite`.
 - `rewrite_reason`: why the implementation was selected.
 - `rewrite_split_policy`: `local` or `none`.
@@ -43,18 +42,9 @@ The rule is based on rule probabilities only.  Probabilistic input facts in
   managers for slow components.
 
 ## Diagnostics
-The following options are available for implementation studies, but they are not
-artifact commands:
-- `--explicit-rewrite`
-- `--implicit-rewrite`
-- `--split-mode=<no-split|naive-split>`
-- `--force-full-siso-detect`
-- `--no-relax-compaction-dirty`
-- `--no-single-rand-fast`
-- dump/profile flags
-
-`--derv-only --rewrite` does not run the rewrite pipeline and should not be used
-as a graph-only rewrite benchmark.
+Dump/profile/tuning flags are for local diagnosis and should not appear in AE
+benchmark commands.  `--derv-only --rewrite` does not run the rewrite pipeline
+and should not be used as a graph-only rewrite benchmark.
 
 ## Correctness Policy
 - Side-channel and taint benchmark outputs should match exactly.
@@ -63,6 +53,6 @@ as a graph-only rewrite benchmark.
   boundaries observed in a small number of cases.
 
 ## Related commits
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface
 - `f78f1cade` — docs(rewrite): record artifact smoke verification
 - `beb581c24` — perf(problog): reduce symbolization rewrite overhead
-- `33a7b3912` — perf(problog): add smart rewrite artifact dispatcher

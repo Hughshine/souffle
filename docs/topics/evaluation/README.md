@@ -1,19 +1,16 @@
 # Evaluation Docs
 
-Current evaluation docs are split by runnable workflow.
+Current evaluation docs are scoped to the full-mode AE artifact.
 
-## Current Workflows
-- `docs/topics/evaluation/README.eval.inc.md`: incremental side-channel workflow (`side_channel_inc.py`).
-- `docs/topics/evaluation/README.eval.md`: full-only side-channel workflow (`side_channel_full.py`).
-- `docs/topics/evaluation/README.artifact.inc.md`: minimal artifact reproduction path.
-- `docs/topics/evaluation/OPT.md`: optimization-oriented inc-regional run checklist.
-- `docs/topics/evaluation/README.eval.final.md`: latest curated batch summary.
-
-For dated run artifacts and TSV/plot outputs, use `archive/`.
+## Current Workflow
+- `docs/topics/evaluation/README.eval.md`: companion `CAV-FULL` benchmark
+  provenance and generated-binary command shape.
 
 ## Source references
-- [problog-benchmark/README.side-channel-inc.md](problog-benchmark/README.side-channel-inc.md)
-- [problog-benchmark/README.side-channel-full.md](problog-benchmark/README.side-channel-full.md)
-- [archive/README.md](archive/README.md)
+- [README.eval.md](README.eval.md)
+- [../../INDEX.md](../../INDEX.md)
 
 ## Related commits
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface
+- `f78f1cade` — docs(rewrite): record artifact smoke verification
+- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

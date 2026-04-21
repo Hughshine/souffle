@@ -79,17 +79,15 @@ protected:
     std::string log_file_name = "log.txt";  // default log file name
     bool derivation_only = false; // default derivation graph generation flag
     /**
-    * knowledge representation
+    * internal knowledge representation selector; the AE CLI uses the BDD default.
     */
-    std::string knowledge_representation;  // bdd, sdd are supported
+    std::string knowledge_representation;
     bool merge_bi_imp = true;  // enable merging mutually implying deterministic nodes
     bool prune_extra = false;  // enable extra prune pass (outputless components)
     bool fold_const = false;  // enable deterministic constant pre-analysis (no prune rewrite)
     bool enable_rewrite = false;  // enable smart rewrite dispatch
-    bool enable_explicit_rewrite = false;  // force legacy explicit graph rewrite pipeline
-    bool enable_implicit_rewrite = false;  // enable experimental implicit-split rewrite pipeline
-    std::string split_mode = "naive-split";  // diagnostic split mode for rewrite: no-split/naive-split
-    bool split_mode_explicit = false;  // true when --split-mode/-P was passed explicitly
+    bool force_graph_rewrite = false;  // hidden compatibility alias for pinned benchmark scripts
+    bool force_implicit_rewrite = false;  // hidden compatibility alias for pinned benchmark scripts
     bool dump_json = false;  // dump derivation graph JSON after prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
     bool dump_stat = false;  // dump derivation graph stats after prune
@@ -100,7 +98,6 @@ protected:
     bool dep_graph_profile = false;  // enable dependency-graph profiling
     bool post_del = false;  // enable postprocessUselessVariables after deletion
     bool det_opt = false;  // enable deterministic-relation analysis and det gating
-    bool det_force = false;  // force deterministic evaluation (skip derivation graph)
     bool reuse_var_index = true;  // reuse freed variable indices in CUDD (default on)
     bool single_rand_fast = true;  // enable single-randvar fast path in component FC
     bool force_full_siso_detect = false;  // force full-graph SISO detection (disable dirty-frontier detect)
@@ -113,7 +110,6 @@ public:
             bool merge_bi = true, bool foldconst = false, bool rewrite = false,
             bool dumpjson = false, bool dumpdot = false, bool dumpstat = false, bool dumpconst = false,
             bool dredProfile = false,
-            const std::string& splitmode = "naive-split",
             bool fcProfile = false,
             bool wmcProfile = false,
             bool depGraphProfile = false,
@@ -123,8 +119,7 @@ public:
       dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
       dred_profile(dredProfile), fc_profile(fcProfile),
       wmc_profile(wmcProfile),
-      dep_graph_profile(depGraphProfile), post_del(postDel),
-      split_mode(splitmode) {}
+      dep_graph_profile(depGraphProfile), post_del(postDel) {}
 
     CmdOptions() {}
     /**
@@ -174,17 +169,11 @@ public:
     bool isRewriteEnabled() const {
         return enable_rewrite;
     }
-    bool isExplicitRewriteEnabled() const {
-        return enable_explicit_rewrite;
+    bool isGraphRewriteForced() const {
+        return force_graph_rewrite;
     }
-    bool isImplicitRewriteEnabled() const {
-        return enable_implicit_rewrite;
-    }
-    const std::string& getSplitMode() const {
-        return split_mode;
-    }
-    bool isSplitModeExplicit() const {
-        return split_mode_explicit;
+    bool isImplicitRewriteForced() const {
+        return force_implicit_rewrite;
     }
     bool isDumpJsonEnabled() const {
         return dump_json;
@@ -224,9 +213,6 @@ public:
     }
     bool isDetOptEnabled() const {
         return det_opt;
-    }
-    bool isDetForceEnabled() const {
-        return det_force;
     }
     bool isHelpRequested() const {
         return help_requested;
@@ -280,13 +266,13 @@ public:
         option longOptions[] = {{"facts", true, nullptr, 'F'}, {"output", true, nullptr, 'D'},
                 {"help", false, nullptr, 'h'},
                 {"profile", true, nullptr, 'p'}, {"jobs", true, nullptr, 'j'}, {"index", true, nullptr, 'i'},
-                {"knowledge", true, nullptr, 'k'}, {"logfile", true, nullptr, 'l'},
+                {"knowledge", true, nullptr, 'k'},
+                {"logfile", true, nullptr, 'l'},
                 {"derv-only", optional_argument, nullptr, 'd'},
                 {"merge-bi-imp", false, nullptr, 'e'}, {"prune-extra", false, nullptr, 1004}, {"fold-const", false, nullptr, 'C'},
                 {"rewrite", false, nullptr, 'r'},
                 {"explicit-rewrite", false, nullptr, 1021},
-                {"implicit-rewrite", false, nullptr, 1019},
-                {"split-mode", true, nullptr, 'P'},
+                {"implicit-rewrite", false, nullptr, 1022},
                 {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
                 {"dumpstat", false, nullptr, 'S'},
                 {"dumpconst", false, nullptr, 'U'},
@@ -296,11 +282,6 @@ public:
                 {"profile-dep-graph", false, nullptr, 1010},
                 {"post-del", false, nullptr, 1006},
                 {"det-opt", false, nullptr, 'Z'},
-                {"det-force", false, nullptr, 1007},
-                {"no-reuse-var-index", false, nullptr, 1008},
-                {"no-single-rand-fast", false, nullptr, 1001},
-                {"force-full-siso-detect", false, nullptr, 1016},
-                {"no-relax-compaction-dirty", false, nullptr, 1020},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -308,7 +289,7 @@ public:
         bool ok = true;
         knowledge_representation = "bdd";  // default knowledge representation
         int c; /* command-line arguments processing */
-        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d::eC:rP:JTSUZ", longOptions, nullptr)) != EOF) {
+        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d::eC:rJTSUZ", longOptions, nullptr)) != EOF) {
             switch (c) {
                 /* Fact directories */
                 case 'F':
@@ -361,8 +342,8 @@ public:
                     } else if (std::string(optarg) == "sdd") {
                         knowledge_representation = "sdd";
                     } else {
-                        std::cerr << "Invalid knowledge representation: " << optarg << ", defaultly change to bdd\n";
-                        knowledge_representation = "bdd";
+                        std::cerr << "Invalid knowledge representation [-k|--knowledge]: " << optarg << "\n";
+                        ok = false;
                     }
                     break;
                 case 'l':
@@ -402,25 +383,12 @@ public:
                     break;
                 case 1021:
                     enable_rewrite = true;
-                    enable_explicit_rewrite = true;
+                    force_graph_rewrite = true;
                     break;
-                case 1019:
+                case 1022:
                     enable_rewrite = true;
-                    enable_implicit_rewrite = true;
+                    force_implicit_rewrite = true;
                     break;
-                case 'P': {
-                    split_mode_explicit = true;
-                    std::string modeArg(optarg);
-                    if (modeArg == "no-split" || modeArg == "none") {
-                        split_mode = "no-split";
-                    } else if (modeArg == "naive-split" || modeArg == "naive") {
-                        split_mode = "naive-split";
-                    } else {
-                        std::cerr << "Invalid split mode [-P|--split-mode]: " << optarg << "\n";
-                        ok = false;
-                    }
-                    break;
-                }
                 case 'J':
                     dump_json = true;
                     break;
@@ -451,38 +419,18 @@ public:
                 case 'Z':
                     det_opt = true;
                     break;
-                case 1007:
-                    det_force = true;
-                    break;
-                case 1008:
-                    reuse_var_index = false;
-                    break;
-                case 1001:
-                    single_rand_fast = false;
-                    break;
-                case 1016:
-                    force_full_siso_detect = true;
-                    break;
-                case 1020:
-                    relax_compaction_dirty = false;
-                    break;
                 default: printHelpPage(exec_name); return false;
             }
         }
 
         // update member fields
+        if (force_graph_rewrite && force_implicit_rewrite) {
+            std::cerr << "Cannot combine hidden graph-rewrite and implicit-rewrite compatibility aliases\n";
+            ok = false;
+        }
         input_dir = fact_dir;
         output_dir = out_dir;
 
-        if (enable_explicit_rewrite && enable_implicit_rewrite) {
-            std::cerr << "Cannot combine --explicit-rewrite with --implicit-rewrite\n";
-            ok = false;
-        }
-        if (enable_implicit_rewrite && split_mode_explicit && split_mode == "no-split") {
-            std::cerr << "Cannot combine --implicit-rewrite with --split-mode=no-split; "
-                      << "use --explicit-rewrite for graph-rewrite diagnostics.\n";
-            ok = false;
-        }
         // return success state
         return ok;
     }
@@ -505,34 +453,9 @@ private:
             std::cerr << "    -p <file>, --profile=<file>  -- Specify filename for profiling\n";
             std::cerr << "                                    (default: " << profile_name << ")\n";
         }
-        std::cerr << "    -k <KR>, --knowledge=<KR>    -- Specify knowledge representation (bdd or sdd)\n";
-        std::cerr << "                                    (default: " << knowledge_representation << ")\n";
         std::cerr << "    -r, --rewrite                -- Enable artifact rewrite dispatcher\n";
         std::cerr << "    --det-opt                    -- Enable deterministic-relation analysis and graph gating\n";
         std::cerr << "    -l <FILE>, --logfile=<FILE>  -- Debugger JSON base name\n";
-        std::cerr << "\n";
-        std::cerr << " Advanced diagnostics (not needed for artifact reproduction):\n";
-        std::cerr << "    -d, --derv-only[=<true|false>] -- Only compute the derivation graph\n";
-        std::cerr << "    -e, --merge-bi-imp           -- Enable merging mutually implying deterministic nodes during pruning\n";
-        std::cerr << "    --prune-extra                -- Enable outputless-component pruning in prune\n";
-        std::cerr << "    -C, --fold-const             -- Enable deterministic constant pre-analysis (no prune rewrite; negation ignored)\n";
-        std::cerr << "    --explicit-rewrite           -- Force explicit graph rewrite diagnostics\n";
-        std::cerr << "    --implicit-rewrite           -- Force implicit-split rewrite diagnostics\n";
-        std::cerr << "    --split-mode=<MODE>          -- Diagnostic split mode: no-split or naive-split\n";
-        std::cerr << "    --dumpjson                   -- Dump derivation graph JSON after prune\n";
-        std::cerr << "    --dumpdot                    -- Dump derivation graph DOT after prune\n";
-        std::cerr << "    --dumpstat                   -- Dump derivation graph stats after prune\n";
-        std::cerr << "    --dred-profile               -- Enable detailed DRed profiling (requires --profile)\n";
-        std::cerr << "    --fc-profile                 -- Enable detailed forward-compilation profiling\n";
-        std::cerr << "    --profile-wmc                -- Enable weighted model counting profiling\n";
-        std::cerr << "    --profile-dep-graph          -- Enable dependency-graph profiling\n";
-        std::cerr << "    --post-del                   -- Enable post-delete variable postprocess (FC)\n";
-        std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
-        std::cerr << "    --det-force                  -- Force deterministic mode (skip derivation graph; emit prob=1.0)\n";
-        std::cerr << "    --force-full-siso-detect     -- Disable dirty-frontier SISO detect and always scan full graph\n";
-        std::cerr << "    --no-relax-compaction-dirty  -- Keep conservative dirtying after deterministic edge compaction\n";
-        std::cerr << "    --no-reuse-var-index         -- Disable reuse of freed CUDD variable indices (reuse is unsafe unless deletion fully removes vars)\n";
-        std::cerr << "    --no-single-rand-fast        -- Disable single-randvar fast path in component FC\n";
 #ifdef _OPENMP
         std::cerr << "    -j <NUM>, --jobs=<NUM>       -- Specify number of threads\n";
         if (num_jobs > 0) {

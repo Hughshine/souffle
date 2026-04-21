@@ -142,8 +142,8 @@ struct ImplicitSplitPipelineOptions {
     bool runOverlayFanOutConverge = true;
     bool runOverlayAllFacts = true;
     bool runMaterializedGraphRewrite = true;
-    bool computeOutputMarginals = true;
-    bool collectPatternStats = true;
+    bool computeOutputMarginals = false;
+    bool collectPatternStats = false;
     bool iterateSplitRewrite = false;
     std::size_t maxOuterIterations = 32;
 };
@@ -191,7 +191,6 @@ public:
             bool enableParallelEdge = true, bool enableFanOutConverge = true, bool enableAllFacts = true,
             ImplicitSplitOverlayStats* stats = nullptr);
 
-    std::vector<OverlayOutputProbability> computeOutputMarginalsExact() const;
     std::vector<OverlayOutputProbability> collectDirectOutputProbabilities() const;
     std::vector<OverlayFactCommit> collectFactCommits() const;
     std::vector<OverlayEdgeCommit> collectEdgeCommits() const;

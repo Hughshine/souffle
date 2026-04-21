@@ -30,15 +30,12 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 ## Verification
 - If C++ changes: rebuild. Run `sh/run_test_format.sh` only when explicitly requested.
   TODO: Align this with CI expectations once clang-format is available by default.
-- If CLI/runtime behavior changes: run the example script:
-  `SOUFFLE_BIN=./build/src/souffle examples/running_example/run.sh`.
-- If incremental/probabilistic behavior changes: run `ctest -L regression` using
+- If CLI/runtime or probabilistic behavior changes: run `ctest -L regression` using
   the repo-built binary from `build/src/souffle`.
 - If tests cannot run, state why and point to `docs/TESTING.md`.
 
 ## Pitfalls / Do & Don't
 - `sh/run_test_format.sh` rewrites files in the current git diff; run it only when you intend to format changed C++/headers.
-- `examples/running_example/run.sh` only auto-detects `cmake-build-release`; set `SOUFFLE_BIN` if you build elsewhere.
 - Keep `docs/INDEX.md` updated when adding or renaming documentation.
 
 ## Reference Docs
@@ -59,4 +56,6 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - [cmake/CTestDisabled.cmake](cmake/CTestDisabled.cmake)
 
 ## Related commits
-- `668298ef8` — fix(inc-region): update regional WMC routing and profiling
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface
+- `f78f1cade` — docs(rewrite): record artifact smoke verification
+- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

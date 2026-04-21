@@ -7,15 +7,14 @@ This is the documentation architecture for this repository.
 - Layer 2 (operations): `docs/USAGE.md`, `docs/TESTING.md`, `docs/RUNBOOK.md`, `docs/SECURITY.md`, `docs/process/*`.
 - Layer 3 (project-level): `docs/project/*` for module map, ownership, and maintenance invariants.
 - Layer 4 (topic deep dives): `docs/topics/*` for implementation details by subsystem.
-- Layer 5 (design): `docs/design/*`.
-- Layer 6 (experiment records): `archive/YYYY-MM-DD/*` with tracked batch README only.
+- Layer 5 (experiment records): keep raw run logs out of the AE branch.
 
 ## Placement Rules
 - If a change affects how users run the binary: update Layer 2.
 - If a change affects module boundaries or ownership: update `docs/project/MODULES.md` and `docs/project/FORK_DELTA.md`.
 - If a change affects algorithm details: update one topic doc in Layer 4.
-- If content is proposal-only: keep it in `docs/design/`.
-- If content is run log/snapshot: keep it out of the AE branch, or place a dated summary under `archive/`.
+- If content is proposal-only or an old run snapshot, keep it out of the AE
+  branch unless it is needed to reproduce the packaged artifact.
 
 ## Root Directory Policy
 - Keep root minimal for discoverability.
@@ -23,9 +22,10 @@ This is the documentation architecture for this repository.
 - Keep process docs under `docs/process/` instead of root-level miscellaneous READMEs.
 
 ## Source references
-- [README.md](README.md)
-- [AGENTS.md](AGENTS.md)
-- [docs/INDEX.md](docs/INDEX.md)
-- [archive/README.md](archive/README.md)
+- [README.md](../../README.md)
+- [AGENTS.md](../../AGENTS.md)
+- [docs/INDEX.md](../INDEX.md)
+- [docs/TESTING.md](../TESTING.md)
 
 ## Related commits
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface

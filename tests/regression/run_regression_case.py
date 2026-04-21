@@ -154,20 +154,6 @@ def assert_prob_close(lhs: Path, rhs: Path, *, tol: float = 1e-9, label: str) ->
         )
 
 
-def assert_prob_all_ones(path: Path, *, tol: float = 1e-12, label: str) -> None:
-    vals = parse_prob_file(path)
-    bad = []
-    for key, value in sorted(vals.items()):
-        if not math.isclose(value, 1.0, rel_tol=0.0, abs_tol=tol):
-            bad.append(f"{key}: {value:.12g}")
-            if len(bad) >= 8:
-                break
-    if bad:
-        raise CaseFailure(
-            f"{label}: det-force output is not all-ones\nfile={path}\n" + "\n".join(bad)
-        )
-
-
 def compile_compute(
     *,
     souffle_bin: Path,
@@ -239,8 +225,8 @@ def case_smoke_full_only(souffle_bin: Path, work_root: Path) -> None:
         raise CaseFailure(f"smoke test produced empty probability output: {facts_prob}")
 
 
-def case_rewrite_split_modes_equiv(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = prepare_case_workspace("rewrite_split_modes_equiv", work_root)
+def case_rewrite_dispatch_equiv(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("rewrite_dispatch_equiv", work_root)
     input_dir = case_dir / "input"
 
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
@@ -249,20 +235,14 @@ def case_rewrite_split_modes_equiv(souffle_bin: Path, work_root: Path) -> None:
     run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base)
     base_prob = out_base / "facts.prob"
 
-    split_modes = ["no-split", "naive-split"]
-    for split_mode in split_modes:
-        out_dir = case_dir / f"out_rewrite_{split_mode}"
-        run_full_once(
-            compute_bin=compute_bin,
-            input_dir=in_dir,
-            output_dir=out_dir,
-            extra_args=["--rewrite", f"--split-mode={split_mode}"],
-        )
-        assert_prob_close(
-            out_dir / "facts.prob",
-            base_prob,
-            label=f"rewrite_split_mode={split_mode}",
-        )
+    out_rewrite = case_dir / "out_rewrite"
+    run_full_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_rewrite,
+        extra_args=["--rewrite"],
+    )
+    assert_prob_close(out_rewrite / "facts.prob", base_prob, label="rewrite_dispatch_equiv")
 
 
 def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
@@ -273,7 +253,6 @@ def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
 
     out_base = case_dir / "out_base"
     out_detopt = case_dir / "out_detopt"
-    out_detforce = case_dir / "out_detforce"
 
     run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base)
     run_full_once(
@@ -282,23 +261,10 @@ def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
         output_dir=out_detopt,
         extra_args=["--det-opt"],
     )
-    run_full_once(
-        compute_bin=compute_bin,
-        input_dir=in_dir,
-        output_dir=out_detforce,
-        extra_args=["--det-force"],
-    )
 
     base_prob = out_base / "facts.prob"
     detopt_prob = out_detopt / "facts.prob"
-    detforce_prob = out_detforce / "facts.prob"
     assert_prob_close(detopt_prob, base_prob, label="det-opt_full_mode_equivalence")
-    assert_prob_all_ones(detforce_prob, label="det-force_all_ones")
-
-    base_keys = set(parse_prob_file(base_prob).keys())
-    force_keys = set(parse_prob_file(detforce_prob).keys())
-    if base_keys != force_keys:
-        raise CaseFailure("det-force changed output tuple set compared to baseline")
 
 def case_problog_string_roundtrip(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("problog_string_roundtrip", work_root)
@@ -600,7 +566,7 @@ def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
 
 CASES = {
     "smoke_full_only": case_smoke_full_only,
-    "rewrite_split_modes_equiv": case_rewrite_split_modes_equiv,
+    "rewrite_dispatch_equiv": case_rewrite_dispatch_equiv,
     "problog_string_roundtrip": case_problog_string_roundtrip,
     "problog_symbol_aggregate_roundtrip": case_problog_symbol_aggregate_roundtrip,
     "problog_fact_prob_alignment": case_problog_fact_prob_alignment,

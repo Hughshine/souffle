@@ -9,13 +9,7 @@
 ## Scope
 - Compiler flags apply to the `souffle` executable and control code generation.
 - Runtime flags apply to generated `./compute` binaries.
-- Artifact instructions should expose only the stable runtime surface.  Other
-  flags are diagnostics and should not appear in artifact benchmark commands.
-
-## Compiler Use
-Use the repo-built `souffle` to generate benchmark `compute` binaries.  Benchmark
-scripts may pass internal generation options, but AE-facing instructions should
-not present those internal options as a stable user surface.
+- AE-facing instructions expose only the stable runtime surface.
 
 ## Artifact Runtime Surface
 Generated programs should be run with:
@@ -29,7 +23,6 @@ Flags:
 - `-l, --logfile <FILE>`: debugger JSON base name.
 - `--det-opt`: deterministic-relation analysis and graph gating.
 - `-r, --rewrite`: smart artifact rewrite dispatcher.
-- `-k, --knowledge <bdd|sdd>`: backend selector; artifact runs use `bdd`.
 
 Plain comparison runs omit only `--rewrite`.
 
@@ -42,29 +35,11 @@ Bare `--rewrite` chooses a policy in [Pipeline.cpp](../../../src/problog/Pipelin
 The classification is intentionally rule-based.  It does not inspect
 probabilistic `.prob` input facts.
 
-Do not pass `--split-mode` in artifact commands.  An explicit split mode is a
-diagnostic override and bypasses the smart dispatcher.
-
-## Diagnostic Runtime Flags
-These remain available for debugging or ablation, but are not AE commands:
-- `--explicit-rewrite`
-- `--implicit-rewrite`
-- `--split-mode=<no-split|naive-split>`
-- `-d, --derv-only[=<true|false>]`
-- `-e, --merge-bi-imp`
-- `--prune-extra`
-- `-C, --fold-const`
-- `--det-force`
-- `--post-del`
-- `--no-reuse-var-index`
-- `--no-single-rand-fast`
-- `--force-full-siso-detect`
-- `--no-relax-compaction-dirty`
-- dump/profile flags such as `--dumpjson`, `--dumpdot`, `--dumpstat`,
-  `--dumpconst`, `--fc-profile`, `--profile-wmc`, and `--profile-dep-graph`
-
-`--derv-only --rewrite` does not execute rewrite and should not be used as a
-graph-only rewrite benchmark.
+## Hidden Diagnostics
+Generated binaries still accept selected dump/profile/tuning flags for local
+debugging.  They are intentionally omitted from generated help and from AE
+commands because artifact results should be reproduced with the stable surface
+above.
 
 ## Correctness Policy
 - Side-channel and taint checks are exact.
@@ -73,6 +48,6 @@ graph-only rewrite benchmark.
   output-rounding boundaries only.
 
 ## Related commits
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface
 - `f78f1cade` — docs(rewrite): record artifact smoke verification
 - `beb581c24` — perf(problog): reduce symbolization rewrite overhead
-- `2d1434976` — feat(problog): add explicit rewrite flag

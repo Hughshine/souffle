@@ -1,8 +1,8 @@
 # Git Commit Notes
 
 ## Source references
-- [.gitignore](.gitignore)
-- [sh/run_test_format.sh](sh/run_test_format.sh)
+- [.gitignore](../../.gitignore)
+- [sh/run_test_format.sh](../../sh/run_test_format.sh)
 
 
 This repo mixes source, experiments, and generated artifacts. Keep commits small and avoid
@@ -50,6 +50,5 @@ Examples:
 - `docs(readme): add P12 profile5 results`
 
 ## Related commits
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface
 - `812ea4081` — docs(repo): refine README narratives
-- `4c4bd26b2` — docs(readme): restructure online incremental docs
-- `9be703353` — perf(inc-region): add regional pipeline and profiling

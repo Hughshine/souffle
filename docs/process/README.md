@@ -10,7 +10,7 @@ This folder contains workflow and hygiene docs for contributors and maintainers.
 - Reference these docs from `README.md`, `CONTRIBUTING.md`, and `AGENTS.md`.
 
 ## Source references
-- [docs/process/README.git.md](docs/process/README.git.md)
-- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [docs/process/README.git.md](README.git.md)
+- [CONTRIBUTING.md](../../CONTRIBUTING.md)
 
 ## Related commits

@@ -1,8 +1,8 @@
 # Security
 
 ## Source references
-- [.env.example](.env.example)
-- [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)
+- [.env.example](../.env.example)
+- [sh/setup/install_ubuntu_deps.sh](../sh/setup/install_ubuntu_deps.sh)
 
 
 ## Scope
@@ -19,7 +19,7 @@ security policy defined in this repo yet.
 
 ## Dependency Hygiene
 - Dependency install scripts live under `sh/setup/`.
-- CUDD is required for the BDD backend; SDD is optional for `-k sdd`.
+- CUDD is required for the BDD backend used by the artifact.
 - Review and pin dependency versions when preparing releases.
 
 ## Disclosure / Reporting
@@ -31,4 +31,5 @@ TODO: define a security contact and disclosure process for this fork.
 - Update docs and run the recommended verification steps.
 
 ## Related commits
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface
 - `aaa18c137` — docs(repo): add core docs

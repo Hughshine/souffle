@@ -374,7 +374,6 @@ void dumpInputFacts(std::ostream& os = std::cout);
 extern std::unordered_map<UntypedTuple, double> fact_prob;
 extern std::unordered_map<std::string, bool> relationHasProbFact;
 extern bool detOptEnabled;
-extern bool detForceEnabled;
 extern std::unordered_map<std::string, bool> relationIsDet;
 inline bool isDetRelation(const std::string& rel) {
     auto it = relationIsDet.find(rel);

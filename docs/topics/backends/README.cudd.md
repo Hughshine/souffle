@@ -1,76 +1,41 @@
-# CUDD (BDD Backend) Notes
+# CUDD BDD Backend Notes
 
 ## Source references
-- [src/include/souffle/problog/formula/CuddManager.h](src/include/souffle/problog/formula/CuddManager.h)
-- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
-- [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
-- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
-
+- [../../../src/include/souffle/problog/formula/CuddManager.h](../../../src/include/souffle/problog/formula/CuddManager.h)
+- [../../../src/include/souffle/problog/ForwardCompilation.h](../../../src/include/souffle/problog/ForwardCompilation.h)
+- [../../../src/include/souffle/CompiledOptions.h](../../../src/include/souffle/CompiledOptions.h)
+- [../../../src/problog/Pipeline.cpp](../../../src/problog/Pipeline.cpp)
 
 ## Scope
-- This document describes how the CUDD-backed BDD knowledge backend is used in this
-  fork for ProbLog-style inference (forward compilation + weighted model counting).
-- It is not a general CUDD tutorial.
-
-## When You Are Using CUDD
-- Runtime flag: `-k bdd` / `--knowledge=bdd` (default in `CompiledOptions`).
-- `-k sdd` switches to the SDD backend (optional dependency).
-- CLI overview: `docs/USAGE.md`.
-- Dependency note and troubleshooting: `docs/RUNBOOK.md`.
+- CUDD-backed BDD is the artifact backend.
+- This is not a general CUDD tutorial.
 
 ## Key Code Locations
-- BDD manager wrapper: `src/include/souffle/problog/formula/CuddManager.h`
-  - `WeightedBDDManager` owns the `DdManager` and implements BDD ops + WMC.
-  - `WeightedBDDManager::initManager()` calls `Cudd_Init(...)`.
-- Pipeline wiring + init config: `src/problog/Pipeline.cpp`
-  - `estimateBddVarCount(...)` and `makeCuddInitConfig(...)` choose init parameters.
-- Forward compilation call sites: `src/include/souffle/problog/ForwardCompilation.h`
-  - `formulaManager.preConfig(view)` is invoked in both full and incremental paths.
+- `WeightedBDDManager` in `CuddManager.h` owns the `DdManager` and implements
+  BDD operations plus weighted model counting.
+- `Pipeline.cpp` estimates BDD variable count and builds CUDD initialization
+  parameters.
+- `ForwardCompilation.h` builds formulas over derivation graph components.
 
-## Manager Initialization (`Cudd_Init`)
-- The manager is created via:
-  `Cudd_Init(numVars, numVarsZ, numSlots, cacheSize, maxMemory)`.
-- Current init strategy is code-driven (Pipeline computes a config from an estimated
-  BDD variable count, then passes it into `WeightedBDDManager`).
-- Detailed notes (thresholds, hooks, and reordering behavior):
-  - `docs/topics/backends/README.cudd.reordering.md`
+## Manager Initialization
+The manager is created with:
+`Cudd_Init(numVars, numVarsZ, numSlots, cacheSize, maxMemory)`.
 
-## Reordering and Post-Delete Shuffle
-- Dynamic reordering is configured by `adaptiveReorder(...)` and CUDD autodyn.
-- `WeightedBDDManager::preConfig()` explicitly skips static ordering and enables
-  adaptive dynamic reordering on the first run.
-- Explicit (non-dynamic) reordering is done via `Cudd_ShuffleHeap` in
-  `postprocessUselessVariables()` when `--post-del` is enabled.
-- Full details:
-  - `docs/topics/backends/README.cudd.reordering.md`
-
-## Profiling and Observability
-- Enable: `--fc-profile` (runtime).
-- CUDD-focused lines include:
-  - `[fc-profile] stage=CUDD_PRECONFIG ...`
-  - `[fc-profile] stage=CUDD_CREATEVAR ...`
-  - `[fc-profile] stage=CUDD_CREATEVAR_STATS ...`
-- Field-level reference:
-  - `docs/topics/profiling/README.fc.profile.md`
-
-## Practical Tuning Workflow
-1. Reproduce with `--fc-profile` enabled and capture stdout.
-2. Check whether manager growth dominates:
-   - `CUDD_PRECONFIG` shows `old_var_size`/`new_var_size`.
-   - Large `new_var_size >> old_var_size` typically means repeated manager growth
-     (variable indices not stable across turns, or `numVars` too small).
-3. Check for GC/reorder during variable creation:
-   - `CUDD_CREATEVAR_STATS` reports deltas around `Cudd_bddIthVar(...)`.
-4. If you tune initialization, change only the config source:
-   - `src/problog/Pipeline.cpp` (`makeCuddInitConfig`).
-   - Keep changes documented in `docs/topics/backends/README.cudd.reordering.md` if thresholds change.
+Current initialization is code-driven.  The pipeline computes a configuration
+from the estimated BDD variable count and passes it to `WeightedBDDManager`.
 
 ## Common Failure Modes
-- `Failed to initialize CUDD manager`: missing/incorrect CUDD install or link.
+- `Failed to initialize CUDD manager`: missing or incorrectly linked CUDD.
 - Performance cliffs:
-  - Manager grows repeatedly (insufficient `numVars` headroom or unstable indices).
-  - Cache is too small for the workload (high recomputation).
-  - Reordering is too frequent or disabled too early (workload-dependent).
+  - manager growth from insufficient variable-count headroom
+  - cache pressure on large components
+  - expensive dynamic reordering on difficult components
+
+## Diagnostics
+`--fc-profile` and `--profile-wmc` expose backend timing, but they are hidden
+diagnostic flags and should not be used in standard AE timing commands.
 
 ## Related commits
-- `78890247d` — fix(inc): align delta handling and node metrics
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface
+- `f78f1cade` — docs(rewrite): record artifact smoke verification
+- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

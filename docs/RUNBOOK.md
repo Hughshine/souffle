@@ -1,44 +1,40 @@
 # Runbook
 
 ## Source references
-- [examples/running_example/run.sh](examples/running_example/run.sh)
-- [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)
-- [src/MainDriver.cpp](src/MainDriver.cpp)
-
+- [README.md](../README.md)
+- [docs/USAGE.md](USAGE.md)
+- [docs/TESTING.md](TESTING.md)
+- [src/MainDriver.cpp](../src/MainDriver.cpp)
+- [src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h)
 
 ## Start / Build
-- Follow the Quickstart in `README.md` for dependency install and build steps.
-- The bundled example uses `examples/running_example/run.sh` (set `SOUFFLE_BIN`
-  if your build directory is not the default).
-- CUDD is required for the BDD backend; SDD is optional for `-k sdd`.
-- TODO (unconfirmed): add standardized CUDD/SDD install commands (no repo script or
-  config currently defines them).
+- Follow the Quickstart in [README.md](../README.md).
+- CUDD is required for the BDD backend used by the artifact.
 
-## Operate / Run Experiments
-- Full-mode evaluation: see `docs/topics/evaluation/README.eval.md`.
-- Incremental evaluation: see `docs/topics/evaluation/README.eval.inc.md`.
-- Evaluation docs map and historical logs: `docs/topics/evaluation/README.md`.
-- Interactive incremental runs use the turn-based CLI (`insert`, `delete`, `commit`).
-
-## Rollback
-- Keep the last known-good build directory and point `SOUFFLE_BIN` at it.
-- For regressions, revert the commit and rebuild to restore previous behavior.
+## Run Artifact Commands
+- Plain generated-binary run:
+  `./compute -F <facts-dir> -D <output-dir> --det-opt --logfile ae-plain`
+- Optimized generated-binary run:
+  `./compute -F <facts-dir> -D <output-dir> --det-opt --rewrite --logfile ae-rewrite`
+- Companion benchmark scripts live in `CAV-FULL` commit `76b4799`.
 
 ## Logs and Metrics
 - `--logfile <name>` writes JSON reports to the output directory (`-D`).
-- `--dumpjson`, `--dumpdot`, `--dumpstat` emit artifacts in the output directory.
-- `-p <file>` enables profiling output when compiled with profiling.
+- Hidden dump/profile flags exist for local diagnosis but are not required for
+  AE reproduction.
 
 ## Troubleshooting
-- `ctest` fails: see `docs/TESTING.md` for status and alternatives.
-- `souffle` not found: set `SOUFFLE_BIN` or add the built binary to `PATH`.
-- Missing BDD/SDD backend: ensure CUDD is installed (SDD optional for `-k sdd`).
-- `--inc` not recognized: the legacy backend is removed; use online incremental modes.
-- Large outputs/logs: avoid committing generated artifacts (see `docs/process/README.git.md`).
+- `ctest` fails: see [docs/TESTING.md](TESTING.md).
+- `souffle` not found: set `PATH` to include `build/src` or call
+  `./build/src/souffle` explicitly.
+- Missing BDD backend: ensure CUDD is available in the build environment.
+- Large outputs/logs: avoid committing generated artifacts.
 
 ## Common Checks
-- Compare `facts.prob` outputs across runs for consistency.
+- Compare `facts.prob` outputs across plain and rewrite runs.
 - Inspect stdout timing lines and JSON logs for hot stages before tuning.
 
 ## Related commits
-- `812ea4081` — docs(repo): refine README narratives
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface
+- `f78f1cade` — docs(rewrite): record artifact smoke verification
+- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

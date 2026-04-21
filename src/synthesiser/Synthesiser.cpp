@@ -4687,13 +4687,13 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << std::stoi(glb.config().get("jobs"));
     hook << ", \"log.txt\"";
     hook << ", " << (glb.config().has("derv-only") ? "true" : "false");
-    hook << "," << (glb.config().has("merge-bi-imp") ? "true" : "false");
+    hook << ",true";
+    hook << ",false";
     hook << "," << (glb.config().has("rewrite") ? "true" : "false");
     hook << ");\n";
 
     hook << "if (!opt.parse(argc,argv)) return opt.isHelpRequested() ? 0 : 1;\n";
     hook << "detOptEnabled = opt.isDetOptEnabled();\n";
-    hook << "detForceEnabled = opt.isDetForceEnabled();\n";
     hook << "dredProfileEnabled = opt.isDredProfileEnabled();\n";
     hook << "depGraphProfileEnabled = opt.isDepGraphProfileEnabled();\n";
     hook << "reuseVarIndexEnabled = opt.isReuseVarIndexEnabled();\n";

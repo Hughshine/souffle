@@ -47,5 +47,5 @@ and align documentation with behavior changes.
 - No generated artifacts or experiment outputs are committed.
 
 ## Related commits
-- `UNCOMMITTED` — docs(repo): align contributing guidance with docs/process and evaluation map
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface
 - `aaa18c137` — docs(repo): add core docs

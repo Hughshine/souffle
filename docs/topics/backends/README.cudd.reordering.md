@@ -1,88 +1,32 @@
-# CUDD Reordering (ProbLog BDD Path)
+# CUDD Reordering
 
 ## Source references
-- [src/include/souffle/problog/formula/CuddManager.h](src/include/souffle/problog/formula/CuddManager.h)
-- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
-- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
-
+- [../../../src/include/souffle/problog/formula/CuddManager.h](../../../src/include/souffle/problog/formula/CuddManager.h)
+- [../../../src/include/souffle/problog/ForwardCompilation.h](../../../src/include/souffle/problog/ForwardCompilation.h)
+- [../../../src/problog/Pipeline.cpp](../../../src/problog/Pipeline.cpp)
 
 ## Scope
-- Covers how dynamic and explicit variable reordering is configured and used in the
-  ProbLog BDD path.
-- Code references:
-  - [src/include/souffle/problog/formula/CuddManager.h](src/include/souffle/problog/formula/CuddManager.h)
-  - [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
-  - [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
+This note covers dynamic variable reordering in the full-mode BDD path.
 
-## Manager Initialization (Cudd_Init)
-- The BDD manager is created in `WeightedBDDManager::initManager()` using:
-  `Cudd_Init(numVars, numVarsZ, numSlots, cacheSize, maxMemory)`.
-- The config is built in `makeCuddInitConfig()` (Pipeline) using the estimated
-  BDD variable count:
-  - `numVars`: `min(2 * varCount, UINT_MAX)` to preallocate BDD vars.
-  - `numVarsZ`: default 0.
-  - `numSlots`: fixed to 512 (unique table buckets).
-  - `cacheSize`, `maxMemory`: scaled by `varCount` (small graphs get smaller
-    cache/memory; large graphs use defaults).
-- GC and reorder hooks are installed via `Cudd_AddHook(..., CUDD_*_HOOK)`.
+## Manager Initialization
+`WeightedBDDManager::initManager()` calls `Cudd_Init(...)`.  The config is built
+in `makeCuddInitConfig()` using the estimated BDD variable count.
 
-## Dynamic Reordering Enablement
-- Dynamic reordering is enabled via `adaptiveReorder(manager)` which calls
-  `Cudd_AutodynEnable(manager, next)` or disables it for large graphs.
-- The heuristic is chosen by `adaptiveReorder()` based on current BDD node count:
-  - `< 10k`: `CUDD_REORDER_SIFT_CONVERGE`
-  - `< 50k`: `CUDD_REORDER_SIFT`
-  - `< 100k`: `CUDD_REORDER_WINDOW4_CONV`
-  - `< 300k`: `CUDD_REORDER_WINDOW4`
-  - `< 3M`: `CUDD_REORDER_WINDOW2`
-  - `>= 3M`: `CUDD_REORDER_NONE` (dynamic reordering disabled)
-- `adaptiveReorder2()` exists but is not used.
+## Dynamic Reordering
+Dynamic reordering is enabled by `adaptiveReorder(...)`.  The heuristic is
+chosen from the current BDD node count and may be disabled on very large graphs.
 
-## When Reordering Is Activated
-- `formulaManager.preConfig(view)` is called in both full and inc pipelines:
-  - Full: `buildFormulasCyclewise` and `buildFormulasCyclewiseOnDemand`
-  - Inc: `buildFormulasIncCyclewise` (insert preconfig)
-- `preConfig(...)`:
-  - Clears caches, scans facts/edges, and calls `createVar(...)`.
-  - Calls `adaptiveReorder(...)` to enable dynamic reordering based on size.
-- Dynamic reordering itself is triggered by CUDD during BDD operations
-  (e.g., `Cudd_bddAnd`, `Cudd_bddOr`, `Cudd_bddIthVar`). It is not forced by
-  `preConfig(...)` beyond enabling a heuristic.
-  - In incremental turns, `preConfig(...)` scans only delta-inserted nodes/edges
-    for `createVar(...)` (cache clear still happens every turn). The adaptive
-    reordering heuristic is configured once per manager, on the first full run.
+## Profiling
+Hidden diagnostic flags can expose:
+- `CUDD_PRECONFIG`
+- `CUDD_CREATEVAR`
+- `CUDD_CREATEVAR_STATS`
+- reordering runtime deltas
 
-## Reordering Hooks and Counters
-- `myVRFunc` is registered for `CUDD_PRE_REORDERING_HOOK` and
-  `CUDD_POST_REORDERING_HOOK`.
-  - It records start/end timestamps for each reorder and increments a counter.
-  - After each reorder, it calls `adaptiveReorder(dd)` to pick the next heuristic.
-- `Cudd_ReadReorderingTime()` provides cumulative time spent in CUDD reordering.
-  We emit a per-stage delta as `reordering_runtime` in FC profiling.
-- `Cudd_ReadReorderings()` provides the total number of reorder operations; this
-  is captured in `CUDD_CREATEVAR_STATS` when `--fc-profile` is enabled.
-
-## Explicit Reordering (Non-Dynamic)
-- `postprocessUselessVariables()` uses `Cudd_ShuffleHeap` to explicitly reorder
-  variables after deletion when `--post-del` is enabled.
-- This is separate from CUDD dynamic reordering and does not use the VR hook.
-
-## Profiling and Observability
-- `--fc-profile` adds:
-  - `CUDD_PRECONFIG` lines: total preConfig time and sub-breakdown.
-  - `CUDD_CREATEVAR` and `CUDD_CREATEVAR_STATS`: per-var timing and deltas for
-    GC/reorder/slots/keys.
-  - `reordering_runtime` in FC stage info (delta of `Cudd_ReadReorderingTime`).
-- The `preConfig (cache clear + var scan/create + dyn-reorder setup) took ...`
-  log message reports `preConfig(...)` wall time, not dynamic reordering time alone.
-
-## Summary
-- Full and incremental pipelines share the same CUDD dynamic reordering path.
-- Differences in reordering cost come from workload size and when CUDD decides to
-  trigger reorders, not from different configuration paths.
-- Explicit reordering (`Cudd_ShuffleHeap`) is only used by post-delete cleanup
-  and is controlled by `--post-del`.
+These diagnostics are useful for local tuning but are not part of artifact
+timing commands.
 
 ## Related commits
-- `4bf38b2a1` — perf(problog): make inc preConfig delta-scoped
-- `188e75a43` — docs(readme): add CUDD reordering notes
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface
+- `f78f1cade` — docs(rewrite): record artifact smoke verification
+- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

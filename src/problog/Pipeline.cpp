@@ -58,18 +58,15 @@ static std::size_t countInitialInputFacts() {
 
 struct RewriteDispatchDecision {
     bool useImplicit = false;
-    std::string splitMode = "naive-split";
     std::string impl = "graph_rewrite";
-    std::string reason = "manual_rewrite";
-    std::string splitPolicy = "local";
+    std::string reason = "no_probabilistic_rule_weights";
+    std::string splitPolicy = "none";
     std::size_t totalRules = 0;
     std::size_t probabilisticRules = 0;
-    bool autoSelected = false;
 };
 
 static RewriteDispatchDecision chooseRewriteDispatch(const CmdOptions& opt, const RuleManager& ruleManager) {
     RewriteDispatchDecision decision;
-    decision.splitMode = opt.getSplitMode();
     for (const auto* rule : ruleManager.getAllRules()) {
         if (rule == nullptr) continue;
         ++decision.totalRules;
@@ -78,45 +75,26 @@ static RewriteDispatchDecision chooseRewriteDispatch(const CmdOptions& opt, cons
         }
     }
 
-    const bool splitForcesLegacy = opt.isSplitModeExplicit() && decision.splitMode == "no-split";
-    if (opt.isExplicitRewriteEnabled()) {
+    if (opt.isGraphRewriteForced()) {
         decision.useImplicit = false;
         decision.impl = "graph_rewrite";
-        decision.reason = opt.isSplitModeExplicit() ? "explicit_flag_manual_split" : "explicit_flag";
-        decision.splitPolicy = splitForcesLegacy ? "none" : "local";
+        decision.reason = "compat_graph_rewrite_alias";
+        decision.splitPolicy = "none";
         return decision;
     }
-
-    if (opt.isImplicitRewriteEnabled() && !splitForcesLegacy) {
+    if (opt.isImplicitRewriteForced()) {
         decision.useImplicit = true;
         decision.impl = "implicit_split";
-        decision.reason = "implicit_flag";
-        decision.splitPolicy = decision.splitMode == "no-split" ? "none" : "local";
+        decision.reason = "compat_implicit_rewrite_alias";
+        decision.splitPolicy = "local";
         return decision;
     }
-
-    if (!opt.isImplicitRewriteEnabled() && !opt.isSplitModeExplicit()) {
-        decision.autoSelected = true;
-        if (decision.probabilisticRules > 0) {
-            decision.useImplicit = true;
-            decision.splitMode = "naive-split";
-            decision.impl = "implicit_split";
-            decision.reason = "probabilistic_rule_weights";
-            decision.splitPolicy = "local";
-        } else {
-            decision.useImplicit = false;
-            decision.splitMode = "no-split";
-            decision.impl = "graph_rewrite";
-            decision.reason = "no_probabilistic_rule_weights";
-            decision.splitPolicy = "none";
-        }
-        return decision;
+    if (decision.probabilisticRules > 0) {
+        decision.useImplicit = true;
+        decision.impl = "implicit_split";
+        decision.reason = "probabilistic_rule_weights";
+        decision.splitPolicy = "local";
     }
-
-    decision.useImplicit = false;
-    decision.impl = "graph_rewrite";
-    decision.reason = opt.isSplitModeExplicit() ? "manual_split_mode" : "manual_rewrite";
-    decision.splitPolicy = splitForcesLegacy ? "none" : "local";
     return decision;
 }
 
@@ -351,13 +329,6 @@ static std::pair<std::size_t, std::size_t> recoverImplicitOutputFactsLocal(Incre
     }
 
     return {recoveredIsolatedFacts, recoveredOutputFacts};
-}
-
-static ImplicitSplitMode resolveImplicitSplitMode(const std::string& splitMode) {
-    if (splitMode == "no-split") {
-        return ImplicitSplitMode::None;
-    }
-    return ImplicitSplitMode::Naive;
 }
 
 struct GraphSummary {
@@ -923,27 +894,6 @@ std::string makeOutputPath(const CmdOptions& opt, const std::string& filename) {
     return dir + "/" + filename;
 }
 
-static void dumpDeterministicProbabilities(const CmdOptions& opt, SouffleProgram& program) {
-    std::vector<std::string> outputTuples;
-    for (auto* rel : program.getOutputRelations()) {
-        if (rel == nullptr) {
-            continue;
-        }
-        for (auto& tup : *rel) {
-            outputTuples.push_back(tup.toString());
-        }
-    }
-    std::sort(outputTuples.begin(), outputTuples.end());
-    const std::string outPath = makeOutputPath(opt, "facts.prob");
-    std::ofstream outputFile(outPath);
-    outputFile << std::setprecision(8);
-    for (const auto& tupleStr : outputTuples) {
-        outputFile << tupleStr << " : 1.0\n";
-    }
-    std::cout << "[det-force] dumpProbabilities outputs=" << outputTuples.size()
-              << " file=" << outPath << std::endl;
-}
-
 static std::vector<std::pair<NodePtr, bool>> applyEvidence(
         DerivationGraph& graph,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences) {
@@ -959,56 +909,6 @@ static std::vector<std::pair<NodePtr, bool>> applyEvidence(
         resolved.emplace_back(node, val);
     }
     return resolved;
-}
-
-static void dumpSisoRegions(const DerivationGraphViewInterface& view) {
-    auto start = std::chrono::steady_clock::now();
-    auto regions = GraphAnalyzer::detectAllSISOStrictFromExit(view);
-    auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::steady_clock::now() - start)
-                       .count();
-    size_t singleHyperedgeCount = 0;
-    size_t linearTwoEdgeCount = 0;
-    size_t parallelTwoEdgeCount = 0;
-    size_t allFactsToSOCount = 0;
-    size_t generalCount = 0;
-    for (const auto& r : regions) {
-        switch (r.kind) {
-        case SISORegionKind::SingleHyperedge:
-            ++singleHyperedgeCount;
-            break;
-        case SISORegionKind::LinearTwoEdge:
-            ++linearTwoEdgeCount;
-            break;
-        case SISORegionKind::ParallelEdge:
-            ++parallelTwoEdgeCount;
-            break;
-        case SISORegionKind::AllFactsToSO:
-            ++allFactsToSOCount;
-            break;
-        case SISORegionKind::General:
-            ++generalCount;
-            break;
-        default:
-            break;
-        }
-    }
-    std::cout << "Found " << regions.size() << " SISO regions"
-              << " (single-hyperedge=" << singleHyperedgeCount
-              << ", linear-two-edge=" << linearTwoEdgeCount
-              << ", parallel-two-edge=" << parallelTwoEdgeCount
-              << ", all-facts=" << allFactsToSOCount
-              << ", general=" << generalCount << ")" << std::endl;
-    std::cout << "[pipeline] SISO detection took " << dur << " ms\n";
-    for (const auto& r : regions) {
-        GraphAnalyzer::printSISOInfo(view, r);
-    }
-    auto dotStart = std::chrono::steady_clock::now();
-    GraphAnalyzer::dumpAllRegionsAsDot(view, regions, "siso_regions.dot");
-    auto dotMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                         std::chrono::steady_clock::now() - dotStart)
-                         .count();
-    std::cout << "[pipeline] dumpAllRegionsAsDot took " << dotMs << " ms\n";
 }
 
 static void runBddPipeline(
@@ -2422,15 +2322,6 @@ void runPipeline(
     precomputedProbResult.clear();
     precomputedTupleProbResult.clear();
 
-    if (::detForceEnabled) {
-        std::cout << "[det-force] enabled; skip derivation graph and emit prob=1.0" << std::endl;
-        dumpDeterministicProbabilities(opt, program);
-        debugger.endTurn();
-        dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter0.txt");
-        setActiveSymbolTable(nullptr);
-        return;
-    }
-
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);
     debugger.addInfo("input_fact_size", std::to_string(countInitialInputFacts()));
     auto t0 = std::chrono::steady_clock::now();
@@ -2477,48 +2368,32 @@ void runPipeline(
                   << " impl=" << rewriteDecision.impl
                   << " reason=" << rewriteDecision.reason
                   << " split_policy=" << rewriteDecision.splitPolicy
-                  << " split_mode=" << rewriteDecision.splitMode
                   << " total_rules=" << rewriteDecision.totalRules
                   << " probabilistic_rules=" << rewriteDecision.probabilisticRules
-                  << " auto=" << (rewriteDecision.autoSelected ? "true" : "false")
                   << std::endl;
         if (rewriteHybridStage) {
-            debugger.addInfo("rewrite_strategy", rewriteDecision.autoSelected ? "default" : "diagnostic");
+            debugger.addInfo("rewrite_strategy", "default");
             debugger.addInfo("rewrite_impl", rewriteDecision.impl);
             debugger.addInfo("rewrite_reason", rewriteDecision.reason);
             debugger.addInfo("rewrite_split_policy", rewriteDecision.splitPolicy);
-            debugger.addInfo("rewrite_dispatch_split_mode", rewriteDecision.splitMode);
             debugger.addInfo("rewrite_dispatch_total_rules", std::to_string(rewriteDecision.totalRules));
             debugger.addInfo("rewrite_dispatch_probabilistic_rules",
                     std::to_string(rewriteDecision.probabilisticRules));
-            debugger.addInfo("rewrite_dispatch_auto", rewriteDecision.autoSelected ? "true" : "false");
-            rewriteHybridStage->logMessage(Level::INFO,
-                    std::string("rewrite_strategy=") +
-                            (rewriteDecision.autoSelected ? "default" : "diagnostic"));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_strategy=default");
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_impl=" + rewriteDecision.impl);
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_reason=" + rewriteDecision.reason);
             rewriteHybridStage->logMessage(Level::INFO,
                     "rewrite_split_policy=" + rewriteDecision.splitPolicy);
-            rewriteHybridStage->logMessage(
-                    Level::INFO, "rewrite_dispatch_split_mode=" + rewriteDecision.splitMode);
             rewriteHybridStage->logMessage(Level::INFO,
                     "rewrite_dispatch_total_rules=" + std::to_string(rewriteDecision.totalRules));
             rewriteHybridStage->logMessage(Level::INFO,
                     "rewrite_dispatch_probabilistic_rules=" +
                             std::to_string(rewriteDecision.probabilisticRules));
-            rewriteHybridStage->logMessage(Level::INFO,
-                    std::string("rewrite_dispatch_auto=") +
-                            (rewriteDecision.autoSelected ? "true" : "false"));
         }
-        const auto runLegacyRewrite = [&] {
+        const auto runGraphRewrite = [&] {
             GraphRewriter rewriter;
             RewriteFeatureFlags rewriteFlags;
-            const auto& splitMode = rewriteDecision.splitMode;
-            if (splitMode == "no-split") {
-                rewriteFlags.splitMode = SplitMode::None;
-            } else {
-                rewriteFlags.splitMode = SplitMode::Naive;
-            }
+            rewriteFlags.splitMode = SplitMode::None;
             // Keep compaction global even for no-split: symbolization uses many
             // deterministic aggregate witnesses, and dirty-only compaction can
             // leave enough redundant deterministic structure to make CUDD blow up.
@@ -2542,7 +2417,7 @@ void runPipeline(
                 }
             }
             ImplicitSplitPipelineOptions rewriteOptions;
-            rewriteOptions.splitMode = resolveImplicitSplitMode(rewriteDecision.splitMode);
+            rewriteOptions.splitMode = ImplicitSplitMode::Naive;
             rewriteOptions.runOverlayFastPaths = true;
             rewriteOptions.runOverlaySingleHyperedge = true;
             rewriteOptions.runOverlayAllFacts = true;
@@ -2566,7 +2441,7 @@ void runPipeline(
                           << " recovered_isolated_output_facts=" << recoveredIsolatedFacts
                           << " recovered_tuple_output_facts=" << recoveredOutputFacts
                           << std::endl;
-                runLegacyRewrite();
+                runGraphRewrite();
                 const auto [postRewriteRecoveredIsolatedFacts, postRewriteRecoveredOutputFacts] =
                         recoverImplicitOutputFactsLocal(*graph, view, originalOutputTuples, originalOutputRelations);
                 if (postRewriteRecoveredIsolatedFacts > 0 || postRewriteRecoveredOutputFacts > 0) {
@@ -2690,7 +2565,7 @@ void runPipeline(
                                 std::to_string(implicitGraphStats.numGeneralRegionsRewritten));
             }
         } else {
-            runLegacyRewrite();
+            runGraphRewrite();
         }
         auto rewriteMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now() - rewriteStart)
@@ -2762,48 +2637,36 @@ void runPipeline(
                     oss << std::fixed << std::setprecision(6) << value;
                     return oss.str();
                 };
-                const auto addExplicitInfo = [&](const std::string& key, double value) {
+                const auto addGraphRewriteInfo = [&](const std::string& key, double value) {
                     const std::string text = formatMs(value);
                     debugger.addInfo(key, text);
                     rewriteHybridStage->logMessage(Level::INFO, key + "=" + text);
                 };
-                const auto addExplicitTextInfo = [&](const std::string& key, const std::string& value) {
+                const auto addGraphRewriteTextInfo = [&](const std::string& key, const std::string& value) {
                     debugger.addInfo(key, value);
                     rewriteHybridStage->logMessage(Level::INFO, key + "=" + value);
                 };
                 const double rewriteMsDouble = static_cast<double>(rewriteMs);
-                addExplicitInfo("explicit_total_ms", rewriteMsDouble);
-                addExplicitInfo("explicit_overlay_prep_ms", 0.0);
-                addExplicitInfo("explicit_overlay_split_ms", 0.0);
-                addExplicitInfo("explicit_overlay_fastpath_ms", 0.0);
-                addExplicitInfo("explicit_overlay_siso_detect_ms", 0.0);
-                addExplicitInfo("explicit_overlay_siso_summarize_ms", 0.0);
-                addExplicitInfo("explicit_overlay_rebuild_index_ms", 0.0);
-                addExplicitInfo("explicit_overlay_fastpath_single_ms", 0.0);
-                addExplicitInfo("explicit_overlay_fastpath_linear_ms", 0.0);
-                addExplicitInfo("explicit_overlay_fastpath_parallel_ms", 0.0);
-                addExplicitInfo("explicit_overlay_fastpath_fan_out_ms", 0.0);
-                addExplicitInfo("explicit_overlay_fastpath_allfacts_ms", 0.0);
-                addExplicitInfo("explicit_materialize_ms", 0.0);
-                addExplicitInfo("explicit_graph_detect_ms", rewriteStats.totalDetectMs);
-                addExplicitInfo("explicit_graph_rewrite_ms", rewriteMsDouble);
-                addExplicitInfo("explicit_graph_detect_total_ms", rewriteStats.totalDetectMs);
-                addExplicitInfo("explicit_graph_bdd_manager_init_ms", rewriteStats.totalBddManagerInitMs);
-                addExplicitInfo("explicit_graph_bdd_compile_ms", rewriteStats.totalBddBuildMs);
-                addExplicitInfo("explicit_graph_bdd_wmc_ms", rewriteStats.totalBddWmcMs);
-                addExplicitInfo("explicit_graph_apply_ms", rewriteStats.totalApplyMs);
-                addExplicitInfo("explicit_graph_compaction_ms", rewriteStats.totalCompactionMs);
-                addExplicitInfo("explicit_graph_cleanup_ms", rewriteStats.totalCleanupMs);
-                addExplicitTextInfo("explicit_graph_detected_regions",
+                addGraphRewriteInfo("graph_rewrite_total_ms", rewriteMsDouble);
+                addGraphRewriteInfo("graph_rewrite_detect_ms", rewriteStats.totalDetectMs);
+                addGraphRewriteInfo("graph_rewrite_detect_total_ms", rewriteStats.totalDetectMs);
+                addGraphRewriteInfo("graph_rewrite_bdd_manager_init_ms",
+                        rewriteStats.totalBddManagerInitMs);
+                addGraphRewriteInfo("graph_rewrite_bdd_compile_ms", rewriteStats.totalBddBuildMs);
+                addGraphRewriteInfo("graph_rewrite_bdd_wmc_ms", rewriteStats.totalBddWmcMs);
+                addGraphRewriteInfo("graph_rewrite_apply_ms", rewriteStats.totalApplyMs);
+                addGraphRewriteInfo("graph_rewrite_compaction_ms", rewriteStats.totalCompactionMs);
+                addGraphRewriteInfo("graph_rewrite_cleanup_ms", rewriteStats.totalCleanupMs);
+                addGraphRewriteTextInfo("graph_rewrite_detected_regions",
                         std::to_string(rewriteStats.numRegionsDetected));
-                addExplicitTextInfo("explicit_graph_detected_region_total_edges",
+                addGraphRewriteTextInfo("graph_rewrite_detected_region_total_edges",
                         std::to_string(rewriteStats.totalDetectedRegionEdges));
-                addExplicitTextInfo("explicit_graph_detected_region_total_nodes",
+                addGraphRewriteTextInfo("graph_rewrite_detected_region_total_nodes",
                         std::to_string(rewriteStats.totalDetectedRegionNodes));
-                debugger.addInfo("explicit_graph_general_regions",
+                debugger.addInfo("graph_rewrite_general_regions",
                         std::to_string(rewriteStats.numGeneralRegionsRewritten));
                 rewriteHybridStage->logMessage(Level::INFO,
-                        "explicit_graph_general_regions=" +
+                        "graph_rewrite_general_regions=" +
                                 std::to_string(rewriteStats.numGeneralRegionsRewritten));
             }
         }
@@ -2817,9 +2680,8 @@ void runPipeline(
         std::cout << "[pipeline] derivation-only mode; skip rewrite" << std::endl;
     }
 
-    const bool autoDisableSingleRandFast = haveRewriteDecision && rewriteDecision.autoSelected &&
-            !rewriteDecision.useImplicit && rewriteDecision.splitMode == "no-split" &&
-            opt.isSingleRandFastEnabled();
+    const bool autoDisableSingleRandFast =
+            haveRewriteDecision && !rewriteDecision.useImplicit && opt.isSingleRandFastEnabled();
     if (autoDisableSingleRandFast) {
         std::cout << "[pipeline] rewrite dispatch disables single-rand component fast path"
                   << " for deterministic no-split rewrite" << std::endl;

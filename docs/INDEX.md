@@ -1,95 +1,47 @@
 # Documentation Index
 
-This index is the source of truth for doc location, recency, and importance. Core Souffle docs live at the repo root and under `docs/`. Benchmark/experiment/example docs remain in their original directories.
+This index is the source of truth for AE-facing documentation in this branch.
+The branch is scoped to the full-mode probabilistic artifact.
 
 Legend:
-- [LATEST] most recent canonical snapshot
-- [PRIMARY] must-read for current behavior
-- [SECONDARY] useful context but not required
-- [DESIGN] proposal/roadmap (not implemented)
-- [HISTORICAL] archived or superseded
+- [PRIMARY] must-read for current artifact behavior
+- [SECONDARY] useful implementation context
+- [HISTORICAL] retained only for provenance, not artifact commands
 
 ## Entry Points
-- [PRIMARY] `README.md` — project overview + quickstart
-- [PRIMARY] `docs/USAGE.md` — CLI/runtime options (authoritative)
-- [PRIMARY] `docs/project/README.md` — project map (modules, fork delta, maintenance)
-- [PRIMARY] `docs/topics/README.md` — topical docs map (current behavior)
-- [PRIMARY] `docs/design/README.md` — design proposals map
-- [SECONDARY] `docs/topics/runtime/README.flag.md` — consolidated compiler/runtime flag reference
-- [SECONDARY] `docs/topics/runtime/README.dump.md` — dump/debug outputs (compiler + runtime)
-- [PRIMARY] `docs/TESTING.md` — verification status + test commands
-- [SECONDARY] `docs/topics/testing/README.regression.md` — maintained regression suite details and case map
-- [PRIMARY] `docs/RUNBOOK.md` — build/run/rollback/troubleshooting
-- [PRIMARY] `docs/ARCHITECTURE.md` — system architecture map
-- [PRIMARY] `docs/process/README.git.md` — commit hygiene
-- [SECONDARY] `docs/process/README.md` — process docs map
-- [SECONDARY] `CONTRIBUTING.md` — contributor workflow
-- [PRIMARY] `AGENTS.md` — Codex constraints (kept at repo root)
+- [PRIMARY] `README.md` — artifact overview and quickstart
+- [PRIMARY] `docs/USAGE.md` — generated-program usage and runtime surface
+- [PRIMARY] `docs/TESTING.md` — build and regression commands
+- [PRIMARY] `docs/RUNBOOK.md` — concise build/run/troubleshooting guide
+- [PRIMARY] `docs/ARCHITECTURE.md` — full-mode architecture map
+- [PRIMARY] `docs/topics/rewrite/README.rewrite.impl.md` — rewrite dispatcher behavior
+- [SECONDARY] `docs/topics/runtime/README.flag.md` — runtime flag reference
+- [SECONDARY] `docs/topics/testing/README.regression.md` — regression suite details
+- [SECONDARY] `docs/project/PROBLOG_EXTENSION_STACK.md` — implementation stack
+- [SECONDARY] `docs/process/README.git.md` — commit hygiene
+- [PRIMARY] `AGENTS.md` — Codex constraints
 
-## Project-Level Docs
-- [PRIMARY] `docs/project/MODULES.md` — whole-project module inventory
-- [PRIMARY] `docs/project/FORK_DELTA.md` — fork-owned modules and contributions
-- [PRIMARY] `docs/project/MAINTENANCE.md` — invariants, risks, and module-level checks
-- [PRIMARY] `docs/project/PROBLOG_EXTENSION_STACK.md` — end-to-end ProbLog extension implementation details
-- [PRIMARY] `docs/project/DOC_SYSTEM.md` — documentation architecture and placement rules
-
-## Current Pipeline & Semantics
-- [PRIMARY] `docs/topics/pipeline/README.dred.md` — online DRed semantics + performance
-- [PRIMARY] `docs/topics/pipeline/README.inc.region.md` — inc-regional implementation
-- [PRIMARY] `docs/topics/pipeline/README.prune.md` — prune behavior + constraints
-- [PRIMARY] `docs/topics/pipeline/README.fc.delete.md` — incremental delete logic
-- [PRIMARY] `docs/topics/pipeline/README.evidence.md` — evidence semantics and flow
-- [PRIMARY] `docs/topics/pipeline/README.const.md` — det-opt behavior
-- [SECONDARY] `docs/topics/pipeline/README.souffle.opt.md` — AST/RAM transform inventory
-
-## Rewrite & Graph Transforms
-- [PRIMARY] `docs/topics/rewrite/README.rewrite.impl.md` — current rewrite behavior
-- [SECONDARY] `docs/topics/rewrite/README.split.md` — split behavior + design notes
+## Current Full-Mode Topics
+- [PRIMARY] `docs/topics/pipeline/README.prune.md` — prune behavior and constraints
+- [PRIMARY] `docs/topics/pipeline/README.const.md` — `--det-opt` behavior
+- [PRIMARY] `docs/topics/pipeline/README.evidence.md` — evidence semantics
+- [PRIMARY] `docs/topics/rewrite/README.rewrite.impl.md` — rewrite dispatcher and graph rewrite
+- [SECONDARY] `docs/topics/rewrite/README.split.md` — internal split behavior
 - [SECONDARY] `docs/topics/rewrite/README.siso.md` — SISO detection details
-- [SECONDARY] `docs/topics/rewrite/README.mst.md` — magic-set (MST) translator notes
-- [DESIGN] `docs/design/README.rewrite.opt.md` — optimization ideas (not implemented)
-
-## Backends
 - [PRIMARY] `docs/topics/backends/README.cudd.md` — BDD backend
 - [SECONDARY] `docs/topics/backends/README.cudd.reordering.md` — reordering details
-- [SECONDARY] `docs/topics/backends/README.sdd.md` — SDD backend status/gaps
-- [DESIGN] `docs/design/README.ordering.md` — ordering implementation notes (FORCE path exists but is unused by CUDD)
 
-## Profiling
-- [PRIMARY] `docs/topics/profiling/README.profile.md` — profiling guide (online)
-- [SECONDARY] `docs/topics/profiling/README.profile.inc.md` — incremental profiling notes
-- [SECONDARY] `docs/topics/profiling/README.fc.profile.md` — FC profiling fields
-
-## Testing & Validation
-- [PRIMARY] `docs/TESTING.md` — testing status, command entry points, and policy
-- [SECONDARY] `docs/topics/testing/README.regression.md` — regression suite scope, cases, and limits
-
-## Evaluation & Results (Souffle)
-- [PRIMARY] `docs/topics/evaluation/README.md` — evaluation doc map
-- [LATEST] `docs/topics/evaluation/README.eval.final.md` — latest curated batch summary
-- [LATEST] `archive/README.md` — dated experiment archive index (batch READMEs tracked, artifacts ignored)
-- [PRIMARY] `docs/topics/evaluation/README.eval.inc.md` — incremental benchmark workflow (current)
-- [PRIMARY] `docs/topics/evaluation/README.eval.md` — full benchmark workflow (current)
-- [SECONDARY] `docs/topics/evaluation/OPT.md` — optimization-focused inc-regional run checklist
-- [SECONDARY] `docs/topics/evaluation/README.artifact.inc.md` — incremental artifact reproduction
-
-## Out of Scope (Benchmarks/Experiments/Examples)
-- Benchmark, experiment, and example docs remain in their original directories and are not reorganized here.
-- See `problog-benchmark/README.md` and `examples/running_example/README.md` as entry points.
-- Historical benchmark notes remain in `problog-benchmark/README.sc.original.md` and `experiments/smokers_11/Plan.md`.
-
-## Design Notes (Not Implemented)
-- [DESIGN] `docs/design/README.inc.regional.multi.md` — multi-turn inc-regional state
-- [DESIGN] `docs/design/README.inc.regional.opt.md` — inc-regional optimizations
-- [DESIGN] `docs/design/IncRegional_PaperFormal_TechReport.md` — formalization notes
-- [DESIGN] `docs/design/README.elastic.md` — elastic switch ideas
-- [DESIGN] `docs/design/README.eqrel.md` — eqrel pruning concept
-- [DESIGN] `docs/design/README.lazy.md` — lazy DD plan
-- [DESIGN] `docs/design/README.refactor.md` — refactor opportunities
+## Evaluation
+- [PRIMARY] `docs/topics/evaluation/README.eval.md` — companion `CAV-FULL`
+  benchmark provenance and command shape
 
 ## Source references
-- [src/MainDriver.cpp](src/MainDriver.cpp)
-- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
-- [tests/regression/CMakeLists.txt](tests/regression/CMakeLists.txt)
+- [src/MainDriver.cpp](../src/MainDriver.cpp)
+- [src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h)
+- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp)
+- [tests/regression/CMakeLists.txt](../tests/regression/CMakeLists.txt)
 
 ## Related commits
+- `ef4b7796c` — chore(artifact): prune AE rewrite surface
+- `f78f1cade` — docs(rewrite): record artifact smoke verification
+- `beb581c24` — perf(problog): reduce symbolization rewrite overhead
