@@ -58,8 +58,10 @@ This report records the current cleanup plan for turning the local
   edges after rewrite and reintroduced a CUDD formula-build abort.
 - Investigate `component_build_subgraphs_ms`; it is still a major cost on
   symbolization after rewrite.
-- Investigate the symbolization `1e-8` last-digit differences before final
-  correctness claims.
+- Treat symbolization `facts.prob` comparison as tolerance-based at `1e-8` for
+  now. The current differences were audited and are `labeled_ea` values whose
+  OR probability lands on an 8-digit output rounding boundary, not missing
+  support.
 - Keep aggregation support small and isolated: it should remain a graph
   construction extension rather than a new rule-application protocol.
 
@@ -107,8 +109,10 @@ This report records the current cleanup plan for turning the local
   `auto-implicit` and preserve output equality in the checked runs.
 
 ## Remaining Follow-Up
-- Audit the symbolization `1e-8` output differences before making bitwise
-  equality claims.
+- If final artifact text needs bitwise equality rather than tolerance-based
+  equality, add a deterministic output-rounding policy or print more precision;
+  the current audited `1e-8` differences are rounding-boundary `labeled_ea`
+  values.
 - Continue optimizing symbolization overhead, especially SISO detection
   scheduling and `component_build_subgraphs_ms`.
 - Investigate whether SUM aggregate subgraphs need a specialized exact

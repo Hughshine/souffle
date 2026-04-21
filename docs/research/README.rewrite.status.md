@@ -118,8 +118,11 @@ Current symbolization reading from
 - correctness:
   all both-completed cases had identical output keys; most were byte-exact.
   `readelf` had two values and `wget` had one value differing by `1e-8`, i.e.
-  the last printed decimal under the current 8-decimal output format. This
-  still needs an audit before claiming bitwise equality.
+  the last printed decimal under the current 8-decimal output format. The
+  audited cases are all `labeled_ea` outputs whose probability is an OR over
+  one string object and two symbolic-data supports, with the exact decimal
+  value landing on an 8-digit rounding boundary. Example:
+  `1 - (1 - 0.95) * (1 - 0.2491) * (1 - 0.275) = 0.972779875`.
 
 Current side-channel smoke from
 `/tmp/cavfull_smoke_smart_script_20260421`:
@@ -161,8 +164,8 @@ Current interpretation:
   plus component-specialized evaluation
 - symbolization now shows a useful selected-case optimized path, including
   cases where plain aborts, but still needs more engineering before claiming a
-  uniform `2x` speedup. The `1e-8` last-digit difference should be explained or
-  eliminated before final artifact freeze.
+  uniform `2x` speedup. Correctness should be reported with a `1e-8` tolerance
+  unless the output writer is changed to avoid rounding-boundary bitwise drift.
 
 ## Trusted Side-Channel Reading
 From the shipped reference bundle
@@ -1805,8 +1808,8 @@ Additional profiling notes:
     classification after the fast-single optimization
   - split classification timing into pure classification and fast-evaluation
     timing so future regressions are easier to diagnose
-  - investigate the `1e-8` facts.prob differences before treating the optimized
-    fast path as bitwise-stable
+  - keep the `facts.prob` comparison tolerance at `1e-8` unless the output
+    writer is changed to avoid rounding-boundary bitwise drift
   - final artifact cleanup pass:
     first write a focused report that separates artifact-evaluation pipeline
     code from local probes, temporary flags, rejected experiments, debug-only
