@@ -1,0 +1,119 @@
+# Artifact Cleanup Report
+
+## Source references
+- [src/problog/Pipeline.cpp](../../src/problog/Pipeline.cpp)
+- [src/include/souffle/CompiledOptions.h](../../src/include/souffle/CompiledOptions.h)
+- [src/include/souffle/problog/GraphRewriter.h](../../src/include/souffle/problog/GraphRewriter.h)
+- [docs/research/README.rewrite.status.md](README.rewrite.status.md)
+- [problog-benchmark/.worktree/clones/CAV-FULL/symbolization_benchmark/README.md](../../problog-benchmark/.worktree/clones/CAV-FULL/symbolization_benchmark/README.md)
+
+This report records the current cleanup plan for turning the local
+`full-artifact-opt-unified` checkpoint into an artifact-evaluation branch.
+
+## Keep For Evaluation
+- `--det-opt` remains part of all benchmark invocations.
+- Bare `--rewrite` should be the artifact-facing rewrite flag.
+- The smart dispatcher behind `--rewrite` should select the best maintained
+  rewrite strategy per benchmark shape.
+- Side-channel and taint should not require users to choose explicit vs implicit
+  rewrite manually.
+- Symbolization should use the deterministic no-split rewrite path while the
+  rules remain deterministic and only input facts are probabilistic.
+- `--knowledge bdd` remains the default trusted backend for these measurements.
+
+## Keep As Diagnostic Controls
+- `--implicit-rewrite` should remain available for direct implicit-lane
+  debugging and historical comparison.
+- `--split-mode=no-split` should remain available for no-split ablations.
+- `--no-single-rand-fast` should remain available until the final dispatcher
+  policy around component fast paths is stable.
+- `--force-complete-siso-detect` and dirty-frontier related options should stay
+  diagnostic-only.
+- `SOUFFLE_DISABLE_REWRITE_*` and `SOUFFLE_SISO_*` environment toggles should
+  not appear in artifact instructions except in a developer troubleshooting
+  appendix.
+
+## Remove Or Hide Before Artifact Freeze
+- The temporary `--rewrite-compaction-only` CLI path has been removed locally and
+  should stay removed.
+- Old all-facts-on/off and implicit sub-variant instructions should be removed
+  from benchmark READMEs unless they are explicitly labeled historical.
+- CAV-FULL side-channel RQ2 still encodes `_r` as `--implicit-rewrite`; final
+  artifact scripts should call bare `--rewrite` instead.
+- CAV-FULL symbolization README currently documents a temporary best pipeline;
+  update it once smart `--rewrite` is the only required optimized command.
+- Avoid exposing local environment-variable probes as user-facing evaluation
+  modes.
+
+## Code Cleanup Targets
+- Consolidate duplicated BDD/SDD component classification code paths before
+  artifact freeze if time permits.
+- Keep component timing fields, but label them as profiling metadata rather than
+  benchmark outputs.
+- Decide whether the no-split detector-mask heuristic should be permanent or
+  guarded by a clearer dispatch-policy name.
+- Revisit dirty-only compaction. The current thresholded implementation can help
+  local no-split passes but showed high variance on `readelf`; keep only if the
+  multi-case data justifies it.
+- Investigate `component_build_subgraphs_ms`; it is still a major cost on
+  symbolization after rewrite.
+- Investigate the symbolization `1e-8` last-digit differences before final
+  correctness claims.
+- Keep aggregation support small and isolated: it should remain a graph
+  construction extension rather than a new rule-application protocol.
+
+## Benchmark Cleanup Targets
+- Use `problog-benchmark/.worktree/clones/CAV-FULL` as the packaged benchmark
+  branch.
+- Keep symbolization benchmark assets under `symbolization_benchmark/` only:
+  `.dl`, `.facts`, `.prob`, and README are sufficient.
+- Drop `troff` from the current symbolization performance table unless the CUDD
+  formula-build failure is fixed.
+- For symbolization tables, keep both categories visible:
+  cases where plain and rewrite both complete, and cases where plain aborts but
+  rewrite completes.
+- For side-channel and taint, keep correctness comparison in the harness rather
+  than relying on manual `cmp` commands.
+
+## Worktree Cleanup Recommendation
+- Use one canonical compiler worktree for the unified branch:
+  `.worktree/clones/full-artifact-opt-unified-wt`.
+- Keep one benchmark worktree:
+  `problog-benchmark/.worktree/clones/CAV-FULL`.
+- Archive or delete local-only clones only after confirming their unique commits
+  are merged into the unified branch or intentionally abandoned.
+- Do not preserve temporary `/tmp` experiment directories in git; cite their
+  paths in research notes only when they explain a decision.
+
+## Current Validation Snapshot
+- Build:
+  `cmake --build build -j2 --target souffle` succeeds.
+- Symbolization:
+  `/tmp/symbolization_15_smart_20260421_024056`.
+- Side-channel smoke:
+  `/tmp/side_smart_dispatch_20260421_025655`.
+- Taint smoke:
+  `/tmp/taint_manual_app018_20260421_030655`.
+
+## Current Local Checks
+- Final compiler check:
+  `cmake --build build -j2 --target souffle` succeeded after the code cleanup.
+- Source-reference check:
+  `rg rewrite-compaction-only src docs/USAGE.md docs/topics` returns no source
+  implementation references.
+- Benchmark smoke checks:
+  side-channel P19 and taint `app-018` both dispatch through bare `--rewrite`
+  and preserve output equality in the checked runs.
+
+## Remaining Follow-Up
+- Decide whether to keep thresholded dirty-only compaction based on more than
+  one symbolization case.
+- Update CAV-FULL scripts to use bare `--rewrite` once the compiler branch is
+  committed and pushed.
+- Audit the symbolization `1e-8` output differences before making bitwise
+  equality claims.
+
+## Related commits
+- `UNCOMMITTED` — perf(problog): make bare rewrite dispatch benchmark-aware
+- `UNCOMMITTED` — docs(research): add artifact cleanup report
+- `c33d371` — artifact: add DDisasm symbolization benchmark

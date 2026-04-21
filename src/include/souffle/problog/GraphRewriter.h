@@ -54,6 +54,8 @@ struct GraphRewriteStats {
     double totalBddBuildMs = 0.0;      ///< Total BDD build/compilation time across rewritten regions
     double totalBddWmcMs = 0.0;        ///< Total BDD WMC time across rewritten regions
     double totalApplyMs = 0.0;         ///< Total rewrite apply time for general regions
+    double totalCompactionMs = 0.0;    ///< Total deterministic edge compaction time
+    double totalCleanupMs = 0.0;       ///< Total isolated-node cleanup time
     double initialCountRandomVarsMs = 0.0;   ///< Time spent counting random vars before rewrite
     double initialEvidenceAffectedMs = 0.0;  ///< Time spent building evidence-affected node seed set
 };
@@ -76,6 +78,7 @@ struct RewriteFeatureFlags {
     bool enableFanOutConverge   = true;
     bool enableGeneral          = true;   ///< fallback BDD-based rewrite
     bool enableCompaction       = true;   ///< edge compaction after each SISO pass
+    bool restrictCompactionToDirty = false;  ///< only compact edges adjacent to the last rewrite frontier
     SplitMode splitMode         = SplitMode::Naive;  ///< split disjoint fan-out branches into shadow facts
     size_t splitMaxNewNodesPerPass = 5000;  ///< complete-split budget: max new shadow nodes per pass
     size_t splitMaxNewEdgesPerPass = 50000; ///< complete-split budget: max rewired edges per pass
@@ -126,6 +129,11 @@ public:
         stats.randomVarsBefore = countRandomVarsInView(view);
         stats.initialCountRandomVarsMs = toMs(std::chrono::steady_clock::now() - initialCountStart);
         stats.randomVarsAfter = stats.randomVarsBefore;
+        if (std::getenv("SOUFFLE_SKIP_GRAPH_REWRITE") != nullptr) {
+            std::cout << "[GraphRewriter] SOUFFLE_SKIP_GRAPH_REWRITE set; skip graph rewrite."
+                      << std::endl;
+            return stats;
+        }
         auto initialEvidenceStart = std::chrono::steady_clock::now();
         const auto evidenceAffectedNodes = collectEvidenceAffectedNodes(view);
         stats.initialEvidenceAffectedMs = toMs(std::chrono::steady_clock::now() - initialEvidenceStart);
@@ -137,6 +145,7 @@ public:
         std::unordered_set<NodePtr> detectDirtyNodes;
         std::unordered_set<EdgePtr> detectDirtyEdges;
         bool hasDetectDirty = false;
+        bool previousPassOnlyLinearParallel = false;
 
         auto runSplitPass = [&](const std::unordered_set<NodePtr>* splitSeedNodes,
                                 const std::unordered_set<EdgePtr>* splitSeedEdges,
@@ -237,11 +246,23 @@ public:
                 }
             }
             auto detectStart = std::chrono::steady_clock::now();
+            GraphAnalyzer::FastPathDetectOptions detectOptions;
+            detectOptions.enableSingleHyperedge = flags.enableSingleHyperedge;
+            detectOptions.enableLinearTwoEdge = flags.enableLinearTwoEdge;
+            detectOptions.enableParallelEdge = flags.enableParallelEdge;
+            detectOptions.enableAllFactsToSO = flags.enableAllFactsToSO;
+            detectOptions.enableFanOutConverge = flags.enableFanOutConverge;
+            if (flags.splitMode == SplitMode::None && previousPassOnlyLinearParallel) {
+                detectOptions.enableSingleHyperedge = false;
+                detectOptions.enableAllFactsToSO = false;
+                detectOptions.enableFanOutConverge = false;
+            }
             auto regions = hasDetectDirty
                     ? GraphAnalyzer::detectAllSISOStrictFromExit(
-                              view, &detectDirtyNodes, &detectDirtyEdges, flags.forceCompleteSisoDetect)
+                              view, &detectDirtyNodes, &detectDirtyEdges, flags.forceCompleteSisoDetect,
+                              &detectOptions)
                     : GraphAnalyzer::detectAllSISOStrictFromExit(
-                              view, nullptr, nullptr, flags.forceCompleteSisoDetect);
+                              view, nullptr, nullptr, flags.forceCompleteSisoDetect, &detectOptions);
             // Filter by enabled flags.
             if (!flags.enableSingleHyperedge || !flags.enableAllFactsToSO ||
                     !flags.enableLinearTwoEdge || !flags.enableParallelEdge ||
@@ -279,13 +300,15 @@ public:
             stats.totalDetectMs += detectMs;
             std::cout << "[GraphRewriter] SISO detection took "
                       << detectMs << " ms" << std::endl;
-            size_t detectedSingle = 0, detectedLinear = 0, detectedParallel = 0, detectedAllFacts = 0, detectedGeneral = 0;
+            size_t detectedSingle = 0, detectedLinear = 0, detectedParallel = 0, detectedAllFacts = 0;
+            size_t detectedFan = 0, detectedGeneral = 0;
             for (const auto& r : regions) {
                 switch (r.kind) {
                     case SISORegionKind::SingleHyperedge: ++detectedSingle; break;
                     case SISORegionKind::LinearTwoEdge: ++detectedLinear; break;
                     case SISORegionKind::ParallelEdge: ++detectedParallel; break;
                     case SISORegionKind::AllFactsToSO: ++detectedAllFacts; break;
+                    case SISORegionKind::FanOutConverge: ++detectedFan; break;
                     case SISORegionKind::General: ++detectedGeneral; break;
                     default: break;
                 }
@@ -319,6 +342,7 @@ public:
                 const auto* splitSeedNodes = hasDetectDirty ? &detectDirtyNodes : nullptr;
                 const auto* splitSeedEdges = hasDetectDirty ? &detectDirtyEdges : nullptr;
                 if (runSplitPass(splitSeedNodes, splitSeedEdges, &iterDirtyNodes, &iterDirtyEdges)) {
+                    previousPassOnlyLinearParallel = false;
                     hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
                     if (hasDetectDirty) {
                         detectDirtyNodes.swap(iterDirtyNodes);
@@ -369,8 +393,8 @@ public:
                         if (!edge) continue;
                         NodePtr exit = region.exit;
                         if (!exit) continue;
-                        auto inputs = view.getInputs(edge);
-                        auto negs   = view.getBodyNegations(edge);
+                        const auto& inputs = edge->getInputs();
+                        const auto& negs   = edge->getBodyNegations();
                         double p = edge->getProbability();
                         if (p < 0.0) p = 0.0;
                         if (p > 1.0) p = 1.0;
@@ -450,8 +474,8 @@ public:
                         EdgePtr edge = region.internalEdges.front();
                         if (!edge) continue;
                         if (!region.entry || !region.exit) continue;
-                        auto inputs = view.getInputs(edge);
-                        auto negs   = view.getBodyNegations(edge);
+                        const auto& inputs = edge->getInputs();
+                        const auto& negs   = edge->getBodyNegations();
                         if (inputs.empty()) continue;
                         double p = edge->getProbability();
                         if (p < 0.0) p = 0.0;
@@ -540,17 +564,17 @@ public:
                         if (!mid) continue;
                         for (auto e : region.internalEdges) {
                             if (!e || e == intoMid) continue;
-                            auto inputs = view.getInputs(e);
+                            const auto& inputs = e->getInputs();
                             if (inputs.size() == 1 && inputs[0] == mid) {
                                 outMid = e;
                                 break;
                             }
                         }
                         if (!intoMid || !outMid) continue;
-                        auto negInto = view.getBodyNegations(intoMid);
+                        const auto& negInto = intoMid->getBodyNegations();
                         if (negInto.size() > 1) continue;  // expect single-input edge
                         bool entryNeg = (!negInto.empty() && negInto[0]);
-                        auto negOut = view.getBodyNegations(outMid);
+                        const auto& negOut = outMid->getBodyNegations();
                         if (negOut.size() > 1) continue;   // expect single-input edge
                         if (!negOut.empty() && negOut[0]) continue;  // do not fast-path if mid->exit is negated
                         double p1 = intoMid->getProbability();
@@ -615,7 +639,7 @@ public:
                                 bad = true;
                                 break;
                             }
-                            auto inputs = view.getInputs(e);
+                            const auto& inputs = e->getInputs();
                             if (inputs.size() != 1 || inputs[0] != entryNode) {
                                 bad = true;
                                 break;
@@ -624,7 +648,7 @@ public:
                                 bad = true;
                                 break;
                             }
-                            auto negs = view.getBodyNegations(e);
+                            const auto& negs = e->getBodyNegations();
                             if (negs.size() > 1) {
                                 bad = true;
                                 break;
@@ -693,7 +717,7 @@ public:
                         EdgePtr convEdge = nullptr;
                         for (auto e : region.internalEdges) {
                             if (!e) continue;
-                            auto ins = view.getInputs(e);
+                            const auto& ins = e->getInputs();
                             if (ins.size() == 1 && ins[0] == entryNode) {
                                 fanEdges.push_back(e);
                             } else {
@@ -701,7 +725,7 @@ public:
                             }
                         }
                         if (!convEdge || fanEdges.size() < 2) continue;
-                        auto convInputs = view.getInputs(convEdge);
+                        const auto& convInputs = convEdge->getInputs();
                         if (convInputs.size() != fanEdges.size()) continue;
                         std::unordered_set<NodePtr> fanOutputs;
                         for (auto fe : fanEdges) {
@@ -710,7 +734,7 @@ public:
                         }
                         std::unordered_set<NodePtr> convSet(convInputs.begin(), convInputs.end());
                         if (convSet != fanOutputs) continue;
-                        auto convNegs = view.getBodyNegations(convEdge);
+                        const auto& convNegs = convEdge->getBodyNegations();
                         bool convAllPos = std::all_of(convNegs.begin(), convNegs.end(), [](bool b){return !b;});
                         if (!convNegs.empty() && !convAllPos) continue;
                         bool firstNeg = false;
@@ -718,7 +742,7 @@ public:
                         bool mixedPolarity = false;
                         for (auto fe : fanEdges) {
                             if (!fe) continue;
-                            auto negs = view.getBodyNegations(fe);
+                            const auto& negs = fe->getBodyNegations();
                             bool neg = (!negs.empty() && negs[0]);
                             if (!hasNegFlag) {
                                 firstNeg = neg;
@@ -973,16 +997,60 @@ public:
             if (flags.enableCompaction) {
                 auto compactStart = std::chrono::steady_clock::now();
                 auto edgeListStart = std::chrono::steady_clock::now();
-                auto edgeList = view.getEdges();
+                std::vector<EdgePtr> edgeList;
+                const double dirtyNodeRatio = view.getNodes().empty()
+                                                      ? 0.0
+                                                      : static_cast<double>(iterDirtyNodes.size()) /
+                                                                static_cast<double>(view.getNodes().size());
+                const double dirtyEdgeRatio = view.getEdges().empty()
+                                                      ? 0.0
+                                                      : static_cast<double>(iterDirtyEdges.size()) /
+                                                                static_cast<double>(view.getEdges().size());
+                const bool useDirtyCompaction = flags.restrictCompactionToDirty &&
+                        (!iterDirtyNodes.empty() || !iterDirtyEdges.empty()) &&
+                        dirtyNodeRatio <= 0.50 && dirtyEdgeRatio <= 0.50;
+                if (useDirtyCompaction) {
+                    std::unordered_set<EdgePtr> candidateEdges;
+                    for (auto edge : iterDirtyEdges) {
+                        if (edge && view.getEdges().count(edge) > 0) {
+                            candidateEdges.insert(edge);
+                        }
+                    }
+                    for (auto node : iterDirtyNodes) {
+                        if (!node || view.getNodes().count(node) == 0) continue;
+                        for (auto edge : view.getIncomingEdges(node)) {
+                            if (edge && view.getEdges().count(edge) > 0) {
+                                candidateEdges.insert(edge);
+                            }
+                        }
+                        for (auto edge : view.getOutgoingEdges(node)) {
+                            if (edge && view.getEdges().count(edge) > 0) {
+                                candidateEdges.insert(edge);
+                            }
+                        }
+                    }
+                    edgeList.reserve(candidateEdges.size());
+                    for (auto edge : candidateEdges) {
+                        edgeList.push_back(edge);
+                    }
+                } else {
+                    edgeList.reserve(view.getEdges().size());
+                    for (auto edge : view.getEdges()) {
+                        edgeList.push_back(edge);
+                    }
+                }
                 edgeListMs = toMs(std::chrono::steady_clock::now() - edgeListStart);
-                const auto semanticFactStats = buildSemanticFactUseStats(view);
+                // Compaction only absorbs deterministic facts. The semantic
+                // occurrence map is only consulted for probabilistic facts, so
+                // avoid rebuilding it on every pass.
+                const SemanticFactUseStats semanticFactStats;
                 for (auto edge : edgeList) {
                     if (!edge) continue;
-                    auto inputs = view.getInputs(edge);
+                    const auto& inputs = edge->getInputs();
                     if (inputs.empty()) continue;
                     std::vector<NodePtr> keepInputs;
                     std::vector<bool> keepNegs;
-                    auto negs = view.getBodyNegations(edge);
+                    const auto& negs = edge->getBodyNegations();
                     double p = edge->getProbability();
                     std::vector<SupportToken> compactSupport =
                             edge->getProbabilisticSupportTokens();
@@ -1041,6 +1109,7 @@ public:
                     ++compactedEdges;
                 }
                 compactMs = toMs(std::chrono::steady_clock::now() - compactStart);
+                stats.totalCompactionMs += compactMs;
 
                 if (compactedEdges > 0) {
                     stats.numEdgesRemoved += compactRemovedEdges;
@@ -1063,7 +1132,11 @@ public:
             size_t cleanupRemovedNodes = 0;
             if (flags.enableCleanupIsolated) {
                 auto cleanupStart = std::chrono::steady_clock::now();
-                auto nodesList = view.getNodes();
+                std::vector<NodePtr> nodesList;
+                nodesList.reserve(view.getNodes().size());
+                for (auto node : view.getNodes()) {
+                    nodesList.push_back(node);
+                }
                 auto& nodes = view.mutableNodes();
                 for (auto n : nodesList) {
                     if (!n) continue;
@@ -1078,6 +1151,7 @@ public:
                     view.invalidateCaches();
                 }
                 cleanupMs = toMs(std::chrono::steady_clock::now() - cleanupStart);
+                stats.totalCleanupMs += cleanupMs;
                 if (dumpStats && cleanupRemovedNodes > 0) {
                     std::cout << "[GraphRewriter]   Cleanup isolated nodes: removed="
                               << cleanupRemovedNodes << " time=" << cleanupMs << " ms"
@@ -1116,6 +1190,7 @@ public:
                       << ", linear=" << detectedLinear
                       << ", parallel=" << detectedParallel
                       << ", all-facts=" << detectedAllFacts
+                      << ", fan-out=" << detectedFan
                       << ", general=" << detectedGeneral
                       << "), rewritten(total=" << rewrittenThisRound
                       << ") in " << iterMs << " ms" << std::endl;
@@ -1163,6 +1238,7 @@ public:
                 const auto* splitSeedNodes = hasDetectDirty ? &detectDirtyNodes : nullptr;
                 const auto* splitSeedEdges = hasDetectDirty ? &detectDirtyEdges : nullptr;
                 if (runSplitPass(splitSeedNodes, splitSeedEdges, &iterDirtyNodes, &iterDirtyEdges)) {
+                    previousPassOnlyLinearParallel = false;
                     hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
                     if (hasDetectDirty) {
                         detectDirtyNodes.swap(iterDirtyNodes);
@@ -1177,6 +1253,9 @@ public:
             }
 
             hasDetectDirty = !iterDirtyNodes.empty() || !iterDirtyEdges.empty();
+            previousPassOnlyLinearParallel = rewrittenThisRound > 0 && detectedSingle == 0 &&
+                    detectedAllFacts == 0 && detectedFan == 0 && detectedGeneral == 0 &&
+                    detectedLinear + detectedParallel == rewrittenThisRound;
             if (hasDetectDirty) {
                 detectDirtyNodes.swap(iterDirtyNodes);
                 detectDirtyEdges.swap(iterDirtyEdges);
@@ -1336,7 +1415,7 @@ private:
         }
         for (auto edge : view.getEdges()) {
             if (!edge) continue;
-            for (auto input : view.getInputs(edge)) {
+            for (auto input : edge->getInputs()) {
                 if (!isProbabilisticFactNode(input)) continue;
                 ++stats.inputOccurrences[input->getSemanticFactId()];
             }
@@ -1422,7 +1501,7 @@ private:
                     if (outNode && outNode->isFact && view.getNodes().count(outNode) > 0) {
                         candidateFacts.insert(outNode);
                     }
-                    for (auto input : view.getInputs(edge)) {
+                    for (auto input : edge->getInputs()) {
                         if (input && input->isFact && view.getNodes().count(input) > 0) {
                             candidateFacts.insert(input);
                         }
@@ -1525,14 +1604,14 @@ private:
             for (size_t idx : independentIdx) {
                 EdgePtr edge = outs[idx];
                 if (!edge) continue;
-                auto inputs = view.getInputs(edge);
+                const auto& inputs = edge->getInputs();
                 if (inputs.empty()) continue;
-                auto negs = view.getBodyNegations(edge);
+                const auto& negs = edge->getBodyNegations();
 
                 NodePtr shadow = createShadowFact(graph, fact, edge);
                 if (!shadow) continue;
 
-                std::vector<NodePtr> newInputs = inputs;
+                std::vector<NodePtr> newInputs(inputs.begin(), inputs.end());
                 bool replaced = false;
                 for (size_t k = 0; k < newInputs.size(); ++k) {
                     if (newInputs[k] == fact) {
@@ -1622,7 +1701,7 @@ private:
         }
         for (const auto& e : view.getEdges()) {
             if (!isRandomVarEdge(e)) continue;
-            for (const auto& in : view.getInputs(e)) {
+            for (const auto& in : e->getInputs()) {
                 markNode(in);
             }
         }
@@ -1633,7 +1712,7 @@ private:
             if (!cur) continue;
             for (auto inEdge : view.getIncomingEdges(cur)) {
                 if (!inEdge) continue;
-                for (auto in : view.getInputs(inEdge)) {
+                for (auto in : inEdge->getInputs()) {
                     markNode(in);
                 }
             }
@@ -1851,11 +1930,11 @@ private:
                 size_t rewired = 0;
                 for (auto edge : group) {
                     if (!edge) continue;
-                    auto inputs = view.getInputs(edge);
+                    const auto& inputs = edge->getInputs();
                     if (inputs.empty()) continue;
-                    auto negs = view.getBodyNegations(edge);
+                    const auto& negs = edge->getBodyNegations();
 
-                    std::vector<NodePtr> newInputs = inputs;
+                    std::vector<NodePtr> newInputs(inputs.begin(), inputs.end());
                     bool replaced = false;
                     for (size_t k = 0; k < newInputs.size(); ++k) {
                         if (newInputs[k] == fact) {

@@ -22,15 +22,18 @@ SISO rewrite (`--rewrite`) and the newer implicit-split pipeline
 
 ## Rewrite modes
 - Default full-mode runs do not rewrite.
-- `--rewrite`: explicit SISO rewrite. The pipeline rewrites the live derivation
-  graph in place via `GraphRewriter` and then runs the usual hybrid FC/WMC stage.
+- `--rewrite`: artifact-facing smart rewrite dispatcher. Programs with at least
+  one probabilistic rule select implicit split rewrite with naive split; programs
+  whose rules are deterministic select legacy no-split graph rewrite and then
+  component-wise FC/WMC.
 - `--implicit-rewrite`: implicit-split rewrite. The pipeline first runs the
   implicit split/materialize flow, carries precomputed tuple probabilities
   forward, rebuilds the live graph/view, and then hands the result to the same
   full-mode FC/WMC machinery.
-- Both modes still report their end-to-end cost inside `FC_WMC_HYBRID`; the
-  maintained artifact compares plain vs implicit rewrite by default, while the
-  appendix taint benchmark contrasts plain, explicit, and implicit rewrite.
+- All rewrite modes still report their end-to-end cost inside
+  `FC_WMC_HYBRID`; final artifact scripts should prefer bare `--rewrite`, while
+  `--implicit-rewrite` and `--split-mode` remain diagnostic controls for
+  explicit comparisons.
 
 ## Implementation (current state)
 - Detection: `GraphAnalyzer::detectAllSISOStrictFromExit(view)` on the working `IncSubgraphView`; cached incoming edges are cleared each iteration.
@@ -56,8 +59,9 @@ SISO rewrite (`--rewrite`) and the newer implicit-split pipeline
 - Logging: pipeline logs timings; rewrite stats include iterations, region counts, nodes/edges removed/added.
 
 ### Implicit-specific behavior
-- CLI surface: `--implicit-rewrite` turns on rewrite mode and selects the
-  implicit pipeline; `--rewrite` continues to mean the explicit pass.
+- CLI surface: `--implicit-rewrite` turns on rewrite mode and forces the
+  implicit pipeline unless `--split-mode=no-split` is explicitly supplied for a
+  no-split diagnostic run.
 - The implicit pipeline records `rewrite_engine=implicit` in the hybrid stage
   metadata and logs overlay/materialization timing such as
   `implicit_overlay_prep_ms` and `implicit_graph_rewrite_ms`.

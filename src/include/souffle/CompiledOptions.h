@@ -88,6 +88,7 @@ protected:
     bool enable_rewrite = false;  // enable SISO-based graph rewriting
     bool enable_implicit_rewrite = false;  // enable experimental implicit-split rewrite pipeline
     std::string split_mode = "naive-split";  // split mode for rewrite: no-split/naive-split/complete-split
+    bool split_mode_explicit = false;  // true when --split-mode/-P was passed explicitly
     bool dump_json = false;  // dump derivation graph JSON after prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
     bool dump_stat = false;  // dump derivation graph stats after prune
@@ -177,6 +178,9 @@ public:
     }
     const std::string& getSplitMode() const {
         return split_mode;
+    }
+    bool isSplitModeExplicit() const {
+        return split_mode_explicit;
     }
     bool isDumpJsonEnabled() const {
         return dump_json;
@@ -393,6 +397,7 @@ public:
                     enable_implicit_rewrite = true;
                     break;
                 case 'P': {
+                    split_mode_explicit = true;
                     std::string modeArg(optarg);
                     if (modeArg == "no-split" || modeArg == "none") {
                         split_mode = "no-split";

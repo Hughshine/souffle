@@ -142,6 +142,7 @@ private:
         long parallelTwoEdgeMs = 0;
         long allFactsToSOMs    = 0;
         long fanOutConvergeMs  = 0;
+        long semanticFactStatsMs = 0;
         size_t singleHyperedgeCount = 0;
         size_t linearTwoEdgeCount   = 0;
         size_t parallelTwoEdgeCount = 0;
@@ -149,6 +150,16 @@ private:
         size_t fanOutConvergeCount  = 0;
     };
 
+public:
+    struct FastPathDetectOptions {
+        bool enableSingleHyperedge = true;
+        bool enableLinearTwoEdge = true;
+        bool enableParallelEdge = true;
+        bool enableAllFactsToSO = true;
+        bool enableFanOutConverge = true;
+    };
+
+private:
     struct DetectionFrontier {
         NodeSet nodes;
         EdgeSet edges;
@@ -168,7 +179,7 @@ private:
         if (isNodeInView(g, out)) {
             nodes.insert(out);
         }
-        for (auto in : g.getInputs(e)) {
+        for (auto in : e->getInputs()) {
             if (isNodeInView(g, in)) {
                 nodes.insert(in);
             }
@@ -240,8 +251,8 @@ private:
             }
         }
         for (auto edge : g.getEdges()) {
-            if (!isEdgeInView(g, edge)) continue;
-            for (auto input : g.getInputs(edge)) {
+            if (!edge) continue;
+            for (auto input : edge->getInputs()) {
                 if (!isProbabilisticFact(input)) continue;
                 ++stats.inputOccurrences[input->getSemanticFactId()];
             }
@@ -278,7 +289,10 @@ private:
             const DerivationGraphViewInterface& g,
             FastPathDetectStats* stats = nullptr,
             const EdgeSet* candidateEdges = nullptr,
-            const NodeSet* candidateNodes = nullptr) {
+            const NodeSet* candidateNodes = nullptr,
+            const FastPathDetectOptions* options = nullptr) {
+        FastPathDetectOptions defaultOptions;
+        const FastPathDetectOptions& opts = options ? *options : defaultOptions;
         std::vector<SISORegionInfo> regions;
         bool debug = std::getenv("SOUFFLE_SISO_FAST_DEBUG") != nullptr;
         std::vector<EdgePtr> edgeScan;
@@ -305,13 +319,23 @@ private:
                 if (n) nodeScan.push_back(n);
             }
         }
-        const auto semanticFactStats = buildSemanticFactUseStats(g);
+        auto tSemanticStart = std::chrono::steady_clock::now();
+        SemanticFactUseStats semanticFactStats;
+        if (opts.enableSingleHyperedge || opts.enableAllFactsToSO || opts.enableFanOutConverge) {
+            semanticFactStats = buildSemanticFactUseStats(g);
+        }
+        auto tSemanticEnd = std::chrono::steady_clock::now();
+        if (stats) {
+            stats->semanticFactStatsMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    tSemanticEnd - tSemanticStart)
+                                                 .count();
+        }
 
         // 1) Single hyperedge: one edge exit, inputs.size()>=1, exactly one non-fact (SI), others are input facts
         auto tSingleStart = std::chrono::steady_clock::now();
-        for (auto e : edgeScan) {
+        if (opts.enableSingleHyperedge) for (auto e : edgeScan) {
             if (!e) continue;
-            auto inputs = g.getInputs(e);
+            const auto& inputs = e->getInputs();
             if (inputs.size() <= 1) {
                 if (debug && inputs.size() == 1) {
                     std::cout << "[siso-fast] edge " << e->getId()
@@ -412,11 +436,11 @@ private:
 
         // 3) Linear two-edge: entry->mid->exit, each edge single input
         auto tLinearStart = std::chrono::steady_clock::now();
-        for (auto e1 : edgeScan) {
+        if (opts.enableLinearTwoEdge) for (auto e1 : edgeScan) {
             if (!e1) continue;
-            auto in1 = g.getInputs(e1);
+            const auto& in1 = e1->getInputs();
             if (in1.size() != 1) continue;
-            auto neg1 = g.getBodyNegationsStable(e1);
+            const auto& neg1 = e1->getBodyNegationsStable();
             if (neg1.size() > 1) continue;  // expect single-input edge
             NodePtr entry = in1[0];
             NodePtr mid = g.getOutput(e1);
@@ -427,13 +451,13 @@ private:
             auto midIn = g.getIncomingEdges(mid);
             if (midIn.size() != 1 || midIn[0] != e1) continue;
             // mid should have exactly one outgoing edge for the chain
-            auto midOut = g.getOutgoingEdges(mid);
+            const auto& midOut = g.getOutgoingEdges(mid);
             if (midOut.size() != 1) continue;
             EdgePtr e2 = midOut[0];
             if (!e2) continue;
-            auto in2 = g.getInputs(e2);
+            const auto& in2 = e2->getInputs();
             if (in2.size() != 1 || in2[0] != mid) continue;
-            auto neg2 = g.getBodyNegationsStable(e2);
+            const auto& neg2 = e2->getBodyNegationsStable();
             if (neg2.size() > 1) continue;  // expect single-input edge
             if (!neg2.empty() && neg2[0]) continue;  // do not fast-path if mid->exit is negated
             NodePtr exit = g.getOutput(e2);
@@ -451,17 +475,17 @@ private:
         // 4) Parallel edges: same SI -> same SO, each edge has exactly one input.
         // Linear-time grouping by SO and then SI to avoid O(m^2).
         auto tParallelStart = std::chrono::steady_clock::now();
-        for (NodePtr so : nodeScan) {
+        if (opts.enableParallelEdge) for (NodePtr so : nodeScan) {
             if (!so) continue;
-            auto incoming = g.getIncomingEdges(so);
+            const auto& incoming = g.getIncomingEdges(so);
             if (incoming.size() < 2) continue;  // need at least two edges to form parallel region
             // group single-input edges by their sole input (SI) and negation flag
             std::unordered_map<NodePtr, std::array<std::vector<EdgePtr>, 2>> bySiNeg;
             for (EdgePtr e : incoming) {
                 if (!e) continue;
-                auto ins = g.getInputs(e);
+                const auto& ins = e->getInputs();
                 if (ins.size() != 1) continue;
-                const auto& negs = g.getBodyNegationsStable(e);
+                const auto& negs = e->getBodyNegationsStable();
                 if (!negs.empty() && negs.size() != 1) continue;  // keep only single-input with aligned neg flag
                 bool isNeg = (!negs.empty() && negs[0]);
                 NodePtr si = ins[0];
@@ -489,17 +513,17 @@ private:
 
         // 2) Fan-out converge (SI fact fan-out to xi, xi converge to SO via one multi-input edge)
         auto tFanStart = std::chrono::steady_clock::now();
-        for (NodePtr si : nodeScan) {
+        if (opts.enableFanOutConverge) for (NodePtr si : nodeScan) {
             if (!si) continue;
             if (!si->isFact || si->hasEvidence() || si->needOutput) continue;
-            auto outsSi = g.getOutgoingEdges(si);
+            const auto& outsSi = g.getOutgoingEdges(si);
             if (outsSi.size() < 2) continue;  // need fan-out
             bool bad = false;
             std::vector<EdgePtr> fanEdges;
             std::vector<NodePtr> xiNodes;
             for (EdgePtr e : outsSi) {
                 if (!e) continue;
-                auto ins = g.getInputs(e);
+                const auto& ins = e->getInputs();
                 if (ins.size() != 1 || ins[0] != si) {
                     bad = true; break;
                 }
@@ -512,15 +536,15 @@ private:
             for (NodePtr x : xiNodes) {
                 if (!x) { bad = true; break; }
                 if (!xiSet.insert(x).second) { bad = true; break; }
-                auto inX = g.getIncomingEdges(x);
-                auto outX = g.getOutgoingEdges(x);
+                const auto& inX = g.getIncomingEdges(x);
+                const auto& outX = g.getOutgoingEdges(x);
                 if (inX.size() != 1 || outX.size() != 1) { bad = true; break; }
             }
             if (bad) continue;
             // all xi must share the same convergence edge
             EdgePtr conv = nullptr;
             for (NodePtr x : xiSet) {
-                auto outX = g.getOutgoingEdges(x);
+                const auto& outX = g.getOutgoingEdges(x);
                 if (outX.empty()) { bad = true; break; }
                 if (!conv) {
                     conv = outX[0];
@@ -529,10 +553,10 @@ private:
                 }
             }
             if (bad || !conv) continue;
-            auto convInputs = g.getInputs(conv);
+            const auto& convInputs = conv->getInputs();
             if (convInputs.size() != xiSet.size()) continue;
             // inputs of conv must be exactly xi and all positive
-            auto convNeg = g.getBodyNegationsStable(conv);
+            const auto& convNeg = conv->getBodyNegationsStable();
             if (!convNeg.empty()) {
                 bool allFalse = std::all_of(convNeg.begin(), convNeg.end(), [](bool b){return !b;});
                 if (!allFalse) continue;
@@ -558,9 +582,9 @@ private:
 
         // 2) All-facts single hyperedge: single edge with all fact inputs and inputs have no incoming edges.
         auto tAllFactsStart = std::chrono::steady_clock::now();
-        for (auto e : edgeScan) {
+        if (opts.enableAllFactsToSO) for (auto e : edgeScan) {
             if (!e) continue;
-            auto inputs = g.getInputs(e);
+            const auto& inputs = e->getInputs();
             if (inputs.empty()) continue;
             if (debug) {
                 std::cout << "[siso-fast] edge " << e->getId()
@@ -1374,7 +1398,8 @@ public:
         const DerivationGraphViewInterface& g,
         const std::unordered_set<NodePtr>* dirtyNodes,
         const std::unordered_set<EdgePtr>* dirtyEdges,
-        bool forceCompleteDetect = false)
+        bool forceCompleteDetect = false,
+        const FastPathDetectOptions* options = nullptr)
     {
         const char* dirtyEnv = std::getenv("SOUFFLE_SISO_DIRTY_DETECT");
         const bool disableDirtyFromEnv = dirtyEnv && (std::string(dirtyEnv) == "0" ||
@@ -1434,13 +1459,13 @@ public:
                     fallbackToFull = true;
                 } else {
                     usedDirtyFrontier = true;
-                    regions = detectFastPathRegions(g, &fastStats, &frontier.edges, &frontier.nodes);
+                    regions = detectFastPathRegions(g, &fastStats, &frontier.edges, &frontier.nodes, options);
                 }
             }
         }
 
         if (!usedDirtyFrontier) {
-            regions = detectFastPathRegions(g, &fastStats);
+            regions = detectFastPathRegions(g, &fastStats, nullptr, nullptr, options);
         }
 
         auto t1 = std::chrono::steady_clock::now();
@@ -1522,7 +1547,8 @@ public:
                   << "linear=" << fastStats.linearTwoEdgeMs << " ms (" << fastStats.linearTwoEdgeCount << ") "
                   << "parallel=" << fastStats.parallelTwoEdgeMs << " ms (" << fastStats.parallelTwoEdgeCount << ") "
                   << "all-facts=" << fastStats.allFactsToSOMs << " ms (" << fastStats.allFactsToSOCount << ") "
-                  << "fan-out-conv=" << fastStats.fanOutConvergeMs << " ms (" << fastStats.fanOutConvergeCount << ")"
+                  << "fan-out-conv=" << fastStats.fanOutConvergeMs << " ms (" << fastStats.fanOutConvergeCount << ") "
+                  << "semantic-stats=" << fastStats.semanticFactStatsMs << " ms"
                   << std::endl;
         std::cout << "[siso-prof] detect=" << detectMs << " ms"
                   << " sort=" << sortMs << " ms"
@@ -1540,7 +1566,7 @@ public:
         const DerivationGraphViewInterface& g,
         bool forceCompleteDetect = false)
     {
-        return detectAllSISOStrictFromExit(g, nullptr, nullptr, forceCompleteDetect);
+        return detectAllSISOStrictFromExit(g, nullptr, nullptr, forceCompleteDetect, nullptr);
     }
 
     // Output the full graph and highlight a SISO region with different colors.

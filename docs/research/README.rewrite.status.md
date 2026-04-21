@@ -27,6 +27,9 @@ status layer above the deeper implementation notes in
   default choices, or artifact packaging.
 
 ## Current Trusted Artifact Pair
+- This pair records the pre-unified packaged full artifact baseline. The local
+  unified checkpoint below folds in additional rewrite, symbolization, string,
+  and aggregation work that is not yet a published artifact tip.
 - benchmark side:
   - `problog-benchmark/.worktree/clones/CAV-FULL`
   - branch `CAV-FULL`
@@ -37,14 +40,118 @@ status layer above the deeper implementation notes in
   - paired tip `7d9d45b72fb59657062d07348e7361d1ecdc20f8`
 
 ## Trusted Current Conclusions
-- `--rewrite` is the explicit rewrite pipeline.
-- `--implicit-rewrite` is the implicit-split rewrite pipeline.
+- In the local unified checkpoint, bare `--rewrite` is the artifact-facing
+  smart dispatcher.
+- Older packaged full-artifact runs still used the explicit `--rewrite` /
+  `--implicit-rewrite` distinction; keep that distinction only for historical
+  comparison and diagnostic controls.
+- `--implicit-rewrite` remains the direct implicit-split diagnostic pipeline.
 - The maintained full artifact now defaults to implicit rewrite for the
   side-channel rewrite comparison.
 - `RQ3` is no longer treated as a separate workload; it is derived from the
   validated `RQ2` standard runs.
 - Iterative implicit rewrite remains experimental and is not part of the current
   packaged full artifact contract.
+
+## Local Unified Checkpoint: 2026-04-21
+- compiler workspace:
+  `.worktree/clones/full-artifact-opt-unified-wt`
+- branch:
+  `full-artifact-opt-unified`
+- base commit before local changes:
+  `c306be2731b0 perf(fc): defer dep-graph depths until cyclewise build`
+- benchmark workspace:
+  `problog-benchmark/.worktree/clones/CAV-FULL`
+- symbolization benchmark commit:
+  `c33d371 artifact: add DDisasm symbolization benchmark`
+
+Implemented in the local compiler checkpoint:
+- removed the temporary `--rewrite-compaction-only` CLI path
+- made bare `--rewrite` a smart dispatcher:
+  probabilistic rules select implicit rewrite with naive split; deterministic
+  rules select legacy no-split rewrite
+- kept explicit control flags for diagnosis:
+  `--implicit-rewrite` still forces implicit rewrite and
+  `--split-mode=no-split` still forces no-split legacy rewrite
+- added detector-level feature masking so disabled SISO detectors are not still
+  paid for before post-filtering
+- added a no-split follow-up heuristic:
+  after a pass that rewrites only linear/parallel regions, the next detector
+  pass skips fact-oriented detectors
+- split component classification timing into pure classification and fast
+  component evaluation wall time
+- for deterministic no-split auto-dispatch, disabled the single-rand component
+  fast path by default because on symbolization it moves many tiny exact
+  computations into a slower per-component evaluator; the BDD path remains
+  exact on the checked cases
+
+Current symbolization reading from
+`/tmp/symbolization_15_smart_20260421_024056`:
+- cases:
+  `bison, cluster, flex, gawk, gcc11, gpgsm, gpp11, gvmap, llvm-config,
+  llvm-pdbutil, readelf, tc, tmux, troff, wget`
+- bare `--rewrite` dispatch:
+  all symbolization stages selected `auto-legacy-no-split` because the rules are
+  deterministic; input facts remain probabilistic
+- completion:
+  rewrite completed `14/15`; plain completed `10/15`; `troff` failed in both
+  modes
+- among cases where both modes completed:
+  rewrite was faster on `9/10`, with geometric-mean speedup `1.58x`
+- plain aborted while rewrite completed on:
+  `flex, gcc11, gpp11, tmux`
+- `troff` failure:
+  CUDD `makeOrBalanced` returned null during BDD formula construction; explicit
+  no-split with single-rand fast path still failed, so this is not caused by the
+  auto-disable single-rand policy
+- weak or negative symbolization cases:
+  `gvmap` regressed (`5.63s -> 7.30s`) and `llvm-config` was essentially flat
+  (`9.70s -> 9.65s`)
+- representative positive cases:
+  `tc 6.54s -> 1.18s`, `readelf 15.33s -> 10.00s`,
+  `wget 20.98s -> 8.57s`
+- correctness:
+  all both-completed cases had identical output keys; most were byte-exact;
+  `readelf` had two values and `wget` had one value differing by `1e-8`, i.e.
+  the last printed decimal under the current 8-decimal output format
+
+Current side-channel smoke from
+`/tmp/side_smart_dispatch_20260421_025655`:
+- case:
+  `P19`
+- bare `--rewrite` dispatch:
+  `auto-implicit split_mode=naive-split total_rules=42 probabilistic_rules=28`
+- output:
+  `facts.prob` byte-exact against plain
+- time:
+  `15.30s -> 3.98s`
+
+Current taint smoke from
+`/tmp/taint_manual_app018_20260421_030655`:
+- case:
+  `app-018`
+- full stage chain:
+  `cipt-cg-dlog, pre-dlog, typefilter-dlog, pt-obj-dlog, taint-lim-dlog`
+- bare `--rewrite` dispatch:
+  deterministic stages selected `auto-legacy-no-split`; `pt-obj-dlog` selected
+  `auto-implicit split_mode=naive-split total_rules=37 probabilistic_rules=25`
+- output:
+  `pt-obj-dlog/facts.prob` was byte-exact (`164871` rows); all other checked
+  stages were exact/empty consistently
+- time:
+  full chain `76.64s -> 7.52s`, dominated by `pt-obj-dlog 76.38s -> 7.28s`
+
+Current interpretation:
+- side-channel and taint validate the intended smart-dispatch shape:
+  probabilistic-rule workloads still get implicit split and retain large speedup
+- symbolization validates that deterministic-rule workloads need no-split
+  component-wise processing, but raw SISO rewrite is not the main source of
+  speedup there; the useful effect is deterministic/independence decomposition
+  plus component-specialized evaluation
+- symbolization still needs more engineering before claiming a uniform `2x`
+  speedup: small deterministic cases need a skip/threshold policy, and the
+  `1e-8` last-digit difference should be explained or eliminated before final
+  artifact freeze
 
 ## Trusted Side-Channel Reading
 From the shipped reference bundle
@@ -1514,9 +1621,197 @@ Additional profiling notes:
   - large cases still justify rewrite even more strongly because plain remains
     non-robust (`tmux` crashes, rewrite completes).
 
+## 2026-04-20 — Symbolization explicit rewrite: front-end rewrite overhead
+
+- scope:
+  explicit rewrite only, same extracted symbolization host and balanced inputs
+  as above, after the lazy dep-graph-depth checkpoint
+- implemented low-risk rewrite-front-end optimizations:
+  - hot detector/rewrite loops now use `Hyperedge` input/negation references
+    directly instead of repeatedly copying vectors through the view API
+  - compaction snapshots live edges/nodes into vectors instead of copying the
+    whole unordered-set container before mutating the view
+  - compaction no longer rebuilds probabilistic semantic fact-use stats, since
+    it only absorbs deterministic facts and therefore never consults those
+    occurrence counts
+  - detector profiling now reports `semantic-stats=... ms` inside the
+    fast-path breakdown so this cost is visible separately
+- correctness:
+  `problog_sum_exact_roundtrip`, `problog_string_roundtrip`, and
+  `problog_symbol_aggregate_roundtrip` passed with the repo-built binary.
+  For `gawk_balanced`, `bison_balanced`, and `tmux`, the checked output CSVs
+  and `facts.prob` matched the previous lazy-depth explicit outputs exactly.
+- measurements:
+  - previous lazy-depth explicit rewrite totals:
+    `gawk=1830 ms`, `bison=1628 ms`, `tmux=8158 ms`
+  - best post-copy explicit rewrite totals observed:
+    `gawk=1470 ms`, `bison=1550 ms`, `tmux=6336 ms`
+  - final no-op split is pure overhead on the checked symbolization cases:
+    `--split-mode=no-split` produced identical checked outputs and the same
+    random-variable removal (`gawk=9968`, `bison=10824`, `tmux=39156`)
+- rejected/neutral attempt:
+  dirty frontier narrowing by marking only rewritten-region boundaries was
+  not kept. It reduced raw dirty seed counts, but the one-hop frontier expanded
+  to the same large node/edge set on `tmux` and did not produce stable rewrite
+  time improvement.
+- remaining bottleneck:
+  rewrite cost is now dominated by repeated detector scans and the final
+  no-region proof. On `tmux`, the third explicit detect still scans a dirty
+  frontier of roughly `203k` nodes and `159k` edges just to produce zero
+  candidates, followed by a no-op naive split. The next optimization should
+  separate dirty reasons or detector phases so linear/parallel follow-up
+  scans do not force all fact-oriented detectors over the same large frontier.
+
+## 2026-04-20 — Symbolization rewrite benefit is deterministic-component compaction
+
+- active host/provenance:
+  the current symbolization experiments use the extracted host
+  `problog-benchmark/benchmarks/ddisasm_symbolization_extracted/dataset/programs/symbolization_data_object_extracted.dl`
+  and the preserved `*_balanced` input directories under
+  `/tmp/ddisasm_symbolization_inputs_syspaper_20260419_1645`. This extracted
+  host is not yet tracked in the packaged `CAV-FULL` benchmark tree and should
+  be migrated there before treating it as artifact-stable.
+- current output relations in that host:
+  only `data_object`, `symbolic_data`, and `labeled_ea` are now emitted. The
+  earlier debug/intermediate outputs `data_object_candidate`,
+  `data_object_total_points`, and `discarded_data_object` were removed from the
+  benchmark-facing `.output` set to avoid inflating the queried output nodes.
+- tuple interpretation:
+  `symbolic_data(EA, Size, Val)` means that the bytes at address `EA` form a
+  selected data object of byte length `Size` and contain a refined symbolic
+  pointer/reference value `Val`. Example:
+  `symbolic_data(183624,8,17056)` is backed by
+  `address_in_data_refined(183624,17056)`, selected as an 8-byte `"symbol"`
+  data object.
+- key ablation on `gawk_balanced`:
+  - full explicit rewrite: `manager_init_vars=122`, max slow component estimate
+    `61`
+  - skip literal rewrite but keep hybrid backend: `manager_init_vars=8106`, max
+    slow component estimate `4053`
+  - disable only deterministic edge compaction:
+    `manager_init_vars=8094`, max slow component estimate `4047`
+  - disable all-facts but keep compaction:
+    `manager_init_vars=122`, max slow component estimate `61`
+- interpretation:
+  symbolization's current rewrite advantage is not primarily SISO probabilistic
+  precomputation. The dominant effect is deterministic fact-input compaction:
+  deterministic leaf facts are projected out of hyperedge inputs, which removes
+  correlation-free graph connectors and lets the component-wise backend solve
+  many small components. This preserves checked `facts.prob` outputs on the
+  tested `grep/gawk/bison` cases, but it should be presented as
+  component-aware deterministic normalization/splitting rather than as evidence
+  that SISO rewrite itself is useful for symbolization.
+- next packaging direction:
+  separate a cheap deterministic-input compaction or support-aware component
+  construction pass from the expensive SISO rewrite loop. For symbolization, the
+  intended story should be: the system outperforms ProbLog by exploiting
+  deterministic/correlation-free structure and component-specialized
+  evaluation; raw SISO rewrite is secondary or sometimes pure overhead.
+
+## 2026-04-21 — Symbolization checkpoint: no-split rewrite and component-fast optimization
+
+- active experiment workspace:
+  `/tmp/symbolization_10case_trim_random_20260421`
+- active extracted host:
+  `problog-benchmark/benchmarks/ddisasm_symbolization_extracted/dataset/programs/symbolization_data_object_extracted.dl`
+- current fixed case pool:
+  - syspaper balanced: `bison`, `flex`, `gawk`, `grep`, `m4`, `make`,
+    `patch`, `rsync`, `tar`, `wget`
+  - medium extras: `bugpoint`, `cluster`, `dirmngr`, `git-http-backend`,
+    `git-remote-http`, `gpgcompose`, `gpgsm`, `gvmap`, `ip`,
+    `llvm-config`, `readelf`, `screen`, `sshd`, `tc`, `tmux`, `troff`
+  - larger extras: `gcc11`, `gpp11`, `llvm-objcopy`, `llvm-objdump`,
+    `llvm-pdbutil`
+- selected 15-case symbolization benchmark:
+  - retain cases whose completed plain runtime is at least `5s`, plus cases
+    where plain aborts but the optimized path completes
+  - add back `gpgsm` as the fastest dropped case by speedup (`3.965s` plain,
+    `2.391s` best, `1.66x`) to make a 15-case set
+  - selected cases: `bison`, `cluster`, `flex`, `gawk`, `gcc11`, `gpgsm`,
+    `gpp11`, `gvmap`, `llvm-config`, `llvm-pdbutil`, `readelf`, `tc`, `tmux`,
+    `troff`, `wget`
+- fixed benchmark-facing output relations remain only:
+  `data_object`, `symbolic_data`, and `labeled_ea`.
+- current fastest tested symbolization path:
+  `--det-opt --rewrite --split-mode=no-split`
+  - this is not pure SISO probabilistic precomputation
+  - global random variable count usually does not decrease on these cases
+  - nevertheless, no-split SISO structural rewrites compress the graph and
+    reduce downstream component construction/classification cost
+- compaction-only ablation:
+  - a temporary `--rewrite-compaction-only` option was used locally to enter
+    the rewrite stage, bypass SISO detection/rewrite, run deterministic edge
+    compaction plus isolated-node cleanup, and then continue to the
+    component-wise backend
+  - `readelf`: compaction-only `10.39s`, no-split rewrite `9.37s`
+  - `llvm-config`: compaction-only `5.11s`, no-split rewrite `3.01s`
+  - conclusion:
+    compaction is necessary but not sufficient. The no-split SISO structural
+    rewrites are still useful because they shrink the component graph even
+    when they do not remove global random variables.
+  - disposition:
+    the standalone compaction-only CLI path is not artifact-facing and has
+    been removed after this ablation.
+- component classification reading:
+  - the existing `component classification` timer is not pure classification;
+    it includes fast component evaluation.
+  - `readelf` has `18036` fast-single components and `1366` slow components in
+    the checked no-split run.
+  - `llvm-config` has `1234` fast-single components and `677` slow components.
+- implemented candidate component-side optimization:
+  - add a borrowed component view so fast component evaluators do not copy
+    `ComponentSubgraph` node/edge sets into temporary `SubgraphView`s
+  - evaluate a single-random-variable component for both `false` and `true`
+    assignments in one pass instead of running the boolean evaluator twice
+  - stage-level effect:
+    - `readelf` component classification dropped from about `1013ms` to
+      about `632ms`
+    - `llvm-config` component classification dropped from about `72ms` to
+      about `42ms`
+  - end-to-end wall-clock remains noisy and is still affected by graph
+    construction, SISO detection, component subgraph build, and occasional
+    slow-component BDD formula build costs; use stage timings rather than one
+    wall-clock run as the immediate keep/drop signal.
+- correctness status:
+  - checked output CSVs matched on `readelf` and `llvm-config`.
+  - `llvm-config facts.prob` matched exactly in the checked pair.
+  - `readelf facts.prob` had same key set with only last-digit differences
+    around `1e-8` in the checked pair.
+  - do not assume those `1e-8` differences are harmless floating-point noise
+    yet. They may reflect output-order, evaluation-order, or fast-path
+    arithmetic differences and need a focused audit before claiming exact
+    equality.
+- next optimization targets:
+  - make artifact-facing `--rewrite` a smart dispatcher:
+    default to implicit rewrite with naive split for workloads with
+    probabilistic rules, matching the side-channel and taint winners; for
+    workloads whose rules are all deterministic/non-probabilistic, select a
+    no-split explicit-style pipeline, matching the current symbolization
+    winner. Diagnostic parameters such as `--implicit-rewrite` or
+    `--split-mode=no-split` can remain available, but artifact evaluation
+    should only need `--rewrite`.
+  - remove or avoid the final no-op SISO detection pass on symbolization-style
+    runs
+  - keep the useful no-split structural rewrites, but make their detector
+    schedule cheaper than the generic full SISO loop
+  - reduce `component_build_subgraphs_ms`, which is often larger than
+    classification after the fast-single optimization
+  - split classification timing into pure classification and fast-evaluation
+    timing so future regressions are easier to diagnose
+  - investigate the `1e-8` facts.prob differences before treating the optimized
+    fast path as bitwise-stable
+  - final artifact cleanup pass:
+    first write a focused report that separates artifact-evaluation pipeline
+    code from local probes, temporary flags, rejected experiments, debug-only
+    instrumentation, and stale benchmark helpers. Use that report to decide
+    what should be removed, archived, hidden behind diagnostics, or kept before
+    cutting the final artifact-evaluation version.
+
 ## Related commits
 - `UNCOMMITTED` — feat(problog): add minimal SUM aggregate replay regression and graph reconstruction
+- `UNCOMMITTED` — perf(problog): remove compaction-only probe and keep fast-single component evaluator optimization
 - `UNCOMMITTED` — fix(implicit-rewrite): force materialized handoff when overlay split creates aliases
+- `UNCOMMITTED` — perf(rewrite): trim explicit rewrite front-end scans for symbolization
 - `UNCOMMITTED` — perf(fc): defer dep-graph depth construction until cyclewise build
 - `UNCOMMITTED` — docs(research): record DDisasm pass exploration and symbolization host reading
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts

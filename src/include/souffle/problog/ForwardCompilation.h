@@ -313,7 +313,7 @@ struct ScbfCyclewiseStats {
 };
 template<typename FormulaNodeRef>
 void buildFormulasCyclewiseInternal(
-    SubgraphView& view,
+    DerivationGraphViewInterface& view,
     FormulaManager<FormulaNodeRef>& formulaManager,
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
@@ -790,7 +790,7 @@ void buildFormulasCyclewiseInternal(
 
 template<typename FormulaNodeRef>
 void buildFormulasCyclewise(
-    SubgraphView& view,
+    DerivationGraphViewInterface& view,
     FormulaManager<FormulaNodeRef>& formulaManager,
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
@@ -808,7 +808,7 @@ void buildFormulasCyclewise(
 
 template<typename FormulaNodeRef>
 void buildFormulasCyclewiseScbf(
-    SubgraphView& view,
+    DerivationGraphViewInterface& view,
     FormulaManager<FormulaNodeRef>& formulaManager,
     std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
@@ -823,6 +823,24 @@ struct ComponentSubgraph {
     size_t id;
     std::unordered_set<NodePtr> nodes;
     std::unordered_set<EdgePtr> edges;
+};
+
+class BorrowedComponentSubgraphView : public virtual DerivationGraphViewInterface {
+public:
+    explicit BorrowedComponentSubgraphView(const ComponentSubgraph& comp)
+            : nodes_(&comp.nodes), edges_(&comp.edges) {}
+
+    const std::unordered_set<NodePtr>& getNodes() const override {
+        return *nodes_;
+    }
+
+    const std::unordered_set<EdgePtr>& getEdges() const override {
+        return *edges_;
+    }
+
+private:
+    const std::unordered_set<NodePtr>* nodes_;
+    const std::unordered_set<EdgePtr>* edges_;
 };
 
 inline std::size_t countComponentRandomVars(const ComponentSubgraph& comp) {
@@ -910,6 +928,13 @@ struct BoolNodeRef {
     bool value = false;
     bool valid = false;
     void* get() const { return valid ? const_cast<BoolNodeRef*>(this) : nullptr; }
+};
+
+struct BoolPairNodeRef {
+    bool valueFalse = false;
+    bool valueTrue = false;
+    bool valid = false;
+    void* get() const { return valid ? const_cast<BoolPairNodeRef*>(this) : nullptr; }
 };
 
 class BoolFormulaManager final : public FormulaManager<BoolNodeRef> {
@@ -1003,6 +1028,111 @@ private:
     NodePtr targetNode;
     EdgePtr targetEdge;
     bool varValue = false;
+    bool sawVar = false;
+    bool invalid = false;
+};
+
+class BoolPairFormulaManager final : public FormulaManager<BoolPairNodeRef> {
+public:
+    BoolPairFormulaManager(NodePtr targetNode, EdgePtr targetEdge)
+            : targetNode(std::move(targetNode)), targetEdge(std::move(targetEdge)) {}
+
+    BoolPairNodeRef createVar(int) override {
+        return markVar(nullptr, nullptr);
+    }
+    BoolPairNodeRef createVar(int, const Node& node) override {
+        return markVar(&node, nullptr);
+    }
+    BoolPairNodeRef createVar(int, const Hyperedge& edge) override {
+        return markVar(nullptr, &edge);
+    }
+
+    BoolPairNodeRef makeAnd(const BoolPairNodeRef& a, const BoolPairNodeRef& b) override {
+        return BoolPairNodeRef{a.valueFalse && b.valueFalse, a.valueTrue && b.valueTrue,
+                a.valid && b.valid};
+    }
+    BoolPairNodeRef makeAnd(const std::vector<BoolPairNodeRef>& nodes) override {
+        bool valueFalse = true;
+        bool valueTrue = true;
+        bool valid = true;
+        for (const auto& node : nodes) {
+            valueFalse = valueFalse && node.valueFalse;
+            valueTrue = valueTrue && node.valueTrue;
+            valid = valid && node.valid;
+            if (!valueFalse && !valueTrue) break;
+        }
+        return BoolPairNodeRef{valueFalse, valueTrue, valid};
+    }
+    BoolPairNodeRef makeOr(const BoolPairNodeRef& a, const BoolPairNodeRef& b) override {
+        return BoolPairNodeRef{a.valueFalse || b.valueFalse, a.valueTrue || b.valueTrue,
+                a.valid && b.valid};
+    }
+    BoolPairNodeRef makeOr(const std::vector<BoolPairNodeRef>& nodes) override {
+        bool valueFalse = false;
+        bool valueTrue = false;
+        bool valid = true;
+        for (const auto& node : nodes) {
+            valueFalse = valueFalse || node.valueFalse;
+            valueTrue = valueTrue || node.valueTrue;
+            valid = valid && node.valid;
+            if (valueFalse && valueTrue) break;
+        }
+        return BoolPairNodeRef{valueFalse, valueTrue, valid};
+    }
+    BoolPairNodeRef makeNot(const BoolPairNodeRef& a) override {
+        return BoolPairNodeRef{!a.valueFalse, !a.valueTrue, a.valid};
+    }
+    BoolPairNodeRef makeCondition(const BoolPairNodeRef& f, const std::vector<int>&,
+            const std::vector<int>&) override {
+        return f;
+    }
+    BoolPairNodeRef getTrue() override {
+        return BoolPairNodeRef{true, true, true};
+    }
+    BoolPairNodeRef getFalse() override {
+        return BoolPairNodeRef{false, false, true};
+    }
+    bool isSame(const BoolPairNodeRef& a, const BoolPairNodeRef& b) override {
+        return a.valid == b.valid && a.valueFalse == b.valueFalse && a.valueTrue == b.valueTrue;
+    }
+    std::string toString(const BoolPairNodeRef& node) override {
+        return std::string("pair(") + (node.valueFalse ? "1" : "0") + "," +
+                (node.valueTrue ? "1" : "0") + ")";
+    }
+    void setVariableWeight(int, double, double) override {}
+    double computeWeightedModelCount(const BoolPairNodeRef& node) override {
+        return node.valueTrue ? 1.0 : 0.0;
+    }
+    int getVarIndex(const Node&) override { return 0; }
+    int getVarIndex(const Hyperedge&) override { return 0; }
+    void printInfo(const BoolPairNodeRef&, const std::string&) override {}
+    void dumpProfilingStatistics() override {}
+
+    bool isValid() const { return !invalid && sawVar; }
+
+private:
+    BoolPairNodeRef markVar(const Node* node, const Hyperedge* edge) {
+        if (sawVar) {
+            invalid = true;
+            return BoolPairNodeRef{false, true, true};
+        }
+        if (node != nullptr) {
+            if (!targetNode || targetNode.get() != node) {
+                invalid = true;
+            }
+        } else if (edge != nullptr) {
+            if (!targetEdge || targetEdge.get() != edge) {
+                invalid = true;
+            }
+        } else {
+            invalid = true;
+        }
+        sawVar = true;
+        return BoolPairNodeRef{false, true, true};
+    }
+
+    NodePtr targetNode;
+    EdgePtr targetEdge;
     bool sawVar = false;
     bool invalid = false;
 };
@@ -1164,17 +1294,16 @@ inline bool evaluateSingleRandComponent(
         const SingleRandVarInfo& var,
         bool varValue,
         std::unordered_map<NodePtr, bool>& nodeValues,
-        long long* evalMs = nullptr) {
+        double* evalMs = nullptr) {
     BoolFormulaManager manager(var.node, var.edge, varValue);
-    SubgraphView subview(comp.nodes, comp.edges);
+    BorrowedComponentSubgraphView subview(comp);
     std::map<NodePtr, BoolNodeRef> nodeFormulas;
     std::map<EdgePtr, BoolNodeRef> edgeFormulas;
     auto start = std::chrono::steady_clock::now();
     buildFormulasCyclewise(subview, manager, nodeFormulas, edgeFormulas, {}, nullptr, true, false);
     auto end = std::chrono::steady_clock::now();
     if (evalMs) {
-        *evalMs = static_cast<long long>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+        *evalMs = std::chrono::duration<double, std::milli>(end - start).count();
     }
     if (!manager.isValid()) {
         return false;
@@ -1191,20 +1320,53 @@ inline bool evaluateSingleRandComponent(
     return true;
 }
 
+inline bool evaluateSingleRandComponentBoth(
+        const ComponentSubgraph& comp,
+        const SingleRandVarInfo& var,
+        std::unordered_map<NodePtr, bool>& valuesFalse,
+        std::unordered_map<NodePtr, bool>& valuesTrue,
+        double* evalMs = nullptr) {
+    BoolPairFormulaManager manager(var.node, var.edge);
+    BorrowedComponentSubgraphView subview(comp);
+    std::map<NodePtr, BoolPairNodeRef> nodeFormulas;
+    std::map<EdgePtr, BoolPairNodeRef> edgeFormulas;
+    auto start = std::chrono::steady_clock::now();
+    buildFormulasCyclewise(subview, manager, nodeFormulas, edgeFormulas, {}, nullptr, true, false);
+    auto end = std::chrono::steady_clock::now();
+    if (evalMs) {
+        *evalMs = std::chrono::duration<double, std::milli>(end - start).count();
+    }
+    if (!manager.isValid()) {
+        return false;
+    }
+    valuesFalse.clear();
+    valuesTrue.clear();
+    valuesFalse.reserve(comp.nodes.size());
+    valuesTrue.reserve(comp.nodes.size());
+    for (const auto& node : comp.nodes) {
+        auto it = nodeFormulas.find(node);
+        if (it == nodeFormulas.end() || !it->second.get()) {
+            continue;
+        }
+        valuesFalse.emplace(node, it->second.valueFalse);
+        valuesTrue.emplace(node, it->second.valueTrue);
+    }
+    return true;
+}
+
 inline bool evaluateConjComponent(
         const ComponentSubgraph& comp,
         std::unordered_map<NodePtr, double>& nodeProbs,
-        long long* evalMs = nullptr) {
+        double* evalMs = nullptr) {
     ConjFormulaManager manager;
-    SubgraphView subview(comp.nodes, comp.edges);
+    BorrowedComponentSubgraphView subview(comp);
     std::map<NodePtr, ConjNodeRef> nodeFormulas;
     std::map<EdgePtr, ConjNodeRef> edgeFormulas;
     auto start = std::chrono::steady_clock::now();
     buildFormulasCyclewise(subview, manager, nodeFormulas, edgeFormulas, {}, nullptr, true, false);
     auto end = std::chrono::steady_clock::now();
     if (evalMs) {
-        *evalMs = static_cast<long long>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+        *evalMs = std::chrono::duration<double, std::milli>(end - start).count();
     }
     if (!manager.isValid()) {
         return false;

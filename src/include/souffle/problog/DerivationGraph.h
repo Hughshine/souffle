@@ -559,7 +559,7 @@ inline bool nodeMayDependOnSupportTokens(const DerivationGraphViewInterface& g, 
             if (supportTokensIntersect(edge->getProbabilisticSupportTokens(), targetTokens)) {
                 return true;
             }
-            for (auto input : g.getInputs(edge)) {
+            for (auto input : edge->getInputs()) {
                 if (input && seenNodes.insert(input->getId()).second) {
                     work.push(input);
                 }
@@ -577,7 +577,7 @@ inline bool edgeInputHasSupportOverlap(const DerivationGraphViewInterface& g, Ed
     if (supportTokensIntersect(edge->getProbabilisticSupportTokens(), targetTokens)) {
         return true;
     }
-    const auto inputs = g.getInputs(edge);
+    const auto& inputs = edge->getInputs();
     for (size_t i = 0; i < inputs.size(); ++i) {
         if (i == inputIndex) {
             continue;

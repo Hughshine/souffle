@@ -52,6 +52,52 @@ static std::size_t countInitialInputFacts() {
     return inputFactSet.size();
 }
 
+struct RewriteDispatchDecision {
+    bool useImplicit = false;
+    std::string splitMode = "naive-split";
+    std::string engine = "legacy";
+    std::size_t totalRules = 0;
+    std::size_t probabilisticRules = 0;
+    bool autoSelected = false;
+};
+
+static RewriteDispatchDecision chooseRewriteDispatch(const CmdOptions& opt, const RuleManager& ruleManager) {
+    RewriteDispatchDecision decision;
+    decision.splitMode = opt.getSplitMode();
+    for (const auto* rule : ruleManager.getAllRules()) {
+        if (rule == nullptr) continue;
+        ++decision.totalRules;
+        if (std::abs(rule->getProbability() - 1.0) > 1e-12) {
+            ++decision.probabilisticRules;
+        }
+    }
+
+    const bool splitForcesLegacy = opt.isSplitModeExplicit() && decision.splitMode == "no-split";
+    if (opt.isImplicitRewriteEnabled() && !splitForcesLegacy) {
+        decision.useImplicit = true;
+        decision.engine = "implicit-forced";
+        return decision;
+    }
+
+    if (!opt.isImplicitRewriteEnabled() && !opt.isSplitModeExplicit()) {
+        decision.autoSelected = true;
+        if (decision.probabilisticRules > 0) {
+            decision.useImplicit = true;
+            decision.splitMode = "naive-split";
+            decision.engine = "auto-implicit";
+        } else {
+            decision.useImplicit = false;
+            decision.splitMode = "no-split";
+            decision.engine = "auto-legacy-no-split";
+        }
+        return decision;
+    }
+
+    decision.useImplicit = false;
+    decision.engine = splitForcesLegacy ? "legacy-forced-no-split" : "legacy-forced";
+    return decision;
+}
+
 static std::size_t estimateBddVarCount(const SubgraphView& view) {
     auto isSemanticRandomProb = [](double p) {
         return p > 0.0 && p < 1.0;
@@ -527,14 +573,14 @@ struct FastComponentEval {
     SingleRandVarInfo var;
     std::unordered_map<NodePtr, bool> valuesTrue;
     std::unordered_map<NodePtr, bool> valuesFalse;
-    long long evalMsTrue = 0;
-    long long evalMsFalse = 0;
+    double evalMsTrue = 0.0;
+    double evalMsFalse = 0.0;
 };
 
 struct ConjComponentEval {
     ComponentSubgraph comp;
     std::unordered_map<NodePtr, double> probabilities;
-    long long evalMs = 0;
+    double evalMs = 0.0;
 };
 
 struct ComponentAnalysis {
@@ -581,10 +627,10 @@ struct ComponentDecision {
 static bool evaluateZeroRandConjComponent(
         const ComponentSubgraph& comp,
         std::unordered_map<NodePtr, double>& nodeProbs,
-        long long* evalMs = nullptr) {
+        double* evalMs = nullptr) {
     using Clock = std::chrono::steady_clock;
     const auto start = Clock::now();
-    SubgraphView subview(comp.nodes, comp.edges);
+    BorrowedComponentSubgraphView subview(comp);
     std::unordered_map<NodePtr, std::size_t> indegree;
     indegree.reserve(comp.nodes.size());
     for (const auto& node : comp.nodes) {
@@ -668,8 +714,7 @@ static bool evaluateZeroRandConjComponent(
         nodeProbs[node] = prob;
     }
     if (evalMs) {
-        *evalMs = static_cast<long long>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count());
+        *evalMs = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
     }
     return true;
 }
@@ -1002,7 +1047,8 @@ static void runBddPipeline(
         DerivationGraph& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        StageInfo* rewriteHybridStage) {
+        StageInfo* rewriteHybridStage,
+        bool autoDisableSingleRandFast) {
     Debugger& debugger = Debugger::getInstance();
 
     std::map<NodePtr, BddNodeRef> nodeFormulas;
@@ -1111,7 +1157,8 @@ static void runBddPipeline(
             decisions.reserve(analyses.size());
 
             probResult.clear();
-            const bool enableFast = opt.isSingleRandFastEnabled();
+            const bool enableFast = opt.isSingleRandFastEnabled() && !autoDisableSingleRandFast;
+            double componentFastEvalTotalMs = 0.0;
             auto classifyStart = std::chrono::steady_clock::now();
             for (auto& analysis : analyses) {
                 const auto& comp = analysis.comp;
@@ -1185,10 +1232,13 @@ static void runBddPipeline(
                 if (singleCandidate) {
                     FastComponentEval eval;
                     eval.var = analysis.singleRand;
-                    if (!evaluateSingleRandComponent(
-                                analysis.comp, eval.var, true, eval.valuesTrue, &eval.evalMsTrue) ||
-                            !evaluateSingleRandComponent(
-                                    analysis.comp, eval.var, false, eval.valuesFalse, &eval.evalMsFalse)) {
+                    auto fastEvalStart = std::chrono::steady_clock::now();
+                    const bool evalOk = evaluateSingleRandComponentBoth(
+                            analysis.comp, eval.var, eval.valuesFalse, eval.valuesTrue, &eval.evalMsTrue);
+                    componentFastEvalTotalMs += std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - fastEvalStart).count();
+                    if (!evalOk) {
+                        eval.evalMsFalse = 0;
                         if (logFastReasons) {
                             std::cout << "[fc-component] id=" << comp.id
                                       << " single_skip=eval_failed"
@@ -1239,9 +1289,12 @@ static void runBddPipeline(
                 if (conjCandidate) {
                     ConjComponentEval eval;
                     const bool zeroRandConj = (analysis.randVars == 0);
+                    auto fastEvalStart = std::chrono::steady_clock::now();
                     const bool conjOk = zeroRandConj
                             ? evaluateZeroRandConjComponent(analysis.comp, eval.probabilities, &eval.evalMs)
                             : evaluateConjComponent(analysis.comp, eval.probabilities, &eval.evalMs);
+                    componentFastEvalTotalMs += std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - fastEvalStart).count();
                     if (!conjOk) {
                         if (logFastReasons) {
                             std::cout << "[fc-component] id=" << comp.id
@@ -1306,6 +1359,8 @@ static void runBddPipeline(
             auto classifyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       std::chrono::steady_clock::now() - classifyStart)
                                       .count();
+            const double componentClassifyPureMs =
+                    std::max(0.0, static_cast<double>(classifyMs) - componentFastEvalTotalMs);
 
             std::sort(slowEvals.begin(), slowEvals.end(),
                     [](const SlowComponentEval& a, const SlowComponentEval& b) {
@@ -1358,6 +1413,8 @@ static void runBddPipeline(
             debugger.addInfo("evidence_apply_ms", std::to_string(evidenceApplyMs));
             debugger.addInfo("evidence_group_ms", std::to_string(evidenceGroupMs));
             debugger.addInfo("component_classify_ms", std::to_string(classifyMs));
+            debugger.addInfo("component_classify_pure_ms", std::to_string(componentClassifyPureMs));
+            debugger.addInfo("component_fast_eval_total_ms", std::to_string(componentFastEvalTotalMs));
             debugger.addInfo("fastpath_components", std::to_string(fastStats.used));
             debugger.addInfo("fastpath_candidates", std::to_string(fastStats.candidates));
             debugger.addInfo("fastpath_skipped", std::to_string(fastStats.skipped));
@@ -1378,6 +1435,10 @@ static void runBddPipeline(
                         std::to_string(evidenceGroupMs));
                 hybridStage->logMessage(Level::INFO, "component_classify_ms=" +
                         std::to_string(classifyMs));
+                hybridStage->logMessage(Level::INFO, "component_classify_pure_ms=" +
+                        std::to_string(componentClassifyPureMs));
+                hybridStage->logMessage(Level::INFO, "component_fast_eval_total_ms=" +
+                        std::to_string(componentFastEvalTotalMs));
                 hybridStage->logMessage(Level::INFO, "slow_components=" +
                         std::to_string(slowEvals.size()));
                 hybridStage->logMessage(Level::INFO, "fastpath_components=" +
@@ -1574,7 +1635,9 @@ static void runBddPipeline(
             std::cout << "[pipeline] component analysis took " << analysesMs << " ms\n";
             std::cout << "[pipeline] evidence resolve/tag took " << evidenceApplyMs << " ms\n";
             std::cout << "[pipeline] evidence grouping took " << evidenceGroupMs << " ms\n";
-            std::cout << "[pipeline] component classification took " << classifyMs << " ms\n";
+            std::cout << "[pipeline] component classification took " << classifyMs
+                      << " ms (pure=" << componentClassifyPureMs
+                      << " ms, fast_eval=" << componentFastEvalTotalMs << " ms)\n";
             std::cout << "[pipeline] evidence BDD build took " << evidenceBuildMs << " ms\n";
             std::cout << "[pipeline] evidence WMC took " << evidenceWmcMs << " ms\n";
             std::cout << "[pipeline] per-node conditional WMC took " << perNodeWmcMs << " ms\n";
@@ -1804,7 +1867,8 @@ static void runSddPipeline(
         DerivationGraph& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        StageInfo* rewriteHybridStage) {
+        StageInfo* rewriteHybridStage,
+        bool autoDisableSingleRandFast) {
     Debugger& debugger = Debugger::getInstance();
 
     std::map<NodePtr, SddNodeRef> nodeFormulas;
@@ -1869,7 +1933,8 @@ static void runSddPipeline(
             std::vector<ComponentDecision> decisions;
             decisions.reserve(analyses.size());
 
-            const bool enableFast = opt.isSingleRandFastEnabled();
+            const bool enableFast = opt.isSingleRandFastEnabled() && !autoDisableSingleRandFast;
+            double componentFastEvalTotalMs = 0.0;
             auto classifyStart = std::chrono::steady_clock::now();
             for (auto& analysis : analyses) {
                 const auto& comp = analysis.comp;
@@ -1940,10 +2005,13 @@ static void runSddPipeline(
                 if (singleCandidate) {
                     FastComponentEval eval;
                     eval.var = analysis.singleRand;
-                    if (!evaluateSingleRandComponent(
-                                analysis.comp, eval.var, true, eval.valuesTrue, &eval.evalMsTrue) ||
-                            !evaluateSingleRandComponent(
-                                    analysis.comp, eval.var, false, eval.valuesFalse, &eval.evalMsFalse)) {
+                    auto fastEvalStart = std::chrono::steady_clock::now();
+                    const bool evalOk = evaluateSingleRandComponentBoth(
+                            analysis.comp, eval.var, eval.valuesFalse, eval.valuesTrue, &eval.evalMsTrue);
+                    componentFastEvalTotalMs += std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - fastEvalStart).count();
+                    if (!evalOk) {
+                        eval.evalMsFalse = 0;
                         if (logFastReasons) {
                             std::cout << "[fc-component] id=" << comp.id
                                       << " single_skip=eval_failed"
@@ -1968,7 +2036,12 @@ static void runSddPipeline(
 
                 if (conjCandidate) {
                     ConjComponentEval eval;
-                    if (!evaluateConjComponent(analysis.comp, eval.probabilities, &eval.evalMs)) {
+                    auto fastEvalStart = std::chrono::steady_clock::now();
+                    const bool conjOk =
+                            evaluateConjComponent(analysis.comp, eval.probabilities, &eval.evalMs);
+                    componentFastEvalTotalMs += std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - fastEvalStart).count();
+                    if (!conjOk) {
                         if (logFastReasons) {
                             std::cout << "[fc-component] id=" << comp.id
                                       << " conj_skip=eval_failed"
@@ -2007,6 +2080,8 @@ static void runSddPipeline(
             auto classifyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       std::chrono::steady_clock::now() - classifyStart)
                                       .count();
+            const double componentClassifyPureMs =
+                    std::max(0.0, static_cast<double>(classifyMs) - componentFastEvalTotalMs);
 
             long long initMsTotal = 0;
             long long initMsMax = 0;
@@ -2041,6 +2116,8 @@ static void runSddPipeline(
             debugger.addInfo("evidence_apply_ms", std::to_string(evidenceApplyMs));
             debugger.addInfo("evidence_group_ms", std::to_string(evidenceGroupMs));
             debugger.addInfo("component_classify_ms", std::to_string(classifyMs));
+            debugger.addInfo("component_classify_pure_ms", std::to_string(componentClassifyPureMs));
+            debugger.addInfo("component_fast_eval_total_ms", std::to_string(componentFastEvalTotalMs));
             debugger.addInfo("fastpath_components", std::to_string(fastStats.used));
             debugger.addInfo("fastpath_candidates", std::to_string(fastStats.candidates));
             debugger.addInfo("fastpath_skipped", std::to_string(fastStats.skipped));
@@ -2065,6 +2142,10 @@ static void runSddPipeline(
                         std::to_string(evidenceGroupMs));
                 hybridStage->logMessage(Level::INFO, "component_classify_ms=" +
                         std::to_string(classifyMs));
+                hybridStage->logMessage(Level::INFO, "component_classify_pure_ms=" +
+                        std::to_string(componentClassifyPureMs));
+                hybridStage->logMessage(Level::INFO, "component_fast_eval_total_ms=" +
+                        std::to_string(componentFastEvalTotalMs));
                 hybridStage->logMessage(Level::INFO, "fastpath_components=" + std::to_string(fastStats.used));
                 hybridStage->logMessage(Level::INFO, "fastpath_candidates=" + std::to_string(fastStats.candidates));
                 hybridStage->logMessage(Level::INFO, "fastpath_skipped=" + std::to_string(fastStats.skipped));
@@ -2210,7 +2291,9 @@ static void runSddPipeline(
             std::cout << "[pipeline] component analysis took " << analysesMs << " ms\n";
             std::cout << "[pipeline] evidence resolve/tag took " << evidenceApplyMs << " ms\n";
             std::cout << "[pipeline] evidence grouping took " << evidenceGroupMs << " ms\n";
-            std::cout << "[pipeline] component classification took " << classifyMs << " ms\n";
+            std::cout << "[pipeline] component classification took " << classifyMs
+                      << " ms (pure=" << componentClassifyPureMs
+                      << " ms, fast_eval=" << componentFastEvalTotalMs << " ms)\n";
             std::cout << "[pipeline] component evidence build took " << evidenceBuildMs << " ms\n";
             std::cout << "[pipeline] component evidence WMC took " << evidenceWmcMs << " ms\n";
             std::cout << "[pipeline] per-node conditional WMC took " << perNodeWmcMs << " ms\n";
@@ -2416,22 +2499,74 @@ void runPipeline(
         view.dumpJson(makeOutputPath(opt, "derivation.json"));
     }
     StageInfo* rewriteHybridStage = nullptr;
+    RewriteDispatchDecision rewriteDecision;
+    bool haveRewriteDecision = false;
     if (opt.isRewriteEnabled() && !opt.isDerivationOnly()) {
         rewriteHybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
     }
     if (opt.isRewriteEnabled() && !opt.isDerivationOnly()) {
         auto rewriteStart = std::chrono::steady_clock::now();
         GraphRewriteStats rewriteStats;
+        rewriteDecision = chooseRewriteDispatch(opt, ruleManager);
+        haveRewriteDecision = true;
+        std::cout << "[pipeline] rewrite dispatch"
+                  << " engine=" << rewriteDecision.engine
+                  << " split_mode=" << rewriteDecision.splitMode
+                  << " total_rules=" << rewriteDecision.totalRules
+                  << " probabilistic_rules=" << rewriteDecision.probabilisticRules
+                  << " auto=" << (rewriteDecision.autoSelected ? "true" : "false")
+                  << std::endl;
+        if (rewriteHybridStage) {
+            debugger.addInfo("rewrite_dispatch_engine", rewriteDecision.engine);
+            debugger.addInfo("rewrite_dispatch_split_mode", rewriteDecision.splitMode);
+            debugger.addInfo("rewrite_dispatch_total_rules", std::to_string(rewriteDecision.totalRules));
+            debugger.addInfo("rewrite_dispatch_probabilistic_rules",
+                    std::to_string(rewriteDecision.probabilisticRules));
+            debugger.addInfo("rewrite_dispatch_auto", rewriteDecision.autoSelected ? "true" : "false");
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_dispatch_engine=" + rewriteDecision.engine);
+            rewriteHybridStage->logMessage(
+                    Level::INFO, "rewrite_dispatch_split_mode=" + rewriteDecision.splitMode);
+            rewriteHybridStage->logMessage(Level::INFO,
+                    "rewrite_dispatch_total_rules=" + std::to_string(rewriteDecision.totalRules));
+            rewriteHybridStage->logMessage(Level::INFO,
+                    "rewrite_dispatch_probabilistic_rules=" +
+                            std::to_string(rewriteDecision.probabilisticRules));
+            rewriteHybridStage->logMessage(Level::INFO,
+                    std::string("rewrite_dispatch_auto=") +
+                            (rewriteDecision.autoSelected ? "true" : "false"));
+        }
         const auto runLegacyRewrite = [&] {
             GraphRewriter rewriter;
             RewriteFeatureFlags rewriteFlags;
-            const auto& splitMode = opt.getSplitMode();
+            const auto& splitMode = rewriteDecision.splitMode;
             if (splitMode == "no-split") {
                 rewriteFlags.splitMode = SplitMode::None;
             } else if (splitMode == "complete-split") {
                 rewriteFlags.splitMode = SplitMode::Complete;
             } else {
                 rewriteFlags.splitMode = SplitMode::Naive;
+            }
+            rewriteFlags.restrictCompactionToDirty = rewriteFlags.splitMode == SplitMode::None;
+            if (std::getenv("SOUFFLE_DISABLE_REWRITE_SINGLE")) {
+                rewriteFlags.enableSingleHyperedge = false;
+            }
+            if (std::getenv("SOUFFLE_DISABLE_REWRITE_ALLFACTS")) {
+                rewriteFlags.enableAllFactsToSO = false;
+            }
+            if (std::getenv("SOUFFLE_DISABLE_REWRITE_LINEAR")) {
+                rewriteFlags.enableLinearTwoEdge = false;
+            }
+            if (std::getenv("SOUFFLE_DISABLE_REWRITE_PARALLEL")) {
+                rewriteFlags.enableParallelEdge = false;
+            }
+            if (std::getenv("SOUFFLE_DISABLE_REWRITE_FANOUT")) {
+                rewriteFlags.enableFanOutConverge = false;
+            }
+            if (std::getenv("SOUFFLE_DISABLE_REWRITE_GENERAL")) {
+                rewriteFlags.enableGeneral = false;
+            }
+            if (std::getenv("SOUFFLE_DISABLE_REWRITE_COMPACTION")) {
+                rewriteFlags.enableCompaction = false;
             }
             // Keep the graph-level rewrite policy aligned with the CLI. Without
             // threading this flag through, implicit full-mode runs silently fall
@@ -2442,7 +2577,7 @@ void runPipeline(
             rewriteFlags.relaxCompactionDirty = opt.isRelaxCompactionDirtyEnabled();
             rewriteStats = rewriter.rewriteUntilFixpoint(*graph, view, opt.isProfiling(), rewriteFlags);
         };
-        if (opt.isImplicitRewriteEnabled()) {
+        if (rewriteDecision.useImplicit) {
             std::unordered_set<UntypedTuple> originalOutputTuples;
             std::unordered_set<std::string> originalOutputRelations;
             for (const auto& node : view.getNodes()) {
@@ -2452,7 +2587,7 @@ void runPipeline(
                 }
             }
             ImplicitSplitPipelineOptions rewriteOptions;
-            rewriteOptions.splitMode = resolveImplicitSplitMode(opt.getSplitMode());
+            rewriteOptions.splitMode = resolveImplicitSplitMode(rewriteDecision.splitMode);
             rewriteOptions.runOverlayFastPaths = true;
             rewriteOptions.runOverlaySingleHyperedge = true;
             rewriteOptions.runOverlayAllFacts = true;
@@ -2543,8 +2678,8 @@ void runPipeline(
                     rewriteHybridStage->logMessage(Level::INFO, key + "=" + value);
                 };
                 const auto& implicitGraphStats = implicitResult.stats.graphRewriteStats;
-                debugger.addInfo("rewrite_engine", "implicit");
-                rewriteHybridStage->logMessage(Level::INFO, "rewrite_engine=implicit");
+                debugger.addInfo("rewrite_engine", rewriteDecision.engine);
+                rewriteHybridStage->logMessage(Level::INFO, "rewrite_engine=" + rewriteDecision.engine);
                 addImplicitInfo("implicit_total_ms", implicitResult.stats.totalMs);
                 addImplicitInfo("implicit_overlay_prep_ms", implicitResult.stats.overlayPrepMs);
                 addImplicitInfo("implicit_overlay_split_ms", implicitResult.stats.overlaySplitMs);
@@ -2622,9 +2757,11 @@ void runPipeline(
                   << ", randomVarsDelta=" << randomVarsDelta
                   << ", randomVarsRatio=" << randomVarsRatio
                   << ", randomVarsRemoved=" << rewriteStats.totalRandomVars
+                  << ", compactionMs=" << rewriteStats.totalCompactionMs
+                  << ", cleanupMs=" << rewriteStats.totalCleanupMs
                   << ", simpleFactRegions=" << rewriteStats.simpleFactRegions << std::endl;
         if (rewriteHybridStage) {
-            const std::string rewriteEngine = opt.isImplicitRewriteEnabled() ? "implicit" : "legacy";
+            const std::string rewriteEngine = rewriteDecision.engine;
             debugger.addInfo("rewrite_engine", rewriteEngine);
             debugger.addInfo("rewrite_ms", std::to_string(rewriteMs));
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_engine=" + rewriteEngine);
@@ -2640,6 +2777,8 @@ void runPipeline(
             debugger.addInfo("rewrite_bdd_compile_ms", std::to_string(rewriteStats.totalBddBuildMs));
             debugger.addInfo("rewrite_bdd_wmc_ms", std::to_string(rewriteStats.totalBddWmcMs));
             debugger.addInfo("rewrite_apply_total_ms", std::to_string(rewriteStats.totalApplyMs));
+            debugger.addInfo("rewrite_compaction_ms", std::to_string(rewriteStats.totalCompactionMs));
+            debugger.addInfo("rewrite_cleanup_ms", std::to_string(rewriteStats.totalCleanupMs));
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_initial_count_random_vars_ms=" +
                     std::to_string(rewriteStats.initialCountRandomVarsMs));
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_collect_evidence_affected_ms=" +
@@ -2654,8 +2793,12 @@ void runPipeline(
                     std::to_string(rewriteStats.totalBddWmcMs));
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_apply_total_ms=" +
                     std::to_string(rewriteStats.totalApplyMs));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_compaction_ms=" +
+                    std::to_string(rewriteStats.totalCompactionMs));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_cleanup_ms=" +
+                    std::to_string(rewriteStats.totalCleanupMs));
 
-            if (!opt.isImplicitRewriteEnabled()) {
+            if (!rewriteDecision.useImplicit) {
                 const auto formatMs = [](double value) {
                     std::ostringstream oss;
                     oss << std::fixed << std::setprecision(6) << value;
@@ -2691,6 +2834,8 @@ void runPipeline(
                 addExplicitInfo("explicit_graph_bdd_compile_ms", rewriteStats.totalBddBuildMs);
                 addExplicitInfo("explicit_graph_bdd_wmc_ms", rewriteStats.totalBddWmcMs);
                 addExplicitInfo("explicit_graph_apply_ms", rewriteStats.totalApplyMs);
+                addExplicitInfo("explicit_graph_compaction_ms", rewriteStats.totalCompactionMs);
+                addExplicitInfo("explicit_graph_cleanup_ms", rewriteStats.totalCleanupMs);
                 addExplicitTextInfo("explicit_graph_detected_regions",
                         std::to_string(rewriteStats.numRegionsDetected));
                 addExplicitTextInfo("explicit_graph_detected_region_total_edges",
@@ -2714,10 +2859,24 @@ void runPipeline(
         std::cout << "[pipeline] derivation-only mode; skip rewrite" << std::endl;
     }
 
+    const bool autoDisableSingleRandFast = haveRewriteDecision && rewriteDecision.autoSelected &&
+            !rewriteDecision.useImplicit && rewriteDecision.splitMode == "no-split" &&
+            opt.isSingleRandFastEnabled();
+    if (autoDisableSingleRandFast) {
+        std::cout << "[pipeline] rewrite dispatch disables single-rand component fast path"
+                  << " for deterministic no-split rewrite" << std::endl;
+        debugger.addInfo("single_rand_fast_auto_disabled", "true");
+        if (rewriteHybridStage) {
+            rewriteHybridStage->logMessage(Level::INFO, "single_rand_fast_auto_disabled=true");
+        }
+    }
+
     if (program.getKnowledge() == souffle::Knowledge::BDD) {
-        runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage);
+        runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage,
+                autoDisableSingleRandFast);
     } else if (program.getKnowledge() == souffle::Knowledge::SDD) {
-        runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage);
+        runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage,
+                autoDisableSingleRandFast);
     } else {
         std::cerr << "Unknown knowledge representation" << std::endl;
     }

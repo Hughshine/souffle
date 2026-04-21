@@ -67,11 +67,15 @@ listed below; use `-h` for the authoritative values.
 - `-e, --merge-bi-imp`: always enabled in full-only binaries (`--full-only` at
   compile time); it is forced off in online/incremental binaries.
 - `--prune-extra`: default `false` (enable outputless-component pruning in prune)
-- `-r, --rewrite`: default `false`
+- `-r, --rewrite`: default `false`; enables the artifact-facing smart rewrite
+  dispatcher. The dispatcher currently selects implicit split rewrite when any
+  rule is probabilistic, and deterministic no-split rewrite when rules are
+  deterministic.
 - `--det-opt`: default `false` (enable deterministic-relation analysis + derivation gating)
 - `--det-force`: default `false` (force deterministic evaluation; skip derivation graph and emit 1.0 probs)
 - `--split-mode=<no-split|naive-split|complete-split>`: default `naive-split`
-  (rewrite only)
+  when explicitly forcing a rewrite mode; bare `--rewrite` may override the
+  split policy through the smart dispatcher.
 - `--dumpjson`: default `false`
 - `--dumpdot`: default `false`
 - `--dumpstat`: default `false`

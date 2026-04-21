@@ -91,8 +91,11 @@
 - `-e`, `--merge-bi-imp`: merge mutually implying deterministic nodes (full-only safe).
 - `--prune-extra`: drop outputless components during prune.
 - `-C`, `--fold-const`: constant pre-analysis (negation ignored).
-- `-r`, `--rewrite`: enable SISO-based rewrite.
-- `-P`, `--split-mode <no-split|naive-split|complete-split>`: split mode for rewrite.
+- `-r`, `--rewrite`: enable the smart rewrite dispatcher.
+  Probabilistic-rule programs select implicit split rewrite; deterministic-rule
+  programs select deterministic no-split rewrite.
+- `-P`, `--split-mode <no-split|naive-split|complete-split>`: explicit split
+  mode override for diagnostic rewrite runs.
 - `-k`, `--knowledge <bdd|sdd>`: choose DD backend.
 
 ### Determinism controls

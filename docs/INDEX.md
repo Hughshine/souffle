@@ -17,6 +17,7 @@ Legend:
 - [PRIMARY] `docs/design/README.md` — design proposals map
 - [PRIMARY] `docs/historical/README.md` — archived/historical docs map
 - [SECONDARY] `docs/research/README.rewrite.status.md` — curated rewrite research status and local optimization log
+- [SECONDARY] `docs/research/README.artifact-cleanup.report.md` — artifact-evaluation cleanup and packaging checklist
 - [SECONDARY] `docs/topics/runtime/README.flag.md` — consolidated compiler/runtime flag reference
 - [SECONDARY] `docs/topics/runtime/README.dump.md` — dump/debug outputs (compiler + runtime)
 - [PRIMARY] `docs/TESTING.md` — verification status + test commands
@@ -104,6 +105,7 @@ Legend:
 
 ## Research Status
 - [SECONDARY] `docs/research/README.rewrite.status.md` — current trusted artifact reading plus local optimization outcomes for rewrite work
+- [SECONDARY] `docs/research/README.artifact-cleanup.report.md` — current artifact cleanup and benchmark packaging report
 
 ## Archive
 - [HISTORICAL] `docs/historical/PAPER.md` — paper table/figure working note (archived)
