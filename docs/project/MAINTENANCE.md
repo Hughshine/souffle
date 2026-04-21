@@ -36,4 +36,3 @@ This file records the invariants most likely to cause regressions if violated.
 - [docs/TESTING.md](docs/TESTING.md)
 
 ## Related commits
-- `UNCOMMITTED` — docs(project): add module-level maintenance invariants and regression checks

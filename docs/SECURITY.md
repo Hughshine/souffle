@@ -31,5 +31,4 @@ TODO: define a security contact and disclosure process for this fork.
 - Update docs and run the recommended verification steps.
 
 ## Related commits
-- `UNCOMMITTED` — docs(process): update security hygiene reference to docs/process commit guide
 - `aaa18c137` — docs(repo): add core docs

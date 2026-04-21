@@ -294,6 +294,5 @@ Full-mode commits rebuild via full run (`runAll(...)`), re-create/prune graph, a
 - [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
 
 ## Related commits
-- `UNCOMMITTED` — docs(project): add full ProbLog extension stack document from driver to runtime pipeline
 - `668298ef8` — fix(inc-region): update regional WMC routing and profiling
 - `812ea4081` — docs(repo): refine README narratives

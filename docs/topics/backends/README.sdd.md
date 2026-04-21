@@ -173,8 +173,7 @@ Why it matters:
   until a formula forces `createVar`.
 
 ## Status / Known Issues
-- See `docs/historical/README.rewrite.120825.md` (“SDD status”) for current correctness concerns and
-  why the default recommendation is still BDD.
+- SDD remains non-default for AE. Use BDD unless a diagnostic run explicitly targets SDD.
 
 ## Suggested Next Steps (Implementation Checklist)
 - Add `preConfig(view)` to pre-size var_count (full + delta-insert paths) and to clear

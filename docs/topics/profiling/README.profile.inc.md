@@ -10,7 +10,6 @@
 ## Scope
 - Focus: inc vs full slowdowns outside SEMINAIVE.
 - Data source:
-  - archived per-stage tables in `docs/historical/README.eval.inc.log.md`
   - archived batch TSV summaries in `archive/2026-02-11/tsv/`
 - Assumption: SEMINAIVE fixes are already in place; see `docs/topics/pipeline/README.dred.md`.
 

@@ -22,7 +22,6 @@ This file describes the current inc-regional incremental pipeline implementation
 
 ## Related docs
 - `docs/topics/evaluation/README.eval.inc.md` (benchmark procedures)
-- `docs/historical/README.eval.inc.log.md` (historical benchmark logs)
 - `docs/topics/pipeline/README.dred.md` (online DRed internals and deletion bottlenecks)
 
 ## Assumptions

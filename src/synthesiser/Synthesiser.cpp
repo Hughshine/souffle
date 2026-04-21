@@ -4691,7 +4691,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "," << (glb.config().has("rewrite") ? "true" : "false");
     hook << ");\n";
 
-    hook << "if (!opt.parse(argc,argv)) return 1;\n";
+    hook << "if (!opt.parse(argc,argv)) return opt.isHelpRequested() ? 0 : 1;\n";
     hook << "detOptEnabled = opt.isDetOptEnabled();\n";
     hook << "detForceEnabled = opt.isDetForceEnabled();\n";
     hook << "dredProfileEnabled = opt.isDredProfileEnabled();\n";

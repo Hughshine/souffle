@@ -15,9 +15,9 @@ benchmarks. For the pipeline overview, see `docs/topics/pipeline/README.inc.regi
   `src/include/souffle/problog/IncRegionAnalyzer.h`,
   `src/include/souffle/problog/DerivationGraph.h`.
 - Benchmark context: P1-P14 side-channel runs (seed0, strengthen, delta ratios
-  0.003 / 0.006 / 0.01). Run log is in `docs/historical/README.eval.final.2026-01-21.md`.
-  Additional runs (2026-01-21): `side_channel_inc_strengthen_fresh` P16–P20
-  insert-turn analysis (see `docs/historical/README.eval.final.2026-01-21.md`).
+  0.003 / 0.006 / 0.01). Long-form exploratory logs are not part of the AE branch.
+  Additional runs (2026-01-21): `side_channel_inc_strengthen_fresh` P16-P20
+  insert-turn analysis.
 
 ## DepGraph caching (confirmed)
 `DerivationGraphViewInterface::getCycleDependencyGraph()` caches a
@@ -329,7 +329,7 @@ Feasibility outlook:
   depGraph cache.
 
 ## 2026-01-22 benchmark findings (det-opt, side_channel_inc_strengthen_fresh)
-Summary from `docs/historical/README.eval.final.2026-01-21.md` (no-profile timing + profile breakdown):
+Summary of no-profile timing and profile breakdown:
 - **Insert FC slowdown vs inc-naive.** Average insert-turn speedup
   (inc-naive / inc-regional) ≈ **0.89×** → inc-regional is typically slower.
 - **Region growth is large.** Average `R/DR` after analyze ≈ **0.588**, final

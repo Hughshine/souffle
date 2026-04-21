@@ -17,7 +17,6 @@ namespace souffle::problog {
 enum class ImplicitSplitMode {
     None,
     Naive,
-    Complete,
 };
 
 struct SplitNodeRef {
@@ -73,7 +72,6 @@ struct ImplicitSplitOverlayStats {
     std::size_t rebuildIndexCount = 0;
     std::size_t fastPathIterations = 0;
     double splitNaiveMs = 0.0;
-    double splitCompleteMs = 0.0;
     double splitAliasApplyMs = 0.0;
     double rebuildIndexMs = 0.0;
     double fastPathDetectMs = 0.0;
@@ -203,9 +201,6 @@ public:
     MaterializedImplicitSplitGraph materializeToGraph(
             const std::unordered_set<NodePtr>* skippedOutputNodes = nullptr) const;
 
-    std::size_t countNodesByRelationAndFactState(const std::string& relationName, bool currentIsFact) const;
-    std::size_t countActiveEdgesByOutputRelation(const std::string& relationName) const;
-
     const std::vector<NodePtr>& getOutputs() const {
         return outputs_;
     }
@@ -293,8 +288,6 @@ private:
             double probability, std::vector<SupportToken> supportTokens = {});
 
     std::vector<std::vector<std::size_t>> partitionFactOutgoingEdgesNaive(
-            const NodePtr& fact, ImplicitSplitOverlayStats* stats = nullptr) const;
-    std::vector<std::vector<std::size_t>> partitionFactOutgoingEdgesComplete(
             const NodePtr& fact, ImplicitSplitOverlayStats* stats = nullptr) const;
     void applyEdgeGroupsAsAliases(const NodePtr& fact, const std::vector<std::vector<std::size_t>>& groups,
             ImplicitSplitOverlayStats* stats);
@@ -410,8 +403,5 @@ std::string summarizeRewritePatternCounts(const RewritePatternCounts& counts);
 ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
         const IncrementalDerivationGraphViewInterface& view,
         const ImplicitSplitPipelineOptions& options = {});
-
-int runImplicitSplitSmokeMain();
-int runImplicitSplitJsonBenchmarkMain(int argc, char** argv);
 
 }  // namespace souffle::problog

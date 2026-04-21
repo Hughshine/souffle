@@ -41,5 +41,4 @@
 - Inspect stdout timing lines and JSON logs for hot stages before tuning.
 
 ## Related commits
-- `UNCOMMITTED` — docs(process): update artifact-commit hygiene reference path
 - `812ea4081` — docs(repo): refine README narratives

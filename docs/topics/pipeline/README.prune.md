@@ -16,7 +16,6 @@
 - `docs/topics/profiling/README.profile.inc.md` (timings and profiling data).
 - `docs/topics/pipeline/README.inc.region.md` (delta-reach fallback chain and inc-regional expectations).
 - `docs/topics/evaluation/README.eval.inc.md` (current incremental workflow).
-- `docs/historical/README.eval.inc.log.md` (historical benchmark tables and stage breakdowns).
 - `docs/topics/pipeline/README.dred.md` (SEM stage context).
 
 ## Code map

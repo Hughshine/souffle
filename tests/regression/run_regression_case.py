@@ -249,7 +249,7 @@ def case_rewrite_split_modes_equiv(souffle_bin: Path, work_root: Path) -> None:
     run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base)
     base_prob = out_base / "facts.prob"
 
-    split_modes = ["no-split", "naive-split", "complete-split"]
+    split_modes = ["no-split", "naive-split"]
     for split_mode in split_modes:
         out_dir = case_dir / f"out_rewrite_{split_mode}"
         run_full_once(

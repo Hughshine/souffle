@@ -27,5 +27,3 @@ or an upstream area extended by this fork.
 - [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
 
 ## Related commits
-- `UNCOMMITTED` — docs(project): add whole-project module inventory with ownership classification
-- `UNCOMMITTED` — docs(project): wire ProbLog extension stack doc into module map

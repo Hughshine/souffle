@@ -26,6 +26,10 @@
 #include <unordered_map>
 #include <utility>
 
+// The current probabilistic pipeline is intentionally built as one translation
+// unit because several legacy probabilistic headers still carry non-inline
+// definitions. Compiling the implicit-split implementation separately would
+// duplicate those symbols in generated compiled-mode binaries.
 #include "ImplicitSplitRewrite.cpp"
 
 namespace souffle::problog {
@@ -55,7 +59,9 @@ static std::size_t countInitialInputFacts() {
 struct RewriteDispatchDecision {
     bool useImplicit = false;
     std::string splitMode = "naive-split";
-    std::string engine = "legacy";
+    std::string impl = "graph_rewrite";
+    std::string reason = "manual_rewrite";
+    std::string splitPolicy = "local";
     std::size_t totalRules = 0;
     std::size_t probabilisticRules = 0;
     bool autoSelected = false;
@@ -75,13 +81,17 @@ static RewriteDispatchDecision chooseRewriteDispatch(const CmdOptions& opt, cons
     const bool splitForcesLegacy = opt.isSplitModeExplicit() && decision.splitMode == "no-split";
     if (opt.isExplicitRewriteEnabled()) {
         decision.useImplicit = false;
-        decision.engine = splitForcesLegacy ? "explicit-forced-no-split" : "explicit-forced";
+        decision.impl = "graph_rewrite";
+        decision.reason = opt.isSplitModeExplicit() ? "explicit_flag_manual_split" : "explicit_flag";
+        decision.splitPolicy = splitForcesLegacy ? "none" : "local";
         return decision;
     }
 
     if (opt.isImplicitRewriteEnabled() && !splitForcesLegacy) {
         decision.useImplicit = true;
-        decision.engine = "implicit-forced";
+        decision.impl = "implicit_split";
+        decision.reason = "implicit_flag";
+        decision.splitPolicy = decision.splitMode == "no-split" ? "none" : "local";
         return decision;
     }
 
@@ -90,17 +100,23 @@ static RewriteDispatchDecision chooseRewriteDispatch(const CmdOptions& opt, cons
         if (decision.probabilisticRules > 0) {
             decision.useImplicit = true;
             decision.splitMode = "naive-split";
-            decision.engine = "auto-implicit";
+            decision.impl = "implicit_split";
+            decision.reason = "probabilistic_rule_weights";
+            decision.splitPolicy = "local";
         } else {
             decision.useImplicit = false;
             decision.splitMode = "no-split";
-            decision.engine = "auto-legacy-no-split";
+            decision.impl = "graph_rewrite";
+            decision.reason = "no_probabilistic_rule_weights";
+            decision.splitPolicy = "none";
         }
         return decision;
     }
 
     decision.useImplicit = false;
-    decision.engine = splitForcesLegacy ? "legacy-forced-no-split" : "legacy-forced";
+    decision.impl = "graph_rewrite";
+    decision.reason = opt.isSplitModeExplicit() ? "manual_split_mode" : "manual_rewrite";
+    decision.splitPolicy = splitForcesLegacy ? "none" : "local";
     return decision;
 }
 
@@ -340,16 +356,6 @@ static std::pair<std::size_t, std::size_t> recoverImplicitOutputFactsLocal(Incre
 static ImplicitSplitMode resolveImplicitSplitMode(const std::string& splitMode) {
     if (splitMode == "no-split") {
         return ImplicitSplitMode::None;
-    }
-    if (splitMode == "complete-split") {
-        // The implicit overlay path is engineered around the cheap, local
-        // naive partitioning heuristic. The old "complete" partitioner runs
-        // repeated graph traversals and pairwise overlap checks per fact, which
-        // is not production-ready and has already caused misleading benchmark
-        // results when enabled accidentally. Keep the failure loud instead of
-        // silently selecting a pathological mode.
-        assert(false && "implicit complete-split is disabled; use naive-split");
-        throw std::logic_error("implicit complete-split is disabled; use naive-split");
     }
     return ImplicitSplitMode::Naive;
 }
@@ -1005,136 +1011,6 @@ static void dumpSisoRegions(const DerivationGraphViewInterface& view) {
     std::cout << "[pipeline] dumpAllRegionsAsDot took " << dotMs << " ms\n";
 }
 
-static bool tryRunScbfBdd(
-        const CmdOptions& opt,
-        SubgraphView& view,
-        const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        const std::unordered_set<NodePtr>& seedTrueNodes,
-        std::map<NodePtr, BddNodeRef>& nodeFormulas,
-        std::map<EdgePtr, BddNodeRef>& edgeFormulas,
-        std::unique_ptr<WeightedBDDManager>& bddManager,
-        StageInfo* rewriteHybridStage) {
-    if (!opt.isScbfEnabled()) {
-        return false;
-    }
-    if (!evidences.empty()) {
-        std::cout << "[pipeline] --scbf fallback: evidence-conditioned path not enabled yet; use default FC/WMC"
-                  << std::endl;
-        return false;
-    }
-
-    Debugger& debugger = Debugger::getInstance();
-    debugger.addInfo("scbf_mode", "1");
-
-    if (rewriteHybridStage == nullptr) {
-        debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
-    }
-
-    const auto varEstimate = estimateBddVarCount(view);
-    debugger.addInfo("rand_vars", std::to_string(varEstimate));
-    auto initConfig = makeCuddInitConfig(varEstimate);
-    debugger.addInfo("manager_init_vars", std::to_string(initConfig.numVars));
-    debugger.addInfo("manager_init_slots", std::to_string(initConfig.numSlots));
-    debugger.addInfo("manager_init_cache", std::to_string(initConfig.cacheSize));
-    debugger.addInfo("manager_init_maxmem_mb",
-            std::to_string(initConfig.maxMemory / (1024UL * 1024UL)));
-
-    auto initStart = std::chrono::steady_clock::now();
-    bddManager = std::make_unique<WeightedBDDManager>(initConfig);
-    auto initMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          std::chrono::steady_clock::now() - initStart)
-                          .count();
-    debugger.addInfo("manager_init_ms", std::to_string(initMs));
-
-    probResult.clear();
-    auto t0 = std::chrono::steady_clock::now();
-    ScbfCyclewiseStats scbfStats;
-    buildFormulasCyclewiseScbf(view, *bddManager, nodeFormulas, edgeFormulas, seedTrueNodes, &scbfStats);
-    auto t1 = std::chrono::steady_clock::now();
-    auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-    auto wmcMs = static_cast<long long>(scbfStats.outputWmcMs);
-    auto fcMs = totalMs > wmcMs ? (totalMs - wmcMs) : 0;
-    debugger.addInfo("fc_build_ms", std::to_string(fcMs));
-    debugger.addInfo("wmc_ms", std::to_string(wmcMs));
-    std::cout << "[pipeline] SCBF(BDD) cyclewise total=" << totalMs << " ms"
-              << " (fc=" << fcMs << " ms, wmc=" << wmcMs << " ms)\n";
-
-    for (const auto& [node, prob] : precomputedProbResult) {
-        probResult.emplace(node, prob);
-    }
-
-    debugger.endStage();
-    debugger.startStage(StageKind::IO_DUMP_FULL);
-    auto tDumpStart = std::chrono::steady_clock::now();
-    dumpProbabilities(probResult, opt.getOutputFileDir());
-    auto tDumpMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::steady_clock::now() - tDumpStart)
-                           .count();
-    std::cout << "[pipeline] probability dump took " << tDumpMs << " ms\n";
-    debugger.endStage();
-    return true;
-}
-
-static bool tryRunScbfSdd(
-        const CmdOptions& opt,
-        SubgraphView& view,
-        const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        const std::unordered_set<NodePtr>& seedTrueNodes,
-        std::map<NodePtr, SddNodeRef>& nodeFormulas,
-        std::map<EdgePtr, SddNodeRef>& edgeFormulas,
-        std::unique_ptr<SddFormulaManager>& sddManager,
-        StageInfo* rewriteHybridStage) {
-    if (!opt.isScbfEnabled()) {
-        return false;
-    }
-    if (!evidences.empty()) {
-        std::cout << "[pipeline] --scbf fallback: evidence-conditioned path not enabled yet; use default FC/WMC"
-                  << std::endl;
-        return false;
-    }
-
-    Debugger& debugger = Debugger::getInstance();
-    debugger.addInfo("scbf_mode", "1");
-    if (rewriteHybridStage == nullptr) {
-        debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
-    }
-
-    auto initStart = std::chrono::steady_clock::now();
-    sddManager = std::make_unique<SddFormulaManager>();
-    auto initMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          std::chrono::steady_clock::now() - initStart)
-                          .count();
-    debugger.addInfo("manager_init_ms", std::to_string(initMs));
-
-    probResult.clear();
-    auto t0 = std::chrono::steady_clock::now();
-    ScbfCyclewiseStats scbfStats;
-    buildFormulasCyclewiseScbf(view, *sddManager, nodeFormulas, edgeFormulas, seedTrueNodes, &scbfStats);
-    auto t1 = std::chrono::steady_clock::now();
-    auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-    auto wmcMs = static_cast<long long>(scbfStats.outputWmcMs);
-    auto fcMs = totalMs > wmcMs ? (totalMs - wmcMs) : 0;
-    debugger.addInfo("fc_build_ms", std::to_string(fcMs));
-    debugger.addInfo("wmc_ms", std::to_string(wmcMs));
-    std::cout << "[pipeline] SCBF(SDD) cyclewise total=" << totalMs << " ms"
-              << " (fc=" << fcMs << " ms, wmc=" << wmcMs << " ms)\n";
-
-    for (const auto& [node, prob] : precomputedProbResult) {
-        probResult.emplace(node, prob);
-    }
-
-    debugger.endStage();
-    debugger.startStage(StageKind::IO_DUMP_FULL);
-    auto tDumpStart = std::chrono::steady_clock::now();
-    dumpProbabilities(probResult, opt.getOutputFileDir());
-    auto tDumpMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::steady_clock::now() - tDumpStart)
-                           .count();
-    std::cout << "[pipeline] probability dump took " << tDumpMs << " ms\n";
-    debugger.endStage();
-    return true;
-}
-
 static void runBddPipeline(
         const CmdOptions& opt,
         SouffleProgram& /*program*/,
@@ -1164,11 +1040,7 @@ static void runBddPipeline(
     //std::cout << "[dbg] seedTrueNodes size = " << seedTrueNodes.size() << "\
 
     if (computeProbabilities) {
-        if (tryRunScbfBdd(
-                    opt, view, evidences, seedTrueNodes, nodeFormulas, edgeFormulas, bddManager,
-                    rewriteHybridStage)) {
-            // SCBF path handled FC/WMC and dump.
-        } else if (opt.isRewriteEnabled()) {
+        if (opt.isRewriteEnabled()) {
             auto* hybridStage = rewriteHybridStage;
             if (!hybridStage) {
                 hybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
@@ -1984,11 +1856,7 @@ static void runSddPipeline(
     //std::cout << "[dbg] seedTrueNodes size = " << seedTrueNodes.size() << "\
 
     if (computeProbabilities) {
-        if (tryRunScbfSdd(
-                    opt, view, evidences, seedTrueNodes, nodeFormulas, edgeFormulas, sddManager,
-                    rewriteHybridStage)) {
-            // SCBF path handled FC/WMC and dump.
-        } else if (opt.isRewriteEnabled()) {
+        if (opt.isRewriteEnabled()) {
             auto* hybridStage = rewriteHybridStage;
             if (!hybridStage) {
                 hybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
@@ -2606,20 +2474,31 @@ void runPipeline(
         rewriteDecision = chooseRewriteDispatch(opt, ruleManager);
         haveRewriteDecision = true;
         std::cout << "[pipeline] rewrite dispatch"
-                  << " engine=" << rewriteDecision.engine
+                  << " impl=" << rewriteDecision.impl
+                  << " reason=" << rewriteDecision.reason
+                  << " split_policy=" << rewriteDecision.splitPolicy
                   << " split_mode=" << rewriteDecision.splitMode
                   << " total_rules=" << rewriteDecision.totalRules
                   << " probabilistic_rules=" << rewriteDecision.probabilisticRules
                   << " auto=" << (rewriteDecision.autoSelected ? "true" : "false")
                   << std::endl;
         if (rewriteHybridStage) {
-            debugger.addInfo("rewrite_dispatch_engine", rewriteDecision.engine);
+            debugger.addInfo("rewrite_strategy", rewriteDecision.autoSelected ? "default" : "diagnostic");
+            debugger.addInfo("rewrite_impl", rewriteDecision.impl);
+            debugger.addInfo("rewrite_reason", rewriteDecision.reason);
+            debugger.addInfo("rewrite_split_policy", rewriteDecision.splitPolicy);
             debugger.addInfo("rewrite_dispatch_split_mode", rewriteDecision.splitMode);
             debugger.addInfo("rewrite_dispatch_total_rules", std::to_string(rewriteDecision.totalRules));
             debugger.addInfo("rewrite_dispatch_probabilistic_rules",
                     std::to_string(rewriteDecision.probabilisticRules));
             debugger.addInfo("rewrite_dispatch_auto", rewriteDecision.autoSelected ? "true" : "false");
-            rewriteHybridStage->logMessage(Level::INFO, "rewrite_dispatch_engine=" + rewriteDecision.engine);
+            rewriteHybridStage->logMessage(Level::INFO,
+                    std::string("rewrite_strategy=") +
+                            (rewriteDecision.autoSelected ? "default" : "diagnostic"));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_impl=" + rewriteDecision.impl);
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_reason=" + rewriteDecision.reason);
+            rewriteHybridStage->logMessage(Level::INFO,
+                    "rewrite_split_policy=" + rewriteDecision.splitPolicy);
             rewriteHybridStage->logMessage(
                     Level::INFO, "rewrite_dispatch_split_mode=" + rewriteDecision.splitMode);
             rewriteHybridStage->logMessage(Level::INFO,
@@ -2637,8 +2516,6 @@ void runPipeline(
             const auto& splitMode = rewriteDecision.splitMode;
             if (splitMode == "no-split") {
                 rewriteFlags.splitMode = SplitMode::None;
-            } else if (splitMode == "complete-split") {
-                rewriteFlags.splitMode = SplitMode::Complete;
             } else {
                 rewriteFlags.splitMode = SplitMode::Naive;
             }
@@ -2646,33 +2523,12 @@ void runPipeline(
             // deterministic aggregate witnesses, and dirty-only compaction can
             // leave enough redundant deterministic structure to make CUDD blow up.
             rewriteFlags.restrictCompactionToDirty = false;
-            if (std::getenv("SOUFFLE_DISABLE_REWRITE_SINGLE")) {
-                rewriteFlags.enableSingleHyperedge = false;
-            }
-            if (std::getenv("SOUFFLE_DISABLE_REWRITE_ALLFACTS")) {
-                rewriteFlags.enableAllFactsToSO = false;
-            }
-            if (std::getenv("SOUFFLE_DISABLE_REWRITE_LINEAR")) {
-                rewriteFlags.enableLinearTwoEdge = false;
-            }
-            if (std::getenv("SOUFFLE_DISABLE_REWRITE_PARALLEL")) {
-                rewriteFlags.enableParallelEdge = false;
-            }
-            if (std::getenv("SOUFFLE_DISABLE_REWRITE_FANOUT")) {
-                rewriteFlags.enableFanOutConverge = false;
-            }
-            if (std::getenv("SOUFFLE_DISABLE_REWRITE_GENERAL")) {
-                rewriteFlags.enableGeneral = false;
-            }
-            if (std::getenv("SOUFFLE_DISABLE_REWRITE_COMPACTION")) {
-                rewriteFlags.enableCompaction = false;
-            }
             // Keep the graph-level rewrite policy aligned with the CLI. Without
             // threading this flag through, implicit full-mode runs silently fall
             // back to dirty-frontier detect even when the user explicitly asks
             // for a full-graph SISO scan, which makes diagnosis of post-commit
             // rewrite behavior misleading.
-            rewriteFlags.forceCompleteSisoDetect = opt.isForceCompleteSisoDetectEnabled();
+            rewriteFlags.forceFullSisoDetect = opt.isForceFullSisoDetectEnabled();
             rewriteFlags.relaxCompactionDirty = opt.isRelaxCompactionDirtyEnabled();
             rewriteStats = rewriter.rewriteUntilFixpoint(*graph, view, opt.isProfiling(), rewriteFlags);
         };
@@ -2777,8 +2633,8 @@ void runPipeline(
                     rewriteHybridStage->logMessage(Level::INFO, key + "=" + value);
                 };
                 const auto& implicitGraphStats = implicitResult.stats.graphRewriteStats;
-                debugger.addInfo("rewrite_engine", rewriteDecision.engine);
-                rewriteHybridStage->logMessage(Level::INFO, "rewrite_engine=" + rewriteDecision.engine);
+                debugger.addInfo("rewrite_impl", rewriteDecision.impl);
+                rewriteHybridStage->logMessage(Level::INFO, "rewrite_impl=" + rewriteDecision.impl);
                 addImplicitInfo("implicit_total_ms", implicitResult.stats.totalMs);
                 addImplicitInfo("implicit_overlay_prep_ms", implicitResult.stats.overlayPrepMs);
                 addImplicitInfo("implicit_overlay_split_ms", implicitResult.stats.overlaySplitMs);
@@ -2860,10 +2716,13 @@ void runPipeline(
                   << ", cleanupMs=" << rewriteStats.totalCleanupMs
                   << ", simpleFactRegions=" << rewriteStats.simpleFactRegions << std::endl;
         if (rewriteHybridStage) {
-            const std::string rewriteEngine = rewriteDecision.engine;
-            debugger.addInfo("rewrite_engine", rewriteEngine);
+            debugger.addInfo("rewrite_impl", rewriteDecision.impl);
+            debugger.addInfo("rewrite_reason", rewriteDecision.reason);
+            debugger.addInfo("rewrite_split_policy", rewriteDecision.splitPolicy);
             debugger.addInfo("rewrite_ms", std::to_string(rewriteMs));
-            rewriteHybridStage->logMessage(Level::INFO, "rewrite_engine=" + rewriteEngine);
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_impl=" + rewriteDecision.impl);
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_reason=" + rewriteDecision.reason);
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_split_policy=" + rewriteDecision.splitPolicy);
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_ms=" + std::to_string(rewriteMs));
 
             debugger.addInfo("rewrite_initial_count_random_vars_ms",

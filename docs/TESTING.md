@@ -42,7 +42,6 @@ Pick the smallest set of checks that match your change:
   - `ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}`
   - Detailed case map: `docs/topics/testing/README.regression.md`
 - Experiment workflows: follow `docs/topics/evaluation/README.eval.md` or `docs/topics/evaluation/README.eval.inc.md`.
-- Historical evaluation logs are in `docs/historical/` and indexed by `docs/topics/evaluation/README.md`.
 
 ## Regression Suite Scope
 - Online incremental correctness checks compare:
@@ -60,10 +59,7 @@ Pick the smallest set of checks that match your change:
   - optional per-case `generate.py` for larger derived inputs
 
 ## Legacy/Experimental Tests
-- Historical legacy suites were removed; use `docs/historical/` notes for past workflows.
+- Historical legacy suites are not part of the AE branch.
 
 ## Related commits
-- `UNCOMMITTED` — test(regression): add maintained CTest regression workflow
-- `UNCOMMITTED` — docs(testing): add dedicated regression runbook under docs/topics/testing
-- `UNCOMMITTED` — docs(testing): document regression labels and cmake targets
 - `aaa18c137` — docs(repo): add core docs

@@ -1,99 +1,72 @@
-# Souffle (Local Research Fork)
+# Souffle Probabilistic Artifact
+
+This branch packages the full-mode probabilistic Souffle artifact used for
+rewrite evaluation.  The artifact-facing path is intentionally narrow: build the
+repo, generate the benchmark `compute` binaries with the repo-built `souffle`,
+then run generated binaries with deterministic analysis and the default rewrite
+dispatcher.
 
 ## Source references
 - [src/MainDriver.cpp](src/MainDriver.cpp)
+- [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
 - [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
-- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+- [docs/USAGE.md](docs/USAGE.md)
+- [docs/topics/rewrite/README.rewrite.impl.md](docs/topics/rewrite/README.rewrite.impl.md)
+- [docs/TESTING.md](docs/TESTING.md)
 
-
-This repo extends upstream Souffle with a probabilistic pipeline and online
-incremental evaluation. It focuses on the online compiler path and adds
-DRed-like incremental updates, derivation-graph-based inference, and rewrite
-prototypes.
-
-## Status
-- Active entry point for this fork; keep high-level and link to detailed docs.
-
-## Audience
-- Researchers and engineers working on probabilistic Datalog evaluation.
-- Contributors modifying the online incremental compiler and rewrite pipeline.
-
-## Scope and Defaults
-- Online compilation is the default; `--online` is optional.
-- The legacy `--inc` backend is removed.
-- No interpreter path; `souffle file.dl` defaults to compile-only `-o <basename>`.
-- Rewrite runs only in full-mode runs; if a rewrite mode is enabled, the incremental CLI is disabled after the full run.
-- Full-mode runs do not rewrite by default. Rewrite remains opt-in.
-- `--rewrite` selects the explicit SISO rewrite pipeline.
-- `--implicit-rewrite` selects the implicit-split rewrite pipeline and also enables rewrite mode.
-- When `--implicit-rewrite` is active, the full pipeline emits detailed implicit
-  profiling inside the default JSON stage log and `FC_WMC_HYBRID` stage info,
-  including overlay/SISO timing and BDD substage timing.
-- `--setmode full` maps to `full-hard`; `full-soft` is optional.
+## Artifact Scope
+- Full-mode probabilistic evaluation with derivation graphs, pruning,
+  component-wise forward compilation, and BDD weighted model counting.
+- The optimized artifact command uses bare `--rewrite`.  Do not pass
+  `--split-mode` in artifact runs; explicit split controls are diagnostic only
+  and bypass the smart default dispatcher.
+- `--det-opt` is part of the artifact command.  It enables deterministic
+  relation analysis and graph gating used by the packaged benchmarks.
+- `--knowledge bdd` is the default backend and the expected artifact backend.
 
 ## Quickstart
-
-### 1) Install dependencies (scripts used in CI)
-- Ubuntu: `sudo sh/setup/install_ubuntu_deps.sh`
-- macOS Intel: `sh/setup/install_macos_deps.sh`
-- macOS Apple Silicon: `sh/setup/install_macos_arm_deps.sh`
-
-### 2) Build
 ```bash
 JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
 cmake -S . -B build
 cmake --build build -j${JOBS}
 ```
 
-### 3) Run a minimal example
+Use the built compiler to generate benchmark binaries, then run generated
+programs with:
+
 ```bash
-SOUFFLE_BIN=./build/src/souffle examples/running_example/run.sh
+./compute -F <facts-dir> -D <output-dir> --det-opt --rewrite --logfile ae-run
 ```
 
-### 4) Verify (style)
-```bash
-sh/run_test_format.sh
-```
-See `docs/TESTING.md` for test status and alternative verification paths.
+Plain comparison runs omit only `--rewrite`:
 
-## Configuration
-- Copy `.env.example` to your own environment file and export variables in your
-  shell. The repo does not auto-load `.env`.
-- `SOUFFLE_BIN`, `SOUFFLE_COMPILE_OPTS`, and `SOUFFLE_RUN_OPTS` are used by
-  example scripts.
+```bash
+./compute -F <facts-dir> -D <output-dir> --det-opt --logfile ae-plain
+```
+
+## Correctness Checks
+- Side-channel and taint benchmark comparisons should match exactly.
+- Symbolization comparisons use the same output key set and allow an absolute
+  probability difference of at most `1e-8`.  This tolerance is for rare
+  last-digit output-rounding boundary cases, not for semantic drift.
 
 ## Documentation
-- `CONTRIBUTING.md`: contributor workflow and review checklist.
-- `AGENTS.md`: Codex constraints and verification expectations.
-- `docs/ARCHITECTURE.md`: high-level system design.
-- `docs/project/README.md`: project-level module map, fork delta, and maintenance invariants.
-- `docs/project/PROBLOG_EXTENSION_STACK.md`: detailed ProbLog extension implementation from driver/parser through runtime pipeline.
-- `docs/TESTING.md`: verification strategy and CI command sources.
-- `docs/RUNBOOK.md`: run/rollback/troubleshooting guide.
-- `docs/SECURITY.md`: data handling and dependency hygiene.
-- `docs/USAGE.md`: program syntax, CLI, and runtime options.
-- `docs/process/README.git.md`: commit hygiene and message conventions.
-- `docs/INDEX.md`: index of research notes and evaluation docs.
-- `docs/topics/README.md`: map of current topic docs (pipeline/rewrite/backends/profiling/eval).
-- `docs/design/README.md`: design proposals not fully implemented.
-- `docs/historical/README.md`: archived historical notes.
+- [docs/USAGE.md](docs/USAGE.md): user-facing compiler/runtime usage.
+- [docs/topics/rewrite/README.rewrite.impl.md](docs/topics/rewrite/README.rewrite.impl.md):
+  artifact rewrite behavior and diagnostics.
+- [docs/topics/runtime/README.flag.md](docs/topics/runtime/README.flag.md):
+  detailed flag reference, with artifact defaults separated from diagnostics.
+- [docs/TESTING.md](docs/TESTING.md): verification commands.
+- [docs/INDEX.md](docs/INDEX.md): maintained documentation index.
 
-## FAQ / Common Issues
-- ctest fails: this fork intentionally disables `ctest`; see `docs/TESTING.md`.
-- Need rewrite or incremental details: start at `docs/INDEX.md`.
-- Need to understand the difference between explicit and implicit rewrite:
-  `--rewrite` is the legacy explicit pass, while `--implicit-rewrite` switches
-  the full pipeline to the implicit-split rewrite path used by the maintained
-  full artifact evaluation.
-- Need the new implicit profiling fields: run with `--implicit-rewrite` and
-  inspect the JSON stage log or `FC_WMC_HYBRID` stage info for fields such as
-  `implicit_overlay_siso_detect_ms`, `implicit_overlay_siso_summarize_ms`, and
-  `implicit_graph_bdd_compile_ms`.
-- Commit hygiene: see `docs/process/README.git.md` for what to include and exclude.
+## Verification
+- Build after C++ changes: `cmake --build build -j${JOBS}`.
+- Run regression tests when probabilistic behavior changes:
+  `ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}`.
+- Run the basic example smoke:
+  `SOUFFLE_BIN=./build/src/souffle examples/running_example/run.sh`.
 
 ## Related commits
-- `60bbdc2e4` — perf(problog): expose implicit rewrite profiling in JSON
-- `UNCOMMITTED` — docs(readme): clarify explicit vs implicit rewrite flags for full-artifact
-- `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack guide and link it from README
-- `UNCOMMITTED` — docs(repo): add project-level docs and move commit hygiene guide under docs/process
-- `812ea4081` — docs(repo): refine README narratives
+- `f78f1cade` — docs(rewrite): record artifact smoke verification
+- `beb581c24` — perf(problog): reduce symbolization rewrite overhead
+- `2d1434976` — feat(problog): add explicit rewrite flag

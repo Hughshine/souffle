@@ -88,7 +88,7 @@ protected:
     bool enable_rewrite = false;  // enable smart rewrite dispatch
     bool enable_explicit_rewrite = false;  // force legacy explicit graph rewrite pipeline
     bool enable_implicit_rewrite = false;  // enable experimental implicit-split rewrite pipeline
-    std::string split_mode = "naive-split";  // split mode for rewrite: no-split/naive-split/complete-split
+    std::string split_mode = "naive-split";  // diagnostic split mode for rewrite: no-split/naive-split
     bool split_mode_explicit = false;  // true when --split-mode/-P was passed explicitly
     bool dump_json = false;  // dump derivation graph JSON after prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
@@ -103,9 +103,9 @@ protected:
     bool det_force = false;  // force deterministic evaluation (skip derivation graph)
     bool reuse_var_index = true;  // reuse freed variable indices in CUDD (default on)
     bool single_rand_fast = true;  // enable single-randvar fast path in component FC
-    bool force_complete_siso_detect = false;  // force full-graph SISO detection (disable dirty-frontier detect)
+    bool force_full_siso_detect = false;  // force full-graph SISO detection (disable dirty-frontier detect)
     bool relax_compaction_dirty = true;  // dirty only the surviving compacted edge endpoints
-    bool enable_scbf = false;  // enable experimental SCBF full pipeline
+    bool help_requested = false;  // true when help was printed intentionally
 public:
     // all argument constructor
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
@@ -228,22 +228,21 @@ public:
     bool isDetForceEnabled() const {
         return det_force;
     }
+    bool isHelpRequested() const {
+        return help_requested;
+    }
     bool isReuseVarIndexEnabled() const {
         return reuse_var_index;
     }
     bool isSingleRandFastEnabled() const {
         return single_rand_fast;
     }
-    bool isForceCompleteSisoDetectEnabled() const {
-        return force_complete_siso_detect;
+    bool isForceFullSisoDetectEnabled() const {
+        return force_full_siso_detect;
     }
     bool isRelaxCompactionDirtyEnabled() const {
         return relax_compaction_dirty;
     }
-    bool isScbfEnabled() const {
-        return enable_scbf;
-    }
-
     /**
      * get filename of profile
      */
@@ -279,6 +278,7 @@ public:
 
         // long options
         option longOptions[] = {{"facts", true, nullptr, 'F'}, {"output", true, nullptr, 'D'},
+                {"help", false, nullptr, 'h'},
                 {"profile", true, nullptr, 'p'}, {"jobs", true, nullptr, 'j'}, {"index", true, nullptr, 'i'},
                 {"knowledge", true, nullptr, 'k'}, {"logfile", true, nullptr, 'l'},
                 {"derv-only", optional_argument, nullptr, 'd'},
@@ -299,9 +299,8 @@ public:
                 {"det-force", false, nullptr, 1007},
                 {"no-reuse-var-index", false, nullptr, 1008},
                 {"no-single-rand-fast", false, nullptr, 1001},
-                {"force-complete-siso-detect", false, nullptr, 1016},
+                {"force-full-siso-detect", false, nullptr, 1016},
                 {"no-relax-compaction-dirty", false, nullptr, 1020},
-                {"scbf", false, nullptr, 1018},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -352,6 +351,10 @@ public:
                     std::cerr << "\nWarning: OpenMP was not enabled in compilation\n\n";
 #endif
                     break;
+                case 'h':
+                    help_requested = true;
+                    printHelpPage(exec_name);
+                    return false;
                 case 'k':
                    if (std::string(optarg) == "bdd") {
                         knowledge_representation = "bdd";
@@ -412,8 +415,6 @@ public:
                         split_mode = "no-split";
                     } else if (modeArg == "naive-split" || modeArg == "naive") {
                         split_mode = "naive-split";
-                    } else if (modeArg == "complete-split" || modeArg == "complete") {
-                        split_mode = "complete-split";
                     } else {
                         std::cerr << "Invalid split mode [-P|--split-mode]: " << optarg << "\n";
                         ok = false;
@@ -460,13 +461,10 @@ public:
                     single_rand_fast = false;
                     break;
                 case 1016:
-                    force_complete_siso_detect = true;
+                    force_full_siso_detect = true;
                     break;
                 case 1020:
                     relax_compaction_dirty = false;
-                    break;
-                case 1018:
-                    enable_scbf = true;
                     break;
                 default: printHelpPage(exec_name); return false;
             }
@@ -480,7 +478,11 @@ public:
             std::cerr << "Cannot combine --explicit-rewrite with --implicit-rewrite\n";
             ok = false;
         }
-
+        if (enable_implicit_rewrite && split_mode_explicit && split_mode == "no-split") {
+            std::cerr << "Cannot combine --implicit-rewrite with --split-mode=no-split; "
+                      << "use --explicit-rewrite for graph-rewrite diagnostics.\n";
+            ok = false;
+        }
         // return success state
         return ok;
     }
@@ -505,14 +507,18 @@ private:
         }
         std::cerr << "    -k <KR>, --knowledge=<KR>    -- Specify knowledge representation (bdd or sdd)\n";
         std::cerr << "                                    (default: " << knowledge_representation << ")\n";
+        std::cerr << "    -r, --rewrite                -- Enable artifact rewrite dispatcher\n";
+        std::cerr << "    --det-opt                    -- Enable deterministic-relation analysis and graph gating\n";
+        std::cerr << "    -l <FILE>, --logfile=<FILE>  -- Debugger JSON base name\n";
+        std::cerr << "\n";
+        std::cerr << " Advanced diagnostics (not needed for artifact reproduction):\n";
         std::cerr << "    -d, --derv-only[=<true|false>] -- Only compute the derivation graph\n";
         std::cerr << "    -e, --merge-bi-imp           -- Enable merging mutually implying deterministic nodes during pruning\n";
         std::cerr << "    --prune-extra                -- Enable outputless-component pruning in prune\n";
         std::cerr << "    -C, --fold-const             -- Enable deterministic constant pre-analysis (no prune rewrite; negation ignored)\n";
-        std::cerr << "    -r, --rewrite                -- Enable smart rewrite dispatch\n";
-        std::cerr << "    --explicit-rewrite           -- Force legacy explicit graph rewrite pipeline\n";
-        std::cerr << "    --implicit-rewrite           -- Enable experimental implicit-split rewrite pipeline\n";
-        std::cerr << "    --split-mode=<MODE>          -- Split mode for rewrite: no-split, naive-split, complete-split\n";
+        std::cerr << "    --explicit-rewrite           -- Force explicit graph rewrite diagnostics\n";
+        std::cerr << "    --implicit-rewrite           -- Force implicit-split rewrite diagnostics\n";
+        std::cerr << "    --split-mode=<MODE>          -- Diagnostic split mode: no-split or naive-split\n";
         std::cerr << "    --dumpjson                   -- Dump derivation graph JSON after prune\n";
         std::cerr << "    --dumpdot                    -- Dump derivation graph DOT after prune\n";
         std::cerr << "    --dumpstat                   -- Dump derivation graph stats after prune\n";
@@ -522,11 +528,9 @@ private:
         std::cerr << "    --profile-dep-graph          -- Enable dependency-graph profiling\n";
         std::cerr << "    --post-del                   -- Enable post-delete variable postprocess (FC)\n";
         std::cerr << "    --dumpconst                  -- Dump constant pre-analysis details to file (negation ignored)\n";
-        std::cerr << "    --det-opt                    -- Run deterministic-relation analysis (no behavior change)\n";
         std::cerr << "    --det-force                  -- Force deterministic mode (skip derivation graph; emit prob=1.0)\n";
-        std::cerr << "    --force-complete-siso-detect -- Disable dirty-frontier SISO detect and always scan full graph\n";
+        std::cerr << "    --force-full-siso-detect     -- Disable dirty-frontier SISO detect and always scan full graph\n";
         std::cerr << "    --no-relax-compaction-dirty  -- Keep conservative dirtying after deterministic edge compaction\n";
-        std::cerr << "    --scbf                       -- Enable experimental SCBF full pipeline (opt-in)\n";
         std::cerr << "    --no-reuse-var-index         -- Disable reuse of freed CUDD variable indices (reuse is unsafe unless deletion fully removes vars)\n";
         std::cerr << "    --no-single-rand-fast        -- Disable single-randvar fast path in component FC\n";
 #ifdef _OPENMP
@@ -537,7 +541,7 @@ private:
             std::cerr << "                                    (default: auto)\n";
         }
 #endif
-        std::cerr << "    -h                           -- prints this help page.\n";
+        std::cerr << "    -h, --help                   -- Print this help page\n";
         std::cerr << "--------------------------------------------------------------------\n";
 #ifdef SOUFFLE_GENERATOR_VERSION
         std::cerr << " Version: " << SOUFFLE_GENERATOR_VERSION << std::endl;

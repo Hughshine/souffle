@@ -1,158 +1,78 @@
-# Flags Reference (Compiler vs Generated Program)
+# Flags Reference
 
 ## Source references
-- [src/MainDriver.cpp](src/MainDriver.cpp)
-- [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
-- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
-- [src/synthesiser/Synthesiser.cpp](src/synthesiser/Synthesiser.cpp)
-- [docs/USAGE.md](docs/USAGE.md)
+- [../../USAGE.md](../../USAGE.md)
+- [../../../src/MainDriver.cpp](../../../src/MainDriver.cpp)
+- [../../../src/include/souffle/CompiledOptions.h](../../../src/include/souffle/CompiledOptions.h)
+- [../../../src/problog/Pipeline.cpp](../../../src/problog/Pipeline.cpp)
 
 ## Scope
-- **Compiler flags** apply to the `souffle` executable and control code generation.
-- **Runtime flags** apply to the generated `./compute` binary (compiled program).
-- Some flags exist in both layers (e.g., `-F`, `-D`, `-p`, `-m`, `-d`); compile-time values
-  seed defaults in the generated binary and runtime flags override them.
+- Compiler flags apply to the `souffle` executable and control code generation.
+- Runtime flags apply to generated `./compute` binaries.
+- Artifact instructions should expose only the stable runtime surface.  Other
+  flags are diagnostics and should not appear in artifact benchmark commands.
 
-## Compiler flags (`souffle`)
+## Compiler Use
+Use the repo-built `souffle` to generate benchmark `compute` binaries.  Benchmark
+scripts may pass internal generation options, but AE-facing instructions should
+not present those internal options as a stable user surface.
 
-### Code generation & execution
-- `-c`, `--compile`: generate C++ → compile → run.
-- `-C`, `--compile-many`: generate multi-file C++ → compile → run.
-- `-o`, `--dl-program <FILE>`: generate C++ to `<FILE>` and compile (no run).
-- `-g`, `--generate <FILE>`: generate C++ to `<FILE>` (or `-` for stdout).
-- `-G`, `--generate-many <DIR>`: generate multi-file C++ to `<DIR>`.
-- `-N`, `--generate-namespace <NS>`: namespace for generated C++ (empty for anonymous).
-- `-j`, `--jobs <N|auto>`: run the compiler in parallel (`auto` uses system default).
-  Note: treat as **not allowed** in current workflows; keep `1` unless OpenMP is enabled
-  (without OpenMP, non-`1` only emits a warning and runs serially).
+## Artifact Runtime Surface
+Generated programs should be run with:
+```bash
+./compute -F <facts-dir> -D <output-dir> --det-opt --rewrite --logfile ae-run
+```
 
-### Inputs/outputs & include paths
-- `-F`, `--fact-dir <DIR>`: default facts dir baked into the binary.
-- `-D`, `--output-dir <DIR>`: default output dir baked into the binary (`-` for stdout).
-- `-I`, `--include-dir <DIR>`: include directories (repeatable).
-- `-L`, `--library-dir <DIR>`: library directories (repeatable).
-- `-l`, `--libraries <FILE>`: libraries to link (repeatable).
+Flags:
+- `-F, --facts <DIR>`: input facts/probabilities directory.
+- `-D, --output <DIR>`: output directory.
+- `-l, --logfile <FILE>`: debugger JSON base name.
+- `--det-opt`: deterministic-relation analysis and graph gating.
+- `-r, --rewrite`: smart artifact rewrite dispatcher.
+- `-k, --knowledge <bdd|sdd>`: backend selector; artifact runs use `bdd`.
 
-### Preprocessor & macros
-- `-M`, `--macro <MACROS>`: define preprocessor macros.
-- `--preprocessor <CMD>`: set preprocessor.
-- `--no-preprocessor`: disable preprocessor.
+Plain comparison runs omit only `--rewrite`.
 
-### Optimization/transform controls
-- `-z`, `--disable-transformers <TRANSFORMERS>`: disable specific AST transforms.
-- `--no-souffle-opt`: disable RAM optimizations (transformations, join order, guard hoisting).
-- `--inline-exclude <RELATIONS>`: prevent inlining for listed relations.
-- `-m`, `--magic-transform <RELATIONS>`: enable magic-set on relations (`*` for all).
-- `--magic-transform-exclude <RELATIONS>`: exclude relations from magic-set (implies inline-exclude).
-- `-a`, `--auto-schedule <FILE>`: use auto-schedule profile.
-- `--emit-statistics`: collect auto-schedule stats (requires `--profile`).
+## Rewrite Dispatch
+Bare `--rewrite` chooses a policy in [Pipeline.cpp](../../../src/problog/Pipeline.cpp):
+- If any rule has probability different from `1.0`, use implicit-split rewrite
+  with the local split policy.
+- If no rule has a probabilistic weight, use graph rewrite with no split.
 
-### Online/incremental codegen
-- `-O`, `--online`: enable online compilation (incremental CLI support).
-- `-x`, `--full-only`: generate full-only code (disable incremental CLI paths).
-- `--setmode <MODE>`: default runtime mode (`inc-naive`, `inc-regional`, `full`, `elastic`).
-- `-d`, `--derv-only`: default runtime “derivation-only” mode.
+The classification is intentionally rule-based.  It does not inspect
+probabilistic `.prob` input facts.
 
-### Diagnostics, warnings, and metadata
-- `-r`, `--debug-report <FILE>`: HTML debug report.
-- `--show <MODE>`: print AST/RAM/graph views.
-- `--parse-errors`: show parse errors and exit.
-- `-p`, `--profile <FILE>`: enable profiling in the generated binary and set default profile output.
-- `--dred-profile`: enable detailed DRed profiling instrumentation.
-- `--profile-frequency`: enable profiler frequency counter.
-- `-W`, `--warn <WARN>` / `--wno <WARN>` / `-w`, `--no-warn`: warning controls.
-- `-v`, `--verbose`: verbose output.
-- `-s`, `--swig <LANG>`: generate SWIG interface (`java`, `python`).
-- `--legacy`: enable legacy support.
-- `-P`, `--pragma <OPTIONS>`: pragma options (repeatable).
-- `-h`, `--help`: show help.
-- `--version`: show version.
+Do not pass `--split-mode` in artifact commands.  An explicit split mode is a
+diagnostic override and bypasses the smart dispatcher.
 
-## Runtime flags (generated `./compute`)
+## Diagnostic Runtime Flags
+These remain available for debugging or ablation, but are not AE commands:
+- `--explicit-rewrite`
+- `--implicit-rewrite`
+- `--split-mode=<no-split|naive-split>`
+- `-d, --derv-only[=<true|false>]`
+- `-e, --merge-bi-imp`
+- `--prune-extra`
+- `-C, --fold-const`
+- `--det-force`
+- `--post-del`
+- `--no-reuse-var-index`
+- `--no-single-rand-fast`
+- `--force-full-siso-detect`
+- `--no-relax-compaction-dirty`
+- dump/profile flags such as `--dumpjson`, `--dumpdot`, `--dumpstat`,
+  `--dumpconst`, `--fc-profile`, `--profile-wmc`, and `--profile-dep-graph`
 
-### IO, logging, and scheduling
-- `-F`, `--facts <DIR>`: input facts directory.
-- `-D`, `--output <DIR>`: output directory (`-` for stdout).
-- `-l`, `--logfile <FILE>`: debugger JSON base name (emits `<name>.json` in output dir).
-- `-j`, `--jobs <N|auto>`: threads (OpenMP only).
-  Note: treat as **not allowed** in current workflows; keep `1` unless OpenMP is enabled
-  (without OpenMP, non-`1` only emits a warning and runs serially).
-- `-p`, `--profile <FILE>`: profiling output (requires compile-time `--profile`).
+`--derv-only --rewrite` does not execute rewrite and should not be used as a
+graph-only rewrite benchmark.
 
-### Help
-- `-h`: show usage.
-
-### Mode selection
-- `-m`, `--setmode <MODE>`: `inc-naive` (aliases: `inc`, `incr`, `incremental`),
-  `inc-regional`, `full-hard` (alias: `full`), `full-soft`, `elastic` (accepted but asserts).
-- `-d`, `--derv-only[=<true|false>]`: derivation graph only.
-
-### Semantics / graph transforms
-- `-e`, `--merge-bi-imp`: merge mutually implying deterministic nodes (full-only safe).
-- `--prune-extra`: drop outputless components during prune.
-- `-C`, `--fold-const`: constant pre-analysis (negation ignored).
-- `-r`, `--rewrite`: enable the smart rewrite dispatcher.
-  Probabilistic-rule programs select implicit split rewrite; deterministic-rule
-  programs select deterministic no-split rewrite.
-- `--explicit-rewrite`: force the legacy explicit graph rewrite pipeline for
-  diagnostics and historical comparisons.
-- `--implicit-rewrite`: force the implicit split rewrite pipeline for
-  diagnostics and historical comparisons.
-- `-P`, `--split-mode <no-split|naive-split|complete-split>`: explicit split
-  mode override for diagnostic rewrite runs.
-- `-k`, `--knowledge <bdd|sdd>`: choose DD backend.
-
-### Determinism controls
-- `--det-opt`: enable deterministic-relation analysis.
-- `--det-force`: skip derivation graph and force probabilities to 1.0.
-
-### Dumps & debugging
-- `--dumpjson`: dump derivation graph JSON after prune.
-- `--dumpdot`: dump derivation graph DOT after prune.
-- `--dumpstat`: dump derivation graph stats after prune.
-- `--dumpconst`: dump constant pre-analysis details.
-
-### Profiling toggles
-- `--dred-profile`: detailed DRed profiling (requires compile-time profiling).
-- `--inc-profile`: incremental stage totals (SEM/PRN/FC/WMC and per-turn totals).
-- `--fc-profile`: forward compilation sub-phase profiling (preConfig, loops, reorders, etc).
-- `--profile-inc-delete`: delete-phase breakdown (inc only).
-- `--profile-wmc`: weighted model counting sub-phase profiling.
-- `--profile-inc-regional`: inc-regional diagnostics (analyze/plan/rebuild/calibrate + region stats).
-- `--profile-inc-regional-heavy`: heavy inc-regional diagnostics (very large output).
-- `--inc-regional-trace-tuples=<LIST>`: comma-separated tuples to trace.
-- `--profile-dep-graph`: dependency-graph profiling.
-
-### Profiling organization (recommended)
-- **Layered flags**: use `--inc-profile` for stage totals, then add `--fc-profile`
-  and/or `--profile-wmc` for deep breakdowns.
-- **Same flags for full + inc**: FC/WMC profiling applies to both modes; identify
-  full vs inc by the CLI log context and stage labels (no separate full-only flags).
-- **Incremental-specific add-ons**: `--profile-inc-delete` and `--profile-inc-regional`
-  are optional extras; avoid `--profile-inc-regional-heavy` unless debugging.
-- **Performance overhead**: hit/miss counters and fine-grained timing are guarded
-  by profiling flags to avoid extra cost when profiling is off.
-
-### Benchmarking quick set (side_channel_inc.py)
-- Always include `--det-opt` for incremental benchmarks (required for current analyses).
-- Suggested incremental profiling bundle:
-  `--inc-profile --profile-inc-regional --profile-wmc`
-- Add `--profile-inc-delete` when analyzing delete turns, and `--fc-profile` for FC details.
-- Use `--profile-inc-regional-heavy` only for deep region tracing (very expensive).
-
-### BDD/FC maintenance
-- `--post-del`: post-delete variable reordering.
-- `--no-reuse-var-index`: disable reuse of freed CUDD variable indices.
-- `--no-single-rand-fast`: disable single-randvar fast path in component FC.
-
-## Notes on overlap
-- `-m` means **magic-set** at compile time but **setmode** at runtime.
-- `-d`/`--derv-only` exists at both layers; compile-time sets the default, runtime overrides.
-- `-F`/`-D`/`-p` exist at both layers; compile-time values become defaults in the binary.
-- `-j` exists at both layers but controls different things (compiler threads vs runtime threads).
-- `-r` is debug-report at compile time vs rewrite at runtime (different semantics).
+## Correctness Policy
+- Side-channel and taint checks are exact.
+- Symbolization checks require identical output keys and allow absolute
+  probability differences up to `1e-8`.  This tolerance covers rare final-digit
+  output-rounding boundaries only.
 
 ## Related commits
-- `c300c6951` — docs(opt): update WMC table and summary
-- `21f1c666d` — perf(inc-wmc): cut regional cache churn
-- `8a5764e19` — chore(Pipeline): add input fact size profiling
+- `f78f1cade` — docs(rewrite): record artifact smoke verification
+- `beb581c24` — perf(problog): reduce symbolization rewrite overhead
+- `2d1434976` — feat(problog): add explicit rewrite flag

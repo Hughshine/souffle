@@ -364,15 +364,6 @@ if (SDDXX_LIBRARY)
   list(APPEND SOUFFLE_PROBLOG_PIPELINE_LIBS ${SDDXX_LIBRARY})
 endif ()
 
-# --------------------------------------------------
-# Standalone implicit split overlay smoke (experimental, does not affect runtime pipeline)
-# --------------------------------------------------
-add_executable(souffle-implicit-split-smoke
-               problog/ImplicitSplitSmokeMain.cpp)
-target_link_libraries(souffle-implicit-split-smoke PRIVATE libsouffle compiled ${SOUFFLE_PROBLOG_PIPELINE_LIBS})
-add_dependencies(souffle-implicit-split-smoke compiled)
-install(TARGETS souffle-implicit-split-smoke DESTINATION bin)
-
 if (EMSCRIPTEN)
 target_link_libraries(souffle -sMODULARIZE=1
                       -s'EXPORTED_RUNTIME_METHODS=["FS"]' -sEXPORT_NAME="SOUFFLE")

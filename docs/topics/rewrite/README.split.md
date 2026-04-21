@@ -18,14 +18,13 @@ status, design notes, and historical evaluation observations.
 - Applies to full-mode rewrite only; incremental modes skip rewrite.
 - Split is an optional pre-pass inside the rewrite loop.
 
-## Current behavior (2026-01-04)
-- CLI: `--split-mode={no-split|naive-split|complete-split}` (short `-P`),
-  default `naive-split`.
+## Current behavior
+- Artifact runs do not pass `--split-mode`; bare `--rewrite` selects the split
+  policy through the smart dispatcher.
+- Diagnostic CLI: `--split-mode={no-split|naive-split}` (short `-P`).
 - Split currently only duplicates input fact nodes; incoming edges of internal
   nodes are not cloned yet. Facts with evidence or `needOutput` are skipped, and
   facts in evidence-affected components are excluded.
-- `complete-split` uses a multi-source union-find on downstream reachability;
-  any downstream join merges branches (conservative, semantics-safe).
 - `hasRVReach` is recomputed globally each split pass (no incremental update yet).
 - `naive-split` uses bounded reachability (max 50 nodes per branch) and only
   splits branches whose reachable node sets are pairwise disjoint.
@@ -39,17 +38,15 @@ status, design notes, and historical evaluation observations.
 - Debug DOT: `siso_regions_iter*.dot` in output directory when `--dumpdot`.
 
 ## Executable workflow
-- Use the full evaluation scripts in `docs/topics/evaluation/README.eval.md` with `--rewrite` and
-  `--split-mode=...`.
+- Use the full evaluation scripts in `docs/topics/evaluation/README.eval.md` with
+  bare `--rewrite`.  Use `--split-mode=...` only for diagnostic ablations.
 - Keep no-rewrite and rewrite outputs separate to compare `facts.prob`.
 
 ## Historical observations (pre-2026-01-04)
 - Output consistency: `facts.prob` matched across split modes for P4-P19.
 - `naive-split` triggered rarely on large cases and behaved close to `no-split`.
-- `complete-split` triggered more frequently and reduced RV ratios on P17-P19,
-  but increased rewrite iterations and region counts.
-- The semantics changed on 2026-01-04 to "any join merges branches"; the older
-  timing tables should be treated as historical and re-run under the new rule.
+- Older split timing tables should be treated as historical and re-run under the
+  artifact dispatcher before being used in evaluation.
 
 ## Design goal
 Split tries to separate downstream reasoning that is independent at the random

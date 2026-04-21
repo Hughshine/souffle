@@ -49,5 +49,4 @@ For project-level ownership and module boundaries, use:
 See `docs/INDEX.md` for the complete doc map, including rewrite and evaluation notes.
 
 ## Related commits
-- `UNCOMMITTED` — docs(project): link architecture overview to project-level module and maintenance docs
 - `aaa18c137` — docs(repo): add core docs

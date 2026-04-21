@@ -15,9 +15,6 @@ Legend:
 - [PRIMARY] `docs/project/README.md` — project map (modules, fork delta, maintenance)
 - [PRIMARY] `docs/topics/README.md` — topical docs map (current behavior)
 - [PRIMARY] `docs/design/README.md` — design proposals map
-- [PRIMARY] `docs/historical/README.md` — archived/historical docs map
-- [SECONDARY] `docs/research/README.rewrite.status.md` — curated rewrite research status and local optimization log
-- [SECONDARY] `docs/research/README.artifact-cleanup.report.md` — artifact-evaluation cleanup and packaging checklist
 - [SECONDARY] `docs/topics/runtime/README.flag.md` — consolidated compiler/runtime flag reference
 - [SECONDARY] `docs/topics/runtime/README.dump.md` — dump/debug outputs (compiler + runtime)
 - [PRIMARY] `docs/TESTING.md` — verification status + test commands
@@ -68,20 +65,13 @@ Legend:
 - [SECONDARY] `docs/topics/testing/README.regression.md` — regression suite scope, cases, and limits
 
 ## Evaluation & Results (Souffle)
-- [PRIMARY] `docs/topics/evaluation/README.md` — evaluation doc map (current vs historical)
+- [PRIMARY] `docs/topics/evaluation/README.md` — evaluation doc map
 - [LATEST] `docs/topics/evaluation/README.eval.final.md` — latest curated batch summary
 - [LATEST] `archive/README.md` — dated experiment archive index (batch READMEs tracked, artifacts ignored)
 - [PRIMARY] `docs/topics/evaluation/README.eval.inc.md` — incremental benchmark workflow (current)
 - [PRIMARY] `docs/topics/evaluation/README.eval.md` — full benchmark workflow (current)
 - [SECONDARY] `docs/topics/evaluation/OPT.md` — optimization-focused inc-regional run checklist
 - [SECONDARY] `docs/topics/evaluation/README.artifact.inc.md` — incremental artifact reproduction
-- [HISTORICAL] `docs/historical/README.eval.inc.log.md` — archived incremental run log
-- [HISTORICAL] `docs/historical/README.eval.full.log.md` — archived full-mode run log
-- [HISTORICAL] `docs/historical/README.eval.final.2026-01-21.md` — archived detailed incremental snapshot
-- [HISTORICAL] `docs/historical/OPT.md` — archived optimization notebook
-- [HISTORICAL] `docs/historical/README.table.md` — table generation notes
-- [HISTORICAL] `docs/historical/README.disjunct.md` — disjunction strengthening log
-- [HISTORICAL] `docs/historical/README.problog.md` — ProbLog baseline runs
 
 ## Out of Scope (Benchmarks/Experiments/Examples)
 - Benchmark, experiment, and example docs remain in their original directories and are not reorganized here.
@@ -89,12 +79,6 @@ Legend:
 - Historical benchmark notes remain in `problog-benchmark/README.sc.original.md` and `experiments/smokers_11/Plan.md`.
 
 ## Design Notes (Not Implemented)
-- [DESIGN] `docs/design/README.scbf.pipeline.md` — SCBF pipeline (DG -> SCBF -> rewrite -> DD/WMC)
-- [DESIGN] `docs/design/README.scbf.ir.md` — independent SCBF IR/module prototype and smoke workflow
-- [DESIGN] `docs/design/README.scbf.evaluator.md` — independent SCBF evaluator prototype and smoke workflow
-- [DESIGN] `docs/design/README.scbf.formula.md` — explicit SCBF target-local formula bundle IR
-- [DESIGN] `docs/design/README.scbf.global-formula.md` — stitched global SCBF formula IR above target-local bundles
-- [DESIGN] `docs/design/README.scbf.rewrite.md` — independent SCBF formula-level rewrite prototype
 - [DESIGN] `docs/design/README.inc.regional.multi.md` — multi-turn inc-regional state
 - [DESIGN] `docs/design/README.inc.regional.opt.md` — inc-regional optimizations
 - [DESIGN] `docs/design/IncRegional_PaperFormal_TechReport.md` — formalization notes
@@ -103,34 +87,9 @@ Legend:
 - [DESIGN] `docs/design/README.lazy.md` — lazy DD plan
 - [DESIGN] `docs/design/README.refactor.md` — refactor opportunities
 
-## Research Status
-- [SECONDARY] `docs/research/README.rewrite.status.md` — current trusted artifact reading plus local optimization outcomes for rewrite work
-- [SECONDARY] `docs/research/README.artifact-cleanup.report.md` — current artifact cleanup and benchmark packaging report
-
-## Archive
-- [HISTORICAL] `docs/historical/PAPER.md` — paper table/figure working note (archived)
-- [HISTORICAL] `docs/historical/FINAL.md` — FC-only speedup snapshot note (archived)
-- [HISTORICAL] `docs/historical/TODO.md` — archived experiment follow-ups
-- [HISTORICAL] `docs/historical/README.rewrite.120725.md`
-- [HISTORICAL] `docs/historical/README.rewrite.120825.md`
-- [HISTORICAL] `docs/historical/README.rewrite.2.md`
-- [HISTORICAL] `docs/historical/README.rewrite.conj.md`
-- [HISTORICAL] `docs/historical/README.rewrite.md`
-- [HISTORICAL] `docs/historical/README.precompile.md`
-- [HISTORICAL] `docs/historical/README.codex.md`
-- [HISTORICAL] `docs/historical/Plan.md`
-- [HISTORICAL] `docs/historical/README.eval.inc.log.md`
-- [HISTORICAL] `docs/historical/README.eval.full.log.md`
-- [HISTORICAL] `docs/historical/README.eval.final.2026-01-21.md`
-- [HISTORICAL] `docs/historical/OPT.md`
-
 ## Source references
 - [src/MainDriver.cpp](src/MainDriver.cpp)
 - [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
 - [tests/regression/CMakeLists.txt](tests/regression/CMakeLists.txt)
 
 ## Related commits
-- `UNCOMMITTED` — docs(testing): add topical regression workflow docs and index entries
-- `UNCOMMITTED` — docs(project): add project-level module map, fork delta, and maintenance docs
-- `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack documentation
-- `UNCOMMITTED` — docs(process): move commit hygiene guide under docs/process

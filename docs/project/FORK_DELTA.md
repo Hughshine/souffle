@@ -32,4 +32,3 @@ When rebasing onto upstream Souffle, confirm exact diffs with branch comparison.
 - [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
 
 ## Related commits
-- `UNCOMMITTED` — docs(project): document fork-specific module contributions and boundaries

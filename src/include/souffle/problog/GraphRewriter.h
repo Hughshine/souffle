@@ -80,12 +80,12 @@ struct RewriteFeatureFlags {
     bool enableCompaction       = true;   ///< edge compaction after each SISO pass
     bool restrictCompactionToDirty = false;  ///< only compact edges adjacent to the last rewrite frontier
     SplitMode splitMode         = SplitMode::Naive;  ///< split disjoint fan-out branches into shadow facts
-    size_t splitMaxNewNodesPerPass = 5000;  ///< complete-split budget: max new shadow nodes per pass
-    size_t splitMaxNewEdgesPerPass = 50000; ///< complete-split budget: max rewired edges per pass
-    size_t splitMaxGroupsPerNode = 2;       ///< complete-split cap: max groups kept per node (incl. original)
-    size_t splitMinGroupEdges = 1;          ///< complete-split threshold: min edges in a split group
+    size_t splitMaxNewNodesPerPass = 5000;  ///< exhaustive split budget: max new shadow nodes per pass
+    size_t splitMaxNewEdgesPerPass = 50000; ///< exhaustive split budget: max rewired edges per pass
+    size_t splitMaxGroupsPerNode = 2;       ///< exhaustive split cap: max groups kept per node (incl. original)
+    size_t splitMinGroupEdges = 1;          ///< exhaustive split threshold: min edges in a split group
     bool enableCleanupIsolated  = true;   ///< drop isolated fact/shadow nodes at end of iteration
-    bool forceCompleteSisoDetect = false; ///< force full-graph SISO detect (disable dirty-frontier detect)
+    bool forceFullSisoDetect = false; ///< force full-graph SISO detect (disable dirty-frontier detect)
     bool relaxCompactionDirty   = true;   ///< reseed only the surviving compacted edge endpoints
 };
 
@@ -129,11 +129,6 @@ public:
         stats.randomVarsBefore = countRandomVarsInView(view);
         stats.initialCountRandomVarsMs = toMs(std::chrono::steady_clock::now() - initialCountStart);
         stats.randomVarsAfter = stats.randomVarsBefore;
-        if (std::getenv("SOUFFLE_SKIP_GRAPH_REWRITE") != nullptr) {
-            std::cout << "[GraphRewriter] SOUFFLE_SKIP_GRAPH_REWRITE set; skip graph rewrite."
-                      << std::endl;
-            return stats;
-        }
         auto initialEvidenceStart = std::chrono::steady_clock::now();
         const auto evidenceAffectedNodes = collectEvidenceAffectedNodes(view);
         stats.initialEvidenceAffectedMs = toMs(std::chrono::steady_clock::now() - initialEvidenceStart);
@@ -283,9 +278,9 @@ public:
             auto detectRegions = [&](const GraphAnalyzer::FastPathDetectOptions& opts) {
                 return hasDetectDirty
                     ? GraphAnalyzer::detectAllSISOStrictFromExit(
-                              view, &detectDirtyNodes, &detectDirtyEdges, flags.forceCompleteSisoDetect, &opts)
+                              view, &detectDirtyNodes, &detectDirtyEdges, flags.forceFullSisoDetect, &opts)
                     : GraphAnalyzer::detectAllSISOStrictFromExit(
-                              view, nullptr, nullptr, flags.forceCompleteSisoDetect, &opts);
+                              view, nullptr, nullptr, flags.forceFullSisoDetect, &opts);
             };
             auto regions = detectRegions(detectOptions);
             if (regions.empty() && primaryDetectMask && primaryDetectCanFallback) {
@@ -2022,13 +2017,6 @@ private:
     bool isRegionNonTrivial(const SISORegionInfo& region) const {
         constexpr size_t kDefaultMaxEdges = 5;
         size_t maxEdges = kDefaultMaxEdges;
-        if (const char* env = std::getenv("SOUFFLE_SISO_MAX_EDGES")) {
-            try {
-                maxEdges = std::stoul(env);
-            } catch (...) {
-                maxEdges = kDefaultMaxEdges;
-            }
-        }
 
         size_t edgeCount = region.internalEdges.size();
         size_t nodeCount = region.internalNodes.size();

@@ -7,7 +7,7 @@ This is the documentation architecture for this repository.
 - Layer 2 (operations): `docs/USAGE.md`, `docs/TESTING.md`, `docs/RUNBOOK.md`, `docs/SECURITY.md`, `docs/process/*`.
 - Layer 3 (project-level): `docs/project/*` for module map, ownership, and maintenance invariants.
 - Layer 4 (topic deep dives): `docs/topics/*` for implementation details by subsystem.
-- Layer 5 (design/historical): `docs/design/*`, `docs/historical/*`.
+- Layer 5 (design): `docs/design/*`.
 - Layer 6 (experiment records): `archive/YYYY-MM-DD/*` with tracked batch README only.
 
 ## Placement Rules
@@ -15,7 +15,7 @@ This is the documentation architecture for this repository.
 - If a change affects module boundaries or ownership: update `docs/project/MODULES.md` and `docs/project/FORK_DELTA.md`.
 - If a change affects algorithm details: update one topic doc in Layer 4.
 - If content is proposal-only: keep it in `docs/design/`.
-- If content is run log/snapshot: move it to `docs/historical/` or `archive/`.
+- If content is run log/snapshot: keep it out of the AE branch, or place a dated summary under `archive/`.
 
 ## Root Directory Policy
 - Keep root minimal for discoverability.
@@ -29,4 +29,3 @@ This is the documentation architecture for this repository.
 - [archive/README.md](archive/README.md)
 
 ## Related commits
-- `UNCOMMITTED` — docs(project): define repository-wide doc architecture and placement rules

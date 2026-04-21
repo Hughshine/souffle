@@ -75,6 +75,4 @@ The runner enforces:
   - `ctest --test-dir build -L regression --output-on-failure --progress`
 
 ## Related commits
-- `UNCOMMITTED` — test(regression): add maintained ctest workflow and cases
-- `UNCOMMITTED` — docs(testing): document maintained regression runbook
 - `668298ef8` — fix(inc-region): update regional WMC routing and profiling

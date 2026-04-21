@@ -2,8 +2,7 @@
 
 ## Scope
 This is the current runnable workflow for full-only side-channel evaluation.
-Use this document for commands and outputs. Old full evaluation logs are in
-`docs/historical/README.eval.full.log.md`.
+Use this document for commands and outputs.
 
 ## Prerequisites
 Build Souffle from repo root and put the binary on `PATH`:
@@ -57,5 +56,4 @@ python3 problog-benchmark/side_channel_full.py \
 - [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
 
 ## Related commits
-- `UNCOMMITTED` — docs(evaluation): rewrite full-mode evaluation README as current workflow
 - `812ea4081` — docs(repo): refine README narratives

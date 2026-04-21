@@ -50,53 +50,46 @@ Compiler notes:
   `souffle-compile.py`.
 
 ## Runtime Options (Compiled Program)
-Defaults are baked into each generated binary. Typical defaults in this repo are
-listed below; use `-h` for the authoritative values.
-- `-F, --facts <DIR>`: input directory, default `input`
-- `-D, --output <DIR>`: output directory, default `output`
-- `-p, --profile <FILE>`: profile file, default empty (only if compiled with profiling)
-- `-k, --knowledge <bdd|sdd>`: default `bdd`
-- `-l, --logfile <FILE>`: debugger JSON base name, default `log.txt`
-- `-d, --derv-only[=<true|false>]`: default `false` (omit value to set `true`)
-- `-m, --setmode <inc-naive|inc-regional|full-hard|full-soft|full|elastic>`:
-  default `inc-naive`
-  - aliases: `inc`, `incr`, `incremental` map to `inc-naive`
-  - `full` maps to `full-hard` (hard reset each turn); `full-soft` reuses the
-    DD manager state
-  - `elastic` is accepted but currently **not implemented** (will assert in the CLI)
-- `-e, --merge-bi-imp`: always enabled in full-only binaries (`--full-only` at
-  compile time); it is forced off in online/incremental binaries.
-- `--prune-extra`: default `false` (enable outputless-component pruning in prune)
-- `-r, --rewrite`: default `false`; enables the artifact-facing smart rewrite
-  dispatcher. The dispatcher currently selects implicit split rewrite when any
-  rule is probabilistic, and deterministic no-split rewrite when rules are
-  deterministic.
-- `--explicit-rewrite`: default `false`; diagnostic control that forces the
-  legacy explicit graph rewrite pipeline instead of smart dispatch.
-- `--implicit-rewrite`: default `false`; diagnostic control that forces the
-  implicit split rewrite pipeline instead of smart dispatch.
-- `--det-opt`: default `false` (enable deterministic-relation analysis + derivation gating)
-- `--det-force`: default `false` (force deterministic evaluation; skip derivation graph and emit 1.0 probs)
-- `--split-mode=<no-split|naive-split|complete-split>`: default `naive-split`
-  when explicitly forcing a rewrite mode; bare `--rewrite` may override the
-  split policy through the smart dispatcher.
-- `--dumpjson`: default `false`
-- `--dumpdot`: default `false`
-- `--dumpstat`: default `false`
-- `--dumpconst`: default `false` (write const-prepass details; see `docs/topics/pipeline/README.const.md`)
-- `--dred-profile`: default `false` (requires compile-time `--profile --dred-profile` to emit DRed sub-phase timers;
-  per-SCC workload counters also need `--dumpstat`)
-- `--inc-profile`: default `false` (print per-stage incremental timings to stdout)
-- `--fc-profile`: default `false` (print detailed forward-compilation sub-phase counters/timings to stdout)
-- `--profile-wmc`: default `false` (print weighted model counting timing/call breakdowns to stdout)
-- `--profile-inc-regional`: default `false` (inc-regional diagnostics + timing summary)
-- `--profile-inc-regional-heavy`: default `false` (extra inc-regional tracing; large output)
-- `--inc-regional-trace-tuples=<LIST>`: default empty (comma-separated tuples to trace)
-- `--profile-dep-graph`: default `false` (dependency-graph profiling)
-- `--post-del`: default `false` (enable post-delete variable postprocess in FC)
-- `--no-reuse-var-index`: default `false` (disable reuse of freed DD variable indices)
-- `--no-single-rand-fast`: default `false` (disable single-randvar FC fast path)
-- `-h`: help
+Defaults are baked into each generated binary.  Artifact benchmark commands use
+only the stable surface below:
+- `-F, --facts <DIR>`: input directory.
+- `-D, --output <DIR>`: output directory.
+- `-l, --logfile <FILE>`: debugger JSON base name.
+- `-k, --knowledge <bdd|sdd>`: DD backend; artifact runs use the default `bdd`.
+- `--det-opt`: deterministic-relation analysis and graph gating.
+- `-r, --rewrite`: artifact rewrite dispatcher.
+
+Plain comparison runs omit only `--rewrite`:
+```bash
+./compute -F <facts-dir> -D <output-dir> --det-opt --logfile ae-plain
+```
+
+Optimized runs add bare `--rewrite`:
+```bash
+./compute -F <facts-dir> -D <output-dir> --det-opt --rewrite --logfile ae-rewrite
+```
+
+The dispatcher selects an implicit-split rewrite implementation when any rule
+has a non-`1.0` probability.  If no rule has a probabilistic weight, it selects
+the graph-rewrite implementation with no split.  This classification is based
+on rule probabilities, not on `.prob` input-fact values.
+
+### Diagnostic Runtime Options
+These options are useful for implementation studies but are not part of the
+artifact reproduction command:
+- `--explicit-rewrite`: force the explicit graph-rewrite diagnostics.
+- `--implicit-rewrite`: force the implicit-split diagnostics.
+- `--split-mode=<no-split|naive-split>`: explicit diagnostic split policy.
+  Do not pass `--split-mode` in artifact commands; explicit split controls
+  bypass the smart dispatcher.
+- `-d, --derv-only[=<true|false>]`: derivation graph only.  It does not run the
+  rewrite pipeline and should not be used as a graph-only rewrite benchmark.
+- `-e, --merge-bi-imp`, `--prune-extra`, `-C, --fold-const`, `--det-force`,
+  `--post-del`, `--no-reuse-var-index`, and `--no-single-rand-fast`.
+- Dump/profiling flags: `--dumpjson`, `--dumpdot`, `--dumpstat`, `--dumpconst`,
+  `--dred-profile`, `--fc-profile`, `--profile-wmc`, and
+  `--profile-dep-graph`.
+- Incremental profiling flags remain outside the full-mode artifact path.
 
 ## Online Incremental CLI (Interactive or Batch)
 Commands:

@@ -23,5 +23,3 @@ Project-level docs answer three questions that topic docs do not:
 - [src/MainDriver.cpp](src/MainDriver.cpp)
 
 ## Related commits
-- `UNCOMMITTED` — docs(project): add project-level doc map for module ownership and maintenance
-- `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack implementation guide

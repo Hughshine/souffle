@@ -31,7 +31,8 @@ deduplicates overlapping regions (smallest regions first). The active patterns a
   (no evidence, no incoming edges, only this outgoing edge); the exit has only
   that incoming edge.
 
-Enable fast-path debug output with `SOUFFLE_SISO_FAST_DEBUG=1` (logs to stdout).
+Fast-path debug output is not part of the artifact runtime surface.  Use the
+normal JSON stage log and rewrite metadata for artifact analysis.
 
 ## High-level goal
 Given a derivation hypergraph (nodes = facts/derivations, hyperedges = rule applications), detect **SISO** (single-entry, single-exit) regions. A SISO region is defined here as a subgraph with:
@@ -65,7 +66,6 @@ For each candidate exit edge in the graph:
    - Package `SISORegionInfo` (entry/exit, internal nodes/edges, entry preds, etc.). Regions are filtered for overlap and sorted by size in `detectAllSISOStrictFromExit`.
 
 ## Debug logging
-- `SOUFFLE_SISO_FAST_DEBUG=1`: prints fast-path decisions to stdout.
 - `siso_debug.log`, `siso_edge_dom_inputs.log`, `siso_info.csv`: used by the
   legacy dominance-based detector (currently disabled).
 
@@ -82,8 +82,7 @@ For each candidate exit edge in the graph:
 4) Use `siso_edge_dom_inputs.log` to see why a specific edge chose certain dominant inputs (support-set overlap heuristic).
 
 ## Notes / limitations
-- Fast-path detection ignores dominance-based regions and does not honor
-  `SOUFFLE_SISO_MIN_RANDOM` (that filter lives in the disabled path).
+- Fast-path detection ignores dominance-based regions.
 - Dominance is computed on a collapsed graph using only dominant inputs; if that
   choice is too restrictive, entry LCAs can fail.
 - Entry requires at least one external predecessor; pure-fact prefixes with no

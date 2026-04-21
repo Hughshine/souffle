@@ -2,7 +2,6 @@
 
 ## Scope
 Use this note for optimization-focused incremental runs (especially inc-regional).
-Detailed historical timing dumps were moved to `docs/historical/OPT.md`.
 
 ## Recommended Run Pattern
 ```bash
@@ -38,4 +37,3 @@ For archived aggregate TSV outputs, use `archive/2026-02-11/tsv/`.
 - [archive/2026-02-11/tsv/inc_regional_vs_naive_fc_wmc_per_case_delta.tsv](archive/2026-02-11/tsv/inc_regional_vs_naive_fc_wmc_per_case_delta.tsv)
 
 ## Related commits
-- `UNCOMMITTED` — docs(evaluation): condense OPT note and archive historical details

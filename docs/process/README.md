@@ -14,4 +14,3 @@ This folder contains workflow and hygiene docs for contributors and maintainers.
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Related commits
-- `UNCOMMITTED` — docs(process): add process docs landing page and move commit hygiene guide

@@ -2,8 +2,7 @@
 
 ## Scope
 This is the current runnable workflow for side-channel incremental evaluation.
-Use this document for commands and output locations. Use `docs/historical/README.eval.inc.log.md`
-for old long-form run logs.
+Use this document for commands and output locations.
 
 ## Prerequisites
 Build Souffle from repo root:
@@ -69,5 +68,4 @@ Latest archived batch summary:
 - [archive/2026-02-11/README.md](archive/2026-02-11/README.md)
 
 ## Related commits
-- `UNCOMMITTED` — docs(evaluation): rewrite incremental evaluation README as current workflow
 - `e214cd028` — docs(repo): refresh incremental docs and index

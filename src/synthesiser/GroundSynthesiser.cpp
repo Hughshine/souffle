@@ -271,7 +271,7 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     hook << "," << (glb.config().has("rewrite") ? "true" : "false");
     hook << ");\n";
 
-    hook << "if (!opt.parse(argc,argv)) return 1;\n";
+    hook << "if (!opt.parse(argc,argv)) return opt.isHelpRequested() ? 0 : 1;\n";
 
     if (!db.getNS(false).empty()) {
         hook << db.getNS(false) << "::";

@@ -294,7 +294,7 @@ private:
         FastPathDetectOptions defaultOptions;
         const FastPathDetectOptions& opts = options ? *options : defaultOptions;
         std::vector<SISORegionInfo> regions;
-        bool debug = std::getenv("SOUFFLE_SISO_FAST_DEBUG") != nullptr;
+        bool debug = false;
         std::vector<EdgePtr> edgeScan;
         if (candidateEdges) {
             edgeScan.reserve(candidateEdges->size());
@@ -643,14 +643,6 @@ private:
     }
 
     static std::size_t minRandomVars() {
-        // allow overriding the minimum via env for experiments; default 0 to allow deterministic simplifications
-        const char* env = std::getenv("SOUFFLE_SISO_MIN_RANDOM");
-        if (env) {
-            try {
-                return static_cast<std::size_t>(std::stoul(env));
-            } catch (...) {
-            }
-        }
         return 0;
     }
 
@@ -1401,10 +1393,7 @@ public:
         bool forceCompleteDetect = false,
         const FastPathDetectOptions* options = nullptr)
     {
-        const char* dirtyEnv = std::getenv("SOUFFLE_SISO_DIRTY_DETECT");
-        const bool disableDirtyFromEnv = dirtyEnv && (std::string(dirtyEnv) == "0" ||
-                        std::string(dirtyEnv) == "false" || std::string(dirtyEnv) == "FALSE");
-        if (forceCompleteDetect || disableDirtyFromEnv) {
+        if (forceCompleteDetect) {
             dirtyNodes = nullptr;
             dirtyEdges = nullptr;
         }

@@ -21,5 +21,3 @@ Topical docs for currently supported behavior and workflows.
 - [docs/topics/testing/README.regression.md](docs/topics/testing/README.regression.md)
 
 ## Related commits
-- `UNCOMMITTED` — docs(testing): add topical regression workflow reference
-- `UNCOMMITTED` — docs(evaluation): add topical evaluation map and current/historical split
