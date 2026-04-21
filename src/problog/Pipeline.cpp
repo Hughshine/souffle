@@ -73,6 +73,12 @@ static RewriteDispatchDecision chooseRewriteDispatch(const CmdOptions& opt, cons
     }
 
     const bool splitForcesLegacy = opt.isSplitModeExplicit() && decision.splitMode == "no-split";
+    if (opt.isExplicitRewriteEnabled()) {
+        decision.useImplicit = false;
+        decision.engine = splitForcesLegacy ? "explicit-forced-no-split" : "explicit-forced";
+        return decision;
+    }
+
     if (opt.isImplicitRewriteEnabled() && !splitForcesLegacy) {
         decision.useImplicit = true;
         decision.engine = "implicit-forced";

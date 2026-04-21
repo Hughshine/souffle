@@ -94,6 +94,10 @@
 - `-r`, `--rewrite`: enable the smart rewrite dispatcher.
   Probabilistic-rule programs select implicit split rewrite; deterministic-rule
   programs select deterministic no-split rewrite.
+- `--explicit-rewrite`: force the legacy explicit graph rewrite pipeline for
+  diagnostics and historical comparisons.
+- `--implicit-rewrite`: force the implicit split rewrite pipeline for
+  diagnostics and historical comparisons.
 - `-P`, `--split-mode <no-split|naive-split|complete-split>`: explicit split
   mode override for diagnostic rewrite runs.
 - `-k`, `--knowledge <bdd|sdd>`: choose DD backend.

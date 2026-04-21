@@ -26,14 +26,17 @@ SISO rewrite (`--rewrite`) and the newer implicit-split pipeline
   one probabilistic rule select implicit split rewrite with naive split; programs
   whose rules are deterministic select legacy no-split graph rewrite and then
   component-wise FC/WMC.
+- `--explicit-rewrite`: force the legacy explicit graph rewrite pipeline. This
+  is the diagnostic/historical spelling for the old explicit rewrite lane; do
+  not spell it as `--rewrite --split-mode=*` in artifact-facing scripts.
 - `--implicit-rewrite`: implicit-split rewrite. The pipeline first runs the
   implicit split/materialize flow, carries precomputed tuple probabilities
   forward, rebuilds the live graph/view, and then hands the result to the same
   full-mode FC/WMC machinery.
 - All rewrite modes still report their end-to-end cost inside
   `FC_WMC_HYBRID`; final artifact scripts should prefer bare `--rewrite`, while
-  `--implicit-rewrite` and `--split-mode` remain diagnostic controls for
-  explicit comparisons.
+  `--explicit-rewrite`, `--implicit-rewrite`, and `--split-mode` remain
+  diagnostic controls for explicit comparisons.
 
 ## Implementation (current state)
 - Detection: `GraphAnalyzer::detectAllSISOStrictFromExit(view)` on the working `IncSubgraphView`; cached incoming edges are cleared each iteration.

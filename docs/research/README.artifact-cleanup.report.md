@@ -22,6 +22,8 @@ This report records the current cleanup plan for turning the local
 - `--knowledge bdd` remains the default trusted backend for these measurements.
 
 ## Keep As Diagnostic Controls
+- `--explicit-rewrite` should remain available for direct legacy explicit-lane
+  debugging and historical comparison.
 - `--implicit-rewrite` should remain available for direct implicit-lane
   debugging and historical comparison.
 - `--split-mode=no-split` should remain available for no-split ablations.
@@ -42,7 +44,7 @@ This report records the current cleanup plan for turning the local
   older `--implicit-rewrite` spelling out of artifact-facing instructions.
 - CAV-FULL taint still keeps the historical `implicit_rewrite` variant label,
   but that variant now calls bare `--rewrite`; the explicit diagnostic variant
-  forces legacy rewrite via `--rewrite --split-mode=naive-split`.
+  forces legacy rewrite via `--explicit-rewrite`.
 - Avoid exposing local environment-variable probes as user-facing evaluation
   modes.
 

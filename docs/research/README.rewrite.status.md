@@ -45,6 +45,8 @@ status layer above the deeper implementation notes in
 - Older packaged full-artifact runs still used the explicit `--rewrite` /
   `--implicit-rewrite` distinction; keep that distinction only for historical
   comparison and diagnostic controls.
+- `--explicit-rewrite` is now the non-smart spelling for the legacy explicit
+  graph rewrite lane.
 - `--implicit-rewrite` remains the direct implicit-split diagnostic pipeline.
 - The maintained full artifact now defaults to implicit rewrite for the
   side-channel rewrite comparison.
@@ -71,7 +73,8 @@ Implemented in the local compiler checkpoint:
   probabilistic rules select implicit rewrite with naive split; deterministic
   rules select legacy no-split rewrite
 - kept explicit control flags for diagnosis:
-  `--implicit-rewrite` still forces implicit rewrite and
+  `--explicit-rewrite` forces legacy explicit graph rewrite,
+  `--implicit-rewrite` still forces implicit rewrite, and
   `--split-mode=no-split` still forces no-split legacy rewrite
 - added detector-level feature masking so disabled SISO detectors are not still
   paid for before post-filtering
@@ -1798,8 +1801,8 @@ Additional profiling notes:
     equality.
 - next optimization targets:
   - keep artifact-facing `--rewrite` as the only required optimized command in
-    benchmark instructions; retain `--implicit-rewrite` and `--split-mode=*`
-    only as diagnostic controls
+    benchmark instructions; retain `--explicit-rewrite`, `--implicit-rewrite`,
+    and `--split-mode=*` only as diagnostic controls
   - remove or avoid the final no-op SISO detection pass on symbolization-style
     runs
   - keep the useful no-split structural rewrites, but make their detector

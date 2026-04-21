@@ -71,6 +71,10 @@ listed below; use `-h` for the authoritative values.
   dispatcher. The dispatcher currently selects implicit split rewrite when any
   rule is probabilistic, and deterministic no-split rewrite when rules are
   deterministic.
+- `--explicit-rewrite`: default `false`; diagnostic control that forces the
+  legacy explicit graph rewrite pipeline instead of smart dispatch.
+- `--implicit-rewrite`: default `false`; diagnostic control that forces the
+  implicit split rewrite pipeline instead of smart dispatch.
 - `--det-opt`: default `false` (enable deterministic-relation analysis + derivation gating)
 - `--det-force`: default `false` (force deterministic evaluation; skip derivation graph and emit 1.0 probs)
 - `--split-mode=<no-split|naive-split|complete-split>`: default `naive-split`
