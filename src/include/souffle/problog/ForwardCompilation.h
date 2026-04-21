@@ -378,6 +378,7 @@ void buildFormulasCyclewiseInternal(
 
     auto depStart = Clock::now();
     auto& depGraph = view.getCycleDependencyGraph();
+    depGraph.ensureDepths();
 //    depGraph.dumpCycles(std::cout);
     depGraph.dumpDot("scc.dot");
     auto depMs = toMs(Clock::now() - depStart);

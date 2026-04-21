@@ -1467,9 +1467,57 @@ Additional profiling notes:
   prototype-level for benchmark-scale symbolization inputs because the
   synthetic DP subgraph can expand too aggressively.
 
+## 2026-04-20 — Symbolization: eager dep-graph depths were the main extra FC tax
+
+- scope:
+  unified checkpoint `full-artifact-opt-unified` on the extracted DDisasm
+  symbolization host (`symbolization_data_object_extracted.dl`) with real
+  balanced binary inputs
+- finding:
+  the expensive `component_build_subgraphs_ms` in rewrite mode was not just
+  component bucketing. On the hybrid path it eagerly built a full
+  `CycleDependencyGraph`, including cycle depths, before component analysis.
+  The full-view depth map is only needed later by cyclewise formula
+  construction on the residual slow components.
+- implementation:
+  `CycleDependencyGraph::computeDepths()` is now deferred until
+  `buildFormulasCyclewise*()` actually needs `edgeDepthsGlobal`.
+- evidence:
+  on `gawk_balanced`, a dep-graph-profiled explicit run now reports
+  `depth=0 depth_deferred=1 total=587.8 ms` for the full-view dep graph,
+  versus the previous eager profile of roughly `1145 ms` total with about
+  `360 ms` spent only on depth computation.
+- resulting runtime changes:
+  - `gawk_balanced`
+    - plain: `6.57 s`
+    - explicit: `4.88 s`
+    - implicit: `6.38 s`
+    - `manager_init_vars`: plain `25054`, rewrite `122`
+  - `bison_balanced`
+    - plain: `5.80 s`
+    - explicit: `4.38 s`
+    - implicit: `5.61 s`
+    - `manager_init_vars`: plain `25124`, rewrite `44`
+  - `tmux`
+    - plain still crashes in CUDD `makeOrBalanced`
+    - explicit: `21.61 s`
+    - implicit: `28.33 s`
+    - `manager_init_vars`: rewrite `492`
+- stage-level interpretation:
+  - rewrite still removes almost all hard backend variables on these cases.
+  - the previous slowdown on medium symbolization cases was largely inflated by
+    eager full-view dep-graph work inside `component_build_subgraphs_ms`.
+  - after deferring depth construction, both explicit and implicit regain
+    end-to-end viability on the representative medium cases; explicit is now
+    clearly faster than plain on `gawk` and `bison`, while implicit is roughly
+    tied with or slightly faster than plain.
+  - large cases still justify rewrite even more strongly because plain remains
+    non-robust (`tmux` crashes, rewrite completes).
+
 ## Related commits
 - `UNCOMMITTED` — feat(problog): add minimal SUM aggregate replay regression and graph reconstruction
 - `UNCOMMITTED` — fix(implicit-rewrite): force materialized handoff when overlay split creates aliases
+- `UNCOMMITTED` — perf(fc): defer dep-graph depth construction until cyclewise build
 - `UNCOMMITTED` — docs(research): record DDisasm pass exploration and symbolization host reading
 - `UNCOMMITTED` — docs(research): log rejected and candidate implicit overlay optimization attempts
 - `UNCOMMITTED` — docs(research): refresh curated rewrite status around the packaged full artifact

@@ -3827,6 +3827,7 @@ struct CycleDependencyGraph {
 
     std::unordered_map<NodePtr, size_t> nodeDepthsGlobal;
     std::unordered_map<EdgePtr, size_t> edgeDepthsGlobal;
+    bool depthsComputed = false;
 
     std::vector<size_t> cycleToComponent;
     std::unordered_map<NodePtr, size_t> nodeToComponent;
@@ -3854,9 +3855,8 @@ struct CycleDependencyGraph {
             auto t3 = Clock::now();
             profile.comp_ms = toMs(t3 - t2);
 
-            computeDepths(&profile);
             auto t4 = Clock::now();
-            profile.depth_ms = toMs(t4 - t3);
+            profile.depth_ms = 0.0;
             profile.total_ms = toMs(t4 - t0);
 
             profile.scc_count = nodeCycles.size();
@@ -3869,6 +3869,7 @@ struct CycleDependencyGraph {
                       << " dep=" << profile.dep_ms
                       << " comp=" << profile.comp_ms
                       << " depth=" << profile.depth_ms
+                      << " depth_deferred=1"
                       << " depth_entry=" << profile.depth_entry_ms
                       << " depth_bfs=" << profile.depth_bfs_ms
                       << " depth_edge=" << profile.depth_edge_ms
@@ -3883,8 +3884,15 @@ struct CycleDependencyGraph {
             computeSCCs(nullptr);
             computeDependencies(nullptr);
             computeComponents(nullptr);
-            computeDepths(nullptr);
         }
+    }
+
+    void ensureDepths() {
+        if (depthsComputed) {
+            return;
+        }
+        computeDepths(nullptr);
+        depthsComputed = true;
     }
 
     size_t getComponentId(const NodePtr& node) const {
@@ -4214,6 +4222,7 @@ private:
             profile->depth_bfs_ms = bfs_ms;
             profile->depth_edge_ms = edge_ms;
         }
+        depthsComputed = true;
     }
 };
 
