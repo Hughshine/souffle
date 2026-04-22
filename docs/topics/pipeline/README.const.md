@@ -33,8 +33,3 @@ Artifact commands include `--det-opt` for both plain and rewrite runs:
 ## Outputs
 When enabled, the analysis writes deterministic-relation summaries used for
 debugging.  These files are diagnostics, not correctness or performance oracles.
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

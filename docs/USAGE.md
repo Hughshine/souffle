@@ -85,8 +85,3 @@ records a different provenance pair.
   derivations for deterministic relations.
 - Debug/profiling outputs are available for implementation diagnosis, but are
   not required for standard artifact reproduction.
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

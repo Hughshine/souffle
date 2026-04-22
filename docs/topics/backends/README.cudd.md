@@ -34,8 +34,3 @@ from the estimated BDD variable count and passes it to `WeightedBDDManager`.
 ## Diagnostics
 `--fc-profile` and `--profile-wmc` expose backend timing, but they are hidden
 diagnostic flags and should not be used in standard AE timing commands.
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

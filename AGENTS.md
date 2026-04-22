@@ -22,7 +22,7 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 
 ## Change Discipline
 - Keep changes minimal; avoid touching unrelated files and generated artifacts.
-- Follow `docs/process/README.git.md` for commit hygiene (outputs/logs stay local).
+- Keep outputs/logs local; do not commit generated benchmark artifacts.
 - Avoid introducing new dependencies unless explicitly requested.
 - Keep documentation in the single source of truth and link, do not duplicate.
 - Prefer repo-scoped skills: `repo-docs`, `verify-changes`, `pr-ready`, `git-commit-helper`, `souffle-test-case`.
@@ -42,20 +42,12 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - `docs/ARCHITECTURE.md`
 - `docs/TESTING.md`
 - `docs/RUNBOOK.md`
-- `docs/SECURITY.md`
 - `docs/USAGE.md`
 - `docs/INDEX.md`
 - `docs/topics/testing/README.regression.md`
-- `docs/project/README.md`
-- `docs/process/README.git.md`
 
 ## Source references
 - [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)
 - [sh/run_test_format.sh](sh/run_test_format.sh)
 - [sh/run_regression_tests.sh](sh/run_regression_tests.sh)
 - [cmake/CTestDisabled.cmake](cmake/CTestDisabled.cmake)
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

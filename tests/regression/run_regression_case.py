@@ -81,21 +81,11 @@ def prepare_case_workspace(case_id: str, work_root: Path) -> Path:
     reset_dir(case_dir)
 
     for entry in sorted(case_src.iterdir()):
-        if entry.name == "generate.py":
-            continue
         dst = case_dir / entry.name
         if entry.is_dir():
             shutil.copytree(entry, dst)
         elif entry.is_file():
             shutil.copy2(entry, dst)
-
-    generator = case_src / "generate.py"
-    if generator.exists():
-        run_cmd(
-            [sys.executable, str(generator), "--out-dir", str(case_dir)],
-            cwd=case_src,
-            timeout=180,
-        )
 
     program = case_dir / "compute.dl"
     input_dir = case_dir / "input"

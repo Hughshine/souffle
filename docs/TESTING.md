@@ -52,8 +52,3 @@ CMake (`$<TARGET_FILE:souffle>`), avoiding accidental system `souffle` binaries.
 
 ## Legacy/Experimental Tests
 Historical legacy suites are not part of the AE branch.
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

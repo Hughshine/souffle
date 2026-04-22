@@ -67,8 +67,3 @@ Plain comparison runs omit only `--rewrite`:
   `ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}`.
 - Run a generated benchmark binary from the companion `CAV-FULL` artifact with
   the commands above for end-to-end AE validation.
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

@@ -43,8 +43,3 @@ Optimized run:
 - [../../USAGE.md](../../USAGE.md)
 - [../rewrite/README.rewrite.impl.md](../rewrite/README.rewrite.impl.md)
 - [../../../src/problog/Pipeline.cpp](../../../src/problog/Pipeline.cpp)
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

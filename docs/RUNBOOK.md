@@ -33,8 +33,3 @@
 ## Common Checks
 - Compare `facts.prob` outputs across plain and rewrite runs.
 - Inspect stdout timing lines and JSON logs for hot stages before tuning.
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

@@ -38,8 +38,3 @@ This AE branch packages the full-mode probabilistic pipeline.
 
 ## Further Reading
 See [docs/INDEX.md](INDEX.md) for the complete AE doc map.
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

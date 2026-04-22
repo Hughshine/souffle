@@ -3,9 +3,8 @@
 Each maintained regression case has its own directory under `tests/regression/cases/`.
 
 Layout:
-- Static case: provide `compute.dl` and `input/*.facts` (plus optional `input/*.prob`).
-- Dynamic case: provide a per-case `generate.py` that writes `compute.dl` and `input/*`
-  into the output directory passed via `--out-dir`.
+- Provide `compute.dl` and `input/*.facts` plus optional `input/*.prob`.
 
-The runner (`tests/regression/run_regression_case.py`) copies static assets first, then
-invokes `generate.py` when present.
+The runner (`tests/regression/run_regression_case.py`) copies these static
+assets into a per-case build directory before compiling with the repo-built
+`souffle` binary.

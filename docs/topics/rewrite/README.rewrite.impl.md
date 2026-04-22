@@ -51,8 +51,3 @@ and should not be used as a graph-only rewrite benchmark.
 - Symbolization outputs should have the same key set and may differ by at most
   `1e-8` in probability.  The tolerance is for rare final-digit output-rounding
   boundaries observed in a small number of cases.
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

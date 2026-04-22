@@ -47,12 +47,8 @@ Current maintained cases:
 
 ## Case Asset Model
 - Case data lives under `tests/regression/cases/<case-id>/`.
-- Static-first:
-  - keep `compute.dl` and `input/*.facts` plus optional `input/*.prob` as
-    checked-in files.
-- Dynamic fallback for larger/derived inputs:
-  - add `tests/regression/cases/<case-id>/generate.py`.
-  - the runner invokes this per-case generator with `--out-dir <work-case-dir>`.
+- Cases are static: keep `compute.dl` and `input/*.facts` plus optional
+  `input/*.prob` as checked-in files.
 
 ## Assertions
 The runner enforces:
@@ -62,8 +58,3 @@ The runner enforces:
 
 The suite is a correctness gate, not a performance benchmark.  Heavy
 `CAV-FULL` benchmark workflows remain separate.
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

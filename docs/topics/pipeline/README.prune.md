@@ -24,8 +24,3 @@ the relevant input to graph rewrite, implicit split, and component-wise FC/WMC.
 - Merging must preserve output/evidence flags and probability semantics.
 - Aggregate contribution nodes must remain connected to the output derivations
   they justify.
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `beb581c24` — perf(problog): reduce symbolization rewrite overhead

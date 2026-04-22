@@ -29,8 +29,3 @@ evidence(atom, false).
 ## Limitations
 - Evidence affects probabilistic conditioning, not core Datalog evaluation.
 - Evidence must match a tuple present in the derivation graph.
-
-## Related commits
-- `ef4b7796c` — chore(artifact): prune AE rewrite surface
-- `f78f1cade` — docs(rewrite): record artifact smoke verification
-- `21a083b93` — perf(problog): scope evidence conditioning by component
