@@ -260,7 +260,7 @@ def case_exact_det_modes(souffle_bin: Path, work_root: Path) -> None:
 def run_language_example_case(
     *,
     case_id: str,
-    expected_key: str,
+    expected: Dict[str, float],
     souffle_bin: Path,
     work_root: Path,
 ) -> None:
@@ -286,11 +286,17 @@ def run_language_example_case(
     plain_prob = out_plain / "facts.prob"
     rewrite_prob = out_rewrite / "facts.prob"
     probs = parse_prob_file(plain_prob)
-    if expected_key not in probs:
+    if set(probs.keys()) != set(expected.keys()):
         raise CaseFailure(
-            f"{case_id}: expected query/output tuple was not produced.\n"
-            f"expected={expected_key}\nactual={sorted(probs.keys())}"
+            f"{case_id}: full-relation query produced the wrong tuple set.\n"
+            f"expected={sorted(expected.keys())}\nactual={sorted(probs.keys())}"
         )
+    for key, value in expected.items():
+        if not math.isclose(probs[key], value, rel_tol=0.0, abs_tol=1e-8):
+            raise CaseFailure(
+                f"{case_id}: unexpected plain probability for documented example.\n"
+                f"tuple={key} expected={value:.12g} actual={probs[key]:.12g}"
+            )
     if not (out_plain / "derivation.json").exists():
         raise CaseFailure(f"{case_id}: plain run did not produce derivation.json")
     if not (out_rewrite / "derivation.json").exists():
@@ -302,7 +308,10 @@ def run_language_example_case(
 def case_language_side_channel_mini(souffle_bin: Path, work_root: Path) -> None:
     run_language_example_case(
         case_id="language_side_channel_mini",
-        expected_key='explained("cache-hit")',
+        expected={
+            'explained("cache-hit")': 0.6552,
+            'explained("cache-miss")': 0.153,
+        },
         souffle_bin=souffle_bin,
         work_root=work_root,
     )
@@ -311,7 +320,10 @@ def case_language_side_channel_mini(souffle_bin: Path, work_root: Path) -> None:
 def case_language_taint_mini(souffle_bin: Path, work_root: Path) -> None:
     run_language_example_case(
         case_id="language_taint_mini",
-        expected_key='alarm("network")',
+        expected={
+            'alarm("cache")': 0.2904,
+            'alarm("network")': 0.26129241,
+        },
         souffle_bin=souffle_bin,
         work_root=work_root,
     )
@@ -320,7 +332,10 @@ def case_language_taint_mini(souffle_bin: Path, work_root: Path) -> None:
 def case_language_symbolization_mini(souffle_bin: Path, work_root: Path) -> None:
     run_language_example_case(
         case_id="language_symbolization_mini",
-        expected_key='object_total("widget",15)',
+        expected={
+            'object_total("other",10)': 0.51,
+            'object_total("widget",15)': 0.435666,
+        },
         souffle_bin=souffle_bin,
         work_root=work_root,
     )

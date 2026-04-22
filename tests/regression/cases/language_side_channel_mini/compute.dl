@@ -14,5 +14,4 @@ leak(Observation) :- secret(Value), mapping(Value, Observation).
 .output explained
 explained(Observation) :- leak(Observation), monitor(Observation).
 
-query(explained("cache-hit")).
-evidence(monitor("cache-hit"), true).
+query(explained(Observation)).

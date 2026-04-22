@@ -1,8 +1,8 @@
 # Language Examples
 
-This page introduces the small probabilistic Datalog fragment used by the
-artifact. The intended reader is an evaluator who wants to inspect a program
-before running the larger `problog-benchmark` cases.
+This page introduces the small probabilistic Datalog fragment used by this
+artifact. The intended reader is an evaluator who wants to inspect a complete
+program before running the larger `problog-benchmark` cases.
 
 The examples below are also regression tests. CTest compiles each program,
 runs exact inference with and without `--rewrite`, and checks that both runs
@@ -29,18 +29,26 @@ Source: [../tests/regression/cases/language_side_channel_mini/compute.dl](../tes
 
 This program models a secret-dependent observation. The probabilistic input
 relation `secret` represents possible secret values. The deterministic relation
-`mapping` maps each secret value to an observable event. The `monitor` relation
-is probabilistic and is also used as evidence:
+`mapping` maps each secret value to an observable event. The probabilistic
+relation `monitor` says whether the observation is visible.
 
 ```souffle
-query(explained("cache-hit")).
-evidence(monitor("cache-hit"), true).
+leak(Observation) :- secret(Value), mapping(Value, Observation).
+explained(Observation) :- leak(Observation), monitor(Observation).
+query(explained(Observation)).
 ```
 
-The example covers probabilistic facts, deterministic joins, query selection,
-and evidence conditioning. It resembles the side-channel benchmark shape at a
-small scale: probabilistic inputs feed deterministic propagation rules before
-the solver computes output probabilities.
+The query asks for the whole `explained` relation, not one selected tuple. The
+expected results are:
+
+```text
+explained("cache-hit")  = 0.72 * 0.91 = 0.6552
+explained("cache-miss") = 0.18 * 0.85 = 0.153
+```
+
+This shape resembles the side-channel benchmark at a small scale:
+probabilistic inputs feed deterministic propagation rules, then the solver
+computes probabilities for all requested output tuples.
 
 ## Mini Taint Case
 
@@ -52,17 +60,32 @@ flow edges:
 ```souffle
 tainted(Y) :- tainted(X), flow(X,Y), !sanitizer(Y).
 0.80::alarm(Y) :- tainted(Y), sink(Y).
+query(alarm(Value)).
 ```
 
-The example covers recursion, negation over a deterministic input relation,
-and a probabilistic rule. This shape exercises the optimized rewrite path used
-for workloads with probabilistic rules.
+The query asks for the whole `alarm` relation. The deterministic relation
+`sanitizer` blocks the `parser` node, so the path `user -> parser -> network`
+does not contribute. The expected output has two tuples:
+
+```text
+alarm("cache")   = 0.80 * (0.55 * 0.66) = 0.2904
+alarm("network") = 0.80 * (1 - (1 - 0.55*0.66*0.74)
+                              * (1 - 0.21*0.59*0.64))
+                 = 0.26129241
+```
+
+The example covers recursion, deterministic negation, probabilistic facts, and
+a probabilistic rule. This shape exercises the rewrite path used for workloads
+whose rules have probabilities.
 
 ## Mini Symbolization Case
 
 Source: [../tests/regression/cases/language_symbolization_mini/compute.dl](../tests/regression/cases/language_symbolization_mini/compute.dl)
 
-This program computes an aggregate over symbolic object names:
+This program mirrors the symbolization benchmark style: input facts describe
+objects, object classes, and numeric attributes. A first rule joins symbolic
+object names with their numeric points. A second rule computes the requested
+total for each selected class:
 
 ```souffle
 selected_point(Kind, Points) :-
@@ -72,12 +95,21 @@ selected_point(Kind, Points) :-
 object_total(Kind, Total) :-
     selected(Kind),
     Total = sum Points : { selected_point(Kind, Points) }.
+
+query(object_total(Kind, Total)).
+```
+
+The query asks for the whole `object_total` relation. In this small example the
+selected classes are `widget` and `other`, so the expected results are:
+
+```text
+object_total("widget",15) = 0.82 * 0.77 * 0.69 = 0.435666
+object_total("other",10)  = 0.51
 ```
 
 The example covers `symbol` attributes, numeric attributes, string constants,
-and `sum` aggregates. It matches the symbolization benchmark style: input facts
-describe objects and attributes, and the output relation asks for aggregate
-properties of selected objects.
+and the supported single-relation aggregate pattern used by the current
+pipeline. It is not meant to document a general aggregate semantics.
 
 ## Run the Examples
 

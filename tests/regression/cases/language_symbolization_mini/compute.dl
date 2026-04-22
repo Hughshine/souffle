@@ -6,6 +6,7 @@
 
 .decl selected(kind:symbol)
 selected("widget").
+selected("other").
 
 .decl selected_point(kind:symbol, points:number)
 selected_point(Kind, Points) :-
@@ -18,4 +19,4 @@ object_total(Kind, Total) :-
     selected(Kind),
     Total = sum Points : { selected_point(Kind, Points) }.
 
-query(object_total("widget", 15)).
+query(object_total(Kind, Total)).
