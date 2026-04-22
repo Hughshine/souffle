@@ -52,7 +52,7 @@ std::size_t canonicalFactIdForGraphNode(const NodePtr& node) {
     return node->getSemanticFactId();
 }
 
-bool evaluateOutputTruthUnderAssignment(const IncrementalDerivationGraphViewInterface& view, NodePtr output,
+bool evaluateOutputTruthUnderAssignment(const WorkingDerivationGraphViewInterface& view, NodePtr output,
         const std::unordered_map<std::size_t, bool>& factTruth,
         const std::unordered_map<EdgePtr, bool>& edgeTruth) {
     if (!output) {
@@ -284,8 +284,8 @@ double elapsedMs(const Clock::time_point& start) {
     return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 
-IncSubgraphView buildFullIncView(IncrementalDerivationGraph& graph) {
-    return IncSubgraphView(graph.getNodes(), graph.getEdges(), {}, {}, {}, {});
+WorkingSubgraphView buildFullWorkingView(WorkingDerivationGraph& graph) {
+    return WorkingSubgraphView(graph.getNodes(), graph.getEdges());
 }
 
 class ScopedCoutSilencer {
@@ -359,7 +359,7 @@ bool ImplicitSplitOverlay::SplitDirtyTracker::initialized() const {
     return initialized_;
 }
 
-ImplicitSplitOverlay::ImplicitSplitOverlay(const IncrementalDerivationGraphViewInterface& view)
+ImplicitSplitOverlay::ImplicitSplitOverlay(const WorkingDerivationGraphViewInterface& view)
         : view_(view), splitDirty_(*this) {
     for (const auto& node : view_.getNodes()) {
         if (!node) {
@@ -1939,7 +1939,7 @@ std::string ImplicitSplitOverlay::summarize() const {
 MaterializedImplicitSplitGraph ImplicitSplitOverlay::materializeToGraph(
         const std::unordered_set<NodePtr>* skippedOutputNodes) const {
     MaterializedImplicitSplitGraph out;
-    out.graph = std::make_unique<IncrementalDerivationGraph>();
+    out.graph = std::make_unique<WorkingDerivationGraph>();
 
     std::unordered_map<NodePtr, NodePtr> baseNodeMap;
     std::unordered_map<SplitNodeRef, NodePtr, SplitNodeRefHash> refNodeMap;
@@ -2042,7 +2042,7 @@ MaterializedImplicitSplitGraph ImplicitSplitOverlay::materializeToGraph(
 }
 
 std::vector<OverlayOutputProbability> computeGraphOutputMarginalsExact(
-        const IncrementalDerivationGraphViewInterface& view,
+        const WorkingDerivationGraphViewInterface& view,
         const std::vector<NodePtr>& outputs,
         const std::unordered_map<NodePtr, double>* precomputedOutputs) {
     std::vector<NodePtr> activeOutputs;
@@ -2267,7 +2267,7 @@ void runOverlayRounds(ImplicitSplitOverlay& overlay, const ImplicitSplitPipeline
 }
 
 ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
-        const IncrementalDerivationGraphViewInterface& view,
+        const WorkingDerivationGraphViewInterface& view,
         const ImplicitSplitPipelineOptions& options) {
     ImplicitSplitPipelineResult result;
     const auto totalStart = Clock::now();
@@ -2343,7 +2343,7 @@ ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
     result.stats.materializeMs = elapsedMs(materializeStart);
     result.stats.materializedAliasNodes = result.materialized.aliasNodes;
 
-    auto viewMaterialized = buildFullIncView(*result.materialized.graph);
+    auto viewMaterialized = buildFullWorkingView(*result.materialized.graph);
     result.stats.materializedNodesBefore = viewMaterialized.getNodes().size();
     result.stats.materializedEdgesBefore = viewMaterialized.getEdges().size();
 

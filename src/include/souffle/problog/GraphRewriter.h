@@ -106,8 +106,8 @@ public:
     * @param debug   Legacy flag (ignored for output); use --dumpstat/--dumpdot instead.
     * @param flags   Feature switches controlling which SISO kinds / passes are enabled.
     */
-    GraphRewriteStats rewriteUntilFixpoint(IncrementalDerivationGraph& graph,
-                                           IncSubgraphView& view,
+    GraphRewriteStats rewriteUntilFixpoint(WorkingDerivationGraph& graph,
+                                           WorkingSubgraphView& view,
                                            bool debug = false,
                                            const RewriteFeatureFlags& flags = RewriteFeatureFlags{}) const {
         GraphRewriteStats stats;
@@ -1375,7 +1375,7 @@ private:
         return p > 0.0 && p < 1.0;
     }
 
-    std::unordered_set<NodePtr> collectEvidenceAffectedNodes(const IncSubgraphView& view) const {
+    std::unordered_set<NodePtr> collectEvidenceAffectedNodes(const WorkingSubgraphView& view) const {
         std::unordered_set<NodePtr> affected;
         // Most benchmark/timing runs do not use evidence at all. In that common
         // case, avoid constructing the cycle-dependency graph just to discover
@@ -1403,7 +1403,7 @@ private:
         return affected;
     }
 
-    static NodePtr createShadowFact(IncrementalDerivationGraph& graph, const NodePtr& fact,
+    static NodePtr createShadowFact(WorkingDerivationGraph& graph, const NodePtr& fact,
             const EdgePtr& edgeHint) {
         if (!fact || !edgeHint) return nullptr;
         UntypedTuple shadowTuple;
@@ -1433,7 +1433,7 @@ private:
         return node && node->isFact && node->getProbability() > 0.0 && node->getProbability() < 1.0;
     }
 
-    static SemanticFactUseStats buildSemanticFactUseStats(const IncSubgraphView& view) {
+    static SemanticFactUseStats buildSemanticFactUseStats(const WorkingSubgraphView& view) {
         SemanticFactUseStats stats;
         for (auto node : view.getNodes()) {
             if (!isProbabilisticFactNode(node)) continue;
@@ -1451,7 +1451,7 @@ private:
         return stats;
     }
 
-    static bool canAbsorbFactLiteral(const IncSubgraphView& view, const NodePtr& node,
+    static bool canAbsorbFactLiteral(const WorkingSubgraphView& view, const NodePtr& node,
             const SemanticFactUseStats& semanticStats, std::size_t localOccurrences = 1) {
         if (!node || !node->isFact || node->hasEvidence() || node->needOutput) {
             return false;
@@ -1474,7 +1474,7 @@ private:
         return occIt != semanticStats.inputOccurrences.end() && occIt->second == localOccurrences;
     }
 
-    static bool canPrecomputeOutputFact(const IncSubgraphView& view, const NodePtr& node,
+    static bool canPrecomputeOutputFact(const WorkingSubgraphView& view, const NodePtr& node,
             const std::unordered_set<NodePtr>& evidenceAffectedNodes) {
         if (!node || !node->needOutput || !node->isFact) return false;
         if (node->hasEvidence()) return false;
@@ -1484,7 +1484,7 @@ private:
         return true;
     }
 
-    static size_t precomputeOutputFacts(IncSubgraphView& view,
+    static size_t precomputeOutputFacts(WorkingSubgraphView& view,
             const std::unordered_set<NodePtr>& evidenceAffectedNodes) {
         size_t count = 0;
         for (auto node : view.getNodes()) {
@@ -1499,7 +1499,7 @@ private:
         return count;
     }
 
-    SplitStats splitFanoutNaive(IncrementalDerivationGraph& graph, IncSubgraphView& view,
+    SplitStats splitFanoutNaive(WorkingDerivationGraph& graph, WorkingSubgraphView& view,
             GraphRewriteStats& stats,
             const std::unordered_set<NodePtr>& evidenceAffectedNodes,
             const std::unordered_set<NodePtr>* splitSeedNodes = nullptr,
@@ -1685,7 +1685,7 @@ private:
         return out;
     }
 
-    SplitStats splitFanoutComplete(IncrementalDerivationGraph& graph, IncSubgraphView& view,
+    SplitStats splitFanoutComplete(WorkingDerivationGraph& graph, WorkingSubgraphView& view,
             GraphRewriteStats& stats, const RewriteFeatureFlags& flags,
             const std::unordered_set<NodePtr>& evidenceAffectedNodes,
             std::unordered_set<NodePtr>* dirtyNodes = nullptr,
@@ -1786,7 +1786,7 @@ private:
             return out;
         }
 
-        // Simple candidate queue seeded once per split pass; can be made incremental later.
+        // Simple candidate queue seeded once per split pass; can be made more selective later.
         std::deque<NodePtr> queue;
         std::unordered_set<NodePtr> inQueue;
         auto enqueueFact = [&](const NodePtr& n) {
@@ -2229,8 +2229,8 @@ private:
         return pCond;
     }
 
-    EdgePtr applyRegionRewrite(IncrementalDerivationGraph& graph,
-                               IncSubgraphView& view,
+    EdgePtr applyRegionRewrite(WorkingDerivationGraph& graph,
+                               WorkingSubgraphView& view,
                                const SISORegionInfo& region,
                                double condProb,
                                GraphRewriteStats& stats,

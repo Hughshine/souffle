@@ -114,7 +114,7 @@ struct OverlayGraphStats {
 };
 
 struct MaterializedImplicitSplitGraph {
-    std::unique_ptr<IncrementalDerivationGraph> graph;
+    std::unique_ptr<WorkingDerivationGraph> graph;
     std::vector<NodePtr> outputs;
     std::unordered_set<NodePtr> liveNodes;
     std::unordered_set<EdgePtr> liveEdges;
@@ -184,7 +184,7 @@ struct ImplicitSplitPipelineResult {
 
 class ImplicitSplitOverlay {
 public:
-    explicit ImplicitSplitOverlay(const IncrementalDerivationGraphViewInterface& view);
+    explicit ImplicitSplitOverlay(const WorkingDerivationGraphViewInterface& view);
 
     bool applySplit(ImplicitSplitMode mode, ImplicitSplitOverlayStats* stats = nullptr);
     bool rewriteFastPathsToFixpoint(bool enableSingleHyperedge = true, bool enableLinearTwoEdge = true,
@@ -220,7 +220,7 @@ private:
         std::vector<SupportToken> factSupportTokens;
     };
 
-    const IncrementalDerivationGraphViewInterface& view_;
+    const WorkingDerivationGraphViewInterface& view_;
     std::unordered_map<NodePtr, BaseNodeState> nodeState_;
     std::vector<NodePtr> outputs_;
     std::vector<ImplicitSplitOverlayEdge> edges_;
@@ -392,7 +392,7 @@ private:
 };
 
 std::vector<OverlayOutputProbability> computeGraphOutputMarginalsExact(
-        const IncrementalDerivationGraphViewInterface& view,
+        const WorkingDerivationGraphViewInterface& view,
         const std::vector<NodePtr>& outputs,
         const std::unordered_map<NodePtr, double>* precomputedOutputs = nullptr);
 
@@ -400,7 +400,7 @@ std::string summarizeOverlayProbabilities(const std::vector<OverlayOutputProbabi
 RewritePatternCounts countRewritePatterns(const std::vector<SISORegionInfo>& regions);
 std::string summarizeRewritePatternCounts(const RewritePatternCounts& counts);
 ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
-        const IncrementalDerivationGraphViewInterface& view,
+        const WorkingDerivationGraphViewInterface& view,
         const ImplicitSplitPipelineOptions& options = {});
 
 }  // namespace souffle::problog

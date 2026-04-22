@@ -398,7 +398,7 @@ public:
         std::size_t edgeVarHits = 0;
         std::size_t edgeVarMisses = 0;
         constexpr double slowCreateThresholdMs = 1.0;
-        const bool profileCreate = fcProfile || incProfileEnabled;
+        const bool profileCreate = fcProfile;
         const bool profileTime = profileCreate;
 
         auto recordCreate = [&](double ms, double& total, double& maxMs, std::size_t& count, std::size_t& slowCount) {

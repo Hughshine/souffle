@@ -116,13 +116,13 @@ static std::size_t estimateBddVarCount(const SubgraphView& view) {
     return count;
 }
 
-static IncSubgraphView buildFullIncViewLocal(IncrementalDerivationGraph& graph) {
-    return IncSubgraphView(graph.getNodes(), graph.getEdges(), {}, {}, {}, {});
+static WorkingSubgraphView buildFullWorkingViewLocal(WorkingDerivationGraph& graph) {
+    return WorkingSubgraphView(graph.getNodes(), graph.getEdges());
 }
 
-static IncSubgraphView buildFullIncViewLocal(
+static WorkingSubgraphView buildFullWorkingViewLocal(
         const std::unordered_set<NodePtr>& nodes, const std::unordered_set<EdgePtr>& edges) {
-    return IncSubgraphView(nodes, edges, {}, {}, {}, {});
+    return WorkingSubgraphView(nodes, edges);
 }
 
 static std::size_t precomputeIsolatedOutputFactsLocal(SubgraphView& view) {
@@ -145,7 +145,7 @@ static std::size_t precomputeIsolatedOutputFactsLocal(SubgraphView& view) {
     return count;
 }
 
-static std::size_t sweepIsolatedNonOutputNodesLocal(IncSubgraphView& view) {
+static std::size_t sweepIsolatedNonOutputNodesLocal(WorkingSubgraphView& view) {
     std::vector<NodePtr> candidates;
     candidates.reserve(view.getNodes().size());
     for (const auto& node : view.getNodes()) {
@@ -187,7 +187,7 @@ struct ImplicitOverlayCommitSummary {
 };
 
 static ImplicitOverlayCommitSummary applyImplicitOverlayCommit(
-        IncrementalDerivationGraph& graph, IncSubgraphView& view, const ImplicitSplitPipelineResult& result) {
+        WorkingDerivationGraph& graph, WorkingSubgraphView& view, const ImplicitSplitPipelineResult& result) {
     ImplicitOverlayCommitSummary summary;
     precomputedProbResult.clear();
     precomputedTupleProbResult.clear();
@@ -271,8 +271,8 @@ static ImplicitOverlayCommitSummary applyImplicitOverlayCommit(
     return summary;
 }
 
-static std::pair<std::size_t, std::size_t> recoverImplicitOutputFactsLocal(IncrementalDerivationGraph& graph,
-        IncSubgraphView& view, const std::unordered_set<UntypedTuple>& originalOutputTuples,
+static std::pair<std::size_t, std::size_t> recoverImplicitOutputFactsLocal(WorkingDerivationGraph& graph,
+        WorkingSubgraphView& view, const std::unordered_set<UntypedTuple>& originalOutputTuples,
         const std::unordered_set<std::string>& originalOutputRelations) {
     std::unordered_set<UntypedTuple> liveViewTuples;
     liveViewTuples.reserve(view.getNodes().size());
@@ -2325,7 +2325,7 @@ void runPipeline(
     debugger.startStage(StageKind::CREATE_GRAPH_FULL);
     debugger.addInfo("input_fact_size", std::to_string(countInitialInputFacts()));
     auto t0 = std::chrono::steady_clock::now();
-    auto graph = std::unique_ptr<IncrementalDerivationGraph>(IncrementalDerivationGraph::createFrom(
+    auto graph = std::unique_ptr<WorkingDerivationGraph>(WorkingDerivationGraph::createFrom(
             DerivationManager::untypedTuple2RuleApplications, ruleManager, queryManager, factProb, evidences));
     auto t1 = std::chrono::steady_clock::now();
     std::cout << "[pipeline] create graph took "
@@ -2340,7 +2340,7 @@ void runPipeline(
     debugger.startStage(StageKind::PRUNING_FULL);
     auto t2 = std::chrono::steady_clock::now();
     auto prunedView = graph->prune(program.getOutputRelations());
-    auto view = buildFullIncViewLocal(prunedView.getNodes(), prunedView.getEdges());
+    auto view = buildFullWorkingViewLocal(prunedView.getNodes(), prunedView.getEdges());
     auto t3 = std::chrono::steady_clock::now();
     std::cout << "[pipeline] pruning took "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
@@ -2453,9 +2453,9 @@ void runPipeline(
                 rewriteStats = implicitResult.stats.graphRewriteStats;
                 graph = std::move(implicitResult.materialized.graph);
                 if (!graph) {
-                    graph = std::make_unique<IncrementalDerivationGraph>();
+                    graph = std::make_unique<WorkingDerivationGraph>();
                 }
-                view = buildFullIncViewLocal(
+                view = buildFullWorkingViewLocal(
                         implicitResult.materialized.liveNodes, implicitResult.materialized.liveEdges);
                 const auto [recoveredIsolatedFacts, recoveredOutputFacts] =
                         recoverImplicitOutputFactsLocal(*graph, view, originalOutputTuples, originalOutputRelations);

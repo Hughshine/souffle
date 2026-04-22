@@ -753,7 +753,6 @@ bool DerivationManager::semStatsEnabled = false;
 std::unordered_set<UntypedTuple> DerivationManager::detDeltaDeleteTuples = {};
 std::unordered_set<UntypedTuple> DerivationManager::detDeltaInsertTuples = {};
 bool dredProfileEnabled = false;
-bool incProfileEnabled = false;
 bool fcProfileEnabled = false;
 bool incDeleteProfileEnabled = false;
 bool wmcProfileEnabled = false;

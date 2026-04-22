@@ -3404,7 +3404,7 @@ ruleManager = RuleManager({rule1, rule2, rule3, rule4, rule5, rule6});
 debugger.endStage();
 std::cout << std::fixed << std::setprecision(10);
 debugger.startStage(StageKind::CREATE_GRAPH_FULL);
-auto graph = IncrementalDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);
+auto graph = WorkingDerivationGraph::createFrom(DerivationManager::untypedTuple2RuleApplications, ruleManager, fact_prob);
 debugger.endStage();
 // graph->dumpStatistics(std::cout);
 graph->dumpDot("before_prune.dot");

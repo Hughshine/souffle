@@ -34,13 +34,7 @@ enum class StageKind {
     FORWARD_COMPILATION_FULL,
     WEIGHTED_MODEL_COUNTING_FULL,
     FC_WMC_HYBRID_FULL,
-    IO_DUMP_FULL,
-    SEMINAIVE_INC,
-    CREATE_GRAPH_INC,
-    PRUNING_INC,
-    PRECONFIG_INC,
-    FORWARD_COMPILATION_INC,
-    WEIGHTED_MODEL_COUNTING_INC
+    IO_DUMP_FULL
 };
 
 inline std::string stageKindToString(const StageKind kind) {
@@ -55,12 +49,6 @@ inline std::string stageKindToString(const StageKind kind) {
         case StageKind::WEIGHTED_MODEL_COUNTING_FULL: return "WEIGHTED_MODEL_COUNTING_FULL";
         case StageKind::FC_WMC_HYBRID_FULL: return "FC_WMC_HYBRID";
         case StageKind::IO_DUMP_FULL: return "IO_DUMP_FULL";
-        case StageKind::SEMINAIVE_INC: return "SEMINAIVE_INC";
-        case StageKind::CREATE_GRAPH_INC: return "CREATE_GRAPH_INC";
-        case StageKind::PRUNING_INC: return "PRUNING_INC";
-        case StageKind::PRECONFIG_INC: return "PRECONFIG_INC";
-        case StageKind::FORWARD_COMPILATION_INC: return "FORWARD_COMPILATION_INC";
-        case StageKind::WEIGHTED_MODEL_COUNTING_INC: return "WEIGHTED_MODEL_COUNTING_INC";
         default: return "UNKNOWN";
     }
 }
