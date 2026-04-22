@@ -967,23 +967,8 @@ public:
     static bool isPruneExtraEnabled() {
         return pruneExtraEnabled;
     }
-    static void setConstFoldEnabled(bool enabled) {
-        constFoldEnabled = enabled;
-    }
-    static bool isConstFoldEnabled() {
-        return constFoldEnabled;
-    }
-    static void setConstDumpEnabled(bool enabled) {
-        constDumpEnabled = enabled;
-    }
-    static bool isConstDumpEnabled() {
-        return constDumpEnabled;
-    }
     bool isBiImpMerged() const {
         return biImpMerged;
-    }
-    bool isConstFolded() const {
-        return constFolded;
     }
 
     struct EdgeLookupTiming {
@@ -1874,10 +1859,7 @@ protected:
     const RuleManager* ruleManager;
     static inline bool mergeBiImpEnabled = true;
     static inline bool pruneExtraEnabled = false;
-    static inline bool constFoldEnabled = false;
-    static inline bool constDumpEnabled = false;
     bool biImpMerged = false;
-    bool constFolded = false;
     // map original node id to its current representative after merges
     std::unordered_map<size_t, NodePtr> nodeRepMap;
 
@@ -1930,8 +1912,6 @@ protected:
     }
 
     void mergeBiImpEquivalences(
-            std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges);
-    void foldDeterministicConstants(
             std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges);
     void removeSelfLoopEdges(std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges);
 
@@ -2435,132 +2415,6 @@ void DerivationGraph::mergeBiImpEquivalences(
     } else {
         std::cerr << "[bi-imp-merge] no deterministic SCCs found" << std::endl;
     }
-}
-
-void DerivationGraph::foldDeterministicConstants(
-        std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges) {
-    if (!constFoldEnabled) {
-        return;
-    }
-    // NOTE: Conservative constant folding.
-    // - Only propagates deterministic TRUE (p==1) through positive edges.
-    // - Ignores negation/false/evidence/output nodes (not handled here).
-    // - Intended for full-pipeline use; not safe while the graph is being mutated.
-    std::unordered_set<NodePtr> trueNodes;
-    std::queue<NodePtr> work;
-    size_t foldedNodes = 0;
-    size_t foldedEdges = 0;
-    for (const auto& node : liveNodes) {
-        if (node && node->isFact && node->getProbability() == 1.0) {
-            trueNodes.insert(node);
-            work.push(node);
-        }
-    }
-
-    auto isEligibleEdge = [&](const EdgePtr& e) {
-        if (!e || !e->isDeterministic()) return false;
-        for (bool neg : e->getBodyNegations()) {
-            if (neg) return false;
-        }
-        return liveEdges.count(e) > 0;
-    };
-
-    std::unordered_map<EdgePtr, size_t> remainingInputs;
-    for (const auto& e : liveEdges) {
-        if (!isEligibleEdge(e)) {
-            continue;
-        }
-        size_t remaining = 0;
-        for (const auto& in : e->getInputs()) {
-            if (!trueNodes.count(in)) {
-                ++remaining;
-            }
-        }
-        remainingInputs.emplace(e, remaining);
-    }
-
-    for (const auto& [e, remaining] : remainingInputs) {
-        if (remaining == 0) {
-            NodePtr out = e->getOutput();
-            if (out && trueNodes.insert(out).second) {
-                work.push(out);
-            }
-        }
-    }
-
-    auto removeEdgeFromGraph = [&](const EdgePtr& e) {
-        if (!e) return;
-        if (liveEdges.erase(e) == 0) {
-            return;
-        }
-        edges.erase(e);
-        e->pruned = true;
-        foldedEdges++;
-        NodePtr out = e->getOutput();
-        if (out) {
-            auto& inVec = out->incomingEdges;
-            inVec.erase(std::remove(inVec.begin(), inVec.end(), e), inVec.end());
-        }
-        for (const auto& in : e->getInputs()) {
-            auto& outVec = in->outgoingEdges;
-            outVec.erase(std::remove(outVec.begin(), outVec.end(), e), outVec.end());
-        }
-    };
-
-    bool changed = false;
-    while (!work.empty()) {
-        NodePtr node = work.front();
-        work.pop();
-        if (!node || !liveNodes.count(node)) {
-            continue;
-        }
-        if (!node->isFact || node->getProbability() != 1.0) {
-            node->isFact = true;
-            node->setProbability(1.0);
-            foldedNodes++;
-            changed = true;
-        }
-
-        std::vector<EdgePtr> incoming = node->incomingEdges;
-        for (const auto& e : incoming) {
-            if (!liveEdges.count(e)) {
-                continue;
-            }
-            removeEdgeFromGraph(e);
-            remainingInputs.erase(e);
-            changed = true;
-        }
-
-        std::vector<EdgePtr> outgoing = node->outgoingEdges;
-        for (const auto& e : outgoing) {
-            if (!isEligibleEdge(e)) {
-                continue;
-            }
-            auto it = remainingInputs.find(e);
-            if (it == remainingInputs.end()) {
-                continue;
-            }
-            if (it->second == 0) {
-                continue;
-            }
-            it->second -= 1;
-            if (it->second == 0) {
-                NodePtr out = e->getOutput();
-                if (out && trueNodes.insert(out).second) {
-                    work.push(out);
-                }
-            }
-        }
-    }
-
-    if (changed) {
-        constFolded = true;
-    }
-    std::cout << "[fold-const] folded nodes=" << foldedNodes
-              << " edges=" << foldedEdges
-              << " remaining nodes=" << liveNodes.size()
-              << " edges=" << liveEdges.size()
-              << std::endl;
 }
 
 void DerivationGraph::removeSelfLoopEdges(

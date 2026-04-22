@@ -13,8 +13,8 @@ Read the documents in this order when evaluating or modifying the artifact.
 
 ## Source Entry Points
 
-- [../src/MainDriver.cpp](../src/MainDriver.cpp)
-- [../src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h)
-- [../src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp)
-- [../tests/regression/CMakeLists.txt](../tests/regression/CMakeLists.txt)
+- [../src/MainDriver.cpp:440](../src/MainDriver.cpp#L440)
+- [../src/include/souffle/CompiledOptions.h:48](../src/include/souffle/CompiledOptions.h#L48)
+- [../src/problog/Pipeline.cpp:1947](../src/problog/Pipeline.cpp#L1947)
+- [../tests/regression/CMakeLists.txt:1](../tests/regression/CMakeLists.txt#L1)
 - [../tests/regression/cases](../tests/regression/cases)

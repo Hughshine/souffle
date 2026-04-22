@@ -84,14 +84,12 @@ protected:
     std::string knowledge_representation;
     bool merge_bi_imp = true;  // enable merging mutually implying deterministic nodes
     bool prune_extra = false;  // enable extra prune pass (outputless components)
-    bool fold_const = false;  // enable deterministic constant pre-analysis
     bool enable_rewrite = false;  // enable smart rewrite dispatch
     bool force_graph_rewrite = false;  // select explicit graph rewrite
     bool force_implicit_rewrite = false;  // select implicit split rewrite
     bool dump_json = false;  // dump derivation graph JSON after prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
     bool dump_stat = false;  // dump derivation graph stats after prune
-    bool dump_const = false;  // dump constant pre-analysis details
     bool fc_profile = false;  // enable detailed forward-compilation profiling
     bool wmc_profile = false;  // enable weighted model counting profiling
     bool dep_graph_profile = false;  // enable dependency-graph profiling
@@ -105,19 +103,19 @@ public:
     // all argument constructor
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
             std::string lfn = "log.txt", bool donly = false,
-            bool merge_bi = true, bool foldconst = false, bool rewrite = false,
+            bool merge_bi = true, bool rewrite = false,
             bool explicitRewrite = false, bool implicitRewrite = false, bool detopt = false,
-            bool dumpjson = false, bool dumpdot = false, bool dumpstat = false, bool dumpconst = false,
+            bool dumpjson = false, bool dumpdot = false, bool dumpstat = false,
             bool fcProfile = false,
             bool wmcProfile = false,
             bool depGraphProfile = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
-    , merge_bi_imp(merge_bi), fold_const(foldconst),
+    , merge_bi_imp(merge_bi),
       enable_rewrite(rewrite || explicitRewrite || implicitRewrite),
       force_graph_rewrite(explicitRewrite),
       force_implicit_rewrite(implicitRewrite),
       det_opt(detopt),
-      dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
+      dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat),
       fc_profile(fcProfile),
       wmc_profile(wmcProfile),
       dep_graph_profile(depGraphProfile) {}
@@ -164,9 +162,6 @@ public:
     bool isPruneExtraEnabled() const {
         return prune_extra;
     }
-    bool isConstFoldEnabled() const {
-        return fold_const;
-    }
     bool isRewriteEnabled() const {
         return enable_rewrite;
     }
@@ -193,9 +188,6 @@ public:
     }
     void setDumpStatEnabled(bool enabled) {
         dump_stat = enabled;
-    }
-    bool isDumpConstEnabled() const {
-        return dump_const;
     }
     bool isFcProfileEnabled() const {
         return fc_profile;
@@ -264,13 +256,12 @@ public:
                 {"knowledge", true, nullptr, 'k'},
                 {"logfile", true, nullptr, 'l'},
                 {"derv-only", optional_argument, nullptr, 'd'},
-                {"merge-bi-imp", false, nullptr, 'e'}, {"prune-extra", false, nullptr, 1004}, {"fold-const", false, nullptr, 'C'},
+                {"merge-bi-imp", false, nullptr, 'e'}, {"prune-extra", false, nullptr, 1004},
                 {"rewrite", false, nullptr, 'r'},
                 {"explicit-rewrite", false, nullptr, 1021},
                 {"implicit-rewrite", false, nullptr, 1022},
                 {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
                 {"dumpstat", false, nullptr, 'S'},
-                {"dumpconst", false, nullptr, 'U'},
                 {"fc-profile", false, nullptr, 1005},
                 {"profile-wmc", false, nullptr, 1014},
                 {"profile-dep-graph", false, nullptr, 1010},
@@ -282,7 +273,7 @@ public:
         bool ok = true;
         knowledge_representation = "bdd";  // default knowledge representation
         int c; /* command-line arguments processing */
-        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d::eC:rJTSUZ", longOptions, nullptr)) != EOF) {
+        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d::erJTSZ", longOptions, nullptr)) != EOF) {
             switch (c) {
                 /* Fact directories */
                 case 'F':
@@ -368,9 +359,6 @@ public:
                 case 1004:
                     prune_extra = true;
                     break;
-                case 'C':
-                    fold_const = true;
-                    break;
                 case 'r':
                     enable_rewrite = true;
                     break;
@@ -390,9 +378,6 @@ public:
                     break;
                 case 'S':
                     dump_stat = true;
-                    break;
-                case 'U':
-                    dump_const = true;
                     break;
                 case 1005:
                     fc_profile = true;

@@ -2048,7 +2048,7 @@ private:
         return randomCount;
     }
 
-    size_t countRandomVarsInView(const DerivationGraphViewInterface& view) const {
+    static size_t countRandomVarsInView(const DerivationGraphViewInterface& view) {
         size_t randomCount = 0;
 
         for (const auto& node : view.getNodes()) {
@@ -2122,8 +2122,7 @@ private:
 
         auto t0 = std::chrono::steady_clock::now();
         buildFormulasCyclewise(regionView, bddManager, nodeFormulas, edgeFormulas, seedTrue,
-                               debug ? &roundTimings : nullptr, /*allowConst=*/false,
-                               /*allowDumpConst=*/false);
+                               debug ? &roundTimings : nullptr);
         auto t1 = std::chrono::steady_clock::now();
         double buildMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
 

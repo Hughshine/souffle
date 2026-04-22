@@ -16,14 +16,43 @@ jobs:
           sudo apt-get install -y \
             bison \
             build-essential \
+            autoconf \
+            automake \
             cmake \
+            curl \
             flex \
             graphviz \
             libffi-dev \
+            libreadline-dev \
+            libtool \
             libsqlite3-dev \
             mcpp \
             python3 \
             zlib1g-dev
+
+      - name: Install CUDD
+        run: |
+          mkdir -p /tmp/cudd-src
+          curl -L 'https://github.com/cuddorg/cudd/archive/refs/tags/cudd-3.0.0.tar.gz' -o /tmp/cudd.tar.gz
+          tar -xzf /tmp/cudd.tar.gz -C /tmp/cudd-src --strip-components=1
+          cd /tmp/cudd-src
+          if [ ! -x ./configure ]; then
+            autoreconf -fi
+          fi
+          ./configure --prefix=/usr/local --enable-shared
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      - name: Install SDD
+        run: |
+          git clone --depth 1 https://github.com/black-sat/sddpp.git /tmp/sddpp
+          cmake -S /tmp/sddpp -B /tmp/sddpp/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          cmake --build /tmp/sddpp/build -j"$(nproc)"
+          sudo cmake --install /tmp/sddpp/build
+          sudo ldconfig
 
       - name: Configure
         run: cmake -S . -B build

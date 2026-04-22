@@ -16,7 +16,6 @@
 #include <stdexcept>
 #include <unordered_set>
 
-#include "souffle/problog/ConstAnalysis.h"
 #include "souffle/problog/GraphRewriter.h"
 
 namespace souffle::problog {
@@ -25,6 +24,26 @@ namespace {
 constexpr double kImplicitSplitEps = 1e-12;
 constexpr std::size_t kNaiveReachabilityCap = 50;
 constexpr const char* kSplitShadowPrefix = "_split_shadow_";
+
+enum class ConstTruth {
+    Unknown,
+    True,
+    False,
+};
+
+ConstTruth negateTruth(ConstTruth value) {
+    if (value == ConstTruth::True) {
+        return ConstTruth::False;
+    }
+    if (value == ConstTruth::False) {
+        return ConstTruth::True;
+    }
+    return ConstTruth::Unknown;
+}
+
+ConstTruth literalTruth(ConstTruth nodeTruth, bool negated) {
+    return negated ? negateTruth(nodeTruth) : nodeTruth;
+}
 
 bool nearlyZero(double value) {
     return std::abs(value) <= kImplicitSplitEps;

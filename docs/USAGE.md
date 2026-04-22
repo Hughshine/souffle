@@ -80,10 +80,10 @@ explicit graph rewrite with split disabled.
 
 ## Source Map
 
-- [../src/MainDriver.cpp](../src/MainDriver.cpp): compiler driver options.
-- [../src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h):
+- [../src/MainDriver.cpp:563](../src/MainDriver.cpp#L563): compiler driver options.
+- [../src/include/souffle/CompiledOptions.h:241](../src/include/souffle/CompiledOptions.h#L241):
   generated-binary options.
-- [../src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): exact inference
+- [../src/problog/Pipeline.cpp:1947](../src/problog/Pipeline.cpp#L1947): exact inference
   runtime pipeline.
-- [../src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp):
+- [../src/synthesiser/Synthesiser.cpp:3190](../src/synthesiser/Synthesiser.cpp#L3190):
   generated C++ emission.

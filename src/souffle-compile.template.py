@@ -41,6 +41,7 @@ PATH_DELIMITER = conf['path_delimiter']
 RPATHS = conf['rpaths'].split(PATH_DELIMITER)
 exeext = conf['exe_extension']
 SOURCE_INCLUDE_DIR = conf['source_include_dir']
+DEFAULT_CUDD_DIR = conf.get('cudd_dir', '/usr/local')
 
 scriptdir = pathlib.Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -51,7 +52,7 @@ parser.add_argument('-g', action='store_true', dest='debug', help="Debug build t
 parser.add_argument('-v', action='store_true', dest='verbose', help="Verbose output")
 parser.add_argument('-I', action='append', default=[], metavar='INCDIR', dest='inc_dirs', type=lambda p: pathlib.Path(p).absolute(), help="Additional include directories")
 parser.add_argument('--with-cudd', action='store_true', dest='with_cudd', help="Link with CUDD library")
-parser.add_argument('--cudd-dir', metavar='CUDDDIR', dest='cudd_dir', type=lambda p: pathlib.Path(p).absolute(), default='/usr/local', help="CUDD installation directory (default: /usr/local)")
+parser.add_argument('--cudd-dir', metavar='CUDDDIR', dest='cudd_dir', type=lambda p: pathlib.Path(p).absolute(), default=DEFAULT_CUDD_DIR, help=f"CUDD installation directory (default: {DEFAULT_CUDD_DIR})")
 parser.add_argument('source', nargs='+', metavar='SOURCE', type=lambda p: pathlib.Path(p).absolute(), help="C++ source files")
 parser.add_argument('-o', metavar='BINARY', dest='output', type=lambda p: pathlib.Path(p).absolute(), help="Binary file name")
 
@@ -127,7 +128,6 @@ if args.with_cudd:
     cudd_lib_path = str(cudd_dir / "lib")
     if cudd_lib_path not in RPATHS:
         RPATHS.append(cudd_lib_path)
-    additional_libs.extend(["sdd++", "sdd"])
 
 exepath = pathlib.Path("{}{}".format(args.output, exeext))
 

@@ -11,7 +11,9 @@
 #include "souffle/problog/RuleManager.h"
 #include "souffle/problog/debug/Debugger.h"
 #include "souffle/problog/formula/CuddManager.h"
+#ifdef SOUFFLE_HAVE_SDD
 #include "souffle/problog/formula/SddManager.h"
+#endif
 
 #include <algorithm>
 #include <cassert>
@@ -1377,6 +1379,7 @@ static void runBddPipeline(
     dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter0.txt");
 }
 
+#ifdef SOUFFLE_HAVE_SDD
 static void runSddPipeline(
         const CmdOptions& opt,
         SouffleProgram& /*program*/,
@@ -1939,6 +1942,7 @@ static void runSddPipeline(
     debugger.endTurn();
     dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter0.txt");
 }
+#endif
 
 void runPipeline(
         const CmdOptions& opt,
@@ -1966,8 +1970,6 @@ void runPipeline(
     DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
     DerivationGraph::setMergeBiImpEnabled(exactInferenceMode && opt.isMergeBiImpEnabled());
     DerivationGraph::setPruneExtraEnabled(opt.isPruneExtraEnabled());
-    DerivationGraph::setConstFoldEnabled(opt.isConstFoldEnabled());
-    DerivationGraph::setConstDumpEnabled(opt.isDumpConstEnabled());
     precomputedProbResult.clear();
     precomputedTupleProbResult.clear();
 
@@ -2344,8 +2346,12 @@ void runPipeline(
         runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage,
                 autoDisableSingleRandFast);
     } else if (program.getKnowledge() == souffle::Knowledge::SDD) {
+#ifdef SOUFFLE_HAVE_SDD
         runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage,
                 autoDisableSingleRandFast);
+#else
+        throw std::runtime_error("SDD backend is not enabled in this build");
+#endif
     } else {
         std::cerr << "Unknown knowledge representation" << std::endl;
     }

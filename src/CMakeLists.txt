@@ -220,7 +220,23 @@ add_library(compiled STATIC
   problog/debug/Debugger.cpp
 )
 
-target_include_directories(compiled PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+find_path(CUDD_INCLUDE_DIR NAMES cudd.h)
+find_library(CUDD_LIBRARY NAMES cudd)
+if (NOT CUDD_INCLUDE_DIR OR NOT CUDD_LIBRARY)
+  message(FATAL_ERROR "CUDD is required for exact inference. Install CUDD 3.0.0 so cudd.h and libcudd are discoverable.")
+endif ()
+get_filename_component(CUDD_LIBRARY_DIR "${CUDD_LIBRARY}" DIRECTORY)
+get_filename_component(CUDD_PREFIX "${CUDD_INCLUDE_DIR}" DIRECTORY)
+
+find_path(SDD_INCLUDE_DIR NAMES sdd/sdd.h)
+find_library(SDD_LIBRARY NAMES sdd)
+find_library(SDDXX_LIBRARY NAMES sdd++)
+if (SDD_INCLUDE_DIR AND SDD_LIBRARY AND SDDXX_LIBRARY)
+  target_compile_definitions(compiled PUBLIC SOUFFLE_HAVE_SDD=1)
+  target_include_directories(compiled PUBLIC "${SDD_INCLUDE_DIR}")
+endif ()
+
+target_include_directories(compiled PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CUDD_INCLUDE_DIR}")
 
 # Set C++ standard to C++17
 target_compile_features(libsouffle PUBLIC cxx_std_17)
@@ -314,21 +330,6 @@ target_link_libraries(souffle libsouffle)
 add_dependencies(souffle compiled)
 
 # --------------------------------------------------
-# Exact-inference helper libraries
-# --------------------------------------------------
-find_library(CUDD_LIBRARY NAMES cudd)
-find_library(SDD_LIBRARY NAMES sdd)
-find_library(SDDXX_LIBRARY NAMES sdd++)
-
-set(SOUFFLE_PROBLOG_PIPELINE_LIBS ${CUDD_LIBRARY} m readline)
-if (SDD_LIBRARY)
-  list(APPEND SOUFFLE_PROBLOG_PIPELINE_LIBS ${SDD_LIBRARY})
-endif ()
-if (SDDXX_LIBRARY)
-  list(APPEND SOUFFLE_PROBLOG_PIPELINE_LIBS ${SDDXX_LIBRARY})
-endif ()
-
-# --------------------------------------------------
 # Substitutions for souffle-compile.py
 # --------------------------------------------------
 set(SOUFFLE_COMPILED_CXX_COMPILER ${CMAKE_CXX_COMPILER})
@@ -367,6 +368,19 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 list(APPEND SOUFFLE_COMPILED_LIBS -lreadline)
+list(APPEND SOUFFLE_COMPILED_RPATHS ${CUDD_LIBRARY_DIR})
+
+if (SDD_INCLUDE_DIR AND SDD_LIBRARY AND SDDXX_LIBRARY)
+  list(APPEND SOUFFLE_COMPILED_LIBS ${SDDXX_LIBRARY} ${SDD_LIBRARY})
+  if (COMMAND cmake_path)
+    cmake_path(GET SDD_LIBRARY PARENT_PATH SDD_RPATH)
+    cmake_path(GET SDDXX_LIBRARY PARENT_PATH SDDXX_RPATH)
+  else ()
+    get_filename_component(SDD_RPATH ${SDD_LIBRARY} DIRECTORY)
+    get_filename_component(SDDXX_RPATH ${SDDXX_LIBRARY} DIRECTORY)
+  endif ()
+  list(APPEND SOUFFLE_COMPILED_RPATHS ${SDDXX_RPATH} ${SDD_RPATH})
+endif()
 
 if (SOUFFLE_USE_SQLITE)
   list(APPEND SOUFFLE_COMPILED_LIBS ${SQLite3_LIBRARY})
@@ -442,6 +456,7 @@ JSON_DATA_TEXT = \"\"\"{
   \"rpath_fmt\": \"${RPATH_FMT}\",
   \"path_delimiter\": \"${OS_PATH_DELIMITER}\",
   \"exe_extension\": \"${EXE_EXTENSION}\",
+  \"cudd_dir\": \"${CUDD_PREFIX}\",
   \"source_include_dir\": \"${CMAKE_CURRENT_SOURCE_DIR}/include\"
 }\"\"\"
 ${TEMPLATE}

@@ -4,6 +4,9 @@ This page is the short operational path for a local artifact run.
 
 ## Build
 
+The build requires CUDD headers and `libcudd`. The GitHub artifact CI installs
+CUDD 3.0.0 before configuring CMake.
+
 ```bash
 JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
 cmake -S . -B build

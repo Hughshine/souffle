@@ -5,7 +5,6 @@
 #include "souffle/Derivation.h"
 #include "souffle/problog/DerivationGraph.h"
 #include "souffle/problog/RuleManager.h"
-#include "souffle/problog/ConstAnalysis.h"
 #include "souffle/problog/formula/FormulaManager.h"
 #include "souffle/problog/formula/LogicFormulaManager.h"
 #include "souffle/problog/formula/CuddManager.h"
@@ -50,11 +49,8 @@ struct FcProfileStats {
     std::size_t edge_processed = 0;
     std::size_t edge_requeued = 0;
     std::size_t edge_updated = 0;
-    std::size_t edge_const = 0;
-    std::size_t edge_nonconst = 0;
     std::size_t node_recomputed = 0;
     std::size_t node_updated = 0;
-    std::size_t node_const = 0;
     std::size_t make_and_calls = 0;
     double make_and_ms = 0.0;
     std::size_t make_or_calls = 0;
@@ -86,8 +82,6 @@ void buildFormulasCyclewiseInternal(
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
     const std::unordered_set<NodePtr>& seedTrueNodes = {},
     std::vector<double>* roundTimingsMs = nullptr,
-    bool allowConst = true,
-    bool allowDumpConst = true,
     const std::function<void(const FcHeartbeatSnapshot&)>& heartbeatCallback = nullptr,
     std::size_t heartbeatIntervalMs = 5000
 ) {
@@ -98,31 +92,12 @@ void buildFormulasCyclewiseInternal(
          return std::chrono::duration<double, std::milli>(d).count();
      };
      auto overallStart = Clock::now();
-     double constMs = 0.0;
      FcProfileStats stats;
      const std::size_t nodeCount = view.getNodes().size();
      const std::size_t edgeCount = view.getEdges().size();
      std::size_t factNodes = 0;
      std::size_t detEdges = 0;
      std::size_t nonDetEdges = 0;
-     const bool useConst = allowConst && DerivationGraph::isConstFoldEnabled();
-     const bool dumpConst = allowDumpConst && DerivationGraph::isConstDumpEnabled();
-     ConstAnalysisResult constInfo;
-     const ConstAnalysisResult* constInfoPtr = nullptr;
-     if (useConst || dumpConst) {
-         auto constStart = Clock::now();
-         constInfo = analyzeConstants(view, true);
-         constMs = toMs(Clock::now() - constStart);
-         if (useConst) {
-             constInfoPtr = &constInfo;
-         }
-         if (seedTrueNodes.empty()) {
-             std::cout << "[const-pre] tag=cyclewise took " << constMs << " ms" << std::endl;
-             logConstAnalysis(constInfo, view, "cyclewise");
-         }
-     }
-     ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager, &view};
-
     auto preStart = Clock::now();
      setCuddPreConfigTag("cyclewise");
      formulaManager.preConfig(view);
@@ -149,6 +124,24 @@ void buildFormulasCyclewiseInternal(
             std::cerr << "[ForwardCompilation] invalid probability " << p << " at " << ctx << std::endl;
             assert(false && "probability out of [0,1]");
         }
+    };
+
+    auto inputLiteral = [&](const std::map<NodePtr, FormulaNodeRef>& formulas, const NodePtr& node,
+                                bool negated, FormulaNodeRef& out) {
+        if (!node) {
+            return false;
+        }
+        const bool hasIncomingInView = !view.getIncomingEdges(node).empty();
+        if (!node->isFact && !hasIncomingInView) {
+            out = negated ? formulaManager.getTrue() : formulaManager.getFalse();
+            return true;
+        }
+        auto it = formulas.find(node);
+        if (it == formulas.end()) {
+            return false;
+        }
+        out = negated ? formulaManager.makeNot(it->second) : it->second;
+        return true;
     };
 
     // 1. Initialize formulas
@@ -243,105 +236,95 @@ void buildFormulasCyclewiseInternal(
 //            std::cout << "Processing edge " << edge->getId() << " " << edge->toString() << std::endl;
 //            std::cout << "Edge depth: " << depth << std::endl;
             FormulaNodeRef newEdgeF;
-            bool edgeIsConst = constAccess.edgeFormula(edge, newEdgeF);
-            if (fcProfile) {
-                if (edgeIsConst) {
-                    stats.edge_const++;
-                } else {
-                    stats.edge_nonconst++;
-                }
-            }
             bool allAvailable = true;
-            if (!edgeIsConst) {
-                std::vector<FormulaNodeRef> inputs = { baseEdgeFormulas[edge] };
-                for (size_t i = 0; i < view.getInputs(edge).size(); ++i) {
-                    NodePtr input = view.getInputs(edge)[i];
-                    FormulaNodeRef lit;
-                    bool ok = true;
-                    if (fcProfile) {
-                        auto litStart = Clock::now();
-                        ok = constAccess.inputLiteral(nodeFormulas, input, view.getBodyNegations(edge)[i], lit);
-                        stats.input_literal_calls++;
-                        stats.input_literal_ms += toMs(Clock::now() - litStart);
-                        if (!ok) {
-                            stats.input_literal_missing++;
-                        }
-                    } else {
-                        ok = constAccess.inputLiteral(nodeFormulas, input, view.getBodyNegations(edge)[i], lit);
-                    }
+            std::vector<FormulaNodeRef> inputs = { baseEdgeFormulas[edge] };
+            for (size_t i = 0; i < view.getInputs(edge).size(); ++i) {
+                NodePtr input = view.getInputs(edge)[i];
+                FormulaNodeRef lit;
+                bool ok = true;
+                if (fcProfile) {
+                    auto litStart = Clock::now();
+                    ok = inputLiteral(nodeFormulas, input, view.getBodyNegations(edge)[i], lit);
+                    stats.input_literal_calls++;
+                    stats.input_literal_ms += toMs(Clock::now() - litStart);
                     if (!ok) {
+                        stats.input_literal_missing++;
+                    }
+                } else {
+                    ok = inputLiteral(nodeFormulas, input, view.getBodyNegations(edge)[i], lit);
+                }
+                if (!ok) {
 //                    std::cout << "Input node formula not available: " << input->getId() << " " << input->toString() << std::endl;
-                        allAvailable = false;
-                        auto& sc = stallCount[edge];
-                        sc++;
-                        if (loggedFirstStall.insert(edge).second || sc == 100 || sc == 1000) {
-                            std::cout << "[buildFormulasCyclewise] stall edge " << edge->toString()
-                                      << " missing input formula for node " << input->toString()
-                                      << " (stall #" << sc << ")" << std::endl;
-                        }
-                        if (sc > kMaxStall) {
-                            std::cout << "[buildFormulasCyclewise] giving up on edge " << edge->toString()
-                                      << " after " << sc << " stalls; setting formula to False to continue."
-                                      << std::endl;
-                            edgeFormulas[edge] = formulaManager.getFalse();
-                            allAvailable = true;  // allow propagation of False to break the cycle
-                        }
-                        // When a positive dependency exists but its formula has not been
-                        // produced yet, blindly requeueing the consumer at the same global
-                        // depth can starve the producer: the consumer keeps winning the
-                        // worklist race and repeatedly stalls until the hard cutoff.
-                        //
-                        // Requeue the missing producers first, and defer the current edge to
-                        // strictly after the deepest producer we can see in this SCC. This
-                        // preserves semantics while making the scheduler robust to edge
-                        // insertion-order differences between plain and implicit graphs.
-                        size_t deferredPriority = depth;
-                        if (input) {
-                            for (const auto& inEdge : view.getIncomingEdges(input)) {
-                                auto it = depGraph.edgeToCycleIndex.find(inEdge);
-                                if (it == depGraph.edgeToCycleIndex.end() || it->second != cid) {
-                                    continue;
-                                }
-                                auto depthIt = depGraph.edgeDepthsGlobal.find(inEdge);
-                                if (depthIt != depGraph.edgeDepthsGlobal.end()) {
-                                    deferredPriority =
-                                            std::max(deferredPriority, depthIt->second + 1);
-                                }
-                                if (!inWorklist.count(inEdge)) {
-                                    worklist.push({inEdge, depthIt != depGraph.edgeDepthsGlobal.end()
-                                                            ? depthIt->second
-                                                            : depth,
-                                            _seqId++});
-                                    inWorklist.insert(inEdge);
-                                }
+                    allAvailable = false;
+                    auto& sc = stallCount[edge];
+                    sc++;
+                    if (loggedFirstStall.insert(edge).second || sc == 100 || sc == 1000) {
+                        std::cout << "[buildFormulasCyclewise] stall edge " << edge->toString()
+                                  << " missing input formula for node " << input->toString()
+                                  << " (stall #" << sc << ")" << std::endl;
+                    }
+                    if (sc > kMaxStall) {
+                        std::cout << "[buildFormulasCyclewise] giving up on edge " << edge->toString()
+                                  << " after " << sc << " stalls; setting formula to False to continue."
+                                  << std::endl;
+                        edgeFormulas[edge] = formulaManager.getFalse();
+                        allAvailable = true;  // allow propagation of False to break the cycle
+                    }
+                    // When a positive dependency exists but its formula has not been
+                    // produced yet, blindly requeueing the consumer at the same global
+                    // depth can starve the producer: the consumer keeps winning the
+                    // worklist race and repeatedly stalls until the hard cutoff.
+                    //
+                    // Requeue the missing producers first, and defer the current edge to
+                    // strictly after the deepest producer we can see in this SCC. This
+                    // preserves semantics while making the scheduler robust to edge
+                    // insertion-order differences between plain and implicit graphs.
+                    size_t deferredPriority = depth;
+                    if (input) {
+                        for (const auto& inEdge : view.getIncomingEdges(input)) {
+                            auto it = depGraph.edgeToCycleIndex.find(inEdge);
+                            if (it == depGraph.edgeToCycleIndex.end() || it->second != cid) {
+                                continue;
+                            }
+                            auto depthIt = depGraph.edgeDepthsGlobal.find(inEdge);
+                            if (depthIt != depGraph.edgeDepthsGlobal.end()) {
+                                deferredPriority =
+                                        std::max(deferredPriority, depthIt->second + 1);
+                            }
+                            if (!inWorklist.count(inEdge)) {
+                                worklist.push({inEdge, depthIt != depGraph.edgeDepthsGlobal.end()
+                                                        ? depthIt->second
+                                                        : depth,
+                                        _seqId++});
+                                inWorklist.insert(inEdge);
                             }
                         }
-                        depth = deferredPriority;
-                        break;
                     }
-                    inputs.push_back(lit);
+                    depth = deferredPriority;
+                    break;
                 }
+                inputs.push_back(lit);
+            }
 
-                if (!allAvailable) {
+            if (!allAvailable) {
 //                std::cout << "Not all inputs available for edge " << edge->getId() << ", re-adding to worklist.\n";
-                    worklist.push({edge, depth, _seqId++});
-                    inWorklist.insert(edge);
-                    if (fcProfile) {
-                        stats.edge_requeued++;
-                    }
-                    continue;
+                worklist.push({edge, depth, _seqId++});
+                inWorklist.insert(edge);
+                if (fcProfile) {
+                    stats.edge_requeued++;
                 }
+                continue;
+            }
 
-                if (inputs.size() == 1) {
-                    newEdgeF = inputs[0];
-                } else if (fcProfile) {
-                    auto andStart = Clock::now();
-                    newEdgeF = formulaManager.makeAnd(inputs);
-                    stats.make_and_calls++;
-                    stats.make_and_ms += toMs(Clock::now() - andStart);
-                } else {
-                    newEdgeF = formulaManager.makeAnd(inputs);
-                }
+            if (inputs.size() == 1) {
+                newEdgeF = inputs[0];
+            } else if (fcProfile) {
+                auto andStart = Clock::now();
+                newEdgeF = formulaManager.makeAnd(inputs);
+                stats.make_and_calls++;
+                stats.make_and_ms += toMs(Clock::now() - andStart);
+            } else {
+                newEdgeF = formulaManager.makeAnd(inputs);
             }
             if (!formulaManager.isSame(edgeFormulas[edge], newEdgeF)) {
                 edgeFormulas[edge] = newEdgeF;
@@ -351,35 +334,30 @@ void buildFormulasCyclewiseInternal(
                 NodePtr out = view.getOutput(edge);
 
                 FormulaNodeRef newNodeF;
-                bool hasNewNodeF = constAccess.nodeFormula(out, newNodeF);
-                if (fcProfile && hasNewNodeF) {
-                    stats.node_const++;
+                bool hasNewNodeF = false;
+                std::vector<FormulaNodeRef> inFs;
+                for (auto& inEdge : view.getIncomingEdges(out)) {
+                    auto it = edgeFormulas.find(inEdge);
+                    if (it != edgeFormulas.end() && it->second.get()) {
+                        inFs.push_back(it->second);
+                    }
                 }
-                if (!hasNewNodeF) {
-                    std::vector<FormulaNodeRef> inFs;
-                    for (auto& inEdge : view.getIncomingEdges(out)) {
-                        auto it = edgeFormulas.find(inEdge);
-                        if (it != edgeFormulas.end() && it->second.get()) {
-                            inFs.push_back(it->second);
-                        }
-                    }
 
-                    if (!inFs.empty()) {
-                        if (fcProfile) {
-                            stats.node_recomputed++;
-                        }
-                        if (inFs.size() == 1) {
-                            newNodeF = inFs[0];
-                        } else if (fcProfile) {
-                            auto orStart = Clock::now();
-                            newNodeF = formulaManager.makeOr(inFs);
-                            stats.make_or_calls++;
-                            stats.make_or_ms += toMs(Clock::now() - orStart);
-                        } else {
-                            newNodeF = formulaManager.makeOr(inFs);
-                        }
-                        hasNewNodeF = true;
+                if (!inFs.empty()) {
+                    if (fcProfile) {
+                        stats.node_recomputed++;
                     }
+                    if (inFs.size() == 1) {
+                        newNodeF = inFs[0];
+                    } else if (fcProfile) {
+                        auto orStart = Clock::now();
+                        newNodeF = formulaManager.makeOr(inFs);
+                        stats.make_or_calls++;
+                        stats.make_or_ms += toMs(Clock::now() - orStart);
+                    } else {
+                        newNodeF = formulaManager.makeOr(inFs);
+                    }
+                    hasNewNodeF = true;
                 }
 
                 if (hasNewNodeF) {
@@ -437,7 +415,6 @@ void buildFormulasCyclewiseInternal(
                   << " rounds=" << round
                   << std::endl;
         std::cout << "[fc-profile] stage=FORWARD_COMPILATION total_ms=" << overallMs
-                  << " const_ms=" << constMs
                   << " preConfig_ms=" << preConfigMs
                   << " depGraph_ms=" << depMs
                   << " baseInit_ms=" << baseInitMs
@@ -451,11 +428,8 @@ void buildFormulasCyclewiseInternal(
                   << " edge_processed=" << stats.edge_processed
                   << " edge_requeued=" << stats.edge_requeued
                   << " edge_updated=" << stats.edge_updated
-                  << " edge_const=" << stats.edge_const
-                  << " edge_nonconst=" << stats.edge_nonconst
                   << " node_recomputed=" << stats.node_recomputed
                   << " node_updated=" << stats.node_updated
-                  << " node_const=" << stats.node_const
                   << " make_and_calls=" << stats.make_and_calls
                   << " make_and_ms=" << stats.make_and_ms
                   << " make_or_calls=" << stats.make_or_calls
@@ -478,13 +452,11 @@ void buildFormulasCyclewise(
     std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
     const std::unordered_set<NodePtr>& seedTrueNodes = {},
     std::vector<double>* roundTimingsMs = nullptr,
-    bool allowConst = true,
-    bool allowDumpConst = true,
     const std::function<void(const FcHeartbeatSnapshot&)>& heartbeatCallback = nullptr,
     std::size_t heartbeatIntervalMs = 5000
 ) {
     buildFormulasCyclewiseInternal(view, formulaManager, nodeFormulas, edgeFormulas, seedTrueNodes,
-            roundTimingsMs, allowConst, allowDumpConst, heartbeatCallback, heartbeatIntervalMs);
+            roundTimingsMs, heartbeatCallback, heartbeatIntervalMs);
 }
 
 struct ComponentSubgraph {
@@ -1031,7 +1003,7 @@ inline bool evaluateSingleRandComponent(
     std::map<NodePtr, BoolNodeRef> nodeFormulas;
     std::map<EdgePtr, BoolNodeRef> edgeFormulas;
     auto start = std::chrono::steady_clock::now();
-    buildFormulasCyclewise(subview, manager, nodeFormulas, edgeFormulas, {}, nullptr, true, false);
+    buildFormulasCyclewise(subview, manager, nodeFormulas, edgeFormulas);
     auto end = std::chrono::steady_clock::now();
     if (evalMs) {
         *evalMs = std::chrono::duration<double, std::milli>(end - start).count();
@@ -1062,7 +1034,7 @@ inline bool evaluateSingleRandComponentBoth(
     std::map<NodePtr, BoolPairNodeRef> nodeFormulas;
     std::map<EdgePtr, BoolPairNodeRef> edgeFormulas;
     auto start = std::chrono::steady_clock::now();
-    buildFormulasCyclewise(subview, manager, nodeFormulas, edgeFormulas, {}, nullptr, true, false);
+    buildFormulasCyclewise(subview, manager, nodeFormulas, edgeFormulas);
     auto end = std::chrono::steady_clock::now();
     if (evalMs) {
         *evalMs = std::chrono::duration<double, std::milli>(end - start).count();
@@ -1094,7 +1066,7 @@ inline bool evaluateConjComponent(
     std::map<NodePtr, ConjNodeRef> nodeFormulas;
     std::map<EdgePtr, ConjNodeRef> edgeFormulas;
     auto start = std::chrono::steady_clock::now();
-    buildFormulasCyclewise(subview, manager, nodeFormulas, edgeFormulas, {}, nullptr, true, false);
+    buildFormulasCyclewise(subview, manager, nodeFormulas, edgeFormulas);
     auto end = std::chrono::steady_clock::now();
     if (evalMs) {
         *evalMs = std::chrono::duration<double, std::milli>(end - start).count();

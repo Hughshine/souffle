@@ -14,7 +14,6 @@
 #include "souffle/problog/formula/FormulaManager.h"
 #include "souffle/Derivation.h"
 #include "souffle/problog/DerivationGraph.h"
-#include "souffle/problog/formula/GraphHeuristics.h"
 #include "souffle/problog/debug/Debugger.h"
 extern "C" {
 #include <cudd.h>
@@ -352,7 +351,6 @@ public:
         Cudd_AutodynDisable(manager.get());
     }
 
-    BDDForceHeuristics heuristics;
     Debugger& debugger = Debugger::getInstance();
     int nextVarIndex_ = 0;
     std::unordered_map<const Node*, int> nodeIndex_;
