@@ -18,4 +18,4 @@ tainted(Dst) :- tainted(Src), flow(Src, Dst), !sanitizer(Dst).
 .output alarm
 0.80::alarm(Value) :- tainted(Value), sink(Value).
 
-query(alarm(Value)).
+query(alarm(_)).

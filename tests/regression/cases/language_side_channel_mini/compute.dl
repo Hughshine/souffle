@@ -14,4 +14,4 @@ leak(Observation) :- secret(Value), mapping(Value, Observation).
 .output explained
 explained(Observation) :- leak(Observation), monitor(Observation).
 
-query(explained(Observation)).
+query(explained(_)).

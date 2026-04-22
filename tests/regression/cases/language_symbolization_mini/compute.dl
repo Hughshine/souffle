@@ -19,4 +19,4 @@ object_total(Kind, Total) :-
     selected(Kind),
     Total = sum Points : { selected_point(Kind, Points) }.
 
-query(object_total(Kind, Total)).
+query(object_total(_, _)).
