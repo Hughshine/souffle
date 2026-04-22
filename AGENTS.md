@@ -44,7 +44,6 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - `docs/RUNBOOK.md`
 - `docs/USAGE.md`
 - `docs/INDEX.md`
-- `docs/topics/testing/README.regression.md`
 
 ## Source references
 - [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)

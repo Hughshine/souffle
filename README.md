@@ -11,7 +11,6 @@ dispatcher.
 - [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
 - [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
 - [docs/USAGE.md](docs/USAGE.md)
-- [docs/topics/rewrite/README.rewrite.impl.md](docs/topics/rewrite/README.rewrite.impl.md)
 - [docs/TESTING.md](docs/TESTING.md)
 
 ## Artifact Scope
@@ -54,11 +53,9 @@ Plain comparison runs omit only `--rewrite`:
 
 ## Documentation
 - [docs/USAGE.md](docs/USAGE.md): user-facing compiler/runtime usage.
-- [docs/topics/rewrite/README.rewrite.impl.md](docs/topics/rewrite/README.rewrite.impl.md):
-  artifact rewrite behavior and diagnostics.
-- [docs/topics/runtime/README.flag.md](docs/topics/runtime/README.flag.md):
-  artifact runtime flag reference.
 - [docs/TESTING.md](docs/TESTING.md): verification commands.
+- [docs/RUNBOOK.md](docs/RUNBOOK.md): concise build/run/troubleshooting guide.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): high-level pipeline map.
 - [docs/INDEX.md](docs/INDEX.md): maintained documentation index.
 
 ## Verification

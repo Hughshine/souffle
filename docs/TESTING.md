@@ -5,7 +5,6 @@
 - [tests/regression/CMakeLists.txt](../tests/regression/CMakeLists.txt)
 - [tests/regression/run_regression_case.py](../tests/regression/run_regression_case.py)
 - [sh/run_regression_tests.sh](../sh/run_regression_tests.sh)
-- [docs/topics/testing/README.regression.md](topics/testing/README.regression.md)
 - [cmake/CTestDisabled.cmake](../cmake/CTestDisabled.cmake)
 - [sh/run_test_format.sh](../sh/run_test_format.sh)
 
