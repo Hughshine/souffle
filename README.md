@@ -1,64 +1,61 @@
-# Souffle Probabilistic Artifact
+# Probabilistic Souffle Artifact
 
-This branch packages the compiler side of the full-mode probabilistic Souffle
-artifact for artifact evaluators. The run path has three steps: build this repo,
-generate benchmark `compute` binaries with the repo-built `souffle`, then run
-those binaries with deterministic analysis and the rewrite dispatcher.
+This branch contains the Souffle compiler and runtime used by the full-mode
+probabilistic artifact. It turns a Datalog program plus fact probabilities into
+a generated benchmark binary. That binary computes output tuple probabilities.
 
-## Source References
-- [src/MainDriver.cpp](src/MainDriver.cpp)
-- [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
-- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
-- [docs/USAGE.md](docs/USAGE.md)
-- [docs/TESTING.md](docs/TESTING.md)
+The benchmark inputs and runner scripts are kept in the companion
+`problog-benchmark` artifact.
 
-## Artifact Scope
-- Full-mode probabilistic evaluation with derivation graphs, pruning,
-  component-wise forward compilation, and BDD weighted model counting.
-- Optimized artifact runs use bare `--rewrite`.  The generated binary chooses
-  the rewrite implementation internally.
-- `--det-opt` is part of the artifact command.  It enables deterministic
-  relation analysis and graph gating used by the packaged benchmarks.
-- Generated programs use the BDD backend by default.
-- Benchmark data and scripts live in the companion benchmark artifact:
-  `CAV-FULL` at commit `76b4799`.
+## Evaluator Workflow
 
-## Quickstart
+Build the compiler:
+
 ```bash
 JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
 cmake -S . -B build
 cmake --build build -j${JOBS}
 ```
 
-Use the built compiler to generate benchmark binaries, then run generated
-programs with:
+Generate a benchmark binary with the compiler from this build tree:
 
 ```bash
-./compute -F <facts-dir> -D <output-dir> --det-opt --rewrite --logfile ae-run
+./build/src/souffle -F <facts-dir> -D <output-dir> compute.souffle.dl -o compute
 ```
 
-Plain comparison command:
+Run the generated binary in the plain configuration:
 
 ```bash
 ./compute -F <facts-dir> -D <output-dir> --det-opt --logfile ae-plain
 ```
 
-## Correctness Checks
-- Side-channel and taint benchmark comparisons should match exactly.
-- Symbolization comparisons use the same output key set and allow an absolute
-  probability difference of at most `1e-8`.  This tolerance is for rare
-  last-digit output-rounding boundary cases.
+Run the same binary with rewrite enabled:
+
+```bash
+./compute -F <facts-dir> -D <output-dir> --det-opt --rewrite --logfile ae-rewrite
+```
+
+## Inputs and Outputs
+
+Input facts live in `<facts-dir>` as `<relation>.facts`. Probabilities use
+matching `<relation>.prob` files with line-for-line alignment. A missing
+probability file means probability `1.0` for every tuple in that relation.
+
+The generated binary writes tuple probabilities to `facts.prob` in
+`<output-dir>`. It also writes a JSON timing log whose base name comes from
+`--logfile`.
+
+## Expected Comparisons
+
+Side-channel and taint cases should match exactly between plain and rewrite
+runs. Symbolization cases compare the same output tuple keys and allow absolute
+probability error up to `1e-8`; this covers rare decimal rounding boundaries in
+printed probabilities.
 
 ## Documentation
-- [docs/USAGE.md](docs/USAGE.md): user-facing compiler/runtime usage.
-- [docs/TESTING.md](docs/TESTING.md): verification commands.
-- [docs/RUNBOOK.md](docs/RUNBOOK.md): concise build/run/troubleshooting guide.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): high-level pipeline map.
-- [docs/INDEX.md](docs/INDEX.md): maintained documentation index.
 
-## Verification
-- Build after C++ changes: `cmake --build build -j${JOBS}`.
-- Run regression tests when probabilistic behavior changes:
-  `ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}`.
-- Run a generated benchmark binary from the companion `CAV-FULL` artifact with
-  the commands above for end-to-end AE validation.
+- [docs/USAGE.md](docs/USAGE.md): command-line interface and file formats.
+- [docs/TESTING.md](docs/TESTING.md): build and regression checks.
+- [docs/RUNBOOK.md](docs/RUNBOOK.md): compact operational guide.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): full-mode pipeline map.
+- [docs/INDEX.md](docs/INDEX.md): documentation index.

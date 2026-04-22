@@ -1,41 +1,53 @@
 # Architecture
 
-## Source References
-- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp)
-- [src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h)
-- [src/include/souffle/problog/ForwardCompilation.h](../src/include/souffle/problog/ForwardCompilation.h)
-- [src/include/souffle/problog/GraphRewriter.h](../src/include/souffle/problog/GraphRewriter.h)
-- [src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h)
+This branch packages the full-mode probabilistic runtime used by generated
+benchmark binaries. A run starts from concrete facts, records the derivations
+needed for requested outputs, and computes output probabilities.
 
-## Overview
-This AE branch packages the full-mode probabilistic pipeline for generated
-benchmark binaries.
+## Runtime Flow
 
-## High-Level Flow
-1. Parse Datalog into AST and lower it to RAM.
-2. Synthesize C++ for compiled programs and link against the precompiled runtime.
-3. Full-mode probabilistic runs build a derivation graph.
-4. The graph is pruned against output/evidence requirements.
-5. Optional bare `--rewrite` dispatches to the selected rewrite implementation.
-6. Component-wise forward compilation and BDD weighted model counting compute
-   output probabilities.
+1. Load input facts and optional fact probabilities.
+2. Execute the generated Souffle program.
+3. Build a derivation graph from recorded rule applications.
+4. Prune the graph to output and evidence requirements.
+5. Apply graph rewrite when the run uses `--rewrite`.
+6. Split the remaining graph into components.
+7. Compile components to BDD formulas and run weighted model counting.
+8. Write output tuple probabilities.
 
-## Key Components
-- `src/souffle.cpp` and `src/MainDriver.cpp`: compiler entry point and driver glue.
-- `src/include/souffle/problog/`: derivation graph, pipeline, rewrite, and
-  probabilistic evaluation.
-- `src/synthesiser/Synthesiser.cpp`: emits generated C++ for compiled programs.
-- `src/include/souffle/CompiledOptions.h`: generated-program runtime options.
+## Rewrite Role
 
-## Data and Artifacts
-- Input facts: `-F <dir>` with `<rel>.facts` and optional `<rel>.prob`.
-- Output probabilities: full runs write `facts.prob` to the output directory.
-- Logs: `--logfile <name>` writes JSON reports into the output directory.
+Rewrite runs reduce probability-computation cost before BDD compilation. The
+public run command uses `--rewrite`; the runtime chooses the concrete rewrite
+strategy from rule metadata.
 
-## Dependencies and Constraints
-- The artifact uses CUDD for BDD weighted model counting.
-- Runtime and testing constraints are documented in [docs/USAGE.md](USAGE.md)
-  and [docs/TESTING.md](TESTING.md).
+The current policy is:
+
+- Probabilistic rules use implicit split rewrite.
+- Deterministic rules use explicit graph rewrite with split disabled.
+
+This keeps the benchmark command stable while allowing different workloads to
+use the rewrite path that matches their graph shape.
+
+## Main Components
+
+- `src/MainDriver.cpp`: compiler driver and generated-binary option plumbing.
+- `src/synthesiser/Synthesiser.cpp`: generated C++ emission and full-mode hooks.
+- `src/problog/Pipeline.cpp`: full-mode runtime pipeline.
+- `src/include/souffle/problog/DerivationGraph.h`: derivation graph data model.
+- `src/include/souffle/problog/GraphRewriter.h`: explicit graph rewrite.
+- `src/problog/ImplicitSplitRewrite.cpp`: implicit split rewrite.
+- `src/include/souffle/problog/ForwardCompilation.h`: graph-to-formula
+  compilation.
+
+## Data Products
+
+- Inputs: `<relation>.facts` and optional `<relation>.prob`.
+- Outputs: `facts.prob`.
+- Timing logs: JSON files controlled by `--logfile`.
 
 ## Further Reading
-See [docs/INDEX.md](INDEX.md) for the complete AE doc map.
+
+- [USAGE.md](USAGE.md): evaluator-facing commands and file formats.
+- [TESTING.md](TESTING.md): regression and benchmark validation.
+- [INDEX.md](INDEX.md): complete documentation map.

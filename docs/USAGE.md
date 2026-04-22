@@ -1,81 +1,89 @@
 # Usage
 
-## Source References
-- [../src/MainDriver.cpp](../src/MainDriver.cpp)
-- [../src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h)
-- [../src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp)
-- [../src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp)
+This document describes the evaluator-facing interface. The normal workflow has
+two phases: compile a Datalog program into a benchmark binary, then run that
+binary on a fact directory.
 
-## Program Syntax
-```souffle
-.decl edge(u:number, v:number)
-.decl path(u:number, v:number)
-.input edge
-.output path
+## Build the Compiler
 
-path(x,y) :- edge(x,y).
-path(x,z) :- path(x,y), edge(y,z).
-```
-
-Notes:
-- Facts are read from `-F` input directory as `<rel>.facts`.
-- Probabilities are read from `<rel>.prob` with line-for-line alignment; if a
-  probability file is missing, all tuples in that relation default to `1.0`.
-- This fork accepts ProbLog-style probability prefixes on rules, for
-  example `0.7::path(x,y) :- edge(x,y).`.
-
-## Compile Generated Programs
-Build the compiler first:
 ```bash
+JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
 cmake -S . -B build
 cmake --build build -j${JOBS}
 ```
 
-Generate a benchmark binary:
+Use `./build/src/souffle` from this build tree for artifact runs.
+
+## Generate a Benchmark Binary
+
 ```bash
 ./build/src/souffle -F <facts-dir> -D <output-dir> compute.souffle.dl -o compute
 ```
 
-Compiler notes:
-- `-F` and `-D` at compile time set default input/output directories baked into
-  the generated binary.
-- `-o` controls the output binary name.
-- Generated programs link against the precompiled runtime library from the
-  CMake build tree. Keep the build tree available for generated binaries.
+The `-F` and `-D` arguments set default input and output directories in the
+generated binary. Runtime arguments can override them.
 
-## Runtime Options
-Artifact benchmark commands use this stable generated-program surface:
-- `-F, --facts <DIR>`: input directory.
-- `-D, --output <DIR>`: output directory.
-- `-l, --logfile <FILE>`: debugger JSON base name.
-- `--det-opt`: deterministic-relation analysis and graph gating.
-- `-r, --rewrite`: artifact rewrite dispatcher.
+## Run a Benchmark Binary
 
-Plain comparison command:
+Plain run:
+
 ```bash
 ./compute -F <facts-dir> -D <output-dir> --det-opt --logfile ae-plain
 ```
 
-Optimized runs add bare `--rewrite`:
+Rewrite run:
+
 ```bash
 ./compute -F <facts-dir> -D <output-dir> --det-opt --rewrite --logfile ae-rewrite
 ```
 
-The dispatcher selects an implicit-split rewrite implementation when any rule
-has a non-`1.0` probability. Rule probability `1.0` selects graph rewrite with
-split policy `none`. The dispatcher reads rule probabilities; `.prob` values
-affect fact weights during probability computation.
+`--det-opt` enables deterministic-relation analysis used by the benchmark
+protocol. `--rewrite` enables the rewrite path used for the optimized artifact
+comparison.
 
-## Benchmark Artifact
-Benchmark scripts, generated facts, and case metadata are in the companion
-benchmark artifact branch `CAV-FULL` at commit `76b4799`.
+## Fact and Probability Files
 
-Use this compiler branch with that benchmark branch unless a run explicitly
-records a different provenance pair.
+Each input relation reads facts from `<relation>.facts` in the directory passed
+with `-F`. Probabilities are optional and use `<relation>.prob` files. The two
+files align by line number.
 
-## Differences From Upstream Souffle
-- Probabilistic semantics: derivation graph construction, pruning, forward
-  compilation, and weighted model counting.
-- Optional artifact rewrite dispatcher (`--rewrite`) for full-mode runs.
-- Deterministic-first derivation gating (`--det-opt`) to skip recording
-  derivations for deterministic relations.
+Example:
+
+```text
+edge.facts
+1	2
+2	3
+
+edge.prob
+0.91
+0.74
+```
+
+Rules may also carry ProbLog-style probabilities:
+
+```souffle
+0.7::path(x,y) :- edge(x,y).
+```
+
+## Output Files
+
+The generated binary writes output tuple probabilities to `facts.prob` in the
+directory passed with `-D`. The `--logfile` argument controls the JSON timing log
+base name in the same output directory.
+
+## Rewrite Selection
+
+`--rewrite` is the public switch for artifact runs. The runtime selects the
+concrete rewrite path from the program metadata. Programs with probabilistic
+rules use implicit split rewrite. Programs whose rules are deterministic use
+explicit graph rewrite with split disabled.
+
+## Source Map
+
+- [../src/MainDriver.cpp](../src/MainDriver.cpp): compiler driver options.
+- [../src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h):
+  generated-binary options.
+- [../src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): full-mode runtime
+  pipeline.
+- [../src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp):
+  generated C++ emission.

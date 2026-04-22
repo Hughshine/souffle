@@ -1,54 +1,56 @@
 # AGENTS
 
-Short, executable constraints for Codex in this repo. Keep it lean; link to
-`docs/*` and `README*.md` for details.
+This file gives repo-local constraints for Codex sessions on the artifact
+branch. Read [README.md](README.md) first for the evaluator workflow.
 
 ## Scope
-- This file is the source of truth for agent constraints.
-- Keep commands here aligned with CI/scripts; otherwise add a TODO.
 
-## Setup Commands (from CI/scripts)
-- Install deps (Ubuntu): `sudo sh/setup/install_ubuntu_deps.sh`
-- Install deps (macOS Intel): `sh/setup/install_macos_deps.sh`
-- Install deps (macOS ARM): `sh/setup/install_macos_arm_deps.sh`
-- Build:
-  - `cmake -S . -B build`
-  - `cmake --build build -j${JOBS}` (set `JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)`)
-- Format/style: `sh/run_test_format.sh`
-- Regression tests (see `docs/TESTING.md`):
-  - `ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}`
-  - `cmake --build build --target check-regression`
-  - `sh/run_regression_tests.sh`
+- Keep changes focused on the artifact branch.
+- Keep generated benchmark outputs and timing logs out of git.
+- Update [docs/INDEX.md](docs/INDEX.md) when adding, deleting, or renaming
+  documentation.
+
+## Build and Test
+
+Set the job count:
+
+```bash
+JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
+```
+
+Build:
+
+```bash
+cmake -S . -B build
+cmake --build build -j${JOBS}
+```
+
+Regression:
+
+```bash
+ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}
+```
+
+Format only when explicitly requested:
+
+```bash
+sh/run_test_format.sh
+```
 
 ## Change Discipline
-- Keep changes minimal; avoid touching unrelated files and generated artifacts.
-- Keep outputs/logs local; do not commit generated benchmark artifacts.
-- Avoid introducing new dependencies unless explicitly requested.
-- Keep documentation in the single source of truth and link, do not duplicate.
-- Prefer repo-scoped skills: `repo-docs`, `verify-changes`, `pr-ready`,
-  `git-commit-helper`, `souffle-test-case`.
 
-## Verification
-- If C++ changes: rebuild. Run `sh/run_test_format.sh` only when explicitly requested.
-  TODO: Align this with CI expectations once clang-format is available by default.
-- If CLI/runtime or probabilistic behavior changes: run `ctest -L regression` using
-  the repo-built binary from `build/src/souffle`.
-- If tests cannot run, state why and point to `docs/TESTING.md`.
-
-## Pitfalls / Do and Do Not
-- `sh/run_test_format.sh` rewrites files in the current git diff; run it only
-  when you intend to format changed C++/headers.
-- Keep `docs/INDEX.md` updated when adding or renaming documentation.
+- Use minimal patches.
+- Avoid unrelated source formatting.
+- Use `rg` for search.
+- Use `apply_patch` for manual edits.
+- Rebuild after C++ changes.
+- Run the regression label after compiler, runtime, or probabilistic semantics
+  changes.
 
 ## Reference Docs
-- `docs/ARCHITECTURE.md`
-- `docs/TESTING.md`
-- `docs/RUNBOOK.md`
-- `docs/USAGE.md`
-- `docs/INDEX.md`
 
-## Source References
-- [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)
-- [sh/run_test_format.sh](sh/run_test_format.sh)
-- [sh/run_regression_tests.sh](sh/run_regression_tests.sh)
-- [cmake/CTestDisabled.cmake](cmake/CTestDisabled.cmake)
+- [docs/USAGE.md](docs/USAGE.md)
+- [docs/TESTING.md](docs/TESTING.md)
+- [docs/RUNBOOK.md](docs/RUNBOOK.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/INDEX.md](docs/INDEX.md)
