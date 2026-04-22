@@ -18,7 +18,7 @@ function(add_regression_case test_name case_id timeout_sec)
     )
 endfunction()
 
-add_regression_case(smoke smoke_full_only 120)
+add_regression_case(smoke smoke_exact_inference 120)
 add_regression_case(rewrite_dispatch rewrite_dispatch_equiv 180)
 add_regression_case(problog_string_roundtrip problog_string_roundtrip 180)
 add_regression_case(problog_symbol_aggregate_roundtrip problog_symbol_aggregate_roundtrip 180)
@@ -27,7 +27,7 @@ add_regression_case(problog_large_numeric_tuple_roundtrip problog_large_numeric_
 add_regression_case(problog_query_named_variable_equality problog_query_named_variable_equality 180)
 add_regression_case(problog_constraint_variable_equality_chain problog_constraint_variable_equality_chain 180)
 add_regression_case(problog_sum_exact_roundtrip problog_sum_exact_roundtrip 180)
-add_regression_case(full_det_modes full_det_modes 120)
+add_regression_case(exact_det_modes exact_det_modes 120)
 add_regression_case(dump_contract dump_outputs_contract 180)
 
 if (NOT TARGET check-regression)
@@ -35,7 +35,7 @@ if (NOT TARGET check-regression)
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --progress -L regression
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         USES_TERMINAL
-        COMMENT "Run maintained Souffle regression tests"
+        COMMENT "Run maintained artifact regression tests"
     )
     add_dependencies(check-regression souffle)
 endif()

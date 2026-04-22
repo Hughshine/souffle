@@ -224,9 +224,7 @@ target_include_directories(libsouffle
 # install souffle directory
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/souffle DESTINATION include)
 
-add_library(compiled STATIC dummy.cpp)
-
-target_sources(compiled PRIVATE
+add_library(compiled STATIC
   Derivation.cpp
   problog/Atom.cpp
   problog/Pipeline.cpp
@@ -269,11 +267,6 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif ()
 
 
-if(SOUFFLE_CODE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_link_libraries(libsouffle PUBLIC coverage_config)
-endif ()
-
-
 target_link_libraries(libsouffle PUBLIC "${CMAKE_DL_LIBS}")
 target_link_libraries(compiled PUBLIC "${CMAKE_DL_LIBS}")
 
@@ -301,13 +294,6 @@ if (SOUFFLE_CUSTOM_GETOPTLONG)
                                PUBLIC USE_CUSTOM_GETOPTLONG)
     target_compile_definitions(compiled
                                PUBLIC USE_CUSTOM_GETOPTLONG)
-endif()
-
-if (SOUFFLE_USE_CURSES)
-    target_compile_definitions(libsouffle PUBLIC USE_NCURSES)
-    target_compile_definitions(compiled PUBLIC USE_NCURSES)
-    target_link_libraries(libsouffle PUBLIC Curses::NCurses)
-    target_link_libraries(compiled PUBLIC Curses::NCurses)
 endif()
 
 if (SOUFFLE_USE_ZLIB)
@@ -347,7 +333,7 @@ add_dependencies(souffle compiled)
 install(TARGETS souffle DESTINATION bin)
 
 # --------------------------------------------------
-# Full-only probabilistic helper libraries
+# Exact-inference helper libraries
 # --------------------------------------------------
 find_library(CUDD_LIBRARY NAMES cudd)
 find_library(SDD_LIBRARY NAMES sdd)
@@ -390,31 +376,9 @@ add_custom_command(TARGET souffle POST_BUILD
   $<TARGET_FILE_DIR:souffle>)
 endif ()
 
-if (SOUFFLE_USE_CURSES)
-add_custom_command(TARGET souffle POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-  ${CURSES_NCURSES_LIBRARY}
-  $<TARGET_FILE_DIR:souffle>)
-endif ()
-
-# --------------------------------------------------
-# Souffle's profiler binary
-# --------------------------------------------------
-
-
-add_executable(souffleprof
-  souffle_prof.cpp)
-target_include_directories(souffleprof PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-install(TARGETS souffleprof DESTINATION bin)
-
-# Set C++ standard to C++17
-target_compile_features(souffleprof
-  PUBLIC cxx_std_17)
-
 if (MSVC)
   target_compile_options(libsouffle PUBLIC /Zc:__cplusplus)
   target_compile_options(compiled PUBLIC /Zc:__cplusplus)
-  target_compile_options(souffleprof PUBLIC /Zc:__cplusplus)
 
   target_compile_options(libsouffle PUBLIC /bigobj)
   target_compile_options(compiled PUBLIC /bigobj)
@@ -440,15 +404,12 @@ if (MSVC)
 
   target_compile_options(libsouffle PUBLIC /Zc:preprocessor)
   target_compile_options(compiled PUBLIC /Zc:preprocessor)
-  target_compile_options(souffleprof PUBLIC /Zc:preprocessor)
 
   target_compile_options(libsouffle PUBLIC /EHsc)
   target_compile_options(compiled PUBLIC /EHsc)
-  target_compile_options(souffleprof PUBLIC /EHsc)
 
   target_compile_definitions(libsouffle PUBLIC USE_CUSTOM_GETOPTLONG)
   target_compile_definitions(compiled PUBLIC USE_CUSTOM_GETOPTLONG)
-  target_compile_definitions(souffleprof PUBLIC USE_CUSTOM_GETOPTLONG)
 endif (MSVC)
 
 if (APPLE)
@@ -458,7 +419,6 @@ if (APPLE)
     set(CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} -Wl,-ld_classic")
     target_link_options(libsouffle PUBLIC "-ld_classic")
     target_link_options(compiled PUBLIC "-ld_classic")
-    target_link_options(souffleprof PUBLIC "-ld_classic")
   endif()
 endif()
 
@@ -520,16 +480,6 @@ if (SOUFFLE_USE_ZLIB)
     get_filename_component(ZLIB_RPATH ${ZLIB_LIBRARY_RELEASE} DIRECTORY)
   endif ()
   list(APPEND SOUFFLE_COMPILED_RPATHS ${ZLIB_RPATH})
-endif()
-
-if (SOUFFLE_USE_CURSES)
-  list(APPEND SOUFFLE_COMPILED_LIBS ${CURSES_NCURSES_LIBRARY})
-  if (COMMAND cmake_path)
-    cmake_path(GET CURSES_NCURSES_LIBRARY PARENT_PATH NCURSES_RPATH)
-  else ()
-    get_filename_component(NCURSES_RPATH ${CURSES_NCURSES_LIBRARY} DIRECTORY)
-  endif ()
-  list(APPEND SOUFFLE_COMPILED_RPATHS ${NCURSES_RPATH})
 endif()
 
 list(INSERT SOUFFLE_COMPILED_LIBS 0 "$<TARGET_FILE:compiled>")
@@ -611,8 +561,7 @@ JSON_DATA_TEXT = \"\"\"{
   \"rpath_fmt\": \"${RPATH_FMT}\",
   \"path_delimiter\": \"${OS_PATH_DELIMITER}\",
   \"exe_extension\": \"${EXE_EXTENSION}\",
-  \"source_include_dir\": \"${CMAKE_CURRENT_SOURCE_DIR}/include\",
-  \"jni_includes\": \"${JAVA_INCLUDE_PATH}${OS_PATH_DELIMITER}${JAVA_INCLUDE_PATH2}\"
+  \"source_include_dir\": \"${CMAKE_CURRENT_SOURCE_DIR}/include\"
 }\"\"\"
 ${TEMPLATE}
 ")
@@ -621,11 +570,3 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/souffle-compile.py" CONTENT "$
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/souffle-compile.py DESTINATION bin)
 
 # ---------------------------------------
-
-# FIXME: Ideally, eventually we will move these out to the "tests" subdirectory
-# now that we have a sane(er?) build system
-if (SOUFFLE_ENABLE_TESTING)
-#    add_subdirectory(ast/tests)
-#    add_subdirectory(ram/tests)
-#    add_subdirectory(interpreter/tests)
-endif()

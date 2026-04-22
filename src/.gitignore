@@ -2,8 +2,6 @@
 
 /souffle
 souffle-compile
-souffle-config
-souffle-profile
 
 stack.hh
 parser.hh

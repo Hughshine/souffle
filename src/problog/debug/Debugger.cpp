@@ -5,18 +5,9 @@
 Debugger::Debugger()
         : turnCount_(0), currentTurn_(nullptr), currentStage_(nullptr), currentIteration_(nullptr) {}
 
-TurnInfo* Debugger::startTurn(const std::string& mode) {
+TurnInfo* Debugger::startTurn() {
     std::lock_guard<std::mutex> lock(mtx_);
-    assert(mode == "DEFAULT" || mode == "FULL" || mode == "FULL-HARD" || mode == "FULL-SOFT" ||
-            mode == "INC");
-    std::string realMode;
-    if (mode == "DEFAULT") {
-        realMode = (turnCount_ == 0) ? "FULL-HARD" : "INC";
-    } else if (mode == "FULL" || mode == "FULL-HARD" || mode == "FULL-SOFT") {
-        realMode = mode;
-    } else {
-        realMode = "INC";
-    }
+    std::string realMode = "EXACT";
     turns_.emplace_back(++turnCount_, realMode);
     TurnInfo& turn = turns_.back();
 //    turn.setMemStart(getCurrentMemoryUsage());

@@ -5,7 +5,7 @@ Regression runner for the maintained Souffle fork test suite.
 Each ctest case executes one scenario end-to-end:
 - generate a small program + inputs
 - compile with the repo-built souffle binary
-- run full mode
+- run exact probabilistic inference
 - assert semantic and artifact contracts
 """
 
@@ -179,7 +179,7 @@ def compile_compute(
     return compute_bin, input_dir, output_dir
 
 
-def run_full_once(
+def run_exact_once(
     *,
     compute_bin: Path,
     input_dir: Path,
@@ -200,14 +200,14 @@ def assert_glob_nonempty(base_dir: Path, pattern: str, *, label: str) -> None:
         raise CaseFailure(f"{label}: expected files matching {base_dir / pattern}")
 
 
-def case_smoke_full_only(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = prepare_case_workspace("smoke_full_only", work_root)
+def case_smoke_exact_inference(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("smoke_exact_inference", work_root)
     input_dir = case_dir / "input"
     output_dir = case_dir / "output_run"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-    run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=output_dir)
+    run_exact_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=output_dir)
 
     facts_prob = output_dir / "facts.prob"
     vals = parse_prob_file(facts_prob)
@@ -222,11 +222,11 @@ def case_rewrite_dispatch_equiv(souffle_bin: Path, work_root: Path) -> None:
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
 
     out_base = case_dir / "out_base"
-    run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base)
+    run_exact_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base)
     base_prob = out_base / "facts.prob"
 
     out_rewrite = case_dir / "out_rewrite"
-    run_full_once(
+    run_exact_once(
         compute_bin=compute_bin,
         input_dir=in_dir,
         output_dir=out_rewrite,
@@ -235,8 +235,8 @@ def case_rewrite_dispatch_equiv(souffle_bin: Path, work_root: Path) -> None:
     assert_prob_close(out_rewrite / "facts.prob", base_prob, label="rewrite_dispatch_equiv")
 
 
-def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = prepare_case_workspace("full_det_modes", work_root)
+def case_exact_det_modes(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("exact_det_modes", work_root)
     input_dir = case_dir / "input"
 
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
@@ -244,8 +244,8 @@ def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
     out_base = case_dir / "out_base"
     out_detopt = case_dir / "out_detopt"
 
-    run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base)
-    run_full_once(
+    run_exact_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base)
+    run_exact_once(
         compute_bin=compute_bin,
         input_dir=in_dir,
         output_dir=out_detopt,
@@ -254,13 +254,13 @@ def case_full_det_modes(souffle_bin: Path, work_root: Path) -> None:
 
     base_prob = out_base / "facts.prob"
     detopt_prob = out_detopt / "facts.prob"
-    assert_prob_close(detopt_prob, base_prob, label="det-opt_full_mode_equivalence")
+    assert_prob_close(detopt_prob, base_prob, label="det-opt_exact_inference_equivalence")
 
 def case_problog_string_roundtrip(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("problog_string_roundtrip", work_root)
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-    out_dir = case_dir / "out_full"
-    run_full_once(
+    out_dir = case_dir / "out_exact"
+    run_exact_once(
         compute_bin=compute_bin,
         input_dir=in_dir,
         output_dir=out_dir,
@@ -310,8 +310,8 @@ def case_problog_string_roundtrip(souffle_bin: Path, work_root: Path) -> None:
 def case_problog_symbol_aggregate_roundtrip(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("problog_symbol_aggregate_roundtrip", work_root)
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-    out_dir = case_dir / "out_full"
-    run_full_once(
+    out_dir = case_dir / "out_exact"
+    run_exact_once(
         compute_bin=compute_bin,
         input_dir=in_dir,
         output_dir=out_dir,
@@ -372,8 +372,8 @@ def case_problog_symbol_aggregate_roundtrip(souffle_bin: Path, work_root: Path) 
 def case_problog_fact_prob_alignment(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("problog_fact_prob_alignment", work_root)
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-    out_dir = case_dir / "out_full"
-    run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_dir)
+    out_dir = case_dir / "out_exact"
+    run_exact_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_dir)
 
     probs = parse_prob_file(out_dir / "facts.prob")
     expected = {
@@ -398,8 +398,8 @@ def case_problog_fact_prob_alignment(souffle_bin: Path, work_root: Path) -> None
 def case_problog_large_numeric_tuple_roundtrip(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("problog_large_numeric_tuple_roundtrip", work_root)
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-    out_dir = case_dir / "out_full"
-    run_full_once(
+    out_dir = case_dir / "out_exact"
+    run_exact_once(
         compute_bin=compute_bin,
         input_dir=in_dir,
         output_dir=out_dir,
@@ -422,8 +422,8 @@ def case_problog_large_numeric_tuple_roundtrip(souffle_bin: Path, work_root: Pat
 def case_problog_query_named_variable_equality(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("problog_query_named_variable_equality", work_root)
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-    out_dir = case_dir / "out_full"
-    run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_dir)
+    out_dir = case_dir / "out_exact"
+    run_exact_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_dir)
 
     probs = parse_prob_file(out_dir / "facts.prob")
     expected = {
@@ -446,8 +446,8 @@ def case_problog_query_named_variable_equality(souffle_bin: Path, work_root: Pat
 def case_problog_constraint_variable_equality_chain(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("problog_constraint_variable_equality_chain", work_root)
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-    out_dir = case_dir / "out_full"
-    run_full_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_dir)
+    out_dir = case_dir / "out_exact"
+    run_exact_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_dir)
 
     keep_csv = (out_dir / "keep.csv").read_text(encoding="utf-8").strip().splitlines()
     if keep_csv != ["10"]:
@@ -459,8 +459,8 @@ def case_problog_constraint_variable_equality_chain(souffle_bin: Path, work_root
 def case_problog_sum_exact_roundtrip(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("problog_sum_exact_roundtrip", work_root)
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-    out_dir = case_dir / "out_full"
-    run_full_once(
+    out_dir = case_dir / "out_exact"
+    run_exact_once(
         compute_bin=compute_bin,
         input_dir=in_dir,
         output_dir=out_dir,
@@ -534,28 +534,28 @@ def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
     input_dir = case_dir / "input"
 
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
-    out_full = case_dir / "out_full_hard"
+    out_exact = case_dir / "out_exact"
 
-    run_full_once(
+    run_exact_once(
         compute_bin=compute_bin,
         input_dir=in_dir,
-        output_dir=out_full,
+        output_dir=out_exact,
         extra_args=["--dumpjson", "--dumpdot", "--dumpstat", "--logfile", "reglog"],
     )
 
-    expected_dot_before = out_full / "before_prune.dot"
-    expected_dot_after = out_full / "after_prune.dot"
-    expected_prob = out_full / "facts.prob"
+    expected_dot_before = out_exact / "before_prune.dot"
+    expected_dot_after = out_exact / "after_prune.dot"
+    expected_prob = out_exact / "facts.prob"
     for expected in (expected_dot_before, expected_dot_after, expected_prob):
         if not expected.exists():
             raise CaseFailure(f"dump contract: missing expected artifact {expected}")
 
-    assert_glob_nonempty(out_full, "derivation*.json", label="dump contract json after prune")
-    assert_glob_nonempty(out_full, "reglog_*.json", label="dump contract debugger logs")
+    assert_glob_nonempty(out_exact, "derivation*.json", label="dump contract json after prune")
+    assert_glob_nonempty(out_exact, "reglog_*.json", label="dump contract debugger logs")
 
 
 CASES = {
-    "smoke_full_only": case_smoke_full_only,
+    "smoke_exact_inference": case_smoke_exact_inference,
     "rewrite_dispatch_equiv": case_rewrite_dispatch_equiv,
     "problog_string_roundtrip": case_problog_string_roundtrip,
     "problog_symbol_aggregate_roundtrip": case_problog_symbol_aggregate_roundtrip,
@@ -564,7 +564,7 @@ CASES = {
     "problog_query_named_variable_equality": case_problog_query_named_variable_equality,
     "problog_constraint_variable_equality_chain": case_problog_constraint_variable_equality_chain,
     "problog_sum_exact_roundtrip": case_problog_sum_exact_roundtrip,
-    "full_det_modes": case_full_det_modes,
+    "exact_det_modes": case_exact_det_modes,
     "dump_outputs_contract": case_dump_outputs_contract,
 }
 

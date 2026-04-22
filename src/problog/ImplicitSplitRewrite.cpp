@@ -284,7 +284,7 @@ double elapsedMs(const Clock::time_point& start) {
     return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 
-WorkingSubgraphView buildFullWorkingView(WorkingDerivationGraph& graph) {
+WorkingSubgraphView buildWorkingView(WorkingDerivationGraph& graph) {
     return WorkingSubgraphView(graph.getNodes(), graph.getEdges());
 }
 
@@ -2312,7 +2312,7 @@ ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
     result.stats.activeAliasRefs = overlayGraphStats.activeAliasRefs;
     result.stats.activeAliasedEdges = overlayGraphStats.activeAliasedEdges;
     const bool canCommitOverlayInPlace =
-            // Runtime full-mode can now preserve live aliases in-place by
+            // Exact inference can preserve live aliases in-place by
             // materializing only the shadow fact nodes referenced by committed
             // edges. Keep the cheaper direct-commit handoff available whenever
             // the overlay still has residual graph state to commit.
@@ -2343,7 +2343,7 @@ ImplicitSplitPipelineResult runImplicitSplitRewritePipeline(
     result.stats.materializeMs = elapsedMs(materializeStart);
     result.stats.materializedAliasNodes = result.materialized.aliasNodes;
 
-    auto viewMaterialized = buildFullWorkingView(*result.materialized.graph);
+    auto viewMaterialized = buildWorkingView(*result.materialized.graph);
     result.stats.materializedNodesBefore = viewMaterialized.getNodes().size();
     result.stats.materializedEdgesBefore = viewMaterialized.getEdges().size();
 

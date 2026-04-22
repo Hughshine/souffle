@@ -25,30 +25,30 @@ inline std::string levelToString(Level level) {
 }
 
 enum class StageKind {
-    IO_LOAD_FULL,
-    CONSTRUCT_RULE_FULL,
-    SEMINAIVE_FULL,
-    CREATE_GRAPH_FULL,
-    PRUNING_FULL,
-    PRECONFIG_FULL,
-    FORWARD_COMPILATION_FULL,
-    WEIGHTED_MODEL_COUNTING_FULL,
-    FC_WMC_HYBRID_FULL,
-    IO_DUMP_FULL
+    IO_LOAD,
+    CONSTRUCT_RULE,
+    SEMINAIVE,
+    CREATE_GRAPH,
+    PRUNING,
+    PRECONFIG,
+    FORWARD_COMPILATION,
+    WEIGHTED_MODEL_COUNTING,
+    FC_WMC_HYBRID,
+    IO_DUMP
 };
 
 inline std::string stageKindToString(const StageKind kind) {
     switch (kind) {
-        case StageKind::IO_LOAD_FULL: return "IO_LOAD_FULL";
-        case StageKind::CONSTRUCT_RULE_FULL: return "CONSTRUCT_RULE_FULL";
-        case StageKind::SEMINAIVE_FULL: return "SEMINAIVE_FULL";
-        case StageKind::CREATE_GRAPH_FULL: return "CREATE_GRAPH_FULL";
-        case StageKind::PRUNING_FULL: return "PRUNING_FULL";
-        case StageKind::PRECONFIG_FULL: return "PRECONFIG_FULL";
-        case StageKind::FORWARD_COMPILATION_FULL: return "FORWARD_COMPILATION_FULL";
-        case StageKind::WEIGHTED_MODEL_COUNTING_FULL: return "WEIGHTED_MODEL_COUNTING_FULL";
-        case StageKind::FC_WMC_HYBRID_FULL: return "FC_WMC_HYBRID";
-        case StageKind::IO_DUMP_FULL: return "IO_DUMP_FULL";
+        case StageKind::IO_LOAD: return "IO_LOAD";
+        case StageKind::CONSTRUCT_RULE: return "CONSTRUCT_RULE";
+        case StageKind::SEMINAIVE: return "SEMINAIVE";
+        case StageKind::CREATE_GRAPH: return "CREATE_GRAPH";
+        case StageKind::PRUNING: return "PRUNING";
+        case StageKind::PRECONFIG: return "PRECONFIG";
+        case StageKind::FORWARD_COMPILATION: return "FORWARD_COMPILATION";
+        case StageKind::WEIGHTED_MODEL_COUNTING: return "WEIGHTED_MODEL_COUNTING";
+        case StageKind::FC_WMC_HYBRID: return "FC_WMC_HYBRID";
+        case StageKind::IO_DUMP: return "IO_DUMP";
         default: return "UNKNOWN";
     }
 }
@@ -136,7 +136,7 @@ public:
     Debugger(const Debugger&) = delete;
     Debugger& operator=(const Debugger&) = delete;
 
-    TurnInfo* startTurn(const std::string& mode = "DEFAULT");
+    TurnInfo* startTurn();
     void endTurn();
     StageInfo* startStage(StageKind kind);
     void endStage();

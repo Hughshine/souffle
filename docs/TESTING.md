@@ -19,16 +19,15 @@ Run this after C++ or CMake changes.
 ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}
 ```
 
-Equivalent entry points are:
+Equivalent CMake entry point:
 
 ```bash
 cmake --build build --target check-regression
-sh/run_regression_tests.sh
 ```
 
 ## What the Regression Label Covers
 
-- Full-mode probabilistic smoke tests.
+- Exact probabilistic inference smoke tests.
 - ProbLog string, numeric, and aggregate round-trips.
 - Deterministic-relation analysis through `--det-opt`.
 - Rewrite dispatcher equivalence on maintained cases.
@@ -52,5 +51,3 @@ Side-channel and taint comparisons should match exactly.
   regression case registration.
 - [../tests/regression/run_regression_case.py](../tests/regression/run_regression_case.py):
   case runner and output checker.
-- [../sh/run_regression_tests.sh](../sh/run_regression_tests.sh): shell wrapper.
-- [../sh/run_test_format.sh](../sh/run_test_format.sh): formatting wrapper.

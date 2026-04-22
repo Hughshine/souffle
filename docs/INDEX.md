@@ -6,7 +6,7 @@ Read the documents in this order when evaluating or modifying the artifact.
 2. [USAGE.md](USAGE.md): command-line interface and file formats.
 3. [TESTING.md](TESTING.md): build, regression, and benchmark checks.
 4. [RUNBOOK.md](RUNBOOK.md): compact local run guide.
-5. [ARCHITECTURE.md](ARCHITECTURE.md): full-mode runtime structure.
+5. [ARCHITECTURE.md](ARCHITECTURE.md): exact inference runtime structure.
 6. [../AGENTS.md](../AGENTS.md): Codex constraints for this branch.
 
 ## Source Entry Points

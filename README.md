@@ -1,8 +1,9 @@
 # Probabilistic Souffle Artifact
 
-This branch contains the Souffle compiler and runtime used by the full-mode
-probabilistic artifact. It turns a Datalog program plus fact probabilities into
-a generated benchmark binary. That binary computes output tuple probabilities.
+This branch contains the Souffle compiler and runtime used by the exact
+probabilistic inference artifact. It turns a Datalog program plus fact
+probabilities into a generated benchmark binary. That binary computes output
+tuple probabilities.
 
 The benchmark inputs and runner scripts are kept in the companion
 `problog-benchmark` artifact.
@@ -57,5 +58,5 @@ printed probabilities.
 - [docs/USAGE.md](docs/USAGE.md): command-line interface and file formats.
 - [docs/TESTING.md](docs/TESTING.md): build and regression checks.
 - [docs/RUNBOOK.md](docs/RUNBOOK.md): compact operational guide.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): full-mode pipeline map.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): exact inference pipeline map.
 - [docs/INDEX.md](docs/INDEX.md): documentation index.

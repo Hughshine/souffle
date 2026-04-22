@@ -91,8 +91,7 @@ ExpressionPair MakeIndexTransformer::getLowerUpperExpression(Condition* c, std::
         const std::optional<std::size_t>& identifier, const ram::Relation& rel) {
     if (auto* binRelOp = as<Constraint>(c)) {
         const bool interpreter = !glb->config().has("compile") && !glb->config().has("dl-program") &&
-                                 !glb->config().has("generate") && !glb->config().has("generate-many") &&
-                                 !glb->config().has("swig");
+                                 !glb->config().has("generate") && !glb->config().has("generate-many");
         bool provenance = rel.getAuxiliaryArity() > 0;  // rep == RelationRepresentation::PROVENANCE;
         auto rep = rel.getRepresentation();
         bool btree = (rep == RelationRepresentation::BTREE || rep == RelationRepresentation::DEFAULT ||

@@ -31,12 +31,6 @@ Regression:
 ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}
 ```
 
-Format only when explicitly requested:
-
-```bash
-sh/run_test_format.sh
-```
-
 ## Change Discipline
 
 - Use minimal patches.

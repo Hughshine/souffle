@@ -16,10 +16,9 @@ namespace souffle::problog {
 
 std::string makeOutputPath(const CmdOptions& opt, const std::string& filename);
 
-// full-only is a compile-time flag; expose it to the runtime pipeline
-// to guard features that are only safe in full-only mode.
-void setFullOnlyMode(bool enabled);
-bool isFullOnlyMode();
+// The generated benchmark binary uses the exact inference pipeline.
+void setExactInferenceMode(bool enabled);
+bool isExactInferenceMode();
 
 void runPipeline(
         const CmdOptions& opt,

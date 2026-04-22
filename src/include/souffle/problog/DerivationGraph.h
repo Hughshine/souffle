@@ -1787,7 +1787,7 @@ public:
             const double totalMs = toMs(totalStart);
             const size_t liveNodeCount = newNodes.size();
             const size_t liveEdgeCount = newEdges.size();
-            std::cout << "[profile] stage=PRUNING_FULL prune_ms=" << totalMs
+            std::cout << "[profile] stage=PRUNING prune_ms=" << totalMs
                       << " init_ms=" << initMs
                       << " bfs_ms=" << bfsMs
                       << " filter_nodes_ms=" << filterNodeMs

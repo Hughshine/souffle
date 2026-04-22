@@ -177,11 +177,6 @@ void compileToBinary(
 
     argv.push_back(command);
 
-    if (glb.config().has("swig")) {
-        argv.push_back("-s");
-        argv.push_back(glb.config().get("swig"));
-    }
-
     if (glb.config().has("verbose")) {
         argv.push_back("-v");
     }
@@ -542,9 +537,6 @@ std::string versionFooter() {
 #ifdef _OPENMP
     footer << " openmp";
 #endif
-#ifdef USE_NCURSES
-    footer << " ncurses";
-#endif
 #ifdef USE_SQLITE
     footer << " sqlite";
 #endif
@@ -623,8 +615,6 @@ std::vector<MainOption> getMainOptions() {
           "Do not use a C preprocessor."},
       {"online", nextOptChar++, "", "", false,
           "Use the online translator."},
-      {"full-only", nextOptChar++, "", "", false,
-          "Run the full probabilistic pipeline."},
       {"no-warn", 'w', "", "", false,
           "Disable warnings."},
       {"output-dir", 'D', "DIR", ".", false,
@@ -661,9 +651,6 @@ std::vector<MainOption> getMainOptions() {
               "\ttransformed-ast\n"
               "\ttransformed-ram\n"
               "\ttype-analysis"},
-      {"swig", 's', "LANG", "", false,
-          "Generate SWIG interface for given language. The values <LANG> accepts is java and "
-          "python. "},
       {"verbose", 'v', "", "", false,
           "Verbose output."},
       {"version", nextOptChar++, "", "", false,
@@ -726,15 +713,13 @@ int main(Global& glb, const char* souffle_executable) {
 
         const bool hasCompileOption = glb.config().has("compile") || glb.config().has("compile-many") ||
                                       glb.config().has("generate") || glb.config().has("generate-many") ||
-                                      glb.config().has("dl-program") || glb.config().has("swig");
+                                      glb.config().has("dl-program");
         if (!hasCompileOption) {
             std::string defaultOutput = simpleName(glb.config().get(""));
             glb.config().set("dl-program", defaultOutput);
             std::cerr << "No compile option specified; defaulting to -o " << defaultOutput
                       << " (compile only)." << std::endl;
         }
-        glb.config().set("full-only");
-
         /* for the jobs option, to determine the number of threads used */
         if (isNumber(glb.config().get("jobs").c_str())) {
             int n = std::stoi(glb.config().get("jobs"));
@@ -798,13 +783,6 @@ int main(Global& glb, const char* souffle_executable) {
     } catch (std::exception& e) {
         std::cerr << e.what() << std::endl;
         exit(EXIT_FAILURE);
-    }
-
-    /**
-     * Ensure that code generation is enabled if using SWIG interface option.
-     */
-    if (glb.config().has("swig") && !glb.config().has("generate")) {
-        glb.config().set("generate", simpleName(glb.config().get("")));
     }
 
     // ------ start souffle -------------
@@ -1009,7 +987,7 @@ int main(Global& glb, const char* souffle_executable) {
         const bool generate_many_mode = glb.config().has("generate-many");
 
         const bool must_execute = execute_mode;
-        const bool must_compile = must_execute || compile_mode || glb.config().has("swig");
+        const bool must_compile = must_execute || compile_mode;
 
         try {
             // ------- compiler -------------

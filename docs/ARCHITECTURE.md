@@ -18,19 +18,19 @@ The evaluator-facing output is `facts.prob`.
 pipeline, including component checks, alias resolution, relation dependency
 analysis, join planning, and other Datalog optimizations before C++ emission.
 
-The probabilistic extension adds generated metadata for full-mode execution:
-rule probabilities, query/output relations, evidence relations, relation SCCs,
-and deterministic/probabilistic relation classification used by `--det-opt`.
+The probabilistic extension adds generated metadata for exact inference: rule
+probabilities, query/output relations, evidence relations, relation SCCs, and
+deterministic/probabilistic relation classification used by `--det-opt`.
 
 Key sources:
 
-- [src/MainDriver.cpp](../src/MainDriver.cpp#L445): builds the AST
+- [src/MainDriver.cpp](../src/MainDriver.cpp): builds the AST
   transformation pipeline.
-- [src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp#L324):
+- [src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp):
   computes relation dependency metadata for deterministic optimization.
-- [src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp#L4018):
+- [src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp):
   emits the generated binary's command-line options and relation metadata.
-- [src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp#L4113):
+- [src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp):
   emits the probability-aware fact loader and deterministic relation prepass.
 
 ## 1. Evaluate
@@ -48,11 +48,11 @@ applications and deterministic metadata after evaluation.
 
 Key sources:
 
-- [src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp#L2421):
+- [src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp):
   emits rule-application recording for derivations.
-- [src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp#L4291):
+- [src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp):
   emits the semi-naive `runAll` stage.
-- [src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp#L819):
+- [src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp):
   hands the generated program to the probabilistic runtime pipeline.
 
 ## 2. Build The Derivation Graph
@@ -70,13 +70,13 @@ edges that can affect requested outputs or evidence.
 
 Key sources:
 
-- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp#L1943): top-level
+- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): top-level
   runtime pipeline.
-- [src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h#L1992):
+- [src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h):
   builds the working derivation graph from recorded rule applications.
-- [src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h#L2012):
+- [src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h):
   indexes aggregate witnesses during graph construction.
-- [src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h#L2073):
+- [src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h):
   prunes the graph to output and evidence requirements.
 
 ## 3. Solve Probabilities
@@ -96,25 +96,25 @@ concrete rewrite path from rule metadata:
 
 After rewrite, the backend decomposes the graph into components. Components with
 one random variable, zero-random-variable conjunction structure, or simple
-conjunction structure can bypass full decision diagram construction. Remaining
+conjunction structure can bypass decision diagram construction. Remaining
 components are compiled to a decision diagram and solved by weighted model
 counting.
 
 Key sources:
 
-- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp#L69): selects the
+- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): selects the
   rewrite implementation used by `--rewrite`.
-- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp#L564): BDD backend
+- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): BDD backend
   pipeline, including component fast paths and WMC.
-- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp#L1380): SDD backend
+- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): SDD backend
   pipeline.
-- [src/include/souffle/problog/GraphRewriter.h](../src/include/souffle/problog/GraphRewriter.h#L99):
+- [src/include/souffle/problog/GraphRewriter.h](../src/include/souffle/problog/GraphRewriter.h):
   explicit SISO graph rewrite.
-- [src/problog/ImplicitSplitRewrite.cpp](../src/problog/ImplicitSplitRewrite.cpp#L2269):
+- [src/problog/ImplicitSplitRewrite.cpp](../src/problog/ImplicitSplitRewrite.cpp):
   implicit split rewrite pipeline.
-- [src/include/souffle/problog/PipelineComponents.h](../src/include/souffle/problog/PipelineComponents.h#L32):
+- [src/include/souffle/problog/PipelineComponents.h](../src/include/souffle/problog/PipelineComponents.h):
   component classification and fast-path data structures.
-- [src/include/souffle/problog/PipelineComponents.h](../src/include/souffle/problog/PipelineComponents.h#L144):
+- [src/include/souffle/problog/PipelineComponents.h](../src/include/souffle/problog/PipelineComponents.h):
   zero-random-variable conjunction evaluation.
 
 ## 4. Decision Diagram Interface
@@ -126,15 +126,15 @@ for this workload.
 
 Key sources:
 
-- [src/include/souffle/problog/formula/FormulaManager.h](../src/include/souffle/problog/formula/FormulaManager.h#L9):
+- [src/include/souffle/problog/formula/FormulaManager.h](../src/include/souffle/problog/formula/FormulaManager.h):
   common formula and weighted model counting interface.
-- [src/include/souffle/problog/formula/CuddManager.h](../src/include/souffle/problog/formula/CuddManager.h#L161):
+- [src/include/souffle/problog/formula/CuddManager.h](../src/include/souffle/problog/formula/CuddManager.h):
   CUDD-backed BDD manager.
-- [src/include/souffle/problog/formula/SddManager.h](../src/include/souffle/problog/formula/SddManager.h#L182):
+- [src/include/souffle/problog/formula/SddManager.h](../src/include/souffle/problog/formula/SddManager.h):
   SDD manager.
-- [src/include/souffle/problog/ForwardCompilation.h](../src/include/souffle/problog/ForwardCompilation.h#L474):
+- [src/include/souffle/problog/ForwardCompilation.h](../src/include/souffle/problog/ForwardCompilation.h):
   graph-to-formula compilation.
-- [src/include/souffle/problog/ForwardCompilation.h](../src/include/souffle/problog/ForwardCompilation.h#L1125):
+- [src/include/souffle/problog/ForwardCompilation.h](../src/include/souffle/problog/ForwardCompilation.h):
   component-wise formula compilation.
 
 ## 5. Output
@@ -144,7 +144,7 @@ Timing and graph statistics are written to the JSON log selected by `--logfile`.
 
 Key sources:
 
-- [src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h#L2613):
+- [src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h):
   writes `facts.prob`.
-- [src/problog/debug/Debugger.cpp](../src/problog/debug/Debugger.cpp#L1):
+- [src/problog/debug/Debugger.cpp](../src/problog/debug/Debugger.cpp):
   records stage timing and profiling metadata.

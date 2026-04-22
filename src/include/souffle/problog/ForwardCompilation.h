@@ -117,14 +117,14 @@ void buildFormulasCyclewiseInternal(
              constInfoPtr = &constInfo;
          }
          if (seedTrueNodes.empty()) {
-             std::cout << "[const-pre] tag=full-cyclewise took " << constMs << " ms" << std::endl;
-             logConstAnalysis(constInfo, view, "full-cyclewise");
+             std::cout << "[const-pre] tag=cyclewise took " << constMs << " ms" << std::endl;
+             logConstAnalysis(constInfo, view, "cyclewise");
          }
      }
      ConstFormulaAccess<FormulaNodeRef> constAccess{constInfoPtr, formulaManager, &view};
 
     auto preStart = Clock::now();
-     setCuddPreConfigTag("full_cyclewise");
+     setCuddPreConfigTag("cyclewise");
      formulaManager.preConfig(view);
      setCuddPreConfigTag("");
     auto preConfigMs = toMs(Clock::now() - preStart);
@@ -436,7 +436,7 @@ void buildFormulasCyclewiseInternal(
                   << " cycles=" << cycleMs
                   << " rounds=" << round
                   << std::endl;
-        std::cout << "[fc-profile] stage=FORWARD_COMPILATION_FULL total_ms=" << overallMs
+        std::cout << "[fc-profile] stage=FORWARD_COMPILATION total_ms=" << overallMs
                   << " const_ms=" << constMs
                   << " preConfig_ms=" << preConfigMs
                   << " depGraph_ms=" << depMs

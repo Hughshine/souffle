@@ -83,7 +83,7 @@ explicit graph rewrite with split disabled.
 - [../src/MainDriver.cpp](../src/MainDriver.cpp): compiler driver options.
 - [../src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h):
   generated-binary options.
-- [../src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): full-mode runtime
-  pipeline.
+- [../src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): exact inference
+  runtime pipeline.
 - [../src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp):
   generated C++ emission.

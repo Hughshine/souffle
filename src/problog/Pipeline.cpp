@@ -36,7 +36,7 @@
 namespace souffle::problog {
 
 namespace {
-bool fullOnlyMode = false;
+bool exactInferenceMode = false;
 
 static std::unordered_map<std::string, std::vector<char>> collectRelationAttributeTypes(
         SouffleProgram& program) {
@@ -117,11 +117,11 @@ static std::size_t estimateBddVarCount(const SubgraphView& view) {
     return count;
 }
 
-static WorkingSubgraphView buildFullWorkingViewLocal(WorkingDerivationGraph& graph) {
+static WorkingSubgraphView buildWorkingViewLocal(WorkingDerivationGraph& graph) {
     return WorkingSubgraphView(graph.getNodes(), graph.getEdges());
 }
 
-static WorkingSubgraphView buildFullWorkingViewLocal(
+static WorkingSubgraphView buildWorkingViewLocal(
         const std::unordered_set<NodePtr>& nodes, const std::unordered_set<EdgePtr>& edges) {
     return WorkingSubgraphView(nodes, edges);
 }
@@ -525,12 +525,12 @@ static std::string join(const std::vector<std::string>& parts, const char* sep) 
 
 } // namespace
 
-void setFullOnlyMode(bool enabled) {
-    fullOnlyMode = enabled;
+void setExactInferenceMode(bool enabled) {
+    exactInferenceMode = enabled;
 }
 
-bool isFullOnlyMode() {
-    return fullOnlyMode;
+bool isExactInferenceMode() {
+    return exactInferenceMode;
 }
 
 std::string makeOutputPath(const CmdOptions& opt, const std::string& filename) {
@@ -593,7 +593,7 @@ static void runBddPipeline(
         if (opt.isRewriteEnabled()) {
             auto* hybridStage = rewriteHybridStage;
             if (!hybridStage) {
-                hybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
+                hybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID);
             }
             auto varEstimate = estimateBddVarCount(view);
             debugger.addInfo("rand_vars", std::to_string(varEstimate));
@@ -1163,8 +1163,8 @@ static void runBddPipeline(
                 std::cout << "[pipeline] fastpath WMC took " << fastPathMs << " ms\n";
             }
             if (wmcProfile) {
-                std::cout << "[wmc-profile] stage=FULL"
-                          << " mode=full-rewrite"
+                std::cout << "[wmc-profile] stage=EXACT"
+                          << " mode=rewrite"
                           << " total_ms=" << (evidenceBuildMs + evidenceWmcMs + perNodeWmcMs + fastPathMs)
                           << " components=" << analyses.size()
                           << " nodes=" << view.getNodes().size()
@@ -1183,7 +1183,7 @@ static void runBddPipeline(
             }
 
             debugger.endStage();
-            debugger.startStage(StageKind::IO_DUMP_FULL);
+            debugger.startStage(StageKind::IO_DUMP);
             auto tDumpStart = std::chrono::steady_clock::now();
             dumpProbabilities(probResult, opt.getOutputFileDir());
             auto tDumpMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1192,7 +1192,7 @@ static void runBddPipeline(
             std::cout << "[pipeline] probability dump took " << tDumpMs << " ms\n";
             debugger.endStage();
         } else {
-            auto* fcStage = debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+            auto* fcStage = debugger.startStage(StageKind::FORWARD_COMPILATION);
             auto varEstimate = estimateBddVarCount(view);
             debugger.addInfo("rand_vars", std::to_string(varEstimate));
             if (fcStage) {
@@ -1229,7 +1229,7 @@ static void runBddPipeline(
                       << " ms\n";
             debugger.endStage();
 
-            debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
+            debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING);
 
             auto t2 = std::chrono::steady_clock::now();
             auto resolvedEvs = applyEvidence(graph, evidences);
@@ -1343,8 +1343,8 @@ static void runBddPipeline(
             std::cout << "[pipeline] per-node conditional WMC took "
                       << perNodeWmcMs << " ms\n";
             if (wmcProfile) {
-                std::cout << "[wmc-profile] stage=FULL"
-                          << " mode=full"
+                std::cout << "[wmc-profile] stage=EXACT"
+                          << " mode=plain"
                           << " total_ms=" << (evidenceBuildMs + evidenceWmcMs + perNodeWmcMs)
                           << " components=" << components.size()
                           << " nodes=" << view.getNodes().size()
@@ -1362,7 +1362,7 @@ static void runBddPipeline(
             }
 
             debugger.endStage();
-            debugger.startStage(StageKind::IO_DUMP_FULL);
+            debugger.startStage(StageKind::IO_DUMP);
             auto tDumpStart = std::chrono::steady_clock::now();
             dumpProbabilities(probResult, opt.getOutputFileDir());
             auto tDumpMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1409,7 +1409,7 @@ static void runSddPipeline(
         if (opt.isRewriteEnabled()) {
             auto* hybridStage = rewriteHybridStage;
             if (!hybridStage) {
-                hybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
+                hybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID);
             }
             auto varEstimate = estimateBddVarCount(view);
             debugger.addInfo("rand_vars", std::to_string(varEstimate));
@@ -1816,7 +1816,7 @@ static void runSddPipeline(
             }
 
             debugger.endStage();
-            debugger.startStage(StageKind::IO_DUMP_FULL);
+            debugger.startStage(StageKind::IO_DUMP);
             auto tDumpStart = std::chrono::steady_clock::now();
             dumpProbabilities(probResult, opt.getOutputFileDir());
             auto tDumpMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1825,7 +1825,7 @@ static void runSddPipeline(
             std::cout << "[pipeline] probability dump took " << tDumpMs << " ms\n";
             debugger.endStage();
         } else {
-            auto* fcStage = debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+            auto* fcStage = debugger.startStage(StageKind::FORWARD_COMPILATION);
             auto initStart = std::chrono::steady_clock::now();
             sddManager = std::make_unique<SddFormulaManager>();
             auto initMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1843,7 +1843,7 @@ static void runSddPipeline(
                       << " ms\n";
             debugger.endStage();
 
-            debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
+            debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING);
 
             auto t2 = std::chrono::steady_clock::now();
             auto resolvedEvs = applyEvidence(graph, evidences);
@@ -1925,7 +1925,7 @@ static void runSddPipeline(
                       << perNodeWmcMs << " ms\n";
 
             debugger.endStage();
-            debugger.startStage(StageKind::IO_DUMP_FULL);
+            debugger.startStage(StageKind::IO_DUMP);
             auto tDumpStart = std::chrono::steady_clock::now();
             dumpProbabilities(probResult, opt.getOutputFileDir());
             auto tDumpMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1964,14 +1964,14 @@ void runPipeline(
     DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());
     DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());
     DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
-    DerivationGraph::setMergeBiImpEnabled(fullOnlyMode && opt.isMergeBiImpEnabled());
+    DerivationGraph::setMergeBiImpEnabled(exactInferenceMode && opt.isMergeBiImpEnabled());
     DerivationGraph::setPruneExtraEnabled(opt.isPruneExtraEnabled());
     DerivationGraph::setConstFoldEnabled(opt.isConstFoldEnabled());
     DerivationGraph::setConstDumpEnabled(opt.isDumpConstEnabled());
     precomputedProbResult.clear();
     precomputedTupleProbResult.clear();
 
-    debugger.startStage(StageKind::CREATE_GRAPH_FULL);
+    debugger.startStage(StageKind::CREATE_GRAPH);
     debugger.addInfo("input_fact_size", std::to_string(countInitialInputFacts()));
     auto t0 = std::chrono::steady_clock::now();
     auto graph = std::unique_ptr<WorkingDerivationGraph>(WorkingDerivationGraph::createFrom(
@@ -1986,10 +1986,10 @@ void runPipeline(
         graph->dumpDot(makeOutputPath(opt, "before_prune.dot"));
     }
 
-    debugger.startStage(StageKind::PRUNING_FULL);
+    debugger.startStage(StageKind::PRUNING);
     auto t2 = std::chrono::steady_clock::now();
     auto prunedView = graph->prune(program.getOutputRelations());
-    auto view = buildFullWorkingViewLocal(prunedView.getNodes(), prunedView.getEdges());
+    auto view = buildWorkingViewLocal(prunedView.getNodes(), prunedView.getEdges());
     auto t3 = std::chrono::steady_clock::now();
     std::cout << "[pipeline] pruning took "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
@@ -2006,7 +2006,7 @@ void runPipeline(
     RewriteDispatchDecision rewriteDecision;
     bool haveRewriteDecision = false;
     if (opt.isRewriteEnabled() && !opt.isDerivationOnly()) {
-        rewriteHybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID_FULL);
+        rewriteHybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID);
     }
     if (opt.isRewriteEnabled() && !opt.isDerivationOnly()) {
         auto rewriteStart = std::chrono::steady_clock::now();
@@ -2048,7 +2048,7 @@ void runPipeline(
             // leave enough redundant deterministic structure to make CUDD blow up.
             rewriteFlags.restrictCompactionToDirty = false;
             // Keep the graph-level rewrite policy aligned with the CLI. Without
-            // threading this flag through, implicit full-mode runs silently fall
+            // threading this flag through, implicit exact-inference runs silently fall
             // back to dirty-frontier detect even when the user explicitly asks
             // for a full-graph SISO scan, which makes diagnosis of post-commit
             // rewrite behavior misleading.
@@ -2104,7 +2104,7 @@ void runPipeline(
                 if (!graph) {
                     graph = std::make_unique<WorkingDerivationGraph>();
                 }
-                view = buildFullWorkingViewLocal(
+                view = buildWorkingViewLocal(
                         implicitResult.materialized.liveNodes, implicitResult.materialized.liveEdges);
                 const auto [recoveredIsolatedFacts, recoveredOutputFacts] =
                         recoverImplicitOutputFactsLocal(*graph, view, originalOutputTuples, originalOutputRelations);

@@ -817,7 +817,7 @@ void Synthesiser::emitRules (std::ostream& out) {
 }
 
 void Synthesiser::emitProblogPipeline(std::ostream& out) {
-    out << "souffle::problog::setFullOnlyMode(true);\n";
+    out << "souffle::problog::setExactInferenceMode(true);\n";
     out << "souffle::problog::runPipeline(opt, obj, ruleManager, queryManager, fact_prob, evidences);\n";
 }
 
@@ -3208,18 +3208,8 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         db.addGlobalInclude("\"souffle/profile/ProfileEvent.h\"");
     }
 
-    if (glb.config().has("provenance")) {
-        db.addGlobalInclude("<mutex>");
-        db.addGlobalInclude("\"souffle/provenance/Explain.h\"");
-    }
-
-    if (glb.config().has("live-profile")) {
-        db.addGlobalInclude("<thread>");
-        db.addGlobalInclude("\"souffle/profile/Tui.h\"");
-    }
-
     db.addGlobalInclude("\"souffle/utility/MiscUtil.h\"");
-    if (glb.config().has("profile") || glb.config().has("live-profile")) {
+    if (glb.config().has("profile")) {
         db.addGlobalInclude("\"souffle/profile/Logger.h\"");
         db.addGlobalInclude("\"souffle/profile/ProfileEvent.h\"");
     }
@@ -3751,13 +3741,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     runAll.setNextArg("std::string", "outputDirectoryArg", std::make_optional("\"\""));
     runAll.setNextArg("bool", "performIOArg", std::make_optional("true"));
     runAll.setNextArg("bool", "pruneImdtRelsArg", std::make_optional("false"));
-    if (glb.config().has("live-profile")) {
-        runAll.body() << "std::thread profiler([]() { profile::Tui().runProf(); });\n";
-    }
     runAll.body() << "runFunction(inputDirectoryArg, outputDirectoryArg, performIOArg, pruneImdtRelsArg);\n";
-    if (glb.config().has("live-profile")) {
-        runAll.body() << "if (profiler.joinable()) { profiler.join(); }\n";
-    }
 
     // issue printAll method
     GenFunction& printAll = mainClass.addFunction("printAll", Visibility::Public);
@@ -4105,7 +4089,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "debugger.startTurn();\n";
     hook << "try {\n";
     hook << "if (detOptEnabled) {\n";
-    hook << "auto* detStage = debugger.startStage(StageKind::IO_LOAD_FULL);\n";
+    hook << "auto* detStage = debugger.startStage(StageKind::IO_LOAD);\n";
     hook << "auto detNowMs = [](auto start) {\n";
     hook << "    return std::chrono::duration_cast<std::chrono::milliseconds>(\n";
     hook << "            std::chrono::steady_clock::now() - start).count();\n";
@@ -4288,11 +4272,11 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "}\n";
     hook << "debugger.endStage();\n";
     hook << "}\n";
-    hook << "debugger.startStage(StageKind::SEMINAIVE_FULL);\n";
+    hook << "debugger.startStage(StageKind::SEMINAIVE);\n";
     hook << "obj.runAll(opt.getInputFileDir(), opt.getOutputFileDir());\n";
     hook << "debugger.endStage();\n";
     hook << "if (!detOptEnabled) {\n";
-    hook << "debugger.startStage(StageKind::IO_LOAD_FULL);\n";
+    hook << "debugger.startStage(StageKind::IO_LOAD);\n";
     hook << "{\n";
     hook << "FunctionTimer timer(\"Reading fact probability from \" + opt.getInputFileDir());\n";
      for (auto input : loadIOs) {
@@ -4400,7 +4384,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     db.addGlobalInclude("\"souffle/problog/debug/Debugger.h\"");
     // synthesize rules
     // TODO: should make this pure static?
-    hook << "debugger.startStage(StageKind::CONSTRUCT_RULE_FULL);\n";
+    hook << "debugger.startStage(StageKind::CONSTRUCT_RULE);\n";
     emitRules(hook);
     hook << "debugger.endStage();\n";
     // synthesize forward compilation
@@ -4421,11 +4405,6 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // }
 
 
-    if (glb.config().get("provenance") == "explain") {
-        hook << "explain(obj, false);\n";
-    } else if (glb.config().get("provenance") == "explore") {
-        hook << "explain(obj, true);\n";
-    }
     hook << "return 0;\n";
     hook << "} catch(std::exception &e) { souffle::SignalHandler::instance()->error(e.what());}\n";
     hook << "}\n";

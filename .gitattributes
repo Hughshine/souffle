@@ -1,2 +1,8 @@
-* text eol=lf
-img/**/*.png binary
+* text=auto
+*.cpp text eol=lf
+*.h text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.png binary
+*.pdf binary
