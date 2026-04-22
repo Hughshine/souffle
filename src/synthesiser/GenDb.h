@@ -223,7 +223,7 @@ public:
     bool isMain = false;
 
     std::ostream& hooks() {
-        return hiddenHooksStream;
+        return classHooksStream;
     }
 
 private:
@@ -233,7 +233,7 @@ private:
             >>
             fields;
     std::vector<std::string> inheritance;
-    std::stringstream hiddenHooksStream;
+    std::stringstream classHooksStream;
 };
 
 /**

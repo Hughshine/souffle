@@ -158,7 +158,6 @@ set(SOUFFLE_SOURCES
     reports/ErrorReport.cpp
     reports/DebugReport.cpp
     synthesiser/Synthesiser.cpp
-    # synthesiser/GroundSynthesiser.cpp
     synthesiser/Relation.cpp
     synthesiser/Utils.cpp
     synthesiser/GenDb.cpp

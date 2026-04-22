@@ -46,7 +46,6 @@ public:
         int    block_support_min_size; ///< min support size to consider for blocks
         int    block_support_max_size; ///< max support size used for block clustering
         int    block_max_emit_size;    ///< maximum vars emitted per block
-        bool   force_person_blocks;    ///< hard-coded per-person grouping (for experiments)
         bool   verbose;
 
         Params()
@@ -61,7 +60,6 @@ public:
                   block_support_min_size(3),
                   block_support_max_size(6),
                   block_max_emit_size(2),
-                  force_person_blocks(false),
                   verbose(true) {}
     };
 
@@ -159,11 +157,6 @@ private:
     }
 
     void buildBlocks() {
-        if (P_.force_person_blocks) {
-            buildHardcodedPersonBlocks();
-            return;
-        }
-
         final_order_.clear();
         if (vars_.empty()) return;
 
@@ -176,9 +169,7 @@ private:
         stable_pos.reserve(baseline.size());
         for (size_t i = 0; i < baseline.size(); ++i) stable_pos[baseline[i]] = i;
 
-        std::unordered_map<int, std::vector<int>> person_cliques;
-        auto adjacency = buildSmokesAdjacency(person_cliques);
-        linkSourcePersonCliques(adjacency, person_cliques);
+        auto adjacency = buildSupportAdjacency();
         if (adjacency.empty()) {
             final_order_ = baseline;
             if (P_.verbose) {
@@ -253,49 +244,11 @@ private:
         }
     }
 
-    void buildHardcodedPersonBlocks() {
-        final_order_.clear();
-        if (vars_.empty()) return;
-
-        std::map<int, std::vector<int>> per_person;
-        std::vector<int> others;
-        for (const auto& v : vars_) {
-            int pid = extractPersonId(v.var_id);
-            if (pid >= 0) per_person[pid].push_back(v.var_id);
-            else others.push_back(v.var_id);
-        }
-
-        auto sortPersonBlock = [this](std::vector<int>& vec) {
-            std::stable_sort(vec.begin(), vec.end(), [this](int a, int b) {
-                const bool a_stress = isStressVar(a);
-                const bool b_stress = isStressVar(b);
-                if (a_stress != b_stress) return a_stress;  // stress first
-                return stableLess(a, b);
-            });
-        };
-
-        for (auto& kv : per_person) sortPersonBlock(kv.second);
-        std::sort(others.begin(), others.end(), [this](int a, int b) { return stableLess(a, b); });
-
-        final_order_.reserve(vars_.size());
-        for (const auto& kv : per_person) {
-            final_order_.insert(final_order_.end(), kv.second.begin(), kv.second.end());
-        }
-        final_order_.insert(final_order_.end(), others.begin(), others.end());
-
-        if (P_.verbose) {
-            std::cout << "[Blocks] count=" << per_person.size()
-                      << " order size=" << final_order_.size() << '\n';
-        }
-    }
-
-    std::unordered_map<int, std::vector<int>> buildSmokesAdjacency(
-            std::unordered_map<int, std::vector<int>>& person_cliques) const {
+    std::unordered_map<int, std::vector<int>> buildSupportAdjacency() const {
         std::unordered_map<int, std::set<int>> adj_sets;
         if (!view_) return {};
         for (const auto& node : view_->getNodes()) {
             if (!node || node->pruned) continue;
-            if (!isSmokesNode(node)) continue;
             std::vector<int> clique;
             const auto incoming = view_->getIncomingEdgesStable(node);
             for (const auto& edge : incoming) {
@@ -305,9 +258,6 @@ private:
             }
             std::sort(clique.begin(), clique.end());
             clique.erase(std::unique(clique.begin(), clique.end()), clique.end());
-            if (clique.empty()) continue;
-            int person = extractTuplePerson(node->getTuple().toString());
-            if (person >= 0) person_cliques[person] = clique;
             if (clique.size() < 2) continue;
             for (size_t i = 0; i < clique.size(); ++i) {
                 for (size_t j = i + 1; j < clique.size(); ++j) {
@@ -322,50 +272,6 @@ private:
             adj[var] = std::vector<int>(neigh.begin(), neigh.end());
         }
         return adj;
-    }
-
-    void linkSourcePersonCliques(std::unordered_map<int, std::vector<int>>& adj,
-            const std::unordered_map<int, std::vector<int>>& person_cliques) const {
-        if (!view_) return;
-        auto stress_map = buildStressVarMap();
-        std::unordered_map<int, std::vector<int>> source_to_vars;
-        for (const auto& [var_id, edge_key] : rule_var_to_key_) {
-            std::string repr = std::get<1>(edge_key).toString();
-            if (repr.rfind("influences", 0) != 0) continue;
-            int src = -1, dst = -1;
-            if (!parseInfluenceArgs(repr, src, dst)) continue;
-            auto sinkIt = person_cliques.find(dst);
-            if (sinkIt != person_cliques.end()) {
-                auto& neighbors = adj[var_id];
-                for (int neighbor : sinkIt->second) {
-                    if (neighbor == var_id) continue;
-                    neighbors.push_back(neighbor);
-                    adj[neighbor].push_back(var_id);
-                }
-            }
-            source_to_vars[src].push_back(var_id);
-        }
-        for (auto& [src, vars] : source_to_vars) {
-            if (vars.size() < 2 && stress_map.find(src) == stress_map.end()) continue;
-            for (size_t i = 0; i < vars.size(); ++i) {
-                for (size_t j = i + 1; j < vars.size(); ++j) {
-                    adj[vars[i]].push_back(vars[j]);
-                    adj[vars[j]].push_back(vars[i]);
-                }
-            }
-            auto itStress = stress_map.find(src);
-            if (itStress != stress_map.end()) {
-                int stress_var = itStress->second;
-                for (int v : vars) {
-                    adj[v].push_back(stress_var);
-                    adj[stress_var].push_back(v);
-                }
-            }
-        }
-        for (auto& [var, list] : adj) {
-            std::sort(list.begin(), list.end());
-            list.erase(std::unique(list.begin(), list.end()), list.end());
-        }
     }
 
     std::vector<int> gatherImmediateProbabilisticInputs(const EdgePtr& e) const {
@@ -391,119 +297,6 @@ private:
         std::sort(vars.begin(), vars.end());
         vars.erase(std::unique(vars.begin(), vars.end()), vars.end());
         return vars;
-    }
-
-    bool isSmokesNode(const NodePtr& node) const {
-        if (!node) return false;
-        const std::string repr = node->getTuple().toString();
-        return repr.rfind("smokes", 0) == 0;
-    }
-
-    int extractPersonId(int var_id) const {
-        auto extractFromTuple = [](const std::string& s) -> int {
-            auto l = s.find('(');
-            auto r = s.find(')', l);
-            if (l == std::string::npos || r == std::string::npos || r <= l + 1) return -1;
-            std::string inside = s.substr(l + 1, r - l - 1);
-            try {
-                return std::stoi(inside);
-            } catch (...) {
-                return -1;
-            }
-        };
-
-        auto extractSecond = [](const std::string& s) -> int {
-            auto l = s.find('(');
-            auto r = s.find(')', l);
-            if (l == std::string::npos || r == std::string::npos || r <= l + 1) return -1;
-            std::string inside = s.substr(l + 1, r - l - 1);
-            auto comma = inside.find(',');
-            if (comma == std::string::npos) return -1;
-            std::string second = inside.substr(comma + 1);
-            second.erase(0, second.find_first_not_of(" \t"));
-            try {
-                return std::stoi(second);
-            } catch (...) {
-                return -1;
-            }
-        };
-
-        auto fit = fact_var_to_tuple_.find(var_id);
-        if (fit != fact_var_to_tuple_.end()) {
-            std::string repr = fit->second.toString();
-            if (repr.rfind("stress", 0) == 0) return extractFromTuple(repr);
-            return -1;
-        }
-        auto rit = rule_var_to_key_.find(var_id);
-        if (rit != rule_var_to_key_.end()) {
-            const auto& ek = rit->second;
-            std::string repr = std::get<1>(ek).toString();
-            if (repr.rfind("influences", 0) == 0) return extractSecond(repr);
-        }
-        return -1;
-    }
-
-    bool isStressVar(int var_id) const {
-        auto fit = fact_var_to_tuple_.find(var_id);
-        if (fit == fact_var_to_tuple_.end()) return false;
-        const std::string repr = fit->second.toString();
-        return repr.rfind("stress", 0) == 0;
-    }
-
-    static int extractTuplePerson(const std::string& repr) {
-        auto l = repr.find('(');
-        auto r = repr.find(')', l);
-        if (l == std::string::npos || r == std::string::npos || r <= l + 1) return -1;
-        std::string inside = repr.substr(l + 1, r - l - 1);
-        auto comma = inside.find(',');
-        std::string token = (comma == std::string::npos) ? inside : inside.substr(0, comma);
-        auto trim = [](std::string& s) {
-            const char* ws = " \t\n\r";
-            s.erase(0, s.find_first_not_of(ws));
-            s.erase(s.find_last_not_of(ws) + 1);
-        };
-        trim(token);
-        try {
-            return std::stoi(token);
-        } catch (...) {
-            return -1;
-        }
-    }
-
-    static bool parseInfluenceArgs(const std::string& repr, int& src, int& dst) {
-        auto l = repr.find('(');
-        auto r = repr.find(')', l);
-        if (l == std::string::npos || r == std::string::npos || r <= l + 1) return false;
-        std::string inside = repr.substr(l + 1, r - l - 1);
-        auto comma = inside.find(',');
-        if (comma == std::string::npos) return false;
-        std::string first = inside.substr(0, comma);
-        std::string second = inside.substr(comma + 1);
-        auto trim = [](std::string& s) {
-            const char* ws = " \t\n\r";
-            s.erase(0, s.find_first_not_of(ws));
-            s.erase(s.find_last_not_of(ws) + 1);
-        };
-        trim(first);
-        trim(second);
-        try {
-            src = std::stoi(first);
-            dst = std::stoi(second);
-            return true;
-        } catch (...) {
-            return false;
-        }
-    }
-
-    std::unordered_map<int, int> buildStressVarMap() const {
-        std::unordered_map<int, int> out;
-        for (const auto& [var, tuple] : fact_var_to_tuple_) {
-            std::string repr = tuple.toString();
-            if (repr.rfind("stress", 0) != 0) continue;
-            int person = extractTuplePerson(repr);
-            if (person >= 0) out[person] = var;
-        }
-        return out;
     }
 
 private:

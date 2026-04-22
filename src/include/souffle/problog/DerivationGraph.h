@@ -135,27 +135,6 @@ struct RamDomainVectorHash {
         return seed;
     }
 };
-// TODO: derivation graph now does not support negation...
-// TODO: MST GRAPH FUSE
-/** class Evidence {
-public:
-    friend class DerivationGraph;
-    friend class WorkingDerivationGraph;
-    Evidence(const UntypedTuple tuple, bool value) : tuple(tuple), value(value) {}
-
-    const UntypedTuple& getTuple() const {return tuple;}
-    bool getValue() const {return value;}
-
-    std::string toString() const {
-        std::stringstream ss;
-        ss << "evidence(" << tuple.toString() << ", " << (value ? "true" : "false") << ")";
-        return ss.str();
-    }
-private:
-    UntypedTuple tuple;
-    bool value;
-}; **/
-
 class Node {
 public:
     friend class DerivationGraph;
@@ -2004,8 +1983,6 @@ void Node::addOutgoingEdge(EdgePtr edge) {
 
 class WorkingDerivationGraph : public DerivationGraph, virtual public WorkingDerivationGraphViewInterface {
 public:
-    friend class PreDerivationGraph;
-
     // Constructors
     WorkingDerivationGraph() : DerivationGraph() {}
     WorkingDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}

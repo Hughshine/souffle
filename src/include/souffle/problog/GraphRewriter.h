@@ -103,7 +103,7 @@ public:
     *
     * @param graph   Underlying derivation graph. Only extended (new hyperedges).
     * @param view    Working view mutated in-place (nodes/edges removed or added).
-    * @param debug   Legacy flag (ignored for output); use --dumpstat/--dumpdot instead.
+    * @param debug   Enables per-region trace messages.
     * @param flags   Feature switches controlling which SISO kinds / passes are enabled.
     */
     GraphRewriteStats rewriteUntilFixpoint(WorkingDerivationGraph& graph,
@@ -485,9 +485,6 @@ public:
                         stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
                         view.invalidateCaches();
 
-                        if (dumpStats) {
-                            // Fast-path all-facts debug logging elided to reduce overhead.
-                        }
                         markDirtyAllFactsResult(exit);
                         ++rewrittenThisRound;
                         ++stats.numRegionsRewritten;
@@ -558,9 +555,6 @@ public:
                         stats.numEdgesAdded += 1;
                         stats.numNodesRemoved += removedNodes;
                         view.invalidateCaches();
-                        if (dumpStats) {
-                            // Fast-path single-hyperedge debug logging elided to reduce overhead.
-                        }
                         markDirtyRegion(region);
                         markDirtyEdgeEndpoints(newEdge);
                         ++rewrittenThisRound;
@@ -639,9 +633,6 @@ public:
                         stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
                         view.invalidateCaches();
 
-                        if (dumpStats) {
-                            // Fast-path linear-two-edge debug logging elided to reduce overhead.
-                        }
                         markDirtyRegion(region);
                         markDirtyEdgeEndpoints(newEdge);
                         ++rewrittenThisRound;
@@ -722,9 +713,6 @@ public:
                         stats.totalRandomVars += regionRandomVars;
                         stats.maxRandomVars = std::max(stats.maxRandomVars, regionRandomVars);
                         view.invalidateCaches();
-                        if (dumpStats) {
-                            // Fast-path parallel-edge debug logging elided to reduce overhead.
-                        }
                         markDirtyRegion(region);
                         markDirtyEdgeEndpoints(newEdge);
                         ++rewrittenThisRound;

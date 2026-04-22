@@ -443,20 +443,15 @@ static WarnSet process_warn_opts(const Global& glb) {
 }
 
 Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) {
-    // TODO: should check the transformer sequence; keep the useful ones; modify the others to fit the prob setting
     // clang-format off
-    // Equivalence pipeline
-    // TODO: move 0.0 prob clauses transformer
     auto equivalencePipeline =
             mk<ast::transform::PipelineTransformer>(mk<ast::transform::NameUnnamedVariablesTransformer>(),
                     mk<ast::transform::FixpointTransformer>(mk<ast::transform::MinimiseProgramTransformer>()),
-                    // mk<ast::transform::ReplaceSingletonVariablesTransformer>(),
                     mk<ast::transform::RemoveRelationCopiesTransformer>(),
                     mk<ast::transform::RemoveEmptyRelationsTransformer>()
                     ,mk<ast::transform::RemoveRedundantRelationsTransformer>()
                     );
 
-    // Magic-Set pipeline
     auto magicPipeline = mk<ast::transform::PipelineTransformer>(
             mk<ast::transform::ConditionalTransformer>(
                     glb.config().has("magic-transform"), mk<ast::transform::ExpandEqrelsTransformer>()),
@@ -464,46 +459,16 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
             mk<ast::transform::RemoveRelationCopiesTransformer>(),
             mk<ast::transform::RemoveEmptyRelationsTransformer>(),
             mk<ast::transform::RemoveRedundantRelationsTransformer>(), clone(equivalencePipeline));
-    //
-    // // Partitioning pipeline
-    // auto partitionPipeline =
-    //         mk<ast::transform::PipelineTransformer>(mk<ast::transform::NameUnnamedVariablesTransformer>(),
-    //                 mk<ast::transform::PartitionBodyLiteralsTransformer>()
-    //                 ,  mk<ast::transform::ReplaceSingletonVariablesTransformer>()
-    //                 );
-    //
-    // // Provenance pipeline
-    // auto provenancePipeline = mk<ast::transform::ConditionalTransformer>(glb.config().has("provenance"),
-    //         mk<ast::transform::PipelineTransformer>(mk<ast::transform::ExpandEqrelsTransformer>(),
-    //                 mk<ast::transform::NameUnnamedVariablesTransformer>()));
-    //
-    // // Main pipeline // TODO: Maybe some passes is unused or invalid or should be changed under prob setting
     auto pipeline = mk<ast::transform::PipelineTransformer>(mk<ast::transform::ComponentChecker>(),
             mk<ast::transform::EvidenceSemanticChecker>(),
             mk<ast::transform::ComponentInstantiationTransformer>(),
-            // mk<ast::transform::LatticeTransformer>(),
             mk<ast::transform::ProbQueryChecker>(),
             mk<ast::transform::DebugDeltaRelationTransformer>(),
             mk<ast::transform::IODefaultsTransformer>(),
-            // mk<ast::transform::SimplifyAggregateTargetExpressionTransformer>(),
-            // mk<ast::transform::UniqueAggregationVariablesTransformer>(),
-            // mk<ast::transform::FixpointTransformer>(mk<ast::transform::PipelineTransformer>(  // TODO: useless
-            //         mk<ast::transform::ResolveAnonymousRecordAliasesTransformer>(),
-            //         mk<ast::transform::FoldAnonymousRecords>())),
-            // mk<ast::transform::SubsumptionQualifierTransformer>(), mk<ast::transform::SemanticChecker>(),  // TODO: useless
-            // mk<ast::transform::GroundWitnessesTransformer>(),  // TODO: we (pdatalog) will never support aggregation and other datalog extensions right?
-            // mk<ast::transform::UniqueAggregationVariablesTransformer>(),
-            // mk<ast::transform::MaterializeSingletonAggregationTransformer>(),
-            // mk<ast::transform::FixpointTransformer>(
-            //         mk<ast::transform::MaterializeAggregationQueriesTransformer>()),
-            // mk<ast::transform::RemoveRedundantSumsTransformer>(),
-            // mk<ast::transform::NormaliseGeneratorsTransformer>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
             mk<ast::transform::RemoveBooleanConstraintsTransformer>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
-            mk<ast::transform::MinimiseProgramTransformer>(),  // TODO, avoid removing probablistic clauses
-            // mk<ast::transform::InlineUnmarkExcludedTransform>(),
-            // mk<ast::transform::InlineRelationsTransformer>(),
+            mk<ast::transform::MinimiseProgramTransformer>(),
             mk<ast::transform::GroundedTermsChecker>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
             mk<ast::transform::SimplifyConstantBinaryConstraintsTransformer>(),
@@ -516,12 +481,9 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
                     mk<ast::transform::ReduceExistentialsTransformer>(),
                     mk<ast::transform::RemoveRedundantRelationsTransformer>())),
             mk<ast::transform::RemoveRelationCopiesTransformer>(),
-            // std::move(partitionPipeline),
             std::move(equivalencePipeline),
             mk<ast::transform::RemoveRelationCopiesTransformer>(),
             std::move(magicPipeline), mk<ast::transform::RemoveEmptyRelationsTransformer>(),
-            // mk<ast::transform::AddNullariesToAtomlessAggregatesTransformer>(),
-            // mk<ast::transform::ExecutionPlanChecker>(), // std::move(provenancePipeline),
             mk<ast::transform::IOAttributesTransformer>(),
             mk<ast::transform::ConstantNormalizationTransformer>());
     // clang-format on
@@ -537,7 +499,6 @@ Own<ast2ram::UnitTranslator> getUnitTranslator() {
 
 Own<ram::transform::Transformer> ramTransformerSequence(Global& glb) {
     using namespace ram::transform;
-    // TODO: should check the transformer sequence; one of them is not compatible with unnamed variables in prob
     // clang-format off
     Own<Transformer> ramTransform = mk<TransformerSequence>(
             mk<LoopTransformer>(mk<TransformerSequence>(mk<ExpandFilterTransformer>(),
@@ -645,7 +606,7 @@ std::vector<MainOption> getMainOptions() {
       {"jobs", 'j', "N", "1", false,
           "Run compiler in parallel using N threads, N=auto for system default."},
       {"legacy", nextOptChar++, "", "", false,
-          "Enable legacy support."},
+          "Enable older parser and type-checking behavior."},
       {"libraries", 'l', "FILE", "", true,
           "Specify libraries."},
       {"library-dir", 'L', "DIR", "", true,
@@ -661,9 +622,9 @@ std::vector<MainOption> getMainOptions() {
       {"no-preprocessor", nextOptChar++, "", "", false,
           "Do not use a C preprocessor."},
       {"online", nextOptChar++, "", "", false,
-          "Compatibility no-op; the online translator is always used in this artifact branch."},
+          "Use the online translator."},
       {"full-only", nextOptChar++, "", "", false,
-          "Compatibility no-op; full-only mode is always enforced in this artifact branch."},
+          "Run the full probabilistic pipeline."},
       {"no-warn", 'w', "", "", false,
           "Disable warnings."},
       {"output-dir", 'D', "DIR", ".", false,
@@ -686,7 +647,7 @@ std::vector<MainOption> getMainOptions() {
           "Select implicit rewrite by default in generated binaries."},
       {"det-opt", nextOptChar++, "", "", false,
           "Enable deterministic-relation analysis by default in generated binaries."},
-      {"derv-only", 'd', "", "", false, "Only compute the derivation graph."}, // TODO
+      {"derv-only", 'd', "", "", false, "Only compute the derivation graph."},
       {"show", nextOptChar++, "[ <see-list> ]", "", true,
           "Print selected program information.\n"
           "Modes:\n"
@@ -772,7 +733,6 @@ int main(Global& glb, const char* souffle_executable) {
             std::cerr << "No compile option specified; defaulting to -o " << defaultOutput
                       << " (compile only)." << std::endl;
         }
-        // Full-only mode is enforced in this branch.
         glb.config().set("full-only");
 
         /* for the jobs option, to determine the number of threads used */
@@ -1013,104 +973,7 @@ int main(Global& glb, const char* souffle_executable) {
     // bail if we've nothing else left to show
     if (glb.config().has("show") && !hasShowOpt("initial-ram", "transformed-ram")) return 0;
 
-//     if (groundness.allGroundRules) {
-//         auto synthesiser = mk<synthesiser::GroundSynthesiser>(*astTranslationUnit);
-//         const bool execute_mode = glb.config().has("compile") || glb.config().has("compile-many");
-//         const bool compile_mode = glb.config().has("dl-program");
-//         const bool generate_mode = glb.config().has("generate");
-//         const bool generate_many_mode = glb.config().has("generate-many");
-
-//         const bool must_interpret = !execute_mode && !compile_mode && !generate_mode && !generate_many_mode &&
-//                                     !glb.config().has("swig");
-//         const bool must_execute = execute_mode;
-//         const bool must_compile = must_execute || compile_mode || glb.config().has("swig");
-//         std::string baseFilename;
-//         if (compile_mode) {
-//             baseFilename = glb.config().get("dl-program");
-//         } else if (generate_mode) {
-//             baseFilename = glb.config().get("generate");
-
-//             // trim .cpp extension if it exists
-//             if (baseFilename.size() >= 4 && baseFilename.substr(baseFilename.size() - 4) == ".cpp") {
-//                 baseFilename = baseFilename.substr(0, baseFilename.size() - 4);
-//             }
-//         } else if (generate_many_mode) {
-//             baseFilename = glb.config().get("generate-many");
-//         } else {
-//             baseFilename = tempFile();
-//         }
-
-//         if (baseName(baseFilename) == "/" || baseName(baseFilename) == ".") {
-//             baseFilename = tempFile();
-//         }
-
-//         std::string baseIdentifier = identifier(simpleName(baseFilename));
-
-//         std::string binaryFilename = baseFilename;
-
-//         auto synthesisStart = std::chrono::high_resolution_clock::now();
-//         const bool emitToStdOut = glb.config().has("generate", "-");
-//         const bool emitMultipleFiles =
-//                 glb.config().has("generate-many") || glb.config().has("compile-many");
-
-//         synthesiser::GenDb db;
-//         synthesiser->generateCode(db, baseIdentifier);
-//         std::vector<fs::path> srcFiles;
-
-//         if (emitToStdOut) {
-//             db.emitSingleFile(std::cout);
-//         } else if (emitMultipleFiles) {
-//             fs::path directory = glb.config().has("generate-many")
-//                                          ? fs::path(glb.config().get("generate-many"))
-//                                          : fs::temp_directory_path() / baseIdentifier;
-//             std::string mainClass = db.emitMultipleFilesInDir(directory, srcFiles);
-//             binaryFilename = (directory / fs::path(mainClass)).string();
-//         } else {
-//             {
-//                 std::string sourceFilename = baseFilename + ".cpp";
-//                 std::ofstream os{sourceFilename};
-//                 db.emitSingleFile(os);
-//                 os.close();
-//                 srcFiles.push_back(fs::path(sourceFilename));
-//             }
-//         }
-
-
-//         // Output relationId to relationStr mapping
-
-//         if (glb.config().has("verbose")) {
-//             auto synthesisEnd = std::chrono::high_resolution_clock::now();
-//             std::cout << "Synthesis time: "
-//                       << std::chrono::duration<double>(synthesisEnd - synthesisStart).count() << "sec\n";
-//         }
-
-
-//         if (must_compile) {
-//             /* Fail if a souffle-compile executable is not found */
-//             const auto souffle_compile = findTool("souffle-compile.py", souffleExecutable, ".");
-//             if (!souffle_compile) throw std::runtime_error("failed to locate souffle-compile.py");
-
-//             auto t_bgn = std::chrono::high_resolution_clock::now();
-//             fs::path output(binaryFilename);
-//             compileToBinary(glb, *souffle_compile, srcFiles, output);
-//             auto t_end = std::chrono::high_resolution_clock::now();
-
-//             if (glb.config().has("verbose")) {
-//                 std::cout << "Compilation time: " << std::chrono::duration<double>(t_end - t_bgn).count()
-//                           << "sec\n";
-//             }
-//         }
-
-//         // run compiled C++ program if requested.
-//         if (must_execute) {
-// #if defined(_MSC_VER)
-//             binaryFilename += ".exe";
-// #endif
-//             executeBinaryAndExit(glb, binaryFilename);
-//         }
-//     }
-//     else
-        {
+    {
         // ------- execution -------------
         /* translate AST to RAM */
         debugReport.startSection();

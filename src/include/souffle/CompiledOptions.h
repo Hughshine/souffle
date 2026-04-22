@@ -84,10 +84,10 @@ protected:
     std::string knowledge_representation;
     bool merge_bi_imp = true;  // enable merging mutually implying deterministic nodes
     bool prune_extra = false;  // enable extra prune pass (outputless components)
-    bool fold_const = false;  // enable deterministic constant pre-analysis (no prune rewrite)
+    bool fold_const = false;  // enable deterministic constant pre-analysis
     bool enable_rewrite = false;  // enable smart rewrite dispatch
-    bool force_graph_rewrite = false;  // hidden compatibility alias for pinned benchmark scripts
-    bool force_implicit_rewrite = false;  // hidden compatibility alias for pinned benchmark scripts
+    bool force_graph_rewrite = false;  // select explicit graph rewrite
+    bool force_implicit_rewrite = false;  // select implicit split rewrite
     bool dump_json = false;  // dump derivation graph JSON after prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
     bool dump_stat = false;  // dump derivation graph stats after prune
@@ -412,7 +412,7 @@ public:
 
         // update member fields
         if (force_graph_rewrite && force_implicit_rewrite) {
-            std::cerr << "Cannot combine hidden graph-rewrite and implicit-rewrite compatibility aliases\n";
+            std::cerr << "Cannot combine explicit-rewrite and implicit-rewrite\n";
             ok = false;
         }
         input_dir = fact_dir;

@@ -3955,7 +3955,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         detMeta = buildDetOptMeta(*newAstProgram, glb);
     }
 
-    // hidden hooks
+    // Runtime registration hooks.
     hook << "namespace souffle {\n";
     hook << "SouffleProgram *newInstance_" << id << "(){return new " << db.getNS() << "::" << classname
          << ";}\n";

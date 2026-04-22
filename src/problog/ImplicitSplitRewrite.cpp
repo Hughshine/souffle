@@ -2092,7 +2092,7 @@ std::vector<OverlayOutputProbability> computeGraphOutputMarginalsExact(
     }
     const std::size_t totalVars = probabilisticFactIds.size() + probabilisticEdges.size();
     if (totalVars > 24) {
-        throw std::runtime_error("diagnostic graph exact evaluator only supports up to 24 random variables");
+        throw std::runtime_error("exact graph evaluator only supports up to 24 random variables");
     }
     for (std::size_t i = 0; i < probabilisticEdges.size(); ++i) {
         edgeVarIndex[probabilisticEdges[i]] = probabilisticFactIds.size() + i;

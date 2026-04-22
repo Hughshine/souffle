@@ -1,5 +1,4 @@
-# Maintained regression suite for this fork.
-# Legacy tests under tests/ are intentionally not included here.
+# Maintained regression suite for this artifact branch.
 
 set(REGRESSION_RUNNER "${CMAKE_CURRENT_SOURCE_DIR}/run_regression_case.py")
 

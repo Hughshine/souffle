@@ -155,7 +155,7 @@ void GenClass::definition(const GenDb* db, std::ostream& o) const {
         o << "#pragma warning(default: 4100)\n";
         o << "#endif // _MSC_VER\n";
     }
-    o << hiddenHooksStream.str() << "\n";
+    o << classHooksStream.str() << "\n";
 }
 
 void GenDb::setNS(std::string ns) {

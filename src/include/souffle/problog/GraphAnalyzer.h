@@ -292,10 +292,10 @@ private:
                     break;
                 }
                 if (n->isFact) {
-                    // Legacy single-hyperedge rewrite collapses absorbed literals into a
-                    // synthetic edge weight. That is semantics-preserving for deterministic
+                    // Single-hyperedge rewrite collapses absorbed literals into a
+                    // synthetic edge weight. This is semantics-preserving for deterministic
                     // literals, but not for probabilistic literals under the current
-                    // edge-variable FC/WMC encoding, because shared support would be hidden
+                    // edge-variable FC/WMC encoding, because shared support would be folded
                     // inside an edge weight rather than represented explicitly in the graph.
                     if (isProbabilisticFact(n)) {
                         invalid = true;
