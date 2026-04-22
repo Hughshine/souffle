@@ -1,0 +1,21 @@
+.decl data_point(obj:symbol, points:number)
+.input data_point
+
+.decl object_kind(obj:symbol, kind:symbol)
+.input object_kind
+
+.decl selected(kind:symbol)
+selected("widget").
+
+.decl selected_point(kind:symbol, points:number)
+selected_point(Kind, Points) :-
+    data_point(Obj, Points),
+    object_kind(Obj, Kind).
+
+.decl object_total(kind:symbol, total:number)
+.output object_total
+object_total(Kind, Total) :-
+    selected(Kind),
+    Total = sum Points : { selected_point(Kind, Points) }.
+
+query(object_total("widget", 15)).

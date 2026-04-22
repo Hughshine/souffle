@@ -256,6 +256,76 @@ def case_exact_det_modes(souffle_bin: Path, work_root: Path) -> None:
     detopt_prob = out_detopt / "facts.prob"
     assert_prob_close(detopt_prob, base_prob, label="det-opt_exact_inference_equivalence")
 
+
+def run_language_example_case(
+    *,
+    case_id: str,
+    expected_key: str,
+    souffle_bin: Path,
+    work_root: Path,
+) -> None:
+    case_dir = prepare_case_workspace(case_id, work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+
+    out_plain = case_dir / "out_plain"
+    run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_plain,
+        extra_args=["--det-opt", "--dumpjson", "--logfile", "language-plain"],
+    )
+
+    out_rewrite = case_dir / "out_rewrite"
+    run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_rewrite,
+        extra_args=["--det-opt", "--rewrite", "--dumpjson", "--logfile", "language-rewrite"],
+    )
+
+    plain_prob = out_plain / "facts.prob"
+    rewrite_prob = out_rewrite / "facts.prob"
+    probs = parse_prob_file(plain_prob)
+    if expected_key not in probs:
+        raise CaseFailure(
+            f"{case_id}: expected query/output tuple was not produced.\n"
+            f"expected={expected_key}\nactual={sorted(probs.keys())}"
+        )
+    if not (out_plain / "derivation.json").exists():
+        raise CaseFailure(f"{case_id}: plain run did not produce derivation.json")
+    if not (out_rewrite / "derivation.json").exists():
+        raise CaseFailure(f"{case_id}: rewrite run did not produce derivation.json")
+
+    assert_prob_close(rewrite_prob, plain_prob, tol=1e-8, label=f"{case_id}_rewrite_equivalence")
+
+
+def case_language_side_channel_mini(souffle_bin: Path, work_root: Path) -> None:
+    run_language_example_case(
+        case_id="language_side_channel_mini",
+        expected_key='explained("cache-hit")',
+        souffle_bin=souffle_bin,
+        work_root=work_root,
+    )
+
+
+def case_language_taint_mini(souffle_bin: Path, work_root: Path) -> None:
+    run_language_example_case(
+        case_id="language_taint_mini",
+        expected_key='alarm("network")',
+        souffle_bin=souffle_bin,
+        work_root=work_root,
+    )
+
+
+def case_language_symbolization_mini(souffle_bin: Path, work_root: Path) -> None:
+    run_language_example_case(
+        case_id="language_symbolization_mini",
+        expected_key='object_total("widget",15)',
+        souffle_bin=souffle_bin,
+        work_root=work_root,
+    )
+
+
 def case_problog_string_roundtrip(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("problog_string_roundtrip", work_root)
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
@@ -565,6 +635,9 @@ CASES = {
     "problog_constraint_variable_equality_chain": case_problog_constraint_variable_equality_chain,
     "problog_sum_exact_roundtrip": case_problog_sum_exact_roundtrip,
     "exact_det_modes": case_exact_det_modes,
+    "language_side_channel_mini": case_language_side_channel_mini,
+    "language_taint_mini": case_language_taint_mini,
+    "language_symbolization_mini": case_language_symbolization_mini,
     "dump_outputs_contract": case_dump_outputs_contract,
 }
 

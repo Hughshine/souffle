@@ -56,6 +56,8 @@ printed probabilities.
 ## Documentation
 
 - [docs/USAGE.md](docs/USAGE.md): command-line interface and file formats.
+- [docs/LANGUAGE_EXAMPLES.md](docs/LANGUAGE_EXAMPLES.md): small programs
+  that show the language features covered by regression tests.
 - [docs/TESTING.md](docs/TESTING.md): build and regression checks.
 - [docs/RUNBOOK.md](docs/RUNBOOK.md): compact operational guide.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): exact inference pipeline map.

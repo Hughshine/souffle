@@ -29,6 +29,7 @@ cmake --build build --target check-regression
 
 - Exact probabilistic inference smoke tests.
 - ProbLog string, numeric, and aggregate round-trips.
+- Language examples that mirror side-channel, taint, and symbolization shapes.
 - Deterministic-relation analysis through `--det-opt`.
 - Rewrite dispatcher equivalence on maintained cases.
 - Output and JSON log contracts.
@@ -51,3 +52,5 @@ Side-channel and taint comparisons should match exactly.
   regression case registration.
 - [../tests/regression/run_regression_case.py](../tests/regression/run_regression_case.py):
   case runner and output checker.
+- [LANGUAGE_EXAMPLES.md](LANGUAGE_EXAMPLES.md): evaluator-facing examples
+  that are also compiled and executed by CTest.
