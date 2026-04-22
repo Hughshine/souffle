@@ -2025,7 +2025,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             // end aggregator loop
             out << "}\n";
 
-            // if keys weren't empty then there'll be another loop to close off
+            // Non-empty keys leave another loop to close.
             if (!keys.empty()) {
                 out << "}\n";
             }
@@ -2264,7 +2264,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             // end partition loop
             out << "}\n";
 
-            // the rest shouldn't be run in parallel
+            // Run the rest outside the parallel region.
             out << "#pragma omp single\n{\n";
 
             ifIntrinsic(aggregator, AggregateOp::MEAN, [&]() {

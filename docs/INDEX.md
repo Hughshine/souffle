@@ -8,14 +8,14 @@ Legend:
 - [SECONDARY] useful implementation context
 
 ## Entry Points
-- [PRIMARY] `README.md` — artifact overview and quickstart
-- [PRIMARY] `docs/USAGE.md` — generated-program usage and runtime surface
-- [PRIMARY] `docs/TESTING.md` — build and regression commands
-- [PRIMARY] `docs/RUNBOOK.md` — concise build/run/troubleshooting guide
-- [PRIMARY] `docs/ARCHITECTURE.md` — full-mode architecture map
-- [PRIMARY] `AGENTS.md` — Codex constraints
+- [PRIMARY] `README.md`: artifact overview and quickstart
+- [PRIMARY] `docs/USAGE.md`: generated-program usage and runtime surface
+- [PRIMARY] `docs/TESTING.md`: build and regression commands
+- [PRIMARY] `docs/RUNBOOK.md`: concise build/run/troubleshooting guide
+- [PRIMARY] `docs/ARCHITECTURE.md`: full-mode architecture map
+- [PRIMARY] `AGENTS.md`: Codex constraints
 
-## Source references
+## Source References
 - [src/MainDriver.cpp](../src/MainDriver.cpp)
 - [src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h)
 - [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp)

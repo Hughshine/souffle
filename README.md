@@ -1,12 +1,11 @@
 # Souffle Probabilistic Artifact
 
 This branch packages the compiler side of the full-mode probabilistic Souffle
-artifact.  The artifact-facing path is intentionally narrow: build this repo,
+artifact for artifact evaluators. The run path has three steps: build this repo,
 generate benchmark `compute` binaries with the repo-built `souffle`, then run
-the generated binaries with deterministic analysis and the default rewrite
-dispatcher.
+those binaries with deterministic analysis and the rewrite dispatcher.
 
-## Source references
+## Source References
 - [src/MainDriver.cpp](src/MainDriver.cpp)
 - [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
 - [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
@@ -17,11 +16,10 @@ dispatcher.
 - Full-mode probabilistic evaluation with derivation graphs, pruning,
   component-wise forward compilation, and BDD weighted model counting.
 - Optimized artifact runs use bare `--rewrite`.  The generated binary chooses
-  the rewrite implementation internally; AE commands do not pass explicit
-  rewrite or split policy flags.
+  the rewrite implementation internally.
 - `--det-opt` is part of the artifact command.  It enables deterministic
   relation analysis and graph gating used by the packaged benchmarks.
-- The BDD backend is the artifact backend and the generated-program default.
+- Generated programs use the BDD backend by default.
 - Benchmark data and scripts live in the companion benchmark artifact:
   `CAV-FULL` at commit `76b4799`.
 
@@ -39,7 +37,7 @@ programs with:
 ./compute -F <facts-dir> -D <output-dir> --det-opt --rewrite --logfile ae-run
 ```
 
-Plain comparison runs omit only `--rewrite`:
+Plain comparison command:
 
 ```bash
 ./compute -F <facts-dir> -D <output-dir> --det-opt --logfile ae-plain
@@ -49,7 +47,7 @@ Plain comparison runs omit only `--rewrite`:
 - Side-channel and taint benchmark comparisons should match exactly.
 - Symbolization comparisons use the same output key set and allow an absolute
   probability difference of at most `1e-8`.  This tolerance is for rare
-  last-digit output-rounding boundary cases, not for semantic drift.
+  last-digit output-rounding boundary cases.
 
 ## Documentation
 - [docs/USAGE.md](docs/USAGE.md): user-facing compiler/runtime usage.

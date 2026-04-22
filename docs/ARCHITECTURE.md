@@ -1,6 +1,6 @@
 # Architecture
 
-## Source references
+## Source References
 - [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp)
 - [src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h)
 - [src/include/souffle/problog/ForwardCompilation.h](../src/include/souffle/problog/ForwardCompilation.h)
@@ -8,7 +8,8 @@
 - [src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h)
 
 ## Overview
-This AE branch packages the full-mode probabilistic pipeline.
+This AE branch packages the full-mode probabilistic pipeline for generated
+benchmark binaries.
 
 ## High-Level Flow
 1. Parse Datalog into AST and lower it to RAM.
@@ -32,7 +33,7 @@ This AE branch packages the full-mode probabilistic pipeline.
 - Logs: `--logfile <name>` writes JSON reports into the output directory.
 
 ## Dependencies and Constraints
-- CUDD is required for the BDD backend used by the artifact.
+- The artifact uses CUDD for BDD weighted model counting.
 - Runtime and testing constraints are documented in [docs/USAGE.md](USAGE.md)
   and [docs/TESTING.md](TESTING.md).
 

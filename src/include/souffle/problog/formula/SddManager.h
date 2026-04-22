@@ -762,7 +762,7 @@ inline void SddFormulaManager::setVariableWeight(
     int internal;
     auto it = rawToInternal.find(rawIndex);
     if (it == rawToInternal.end()) {
-        // If the variable isn't mapped/used, don't force manager growth just to store a weight.
+        // If no formula uses the variable, skip manager growth for its weight.
         return;
     }
 

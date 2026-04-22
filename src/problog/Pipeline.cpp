@@ -26,10 +26,10 @@
 #include <unordered_map>
 #include <utility>
 
-// The current probabilistic pipeline is intentionally built as one translation
-// unit because several legacy probabilistic headers still carry non-inline
-// definitions. Compiling the implicit-split implementation separately would
-// duplicate those symbols in generated compiled-mode binaries.
+// Build the probabilistic pipeline as one translation unit because
+// probabilistic headers still define non-inline symbols. Compiling
+// ImplicitSplitRewrite.cpp separately would duplicate those symbols in
+// generated compiled-mode binaries.
 #include "ImplicitSplitRewrite.cpp"
 
 namespace souffle::problog {

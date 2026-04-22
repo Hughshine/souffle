@@ -337,7 +337,7 @@ public:
 
 #if defined(_MSC_VER)
         // cl.exe prints the input file name on the standard error stream,
-        // we must silent it in order to preserve an empty error output
+        // Silence it to preserve empty error output.
         // because Souffle test-suite is sensible to error outputs.
         Cmd << " 2> nul";
 #endif

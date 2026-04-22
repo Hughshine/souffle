@@ -1,6 +1,6 @@
 # Runbook
 
-## Source references
+## Source References
 - [README.md](../README.md)
 - [docs/USAGE.md](USAGE.md)
 - [docs/TESTING.md](TESTING.md)
@@ -9,7 +9,7 @@
 
 ## Start / Build
 - Follow the Quickstart in [README.md](../README.md).
-- CUDD is required for the BDD backend used by the artifact.
+- The artifact uses CUDD for BDD weighted model counting.
 
 ## Run Artifact Commands
 - Plain generated-binary run:
@@ -20,12 +20,10 @@
 
 ## Logs and Metrics
 - `--logfile <name>` writes JSON reports to the output directory (`-D`).
-- Hidden dump/profile flags exist for local diagnosis but are not required for
-  AE reproduction.
 
 ## Troubleshooting
 - `ctest` fails: see [docs/TESTING.md](TESTING.md).
-- `souffle` not found: set `PATH` to include `build/src` or call
+- Missing `souffle` command: set `PATH` to include `build/src` or call
   `./build/src/souffle` explicitly.
 - Missing BDD backend: ensure CUDD is available in the build environment.
 - Large outputs/logs: avoid committing generated artifacts.

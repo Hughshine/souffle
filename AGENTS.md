@@ -25,7 +25,8 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - Keep outputs/logs local; do not commit generated benchmark artifacts.
 - Avoid introducing new dependencies unless explicitly requested.
 - Keep documentation in the single source of truth and link, do not duplicate.
-- Prefer repo-scoped skills: `repo-docs`, `verify-changes`, `pr-ready`, `git-commit-helper`, `souffle-test-case`.
+- Prefer repo-scoped skills: `repo-docs`, `verify-changes`, `pr-ready`,
+  `git-commit-helper`, `souffle-test-case`.
 
 ## Verification
 - If C++ changes: rebuild. Run `sh/run_test_format.sh` only when explicitly requested.
@@ -34,8 +35,9 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
   the repo-built binary from `build/src/souffle`.
 - If tests cannot run, state why and point to `docs/TESTING.md`.
 
-## Pitfalls / Do & Don't
-- `sh/run_test_format.sh` rewrites files in the current git diff; run it only when you intend to format changed C++/headers.
+## Pitfalls / Do and Do Not
+- `sh/run_test_format.sh` rewrites files in the current git diff; run it only
+  when you intend to format changed C++/headers.
 - Keep `docs/INDEX.md` updated when adding or renaming documentation.
 
 ## Reference Docs
@@ -45,7 +47,7 @@ Short, executable constraints for Codex in this repo. Keep it lean; link to
 - `docs/USAGE.md`
 - `docs/INDEX.md`
 
-## Source references
+## Source References
 - [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)
 - [sh/run_test_format.sh](sh/run_test_format.sh)
 - [sh/run_regression_tests.sh](sh/run_regression_tests.sh)
