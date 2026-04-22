@@ -43,7 +43,6 @@
 #include "ram/Break.h"
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
-#include "ram/DerivationCheck.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/EstimateJoinSize.h"
 #include "ram/ExistenceCheck.h"
@@ -226,7 +225,7 @@ std::vector<Own<ram::Expression>> ClauseTranslator::getClauseVarExprs(const ast:
 }
 
 Own<ram::Statement> ClauseTranslator::translateRecursiveClause(
-        const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool /*isDelete*/, bool /*isPrefill*/, bool) {
+        const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version) {
     // Update version config
     sccAtoms = filter(ast::getBodyLiterals<ast::Atom>(clause),
             [&](auto* atom) { return contains(scc, context.getProgram()->getRelation(*atom)); });
@@ -347,7 +346,7 @@ Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause)
     auto recordDerivation = mk<ram::RecordDerivation>(
                         headRelationName, std::move(clone(values)),
                         context.getClauseNum(&clause), clauseStr,
-                        std::move(cloneClauseVarMap(clauseVarMap)), std::move(cloneVarExprs(varExprs)), false, true);
+                        std::move(cloneClauseVarMap(clauseVarMap)), std::move(cloneVarExprs(varExprs)));
 
 
     // Propositions
@@ -355,24 +354,20 @@ Own<ram::Operation> ClauseTranslator::createInsertion(const ast::Clause& clause)
         return mk<ram::Filter>(
             mk<ram::EmptinessCheck>(headRelationName),
             mk<ram::SequentialOperation>(
-                mk<ram::Insert>(headRelationName, std::move(values),
-                    context.getClauseNum(&clause), clauseStr,
-                    std::move(cloneClauseVarMap(clauseVarMap))),
+                mk<ram::Insert>(headRelationName, std::move(values)),
                     std::move(recordDerivation)));
     }
 
     // Relations with functional dependency constraints
     if (auto guardedConditions = getFunctionalDependencies(clause)) {
         return mk<ram::SequentialOperation>(mk<ram::GuardedInsert>(headRelationName,
-            std::move(values), std::move(guardedConditions),
-            context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap))),
+            std::move(values), std::move(guardedConditions)),
             std::move(recordDerivation));
     }
 
     // Everything else
-    return mk<ram::SequentialOperation>(mk<ram::Insert>(headRelationName, std::move(values),
-        context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMap(clauseVarMap)))
-        , std::move(recordDerivation));
+    return mk<ram::SequentialOperation>(
+            mk<ram::Insert>(headRelationName, std::move(values)), std::move(recordDerivation));
 }
 
 Own<ram::Operation> ClauseTranslator::addAtomScan(Own<ram::Operation> op, const ast::Atom* atom,
@@ -658,41 +653,22 @@ Own<ram::Operation> ClauseTranslator::addNegatedAtom(
             mk<ram::Negation>(mk<ram::ExistenceCheck>(name, std::move(values))), std::move(op));
 }
 
-Own<ram::Operation> ClauseTranslator::addNegatedAtomDerived(
-        Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const {
-    // std::size_t arity = atom->getArity();
-    // std::string name = getConcreteRelationName(atom->getQualifiedName());
-    //
-    // if (arity == 0) {
-    //     // for a nullary, negation is a simple emptiness check
-    //     return mk<ram::Filter>(mk<ram::EmptinessCheck>(name), std::move(op));
-    // }
-    //
-    // // else, we construct the atom and create a negation
-    // VecOwn<ram::Expression> values;
-    // auto args = atom->getArguments();
-    // for (std::size_t i = 0; i < arity; i++) {
-    //     values.push_back(context.translateValue(*valueIndex, args[i]));
-    // }
-    // return mk<ram::Filter>(
-    // mk<ram::Negation>(mk<ram::ExistenceCheck>(name, std::move(values))), std::move(op));
-    const auto head = clause.getHead();
-    auto headRelationName = getConcreteRelationName(head->getQualifiedName());
+Own<ram::Operation> ClauseTranslator::addNegatedHeadAtom(
+        Own<ram::Operation> op, const ast::Atom* atom) const {
+    std::size_t arity = atom->getArity();
+    std::string name = getConcreteRelationName(atom->getQualifiedName());
 
-    auto clauseVarMap = getClauseVars(clause);
-    auto varExprs = getClauseVarExprs(clause);
+    if (arity == 0) {
+        return mk<ram::Filter>(mk<ram::EmptinessCheck>(name), std::move(op));
+    }
+
     VecOwn<ram::Expression> values;
-    for (const auto* arg : head->getArguments()) {
+    for (const auto* arg : atom->getArguments()) {
         values.push_back(context.translateValue(*valueIndex, arg));
     }
 
-    auto clauseStr = clause.toString();
-    op =  mk<ram::Filter>(
-    mk<ram::Negation>(mk<ram::DerivationCheck>(headRelationName, std::move(values), context.getClauseNum(&clause),
-        std::move(cloneClauseVarMap(clauseVarMap)), std::move(cloneVarExprs(varExprs)))),
-        std::move(op));
     return mk<ram::Filter>(
-            mk<ram::Negation>(mk<ram::ExistenceCheck>(headRelationName, std::move(values))), std::move(op));
+            mk<ram::Negation>(mk<ram::ExistenceCheck>(name, std::move(values))), std::move(op));
 }
 
 Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
@@ -718,7 +694,7 @@ Own<ram::Operation> ClauseTranslator::addBodyLiteralConstraints(
     if (isRecursive()) {
         if (clause.getHead()->getArity() > 0) {
             // also negate the head
-            op = addNegatedAtomDerived(std::move(op), clause, clause.getHead());
+            op = addNegatedHeadAtom(std::move(op), clause.getHead());
         }
         // also add in prev stuff
         for (std::size_t i = version + 1; i < sccAtoms.size(); i++) {

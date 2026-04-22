@@ -552,27 +552,12 @@ SearchSignature IndexAnalysis::getSearchSignature(const ExistenceCheck* existChe
     return searchSignature(rel->getArity(), existCheck->getValues());
 }
 
-// TODO
-SearchSignature IndexAnalysis::getSearchSignature(const DerivationCheck* derivationCheck) const {
-    const Relation* rel = &relAnalysis->lookup(derivationCheck->getRelation());
-    return searchSignature(rel->getArity(), derivationCheck->getValues());
-}
-
 SearchSignature IndexAnalysis::getSearchSignature(const Relation* ramRel) const {
     return SearchSignature::getFullSearchSignature(ramRel->getArity());
 }
 
 bool IndexAnalysis::isTotalSignature(const AbstractExistenceCheck* existCheck) const {
     for (const auto& cur : existCheck->getValues()) {
-        if (isUndefValue(cur)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool IndexAnalysis::isTotalSignature(const DerivationCheck* derivationCheck) const {
-    for (const auto& cur : derivationCheck->getValues()) {
         if (isUndefValue(cur)) {
             return false;
         }

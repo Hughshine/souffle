@@ -45,7 +45,7 @@ int main(Global& glb, const char* souffle_executable);
 Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb);
 
 /** Construct and return an AST to RAM unit translator. */
-Own<ast2ram::UnitTranslator> getUnitTranslator(Global& glb);
+Own<ast2ram::UnitTranslator> getUnitTranslator();
 
 /** Construct and return a RAM transformer pipeline */
 Own<ram::transform::Transformer> ramTransformerSequence(Global& glb);

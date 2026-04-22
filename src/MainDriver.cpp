@@ -529,10 +529,9 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
     return pipeline;
 }
 
-Own<ast2ram::UnitTranslator> getUnitTranslator(Global& glb) {
+Own<ast2ram::UnitTranslator> getUnitTranslator() {
     auto translationStrategy = mk<ast2ram::TranslationStrategy, ast2ram::online::TranslationStrategy>();
     auto unitTranslator = Own<ast2ram::UnitTranslator>(translationStrategy->createUnitTranslator());
-    std::cout << "unitTranslator created, " << translationStrategy->getName() << std::endl;
     return unitTranslator;
 }
 
@@ -661,6 +660,10 @@ std::vector<MainOption> getMainOptions() {
           "`magic-transform`. Implies `inline-exclude` for the given relations."},
       {"no-preprocessor", nextOptChar++, "", "", false,
           "Do not use a C preprocessor."},
+      {"online", nextOptChar++, "", "", false,
+          "Compatibility no-op; the online translator is always used in this artifact branch."},
+      {"full-only", nextOptChar++, "", "", false,
+          "Compatibility no-op; full-only mode is always enforced in this artifact branch."},
       {"no-warn", 'w', "", "", false,
           "Disable warnings."},
       {"output-dir", 'D', "DIR", ".", false,
@@ -673,10 +676,16 @@ std::vector<MainOption> getMainOptions() {
           "C preprocessor to use."},
       {"profile", 'p', "FILE", "", false,
           "Enable profiling, and write profile data to <FILE>."},
-      {"dred-profile", nextOptChar++, "", "", false,
-          "Enable detailed DRed profiling (requires --profile to emit data)."},
       {"profile-frequency", nextOptChar++, "", "", false,
           "Enable the frequency counter in the profiler."},
+      {"rewrite", nextOptChar++, "", "", false,
+          "Enable artifact rewrite dispatcher by default in generated binaries."},
+      {"explicit-rewrite", nextOptChar++, "", "", false,
+          "Select explicit rewrite by default in generated binaries."},
+      {"implicit-rewrite", nextOptChar++, "", "", false,
+          "Select implicit rewrite by default in generated binaries."},
+      {"det-opt", nextOptChar++, "", "", false,
+          "Enable deterministic-relation analysis by default in generated binaries."},
       {"derv-only", 'd', "", "", false, "Only compute the derivation graph."}, // TODO
       {"show", nextOptChar++, "[ <see-list> ]", "", true,
           "Print selected program information.\n"
@@ -1105,7 +1114,7 @@ int main(Global& glb, const char* souffle_executable) {
         // ------- execution -------------
         /* translate AST to RAM */
         debugReport.startSection();
-        auto unitTranslator = getUnitTranslator(glb);
+        auto unitTranslator = getUnitTranslator();
         auto ramTranslationUnit = unitTranslator->translateUnit(*astTranslationUnit);
         debugReport.endSection("ast-to-ram", "Translate AST to RAM");
 

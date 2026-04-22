@@ -66,7 +66,6 @@ public:
     void setProbability(double p) { probability = p; }
     double getProbability() const { return probability; }
     Atom* cloning() const override;
-    bool isRederive = false;
 protected:
     void print(std::ostream& os) const override;
 

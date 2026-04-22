@@ -2310,7 +2310,6 @@ void runPipeline(
     fcProfileEnabled = opt.isFcProfileEnabled();
     wmcProfileEnabled = opt.isWmcProfileEnabled();
     depGraphProfileEnabled = opt.isDepGraphProfileEnabled();
-    postDelEnabled = opt.isPostDelEnabled();
     DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
     DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());
     DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());

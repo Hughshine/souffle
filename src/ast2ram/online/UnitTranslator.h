@@ -51,11 +51,7 @@ public:
     UnitTranslator();
     ~UnitTranslator();
 
-    souffle::ram::Program* ramProgram = nullptr;
     Own<ram::TranslationUnit> translateUnit(ast::TranslationUnit& tu) override;
-inline  void setRamProgram(souffle::ram::Program* program) {
-        ramProgram = program;
-    };
 protected:
     void addRamSubroutine(std::string subroutineID, Own<ram::Statement> subroutine);
     virtual Own<ram::Relation> createRamRelation(
@@ -77,13 +73,11 @@ protected:
 
     Own<ram::Statement> generateNonRecursiveRelation(const ast::Relation& rel) const;
     Own<ram::Statement> generateRecursiveStratum(const ast::RelationSet& scc, std::size_t sccNum) const;
-    Own<ram::Statement> translateProbQuery(const ast::ProbQuery& probQuery);
     /** IO translation */
     Own<ram::Statement> generateStoreRelation(const ast::Relation* relation) const;
     Own<ram::Statement> generateLoadRelation(const ast::Relation* relation) const;
 
     /** Low-level stratum translation */
-    Own<ram::Statement> translateEvidence(const ast::Evidence& evidence);
     Own<ram::Statement> generateStratum(std::size_t scc) const;
     Own<ram::Statement> generateStratumPreamble(const ast::RelationSet& scc) const;
 
@@ -113,7 +107,6 @@ protected:
 
 private:
     std::map<std::string, Own<ram::Statement>> ramSubroutines;
-    Own<ram::Program> ramProgramHolder;
     Global* glb;
 };
 

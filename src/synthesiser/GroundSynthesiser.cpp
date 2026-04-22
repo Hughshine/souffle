@@ -270,6 +270,9 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
     hook << ",true";
     hook << ",false";
     hook << "," << (glb.config().has("rewrite") ? "true" : "false");
+    hook << "," << (glb.config().has("explicit-rewrite") ? "true" : "false");
+    hook << "," << (glb.config().has("implicit-rewrite") ? "true" : "false");
+    hook << "," << (glb.config().has("det-opt") ? "true" : "false");
     hook << ");\n";
 
     hook << "if (!opt.parse(argc,argv)) return opt.isHelpRequested() ? 0 : 1;\n";

@@ -42,7 +42,6 @@ std::string getAtomName(const ast::Clause& clause, const ast::Atom* atom,
     if (isA<ast::SubsumptiveClause>(clause)) {
         assert(false && "subsumptive clause not supported");
     }
-    assert(!atom->isRederive && !clause.isRederive && "rederive clauses are unsupported");
     if (!isRecursive) {
         if (mode == Auxiliary && clause.getHead() == atom) {
             assert (false && "auxiliary mode not supported");

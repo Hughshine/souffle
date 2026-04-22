@@ -176,138 +176,15 @@ extern std::unordered_set<RuleApplication> testRuleApplicationSet2;
 
 // testDerivationInfo
 extern std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> testUntypedTuple2RuleApplications;
-extern bool dredProfileEnabled;
 extern bool fcProfileEnabled;
-extern bool incDeleteProfileEnabled;
 extern bool wmcProfileEnabled;
-extern bool incRegionalProfileEnabled;
-extern bool incRegionalProfileHeavyEnabled;
-extern std::string incRegionalTraceTuples;
 extern bool depGraphProfileEnabled;
-extern bool postDelEnabled;
 extern bool reuseVarIndexEnabled;
-extern bool incReorderEnabled;
 
 class DerivationManager {
 public:
-    enum class DredTimeBucket : std::uint8_t {
-        DelTotal,
-        DelCopyOld,
-        DelPreamble,
-        DelPrefill,
-        DelPrefillUpdate,
-        DelLoopBody,
-        DelLoopExit,
-        DelLoopUpdate,
-        DelPostamble,
-        DelRecord,
-        DelOverdelete,
-        DelDeltaUnion,
-        DelRuleappErase,
-        InsTotal,
-        InsPreamble,
-        InsPrefill,
-        InsPrefillUpdate,
-        InsLoopBody,
-        InsLoopExit,
-        InsLoopUpdate,
-        InsPostamble,
-        InsRecord,
-        InsDeltaUnion,
-        RedTotal,
-        RedLoopBody,
-        RedLoopExit,
-        RedLoopUpdate,
-        RedPostamble,
-    };
-
-    struct DredStats {
-        std::uint64_t del_ruleapp_recorded = 0;
-        std::uint64_t del_ruleapp_delta_delta = 0;
-        std::uint64_t del_ruleapp_overdelete = 0;
-        std::uint64_t del_complete_scan_calls = 0;
-        std::uint64_t del_complete_scan_elems = 0;
-        std::uint64_t del_delta_tuples = 0;
-        std::uint64_t del_delta_ruleapps = 0;
-        std::uint64_t del_ruleapp_erases = 0;
-        std::uint64_t del_tuple_deletes = 0;
-        std::uint64_t del_complete_sets_freed = 0;
-
-        std::uint64_t ins_ruleapp_recorded = 0;
-        std::uint64_t ins_ruleapp_delta_delta = 0;
-        std::uint64_t ins_ruleapp_rederive_erases = 0;
-        std::uint64_t ins_delta_tuples = 0;
-        std::uint64_t ins_delta_ruleapps = 0;
-        std::uint64_t rederive_delta_tuples = 0;
-        std::uint64_t rederive_delta_ruleapps = 0;
-        std::uint64_t ins_ruleapp_merges = 0;
-        std::uint64_t ins_tuple_inserts = 0;
-        std::uint64_t ins_complete_sets_attached = 0;
-
-        std::uint64_t del_time_total_ns = 0;
-        std::uint64_t del_time_copy_old_ns = 0;
-        std::uint64_t del_time_preamble_ns = 0;
-        std::uint64_t del_time_prefill_ns = 0;
-        std::uint64_t del_time_prefill_update_ns = 0;
-        std::uint64_t del_time_loop_body_ns = 0;
-        std::uint64_t del_time_loop_exit_ns = 0;
-        std::uint64_t del_time_loop_update_ns = 0;
-        std::uint64_t del_time_postamble_ns = 0;
-        std::uint64_t del_time_record_ns = 0;
-        std::uint64_t del_time_overdelete_ns = 0;
-        std::uint64_t del_time_delta_union_ns = 0;
-        std::uint64_t del_time_ruleapp_erase_ns = 0;
-
-        std::uint64_t ins_time_total_ns = 0;
-        std::uint64_t ins_time_preamble_ns = 0;
-        std::uint64_t ins_time_prefill_ns = 0;
-        std::uint64_t ins_time_prefill_update_ns = 0;
-        std::uint64_t ins_time_loop_body_ns = 0;
-        std::uint64_t ins_time_loop_exit_ns = 0;
-        std::uint64_t ins_time_loop_update_ns = 0;
-        std::uint64_t ins_time_postamble_ns = 0;
-        std::uint64_t ins_time_record_ns = 0;
-        std::uint64_t ins_time_delta_union_ns = 0;
-
-        std::uint64_t red_time_total_ns = 0;
-        std::uint64_t red_time_loop_body_ns = 0;
-        std::uint64_t red_time_loop_exit_ns = 0;
-        std::uint64_t red_time_loop_update_ns = 0;
-        std::uint64_t red_time_postamble_ns = 0;
-
-        void reset() { *this = DredStats{}; }
-        void dump(std::ostream& out, const std::string& label) const;
-    };
-
-    struct DredSccStats {
-        std::uint64_t del_ruleapp_overdelete = 0;
-        std::uint64_t del_complete_scan_calls = 0;
-        std::uint64_t del_complete_scan_elems = 0;
-        std::uint64_t rederive_delta_tuples = 0;
-        std::uint64_t rederive_delta_ruleapps = 0;
-        std::uint64_t rederive_ruleapp_erases = 0;
-        std::uint64_t del_time_total_ns = 0;
-        std::uint64_t del_time_loop_body_ns = 0;
-        std::uint64_t del_time_loop_update_ns = 0;
-        std::uint64_t ins_time_total_ns = 0;
-        std::uint64_t ins_time_loop_body_ns = 0;
-        std::uint64_t ins_time_loop_update_ns = 0;
-        std::uint64_t red_time_total_ns = 0;
-        std::uint64_t red_time_loop_body_ns = 0;
-        std::uint64_t red_time_loop_update_ns = 0;
-    };
-
-    static constexpr std::size_t kInvalidDredScc = static_cast<std::size_t>(-1);
-
     static std::set<souffle::RamDomain> testRules;
     static std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2RuleApplications;
-    static std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2DeltaInsertRuleApplications;
-    static std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2DeltaDeleteRuleApplications;
-    static std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2DeltaDeltaInsertRuleApplications;
-    static std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2DeltaDeltaDeleteRuleApplications;
-    static DredStats dredStats;
-    static std::vector<DredSccStats> dredSccStats;
-    static std::size_t dredCurrentScc;
 
     static bool ruleAppExistsInCompleteSet(
             const UntypedTuple& untypedTuple, const RuleApplication& ruleAppl);
@@ -325,44 +202,8 @@ public:
             const std::string& originalFileName, const std::string& suffix, const std::string& inputDir = "");
     static void dumpDerivationInfo(const std::string& filename, const std::string& outputDir);
 
-    static void setSemStatsEnabled(bool enabled);
-    static bool isSemStatsEnabled();
-    static void resetDredStats();
-    static void dumpDredStats(std::ostream& out, const std::string& label);
-    static void dumpDredSccStats(std::ostream& out, const std::string& label);
-
-    static std::size_t getDredCurrentScc();
-    static void setDredCurrentScc(std::size_t sccId);
-    static void bumpDredSccOverdelete(std::uint64_t inc = 1);
-    static void bumpDredSccCompleteScanCalls(std::uint64_t inc = 1);
-    static void bumpDredSccCompleteScanElems(std::uint64_t inc);
-    static void bumpDredSccRederiveDeltaTuples(std::uint64_t inc = 1);
-    static void bumpDredSccRederiveDeltaRuleapps(std::uint64_t inc);
-    static void bumpDredSccRederiveRuleappErases(std::uint64_t inc = 1);
-    static void addDredTime(DredTimeBucket bucket, std::uint64_t ns);
-
-    static void clearDetDeltaTuples();
-    static void recordDetDeltaDelete(const UntypedTuple& tuple);
-    static void recordDetDeltaInsert(const UntypedTuple& tuple);
-    static const std::unordered_set<UntypedTuple>& getDetDeltaDeleteTuples();
-    static const std::unordered_set<UntypedTuple>& getDetDeltaInsertTuples();
     static void freeRuleApplicationMap(
             std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo);
-
-    static std::uint64_t nowNanos() {
-        return static_cast<std::uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch())
-                        .count());
-    }
-    static std::uint64_t elapsedNanos(std::uint64_t start_ns) {
-        return nowNanos() - start_ns;
-    }
-
-private:
-    static bool semStatsEnabled;
-    static std::unordered_set<UntypedTuple> detDeltaDeleteTuples;
-    static std::unordered_set<UntypedTuple> detDeltaInsertTuples;
 };
 
 // relation string -> int mapping, for optimization, reuse string

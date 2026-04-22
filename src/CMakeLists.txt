@@ -167,9 +167,7 @@ set(SOUFFLE_SOURCES
         ast/DeltaRelation.h
         ram/RecordDerivation.h
         ram/SequantialOperation.h
-        ram/DeltaUnion.h
         ram/EmptyStatement.h
-        ram/DerivationCheck.h
         ast2ram/online/ConstraintTranslator.cpp
         ast2ram/online/ClauseTranslator.cpp
         ast2ram/online/TranslationStrategy.cpp

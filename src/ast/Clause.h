@@ -130,8 +130,6 @@ public:
     }
     Clause* cloning() const override;
 
-    bool isRederive = false;
-
 protected:
     // void initializeVariables(VecOwn<Literal> bodyLiterals);
     std::vector<std::string> variables;

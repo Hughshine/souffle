@@ -334,9 +334,7 @@ bool TypeAnalysis::hasValidTypeInfo(const FunctorDeclaration& decl) const {
 NumericConstant::Type TypeAnalysis::getPolymorphicNumericConstantType(const NumericConstant& nc) const {
     // assert(hasValidTypeInfo(nc) && "numeric constant type not set");
     if (!hasValidTypeInfo(nc)) {
-        // FIXME
-        // This is a workaround for the fact that the numeric constant type is not set
-        // mostly for rederive
+        // FIXME: numeric constant type is not always set by earlier analyses.
         return NumericConstant::Type::Int;
     }
     return numericConstantType.at(&nc);
@@ -347,7 +345,6 @@ BinaryConstraintOp TypeAnalysis::getPolymorphicOperator(const BinaryConstraint& 
     if (contains(constraintType, &bc)) {
         return constraintType.at(&bc);
     }
-    // TODO: Fixme, for rederive...
     return bc.getBaseOperator();
 }
 

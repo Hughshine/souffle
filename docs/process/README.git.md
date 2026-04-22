@@ -38,16 +38,16 @@ Types: `fix`, `perf`, `refactor`, `docs`, `build`, `chore`, `test`.
 Guidelines:
 - Use imperative, present tense in summary.
 - Keep the summary <= 72 characters, no trailing period.
-- Scope is a concise component label (e.g., `inc-region`, `problog`, `cli`, `docs`).
+- Scope is a concise component label (e.g., `problog`, `benchmark`, `cli`, `docs`).
 
 Optional body:
 - Explain rationale and include key metrics if relevant.
 - Use footers for issue links if needed.
 
 Examples:
-- `perf(inc-region): cache delta-insert reachability`
-- `refactor(problog): switch impacted maps to unordered_set`
-- `docs(readme): add P12 profile5 results`
+- `perf(problog): speed up component classification`
+- `refactor(problog): simplify full derivation recording`
+- `docs(benchmark): add symbolization notes`
 
 ## Related commits
 - `ef4b7796c` — chore(artifact): prune AE rewrite surface

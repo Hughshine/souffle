@@ -43,8 +43,8 @@ namespace souffle::ram {
 
 class GuardedInsert : public Insert {
 public:
-    GuardedInsert(std::string rel, VecOwn<Expression> expressions, Own<Condition> condition = mk<True>(), std::size_t clauseID = -1, std::string clauseStr = "CLAUSE",  std::map<std::string, Own<ram::Expression>>&& varExprMap = {})  // TODO
-            : Insert(NK_GuardedInsert, rel, std::move(expressions), std::move(clauseID), std::move(clauseStr), std::move(varExprMap)), condition(std::move(condition)) {}
+    GuardedInsert(std::string rel, VecOwn<Expression> expressions, Own<Condition> condition = mk<True>())
+            : Insert(NK_GuardedInsert, rel, std::move(expressions)), condition(std::move(condition)) {}
 
     /** @brief Get guarded condition */
     const Condition* getCondition() const {

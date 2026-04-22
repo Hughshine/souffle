@@ -38,7 +38,6 @@
 #include "ram/Conjunction.h"
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
-#include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/Erase.h"
 #include "ram/Evidence.h"
@@ -243,8 +242,6 @@ Own<ram::Statement> UnitTranslator::generateStratum(std::size_t scc) const {
             appendStmt(current, mk<ram::Clear>(newRelation));
         }
 
-        // issue delete sequence for non-recursive subsumptions
-        // appendStmt(current, generateNonRecursiveDelete(*rel));
     }
 
     // Get all non-recursive relation statements
@@ -794,11 +791,11 @@ Own<ram::Statement> UnitTranslator::generateRecursiveStratum(
     auto joinSizeSequence = mk<ram::Sequence>(std::move(recursiveJoinSizeStatements));
 
     const std::string loop_counter = "loop_counter";
-    VecOwn<ram::Expression> inc;
-    inc.push_back(mk<ram::Variable>(loop_counter));
-    inc.push_back(mk<ram::UnsignedConstant>(1));
+    VecOwn<ram::Expression> incrementArgs;
+    incrementArgs.push_back(mk<ram::Variable>(loop_counter));
+    incrementArgs.push_back(mk<ram::UnsignedConstant>(1));
     auto increment_counter = mk<ram::Assign>(mk<ram::Variable>(loop_counter),
-            mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(inc)), false);  // Counter increment each iteration
+            mk<ram::IntrinsicOperator>(FunctorOp::UADD, std::move(incrementArgs)), false);
     // Add in the main fixpoint loop
     auto loopBody = generateStratumLoopBody(scc);
     auto exitSequence = generateStratumExitSequence(scc);  // If new is empty after an iteration, exit; otherwise update tables and continue.
@@ -969,16 +966,6 @@ Own<ram::Sequence> UnitTranslator::generateProgram(const ast::TranslationUnit& t
     return mk<ram::Sequence>(std::move(res));
 }
 
-Own<ram::Statement> UnitTranslator::translateProbQuery(const ast::ProbQuery& probQuery) {
-        return mk<ram::EmptyStatement>();
-    }
-Own<ram::Statement> UnitTranslator::translateEvidence(const ast::Evidence& evidence) {
-    return mk<ram::EmptyStatement>();
-}
-
-
-
-
 /** Translate AST into full-evaluation RAM only. */
 Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu) {
     glb = &tu.global();
@@ -998,7 +985,6 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
     /* -- Translation -- */
     // Generate the RAM program code
     auto ramMain = generateProgram(tu);
-    Own<ram::Statement> ramAuxProgram = mk<ram::EmptyStatement>();
     // Create the relevant RAM relations
     const auto& sccOrdering = tu.getAnalysis<ast::analysis::TopologicallySortedSCCGraphAnalysis>().order();
 
@@ -1017,7 +1003,7 @@ Own<ram::TranslationUnit> UnitTranslator::translateUnit(ast::TranslationUnit& tu
     ErrorReport& errReport = tu.getErrorReport();
     DebugReport& debugReport = tu.getDebugReport();
     auto ramProgram =
-            mk<ram::Program>(std::move(ramRelations), std::move(ramMain), std::move(ramSubroutines), std::move(ramAuxProgram));
+            mk<ram::Program>(std::move(ramRelations), std::move(ramMain), std::move(ramSubroutines));
     for (const auto& probQuery : tu.getProgram().getProbQueries()) {
         const auto& atom = probQuery->getAtom();
         ramProgram -> addProbQuery(mk<ram::ProbQuery>(atom.getQualifiedName().toString(), toString(atom)));

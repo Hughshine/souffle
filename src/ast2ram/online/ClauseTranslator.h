@@ -57,7 +57,7 @@ public:
     /** Entry points */
     Own<ram::Statement> translateNonRecursiveClause(const ast::Clause& clause);
     Own<ram::Statement> translateRecursiveClause(
-            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version, bool isDelete = false, bool isPrefill = false, bool isRederive = false);
+            const ast::Clause& clause, const ast::RelationSet& scc, std::size_t version);
 
 protected:
     std::size_t version{0};
@@ -72,8 +72,7 @@ protected:
     virtual Own<ram::Operation> addNegatedAtom(
             Own<ram::Operation> op, const ast::Clause& clause, const ast::Atom* atom) const;
 
-    virtual Own<ram::Operation> addNegatedAtomDerived(
-                Own<ram::Operation> op, const ast::Clause& /* clause */, const ast::Atom* atom) const;
+    virtual Own<ram::Operation> addNegatedHeadAtom(Own<ram::Operation> op, const ast::Atom* atom) const;
 
     virtual Own<ram::Operation> addNegatedDeltaAtom(Own<ram::Operation> op, const ast::Atom* atom) const;
     virtual Own<ram::Operation> addDistinct(

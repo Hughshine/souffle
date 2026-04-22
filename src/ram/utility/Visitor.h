@@ -33,7 +33,6 @@
 #include "ram/Conjunction.h"
 #include "ram/Constraint.h"
 #include "ram/DebugInfo.h"
-#include "ram/DeltaUnion.h"
 #include "ram/EmptinessCheck.h"
 #include "ram/EmptyStatement.h"
 #include "ram/Erase.h"
@@ -99,7 +98,6 @@
 #include "ram/UserDefinedAggregator.h"
 #include "ram/UserDefinedOperator.h"
 #include "ram/Variable.h"
-#include "ram/DerivationCheck.h"
 #include "souffle/utility/FunctionalUtil.h"
 #include "souffle/utility/MiscUtil.h"
 #include "souffle/utility/Visitor.h"
@@ -150,7 +148,6 @@ struct Visitor : souffle::detail::VisitorBase<R, NodeType, Params...> {
         SOUFFLE_VISITOR_FORWARD(Conjunction);
         SOUFFLE_VISITOR_FORWARD(Negation);
         SOUFFLE_VISITOR_FORWARD(Constraint);
-        SOUFFLE_VISITOR_FORWARD(DerivationCheck);
 
         // Operations
         SOUFFLE_VISITOR_FORWARD(Filter);
@@ -187,7 +184,6 @@ struct Visitor : souffle::detail::VisitorBase<R, NodeType, Params...> {
 
         SOUFFLE_VISITOR_FORWARD(Swap);
         SOUFFLE_VISITOR_FORWARD(MergeExtend);
-        SOUFFLE_VISITOR_FORWARD(DeltaUnion);
         SOUFFLE_VISITOR_FORWARD(EmptyStatement);
 
         // Control-flow
@@ -215,7 +211,6 @@ protected:
     SOUFFLE_VISITOR_LINK(EstimateJoinSize, RelationStatement);
     SOUFFLE_VISITOR_LINK(RelationStatement, Statement);
     SOUFFLE_VISITOR_LINK(Assign, Statement);
-    SOUFFLE_VISITOR_LINK(DeltaUnion, RelationStatement);
     SOUFFLE_VISITOR_LINK(EmptyStatement, Statement);
 
     SOUFFLE_VISITOR_LINK(Swap, BinRelationStatement);
@@ -275,7 +270,6 @@ protected:
     SOUFFLE_VISITOR_LINK(ExistenceCheck, AbstractExistenceCheck);
     SOUFFLE_VISITOR_LINK(EmptinessCheck, Condition);
     SOUFFLE_VISITOR_LINK(AbstractExistenceCheck, Condition);
-    SOUFFLE_VISITOR_LINK(DerivationCheck, Condition);
 
     SOUFFLE_VISITOR_LINK(Condition, Node);
 

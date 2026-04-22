@@ -43,10 +43,9 @@ protected:
     }
 
     bool equal(const Node& node) const override {
-        const auto& other = asAssert<EmptyStatement>(node);
+        asAssert<EmptyStatement>(node);
         return true;
     }
 };
 
 }  // namespace souffle::ram
-

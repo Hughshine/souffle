@@ -25,7 +25,6 @@ using Duration = std::chrono::duration<double>;
 
 static constexpr bool kCuddVerbose = false;
 extern bool fcProfileEnabled;
-extern bool incReorderEnabled;
 inline std::string cuddPreConfigTag;
 inline void setCuddPreConfigTag(const std::string& tag) {
     cuddPreConfigTag = tag;

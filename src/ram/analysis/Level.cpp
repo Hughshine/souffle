@@ -266,18 +266,6 @@ std::optional<std::size_t> LevelAnalysis::getLevel(const Node* node) const {
             return level;
         }
 
-        // existence check
-        maybe_level visit_(type_identity<DerivationCheck>, const DerivationCheck& exists) override {
-            maybe_level level = std::nullopt;
-            for (const auto& cur : exists.getValues()) {
-                level = max(level, dispatch(*cur));
-            }
-            for (const auto& [_, cur] : exists.varExprMap) {
-                level = max(level, dispatch(*cur));
-            }
-            return level;
-        }
-
         // RecordDerivation
         maybe_level visit_(type_identity<RecordDerivation>, const RecordDerivation& reDerv) override {
             maybe_level level = std::nullopt;

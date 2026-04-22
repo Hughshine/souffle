@@ -92,11 +92,9 @@ protected:
     bool dump_dot = false;  // dump derivation graph DOT after prune
     bool dump_stat = false;  // dump derivation graph stats after prune
     bool dump_const = false;  // dump constant pre-analysis details
-    bool dred_profile = false;  // enable detailed DRed profiling
     bool fc_profile = false;  // enable detailed forward-compilation profiling
     bool wmc_profile = false;  // enable weighted model counting profiling
     bool dep_graph_profile = false;  // enable dependency-graph profiling
-    bool post_del = false;  // enable postprocessUselessVariables after deletion
     bool det_opt = false;  // enable deterministic-relation analysis and det gating
     bool reuse_var_index = true;  // reuse freed variable indices in CUDD (default on)
     bool single_rand_fast = true;  // enable single-randvar fast path in component FC
@@ -108,18 +106,21 @@ public:
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
             std::string lfn = "log.txt", bool donly = false,
             bool merge_bi = true, bool foldconst = false, bool rewrite = false,
+            bool explicitRewrite = false, bool implicitRewrite = false, bool detopt = false,
             bool dumpjson = false, bool dumpdot = false, bool dumpstat = false, bool dumpconst = false,
-            bool dredProfile = false,
             bool fcProfile = false,
             bool wmcProfile = false,
-            bool depGraphProfile = false,
-            bool postDel = false)
+            bool depGraphProfile = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn), derivation_only(donly)
-    , merge_bi_imp(merge_bi), fold_const(foldconst), enable_rewrite(rewrite),
+    , merge_bi_imp(merge_bi), fold_const(foldconst),
+      enable_rewrite(rewrite || explicitRewrite || implicitRewrite),
+      force_graph_rewrite(explicitRewrite),
+      force_implicit_rewrite(implicitRewrite),
+      det_opt(detopt),
       dump_json(dumpjson), dump_dot(dumpdot), dump_stat(dumpstat), dump_const(dumpconst),
-      dred_profile(dredProfile), fc_profile(fcProfile),
+      fc_profile(fcProfile),
       wmc_profile(wmcProfile),
-      dep_graph_profile(depGraphProfile), post_del(postDel) {}
+      dep_graph_profile(depGraphProfile) {}
 
     CmdOptions() {}
     /**
@@ -196,9 +197,6 @@ public:
     bool isDumpConstEnabled() const {
         return dump_const;
     }
-    bool isDredProfileEnabled() const {
-        return dred_profile;
-    }
     bool isFcProfileEnabled() const {
         return fc_profile;
     }
@@ -207,9 +205,6 @@ public:
     }
     bool isDepGraphProfileEnabled() const {
         return dep_graph_profile;
-    }
-    bool isPostDelEnabled() const {
-        return post_del;
     }
     bool isDetOptEnabled() const {
         return det_opt;
@@ -276,11 +271,9 @@ public:
                 {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
                 {"dumpstat", false, nullptr, 'S'},
                 {"dumpconst", false, nullptr, 'U'},
-                {"dred-profile", false, nullptr, 1002},
                 {"fc-profile", false, nullptr, 1005},
                 {"profile-wmc", false, nullptr, 1014},
                 {"profile-dep-graph", false, nullptr, 1010},
-                {"post-del", false, nullptr, 1006},
                 {"det-opt", false, nullptr, 'Z'},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
@@ -401,9 +394,6 @@ public:
                 case 'U':
                     dump_const = true;
                     break;
-                case 1002:
-                    dred_profile = true;
-                    break;
                 case 1005:
                     fc_profile = true;
                     break;
@@ -412,9 +402,6 @@ public:
                     break;
                 case 1010:
                     dep_graph_profile = true;
-                    break;
-                case 1006:
-                    post_del = true;
                     break;
                 case 'Z':
                     det_opt = true;

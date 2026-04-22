@@ -46,19 +46,7 @@ class Insert : public Operation {
 public:
 
     Insert(std::string rel, VecOwn<Expression> expressions)
-            : Insert(NK_Insert, std::move(rel),
-                std::move(expressions), -1, "UNKNOWN CLAUSE", {}) {}
-
-    Insert(std::string rel, VecOwn<Expression> expressions,
-            std::size_t clauseID, std::string clauseStr)
-            : Insert(NK_Insert, std::move(rel), std::move(expressions)
-                , clauseID, std::move(clauseStr), {}) {}
-
-    Insert(std::string rel, VecOwn<Expression> expressions,
-            std::size_t clauseID, std::string clauseStr, std::map<std::string, Own<Expression>>&& varExprMap)
-            : Insert(NK_Insert, std::move(rel), std::move(expressions)
-                , clauseID, std::move(clauseStr), std::move(varExprMap)) {}
-
+            : Insert(NK_Insert, std::move(rel), std::move(expressions)) {}
 
     /** @brief Get relation */
     const std::string& getRelation() const {
@@ -70,25 +58,12 @@ public:
         return toPtrVector(expressions);
     }
 
-    std::size_t getClauseID() const {
-        return clauseID;
-    }
-
-    std::string getClauseStr() const {
-        return clauseStr;
-    }
-
-
     Insert* cloning() const override {
         VecOwn<Expression> newValues;
         for (auto& expr : expressions) {
             newValues.emplace_back(expr->cloning());
         }
-        std::map<std::string, Own<ram::Expression>> newVarExprMap{};
-        for (auto& [var, expr] : varExprMap) {
-            newVarExprMap.emplace(var, expr->cloning());
-        }
-        return new Insert(NK_Insert, relation, std::move(newValues), clauseID, clauseStr, std::move(newVarExprMap));
+        return new Insert(NK_Insert, relation, std::move(newValues));
     }
 
     void apply(const NodeMapper& map) override {
@@ -102,13 +77,9 @@ public:
         return (kind >= NK_Insert && kind < NK_LastInsert);
     }
 
-
-// protected:
-    Insert(NodeKind kind, std::string rel, VecOwn<Expression> expressions,
-        std::size_t clauseID, std::string clauseStr, std::map<std::string, Own<ram::Expression>>&& varExprMap) //
-            : Operation(kind), relation(std::move(rel)), expressions(std::move(expressions)),
-            clauseID(clauseID), clauseStr(std::move(clauseStr)), varExprMap(std::move(varExprMap)) {
-            // clauseID(std::move(clauseID)), clauseStr(std::move(clauseStr)) {
+protected:
+    Insert(NodeKind kind, std::string rel, VecOwn<Expression> expressions)
+            : Operation(kind), relation(std::move(rel)), expressions(std::move(expressions)) {
         assert(allValidPtrs(expressions));
         assert(kind >= NK_Insert && kind < NK_LastInsert);
     }
@@ -116,7 +87,7 @@ public:
     void print(std::ostream& os, int tabpos) const override {
         os << times(" ", tabpos);
         os << "INSERT (" << join(expressions, ", ", print_deref<Own<Expression>>()) << ") INTO " << relation
-           << " BY RULE (" << std::to_string(clauseID) << ")" << clauseStr << std::endl;
+           << std::endl;
     }
 
     bool equal(const Node& node) const override {
@@ -134,9 +105,6 @@ public:
     /* Arguments of insert operation */
     VecOwn<Expression> expressions;
 
-    const std::size_t clauseID;
-    const std::string clauseStr;
-    std::map<std::string, Own<ram::Expression>> varExprMap;  // TODO
 };
 
 }  // namespace souffle::ram

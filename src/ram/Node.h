@@ -91,7 +91,6 @@ public:
             NK_False,
             NK_Negation,
             NK_True,
-            NK_DerivationCheck,
         NK_LastCondition,
 
         NK_Expression,
@@ -201,7 +200,6 @@ public:
                 NK_IO,
                 NK_LogRelationTimer,
                 NK_LogSize,
-                NK_DeltaUnion,
             NK_LastRelationStatement,
         NK_ProbQuery,
         NK_Evidence,

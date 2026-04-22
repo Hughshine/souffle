@@ -98,7 +98,6 @@ TranslatorContext::TranslatorContext(const ast::TranslationUnit& tu) {
         sipsChosen = global->config().get("RamSIPS");
     }
     sipsMetric = ast::SipsMetric::create(sipsChosen, tu);
-    sipsMetricRederive = ast::SipsMetric::create("max-bound", tu);
 
     // Online is the only supported translation strategy in this fork.
     translationStrategy = mk<online::TranslationStrategy>();
@@ -125,9 +124,6 @@ bool TranslatorContext::isRecursiveClause(const ast::Clause* clause) const {
 }
 
 std::size_t TranslatorContext::getClauseNum(const ast::Clause* clause) const {
-    if (clause->isRederive) {
-        return clause->getClauseId();  // return getClauseId()?
-    }
     assert(contains(clauseNums, clause) && "clause num should exist for all clauses");
     return clauseNums.at(clause);
 }
@@ -345,23 +341,10 @@ Own<ram::Statement> TranslatorContext::translateNonRecursiveClause(
     return clauseTranslator->translateNonRecursiveClause(clause);
 }
 
-Own<ram::Statement> TranslatorContext::translateNonRecursiveClauseDel(
-        const ast::Clause& clause, TranslationMode mode) const {
-    auto clauseTranslator = Own<ClauseTranslator>(translationStrategy->createClauseTranslator(*this, mode));
-    return clauseTranslator->translateNonRecursiveClauseDel(clause);
-}
-
-
-Own<ram::Statement> TranslatorContext::translateNonRecursiveClauseIns(
-        const ast::Clause& clause, TranslationMode mode) const {
-    auto clauseTranslator = Own<ClauseTranslator>(translationStrategy->createClauseTranslator(*this, mode));
-    return clauseTranslator->translateNonRecursiveClauseIns(clause);
-}
-
 Own<ram::Statement> TranslatorContext::translateRecursiveClause(const ast::Clause& clause,
-        const ast::RelationSet& scc, std::size_t version, TranslationMode mode, bool isDelete, bool isPrefill) const {
+        const ast::RelationSet& scc, std::size_t version, TranslationMode mode) const {
     auto clauseTranslator = Own<ClauseTranslator>(translationStrategy->createClauseTranslator(*this, mode));
-    return clauseTranslator->translateRecursiveClause(clause, scc, version, isDelete, isPrefill);
+    return clauseTranslator->translateRecursiveClause(clause, scc, version);
 }
 
 Own<ram::Expression> TranslatorContext::translateValue(

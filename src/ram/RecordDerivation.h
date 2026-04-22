@@ -42,20 +42,23 @@ namespace souffle::ram {
 class RecordDerivation : public Operation {
 public:
 
-    RecordDerivation(std::string rel, VecOwn<Expression> expressions, bool insert = true, bool complete = true, bool isRecursive = false, bool rederive = false)
+    RecordDerivation(std::string rel, VecOwn<Expression> expressions)
             : RecordDerivation(std::move(rel),
-                std::move(expressions), insert, complete, isRecursive, -1, "UNKNOWN CLAUSE", {}, {}, rederive) {}
+                std::move(expressions), -1, "UNKNOWN CLAUSE", {}, {}) {}
 
     RecordDerivation(std::string rel, VecOwn<Expression> expressions,
-            std::size_t clauseID, std::string clauseStr, bool insert = true, bool complete = true, bool isRecursive = false, bool rederive = false)
+            std::size_t clauseID, std::string clauseStr)
             : RecordDerivation(std::move(rel), std::move(expressions)
-                , insert, complete, isRecursive, clauseID, std::move(clauseStr), {}, {}, rederive) {}
+                , clauseID, std::move(clauseStr), {}, {}) {}
 
     RecordDerivation(std::string rel, VecOwn<Expression> expressions,
-            std::size_t clauseID, std::string clauseStr, std::map<std::string, Own<Expression>>&& varExprMap, std::vector<Own<ram::Expression>>&& varExprs,
-            bool insert = true, bool complete = true, bool isRecursive = false, bool rederive = false)
-            : RecordDerivation(std::move(rel), std::move(expressions)
-                , insert, complete, isRecursive, clauseID, std::move(clauseStr), std::move(varExprMap), std::move(varExprs), rederive) {}
+            std::size_t clauseID, std::string clauseStr, std::map<std::string, Own<Expression>>&& varExprMap,
+            std::vector<Own<ram::Expression>>&& varExprs)
+            : Operation(NK_RecordDerivation), relation(std::move(rel)), expressions(std::move(expressions)),
+              clauseID(clauseID), clauseStr(std::move(clauseStr)), varExprMap(std::move(varExprMap)),
+              varExprs(std::move(varExprs)) {
+        assert(allValidPtrs(expressions));
+    }
 
 
     /** @brief Get relation */
@@ -72,31 +75,6 @@ public:
         return clauseID;
     }
 
-    std::string getClauseStr() const {
-        return clauseStr;
-    }
-
-    bool isInsert() const {
-        return insert;
-    }
-
-    bool isDelete() const {
-        return !insert;
-    }
-
-    bool isComplete() const {
-        return complete;
-    }
-
-    bool isDelta() const {
-        return !complete;
-    }
-    bool isRederive() const {
-        return rederive;
-    }
-    void setRederive(bool rederive) {
-        this->rederive = rederive;
-    }
     RecordDerivation* cloning() const override {
         VecOwn<Expression> newValues;
         for (auto& expr : expressions) {
@@ -110,7 +88,8 @@ public:
         for (auto& expr : varExprs) {
             newVarExprs.emplace_back(expr->cloning());
         }
-        return new RecordDerivation(relation, std::move(newValues), insert, complete, isRecursive, clauseID, clauseStr, std::move(newVarExprMap), std::move(newVarExprs), isRederive());
+        return new RecordDerivation(
+                relation, std::move(newValues), clauseID, clauseStr, std::move(newVarExprMap), std::move(newVarExprs));
     }
 
     void apply(const NodeMapper& map) override {
@@ -130,27 +109,11 @@ public:
         return (kind == NK_RecordDerivation);
     }
 
-
-// protected:
-    RecordDerivation(std::string rel, VecOwn<Expression> expressions, bool insert, bool complete, bool isRecursive,
-        std::size_t clauseID, std::string clauseStr, std::map<std::string, Own<ram::Expression>>&& varExprMap, std::vector<Own<ram::Expression>>&& varExprs, bool rederive) //
-            : Operation(NK_RecordDerivation), relation(std::move(rel)), expressions(std::move(expressions)),
-            clauseID(clauseID), clauseStr(std::move(clauseStr)), varExprMap(std::move(varExprMap)),
-                insert(insert), complete(complete), isRecursive(isRecursive), varExprs(std::move(varExprs)), rederive(rederive) {
-            // clauseID(std::move(clauseID)), clauseStr(std::move(clauseStr)) {
-        assert(allValidPtrs(expressions));
-        // TODO
-    }
-
     void print(std::ostream& os, int tabpos) const override {
         os << times(" ", tabpos);
         os << "RECORD TUPLE " << relation << "(" << join(expressions, ", ", print_deref<Own<Expression>>())
             << ") DERIVE BY RULE (" << std::to_string(clauseID) << ") " << clauseStr
-            << "WITH MAPPING " << "<placeholder>" << ", "
-            << (insert?"INSERT":"DELETE") << ", "
-            << (complete?"COMPLETE":"DELTA") << ", "
-            << (isRecursive?"Recursive":"Non-Recursive") << ", "
-            << std::endl;
+            << "WITH MAPPING " << "<placeholder>" << std::endl;
         for (auto& [var, expr] : varExprMap) {
             os << times(" ", tabpos + 2) << var << ": " << *expr << std::endl;
         }
@@ -159,9 +122,7 @@ public:
     bool equal(const Node& node) const override {
         const auto& other = asAssert<RecordDerivation>(node);
         return relation == other.relation && equal_targets(expressions, other.expressions) &&
-               clauseID == other.clauseID && clauseStr == other.clauseStr &&
-               insert == other.insert && complete == other.complete &&
-               isRecursive == other.isRecursive && rederive == other.rederive;
+               clauseID == other.clauseID && clauseStr == other.clauseStr;
         // TODO: equal mapping?
     }
 
@@ -185,11 +146,6 @@ public:
     const std::string clauseStr;
     std::map<std::string, Own<ram::Expression>> varExprMap;  // TODO
     std::vector<Own<ram::Expression>> varExprs; // TODO: remove this
-    bool insert; // true for insert, false for delete
-    bool complete; // true for complete, false for delta
-    bool isRecursive; // true for recursive, false for non-recursive
-    bool rederive = false;
 };
 
 }  // namespace souffle::ram
-

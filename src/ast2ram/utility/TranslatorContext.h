@@ -151,19 +151,12 @@ public:
     const ast::SipsMetric* getSipsMetric() const {
         return sipsMetric.get();
     }
-    const ast::SipsMetric* getRederiveSipsMetric() const {
-        return sipsMetricRederive.get();
-    }
 
     /** Translation strategy */
     Own<ram::Statement> translateNonRecursiveClause(
             const ast::Clause& clause, TranslationMode mode = DEFAULT) const;
-    Own<ram::Statement> translateNonRecursiveClauseDel(
-          const ast::Clause& clause, TranslationMode mode = DEFAULT) const;
-    Own<ram::Statement> translateNonRecursiveClauseIns(
-        const ast::Clause& clause, TranslationMode mode = DEFAULT) const;
     Own<ram::Statement> translateRecursiveClause(const ast::Clause& clause, const ast::RelationSet& scc,
-            std::size_t version, TranslationMode mode = DEFAULT, bool isDelete = false, bool isPrefill = false) const;
+            std::size_t version, TranslationMode mode = DEFAULT) const;
 
     Own<ram::Condition> translateConstraint(const ValueIndex& index, const ast::Literal* lit) const;
 
@@ -184,7 +177,6 @@ private:
     const ast::analysis::JoinSizeAnalysis* joinSizeAnalysis;
     std::map<const ast::Clause*, std::size_t> clauseNums;
     Own<ast::SipsMetric> sipsMetric;
-    Own<ast::SipsMetric> sipsMetricRederive;
     Own<TranslationStrategy> translationStrategy;
     std::map<const ast::Relation*, const ast::Relation*> deltaRel;
     ast::UnorderedQualifiedNameMap<const ast::Lattice*> lattices;
