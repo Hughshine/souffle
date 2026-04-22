@@ -36,9 +36,10 @@ Rewrite:
 
 ## Check Results
 
-Compare `facts.prob` from the two output directories. Side-channel and taint
-cases should match exactly. Symbolization uses the same tuple keys with
-probability tolerance `1e-8`.
+Compare `facts.prob` from the two output directories. The tuple keys must be
+identical. Probability values are compared with absolute tolerance `1e-8`;
+most cases match exactly, and the tolerance only covers rare decimal rounding
+boundaries in printed probabilities.
 
 Use JSON logs from `--logfile` to inspect timing stages.
 

@@ -90,33 +90,31 @@ Key sources:
 
 ## 3. Solve Probabilities
 
-The plain backend compiles the pruned graph directly into formulas and performs
-weighted model counting. This is the baseline path.
+The baseline solver compiles the pruned graph directly into a formula and runs
+weighted model counting.
 
-The optimized backend is enabled by `--rewrite`. The runtime chooses the
-concrete rewrite path from rule metadata:
+The optimized solver is enabled by `--rewrite`. The runtime inspects rule
+metadata and chooses a graph reduction strategy automatically:
 
-- Programs with probabilistic rules use implicit split rewrite. It keeps split
-  information in an overlay, applies local rewrites and compaction, and commits
-  only the residual graph needed by the solver.
-- Programs whose rules are deterministic use explicit graph rewrite with split
-  disabled. This avoids split overhead and keeps the component-wise backend
-  optimizations.
+- Programs with probabilistic rules keep split choices in a compact overlay
+  while local reductions and compaction shrink the graph that reaches exact
+  inference.
+- Programs whose rules are deterministic skip split bookkeeping and use direct
+  graph reduction.
 
-After rewrite, the backend decomposes the graph into components. Components with
-one random variable, zero-random-variable conjunction structure, or simple
-conjunction structure can bypass decision diagram construction. Remaining
-components are compiled to a decision diagram and solved by weighted model
-counting.
+The reduced graph is then decomposed into independent components. Components
+with no random variables, one random variable, or simple conjunction structure
+are solved directly. The remaining components are compiled to a decision
+diagram and solved by weighted model counting.
 
 Key sources:
 
 - [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): selects the
   rewrite implementation used by `--rewrite`.
-- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): BDD backend
-  pipeline, including component fast paths and WMC.
-- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): SDD backend
-  pipeline.
+- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): default
+  exact-inference path, including direct component solvers and WMC.
+- [src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp): alternate SDD
+  exact-inference path.
 - [src/include/souffle/problog/GraphRewriter.h](../src/include/souffle/problog/GraphRewriter.h):
   explicit SISO graph rewrite.
 - [src/problog/ImplicitSplitRewrite.cpp](../src/problog/ImplicitSplitRewrite.cpp):
@@ -128,10 +126,9 @@ Key sources:
 
 ## 4. Decision Diagram Interface
 
-The formula backend is parameterized by a decision diagram manager interface.
-This artifact ships BDD and SDD managers. The benchmark path uses BDD by
-default because the CUDD implementation has the most mature engineering support
-for this workload.
+The formula layer uses a decision diagram manager interface. This artifact ships
+BDD and SDD managers. The benchmark path uses BDD by default because the CUDD
+implementation is the best engineered option for this workload.
 
 Key sources:
 

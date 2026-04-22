@@ -43,8 +43,10 @@ For benchmark validation, run paired plain and rewrite commands from
 [docs/USAGE.md](USAGE.md) on cases from the companion `problog-benchmark`
 artifact. Compare the generated `facts.prob` files with the benchmark checker.
 
-Symbolization comparisons allow absolute probability error up to `1e-8`.
-Side-channel and taint comparisons should match exactly.
+All benchmark comparisons require the same output tuple keys. Probability
+values are compared with absolute tolerance `1e-8`; most cases match exactly,
+and the tolerance only covers rare decimal rounding boundaries in printed
+probabilities.
 
 ## Source Map
 

@@ -48,10 +48,10 @@ The generated binary writes tuple probabilities to `facts.prob` in
 
 ## Expected Comparisons
 
-Plain and rewrite runs must produce the same output tuple keys. Side-channel
-and taint probabilities should match exactly. Symbolization cases allow
-absolute probability error up to `1e-8`; this covers rare decimal rounding
-boundaries in printed probabilities.
+Plain and rewrite runs must produce the same output tuple keys. Probability
+values are compared with absolute tolerance `1e-8`; most cases match exactly,
+and the tolerance only covers rare decimal rounding boundaries in printed
+probabilities.
 
 ## Documentation
 

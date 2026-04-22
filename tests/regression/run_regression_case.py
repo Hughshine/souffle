@@ -23,6 +23,8 @@ from typing import Dict, List, Sequence, Tuple
 
 PROB_LINE_RE = re.compile(r"^\s*(.*?)\s*:\s*([+\-]?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)\s*$")
 CASES_ROOT = Path(__file__).resolve().parent / "cases"
+COMMAND_TIMEOUT_SECONDS = 300
+PROBABILITY_TOLERANCE = 1e-8
 
 
 class CaseFailure(RuntimeError):
@@ -38,7 +40,7 @@ def run_cmd(
     cwd: Path,
     *,
     stdin_text: str | None = None,
-    timeout: int = 240,
+    timeout: int = COMMAND_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
         list(cmd),
@@ -114,7 +116,7 @@ def parse_prob_file(path: Path) -> Dict[str, float]:
     return results
 
 
-def assert_prob_close(lhs: Path, rhs: Path, *, tol: float = 1e-9, label: str) -> None:
+def assert_prob_close(lhs: Path, rhs: Path, *, tol: float = PROBABILITY_TOLERANCE, label: str) -> None:
     left = parse_prob_file(lhs)
     right = parse_prob_file(rhs)
     left_keys = set(left.keys())
@@ -185,7 +187,7 @@ def run_exact_once(
     input_dir: Path,
     output_dir: Path,
     extra_args: Sequence[str] | None = None,
-    timeout: int = 180,
+    timeout: int = COMMAND_TIMEOUT_SECONDS,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [str(compute_bin), "-F", str(input_dir), "-D", str(output_dir)]
@@ -242,6 +244,67 @@ def find_stage(log_payload: dict, stage_name: str, *, label: str) -> dict:
     raise CaseFailure(f"{label}: missing debug stage {stage_name}")
 
 
+def assert_tuple_json(value: object, *, label: str) -> None:
+    if not isinstance(value, dict):
+        raise CaseFailure(f"{label}: tuple is not a JSON object")
+    rel = value.get("rel")
+    fields = value.get("fields")
+    fields_raw = value.get("fieldsRaw")
+    if not isinstance(rel, str):
+        raise CaseFailure(f"{label}: tuple relation name is not a string")
+    if not isinstance(fields, list):
+        raise CaseFailure(f"{label}: tuple fields are not an array")
+    if not isinstance(fields_raw, list):
+        raise CaseFailure(f"{label}: raw tuple fields are not an array")
+    if len(fields) != len(fields_raw):
+        raise CaseFailure(f"{label}: decoded and raw tuple fields have different arity")
+    for field in fields_raw:
+        if not isinstance(field, dict):
+            raise CaseFailure(f"{label}: raw tuple field is not a JSON object")
+
+
+def assert_valid_graph_dump_json(path: Path, *, label: str, require_nonempty: bool) -> dict:
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        raise CaseFailure(f"{label}: graph dump JSON is not an object")
+    facts = payload.get("facts")
+    rules = payload.get("rules")
+    if not isinstance(facts, list):
+        raise CaseFailure(f"{label}: graph dump JSON has no facts array")
+    if not isinstance(rules, list):
+        raise CaseFailure(f"{label}: graph dump JSON has no rules array")
+    if require_nonempty and not facts and not rules:
+        raise CaseFailure(f"{label}: graph dump JSON is empty")
+    for entry in facts:
+        if not isinstance(entry, dict) or not {"name", "tuple", "probability"}.issubset(entry):
+            raise CaseFailure(f"{label}: malformed fact entry in graph dump JSON")
+        if not isinstance(entry["name"], str):
+            raise CaseFailure(f"{label}: fact name is not a string in graph dump JSON")
+        assert_tuple_json(entry["tuple"], label=f"{label}: fact tuple")
+        if not isinstance(entry["probability"], (int, float)):
+            raise CaseFailure(f"{label}: fact probability is not numeric in graph dump JSON")
+    for entry in rules:
+        if not isinstance(entry, dict) or not {"head", "headTuple", "probability", "bodies"}.issubset(entry):
+            raise CaseFailure(f"{label}: malformed rule entry in graph dump JSON")
+        if not isinstance(entry["head"], str):
+            raise CaseFailure(f"{label}: rule head is not a string in graph dump JSON")
+        assert_tuple_json(entry["headTuple"], label=f"{label}: rule head tuple")
+        if not isinstance(entry["probability"], (int, float)):
+            raise CaseFailure(f"{label}: rule probability is not numeric in graph dump JSON")
+        bodies = entry.get("bodies")
+        if not isinstance(bodies, list):
+            raise CaseFailure(f"{label}: malformed rule bodies in graph dump JSON")
+        for body in bodies:
+            if not isinstance(body, dict) or not {"negation", "name", "tuple"}.issubset(body):
+                raise CaseFailure(f"{label}: malformed rule body in graph dump JSON")
+            if not isinstance(body["negation"], bool):
+                raise CaseFailure(f"{label}: rule body negation is not boolean in graph dump JSON")
+            if not isinstance(body["name"], str):
+                raise CaseFailure(f"{label}: rule body name is not a string in graph dump JSON")
+            assert_tuple_json(body["tuple"], label=f"{label}: rule body tuple")
+    return payload
+
+
 def assert_rewrite_executed(
     output_dir: Path,
     *,
@@ -250,9 +313,7 @@ def assert_rewrite_executed(
     label: str,
 ) -> None:
     rewrite_graph = output_dir / "rewrite_final.json"
-    graph_payload = read_json(rewrite_graph)
-    if not isinstance(graph_payload, dict):
-        raise CaseFailure(f"{label}: rewrite_final.json is not an object")
+    assert_valid_graph_dump_json(rewrite_graph, label=f"{label} rewrite_final.json", require_nonempty=True)
 
     log_matches = [
         path
@@ -286,21 +347,38 @@ def assert_rewrite_executed(
 
 
 def assert_valid_derivation_json(path: Path, *, label: str) -> None:
-    payload = read_json(path)
-    if not isinstance(payload, dict):
-        raise CaseFailure(f"{label}: derivation JSON is not an object")
+    payload = assert_valid_graph_dump_json(path, label=label, require_nonempty=True)
     facts = payload.get("facts")
     rules = payload.get("rules")
-    if not isinstance(facts, list) or not facts:
+    if not facts:
         raise CaseFailure(f"{label}: derivation JSON has no facts")
-    if not isinstance(rules, list) or not rules:
+    if not rules:
         raise CaseFailure(f"{label}: derivation JSON has no rules")
-    first_fact = facts[0]
-    if not isinstance(first_fact, dict) or "name" not in first_fact or "tuple" not in first_fact:
-        raise CaseFailure(f"{label}: malformed fact entry in derivation JSON")
-    first_rule = rules[0]
-    if not isinstance(first_rule, dict) or "head" not in first_rule or "bodies" not in first_rule:
-        raise CaseFailure(f"{label}: malformed rule entry in derivation JSON")
+
+
+def assert_valid_graph_stats_json(path: Path, *, label: str) -> None:
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        raise CaseFailure(f"{label}: graph stats JSON is not an object")
+    required_numeric = {
+        "nodes",
+        "edges",
+        "queries",
+        "avg_in_degree",
+        "max_in_degree",
+        "avg_out_degree",
+        "max_out_degree",
+        "avg_hyperedge_inputs",
+        "max_hyperedge_inputs",
+    }
+    missing = sorted(required_numeric - payload.keys())
+    if missing:
+        raise CaseFailure(f"{label}: graph stats JSON is missing keys {missing}")
+    for key in required_numeric:
+        if not isinstance(payload[key], (int, float)):
+            raise CaseFailure(f"{label}: graph stats field {key} is not numeric")
+    if payload["nodes"] <= 0:
+        raise CaseFailure(f"{label}: graph stats reports an empty graph")
 
 
 def assert_valid_dot(path: Path, *, label: str) -> None:
@@ -771,6 +849,12 @@ def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
     log_payload = assert_valid_debug_log(log_json)
     for stage_name in ("SEMINAIVE", "CREATE_GRAPH", "PRUNING", "FORWARD_COMPILATION", "IO_DUMP"):
         find_stage(log_payload, stage_name, label="dump contract debugger logs")
+
+    stats_jsons = sorted(out_exact.glob("graph-*.json"))
+    if not stats_jsons:
+        raise CaseFailure("dump contract graph stats: expected graph-*.json from --dumpstat")
+    for stats_json in stats_jsons:
+        assert_valid_graph_stats_json(stats_json, label=f"dump contract graph stats {stats_json.name}")
 
 
 CASES = {
