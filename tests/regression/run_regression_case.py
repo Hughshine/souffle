@@ -200,6 +200,117 @@ def assert_glob_nonempty(base_dir: Path, pattern: str, *, label: str) -> None:
         raise CaseFailure(f"{label}: expected files matching {base_dir / pattern}")
 
 
+def read_json(path: Path) -> object:
+    if not path.exists():
+        raise CaseFailure(f"missing JSON file: {path}")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as err:
+        raise CaseFailure(f"malformed JSON file: {path}\n{err}") from err
+
+
+def single_json_file(base_dir: Path, pattern: str, *, label: str) -> Path:
+    matches = sorted(base_dir.glob(pattern))
+    if len(matches) != 1:
+        raise CaseFailure(
+            f"{label}: expected exactly one file matching {base_dir / pattern}, found {len(matches)}"
+        )
+    return matches[0]
+
+
+def assert_valid_debug_log(path: Path) -> dict:
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        raise CaseFailure(f"debug log is not a JSON object: {path}")
+    turns = payload.get("turns")
+    if not isinstance(turns, list) or not turns:
+        raise CaseFailure(f"debug log has no turns: {path}")
+    first = turns[0]
+    if not isinstance(first, dict) or first.get("mode") != "EXACT":
+        raise CaseFailure(f"debug log first turn is not exact inference: {path}")
+    stages = first.get("stages")
+    if not isinstance(stages, list) or not stages:
+        raise CaseFailure(f"debug log has no stages: {path}")
+    return payload
+
+
+def find_stage(log_payload: dict, stage_name: str, *, label: str) -> dict:
+    for turn in log_payload.get("turns", []):
+        for stage in turn.get("stages", []):
+            if isinstance(stage, dict) and stage.get("name") == stage_name:
+                return stage
+    raise CaseFailure(f"{label}: missing debug stage {stage_name}")
+
+
+def assert_rewrite_executed(
+    output_dir: Path,
+    *,
+    expected_impl: str,
+    expected_probabilistic_rules: int | None = None,
+    label: str,
+) -> None:
+    rewrite_graph = output_dir / "rewrite_final.json"
+    graph_payload = read_json(rewrite_graph)
+    if not isinstance(graph_payload, dict):
+        raise CaseFailure(f"{label}: rewrite_final.json is not an object")
+
+    log_matches = [
+        path
+        for path in sorted(output_dir.glob("*.json"))
+        if path.name not in {"derivation.json", "rewrite_final.json"} and not path.name.startswith("graph-")
+    ]
+    if len(log_matches) != 1:
+        raise CaseFailure(f"{label}: expected exactly one runtime JSON log, found {len(log_matches)}")
+    log_path = log_matches[0]
+    log_payload = assert_valid_debug_log(log_path)
+    stage = find_stage(log_payload, "FC_WMC_HYBRID", label=label)
+    info = stage.get("info")
+    if not isinstance(info, dict):
+        raise CaseFailure(f"{label}: FC_WMC_HYBRID stage has no info map")
+    if info.get("rewrite_impl") != expected_impl:
+        raise CaseFailure(
+            f"{label}: rewrite dispatcher selected the wrong implementation.\n"
+            f"expected={expected_impl} actual={info.get('rewrite_impl')}"
+        )
+    if info.get("rewrite_strategy") != "default":
+        raise CaseFailure(f"{label}: unexpected rewrite strategy {info.get('rewrite_strategy')}")
+    if "rewrite_dispatch_total_rules" not in info or "rewrite_reason" not in info:
+        raise CaseFailure(f"{label}: rewrite dispatch metadata is incomplete: {sorted(info.keys())}")
+    if expected_probabilistic_rules is not None:
+        actual = info.get("rewrite_dispatch_probabilistic_rules")
+        if actual != str(expected_probabilistic_rules):
+            raise CaseFailure(
+                f"{label}: unexpected probabilistic-rule count.\n"
+                f"expected={expected_probabilistic_rules} actual={actual}"
+            )
+
+
+def assert_valid_derivation_json(path: Path, *, label: str) -> None:
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        raise CaseFailure(f"{label}: derivation JSON is not an object")
+    facts = payload.get("facts")
+    rules = payload.get("rules")
+    if not isinstance(facts, list) or not facts:
+        raise CaseFailure(f"{label}: derivation JSON has no facts")
+    if not isinstance(rules, list) or not rules:
+        raise CaseFailure(f"{label}: derivation JSON has no rules")
+    first_fact = facts[0]
+    if not isinstance(first_fact, dict) or "name" not in first_fact or "tuple" not in first_fact:
+        raise CaseFailure(f"{label}: malformed fact entry in derivation JSON")
+    first_rule = rules[0]
+    if not isinstance(first_rule, dict) or "head" not in first_rule or "bodies" not in first_rule:
+        raise CaseFailure(f"{label}: malformed rule entry in derivation JSON")
+
+
+def assert_valid_dot(path: Path, *, label: str) -> None:
+    if not path.exists():
+        raise CaseFailure(f"{label}: missing DOT file {path}")
+    text = path.read_text(encoding="utf-8")
+    if "digraph" not in text or "->" not in text:
+        raise CaseFailure(f"{label}: DOT file does not look like a non-empty graph: {path}")
+
+
 def case_smoke_exact_inference(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("smoke_exact_inference", work_root)
     input_dir = case_dir / "input"
@@ -230,9 +341,15 @@ def case_rewrite_dispatch_equiv(souffle_bin: Path, work_root: Path) -> None:
         compute_bin=compute_bin,
         input_dir=in_dir,
         output_dir=out_rewrite,
-        extra_args=["--rewrite"],
+        extra_args=["--rewrite", "--dumpjson", "--logfile", "rewrite-dispatch"],
     )
     assert_prob_close(out_rewrite / "facts.prob", base_prob, label="rewrite_dispatch_equiv")
+    assert_rewrite_executed(
+        out_rewrite,
+        expected_impl="graph_rewrite",
+        expected_probabilistic_rules=0,
+        label="rewrite_dispatch_equiv",
+    )
 
 
 def case_exact_det_modes(souffle_bin: Path, work_root: Path) -> None:
@@ -261,6 +378,8 @@ def run_language_example_case(
     *,
     case_id: str,
     expected: Dict[str, float],
+    expected_rewrite_impl: str,
+    expected_probabilistic_rules: int,
     souffle_bin: Path,
     work_root: Path,
 ) -> None:
@@ -297,12 +416,16 @@ def run_language_example_case(
                 f"{case_id}: unexpected plain probability for documented example.\n"
                 f"tuple={key} expected={value:.12g} actual={probs[key]:.12g}"
             )
-    if not (out_plain / "derivation.json").exists():
-        raise CaseFailure(f"{case_id}: plain run did not produce derivation.json")
-    if not (out_rewrite / "derivation.json").exists():
-        raise CaseFailure(f"{case_id}: rewrite run did not produce derivation.json")
+    assert_valid_derivation_json(out_plain / "derivation.json", label=f"{case_id} plain")
+    assert_valid_derivation_json(out_rewrite / "derivation.json", label=f"{case_id} rewrite")
 
     assert_prob_close(rewrite_prob, plain_prob, tol=1e-8, label=f"{case_id}_rewrite_equivalence")
+    assert_rewrite_executed(
+        out_rewrite,
+        expected_impl=expected_rewrite_impl,
+        expected_probabilistic_rules=expected_probabilistic_rules,
+        label=f"{case_id}_rewrite",
+    )
 
 
 def case_language_side_channel_mini(souffle_bin: Path, work_root: Path) -> None:
@@ -312,6 +435,8 @@ def case_language_side_channel_mini(souffle_bin: Path, work_root: Path) -> None:
             'explained("cache-hit")': 0.6552,
             'explained("cache-miss")': 0.153,
         },
+        expected_rewrite_impl="graph_rewrite",
+        expected_probabilistic_rules=0,
         souffle_bin=souffle_bin,
         work_root=work_root,
     )
@@ -324,6 +449,8 @@ def case_language_taint_mini(souffle_bin: Path, work_root: Path) -> None:
             'alarm("cache")': 0.2904,
             'alarm("network")': 0.26129241,
         },
+        expected_rewrite_impl="implicit_split",
+        expected_probabilistic_rules=1,
         souffle_bin=souffle_bin,
         work_root=work_root,
     )
@@ -336,6 +463,8 @@ def case_language_symbolization_mini(souffle_bin: Path, work_root: Path) -> None
             'class_total_bytes("other",10)': 0.51,
             'class_total_bytes("widget",15)': 0.435666,
         },
+        expected_rewrite_impl="graph_rewrite",
+        expected_probabilistic_rules=0,
         souffle_bin=souffle_bin,
         work_root=work_root,
     )
@@ -360,7 +489,7 @@ def case_problog_string_roundtrip(souffle_bin: Path, work_root: Path) -> None:
         )
     if not math.isclose(probs[expected_key], 1.0, rel_tol=0.0, abs_tol=1e-12):
         raise CaseFailure(
-            "problog_string_roundtrip: expected evidence-conditioned query probability 1.0.\n"
+            "problog_string_roundtrip: expected conditioned query probability 1.0.\n"
             f"value={probs[expected_key]}"
         )
 
@@ -631,12 +760,17 @@ def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
     expected_dot_before = out_exact / "before_prune.dot"
     expected_dot_after = out_exact / "after_prune.dot"
     expected_prob = out_exact / "facts.prob"
-    for expected in (expected_dot_before, expected_dot_after, expected_prob):
-        if not expected.exists():
-            raise CaseFailure(f"dump contract: missing expected artifact {expected}")
+    assert_valid_dot(expected_dot_before, label="dump contract before_prune")
+    assert_valid_dot(expected_dot_after, label="dump contract after_prune")
+    if not parse_prob_file(expected_prob):
+        raise CaseFailure(f"dump contract: empty probability output {expected_prob}")
 
-    assert_glob_nonempty(out_exact, "derivation*.json", label="dump contract json after prune")
-    assert_glob_nonempty(out_exact, "reglog_*.json", label="dump contract debugger logs")
+    derivation_json = single_json_file(out_exact, "derivation*.json", label="dump contract derivation JSON")
+    assert_valid_derivation_json(derivation_json, label="dump contract derivation JSON")
+    log_json = single_json_file(out_exact, "reglog_*.json", label="dump contract debugger logs")
+    log_payload = assert_valid_debug_log(log_json)
+    for stage_name in ("SEMINAIVE", "CREATE_GRAPH", "PRUNING", "FORWARD_COMPILATION", "IO_DUMP"):
+        find_stage(log_payload, stage_name, label="dump contract debugger logs")
 
 
 CASES = {

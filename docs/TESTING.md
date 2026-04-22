@@ -32,7 +32,7 @@ cmake --build build --target check-regression
 - Language examples that mirror side-channel, taint, and symbolization shapes.
 - Deterministic-relation analysis through `--det-opt`.
 - Rewrite dispatcher equivalence on maintained cases.
-- Output and JSON log contracts.
+- Output, JSON log, DOT dump, and rewrite-dispatch contracts.
 
 The regression runner uses the compiler built in `build/src/souffle`, so it
 does not depend on a system Souffle binary.

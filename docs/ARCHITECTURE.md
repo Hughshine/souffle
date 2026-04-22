@@ -1,11 +1,20 @@
 # Architecture
 
-This artifact evaluates probabilistic Datalog programs by extending Souffle's
-compiled execution path. The two implementation contributions are:
+This artifact evaluates probabilistic Datalog programs. The evaluator supplies a
+`.dl` program, a fact directory, and optional `.prob` files. The compiler
+produces a benchmark binary. That binary writes output tuple probabilities to
+`facts.prob`.
+
+The public comparison is plain exact inference versus exact inference with
+`--rewrite`. Both runs should produce the same tuple keys. The optimized run
+uses graph rewrite and component-level shortcuts before invoking the decision
+diagram backend.
+
+The two implementation contributions are:
 
 1. Faster derivation graph generation. The generated binary records compact rule
    applications while Souffle's semi-naive evaluator runs, then constructs only
-   the graph needed for requested outputs and evidence.
+   the graph needed for requested outputs.
 2. Faster probabilistic solving. The backend can either compile the graph
    directly to a decision diagram or first rewrite and decompose the graph so
    weighted model counting runs on smaller or simpler components.
@@ -19,7 +28,7 @@ pipeline, including component checks, alias resolution, relation dependency
 analysis, join planning, and other Datalog optimizations before C++ emission.
 
 The probabilistic extension adds generated metadata for exact inference: rule
-probabilities, query/output relations, evidence relations, relation SCCs, and
+probabilities, query/output relations, relation dependency components, and
 deterministic/probabilistic relation classification used by `--det-opt`.
 
 Key sources:
@@ -64,9 +73,9 @@ probabilities for probabilistic facts.
 
 The graph construction is compact because it consumes recorded rule
 applications instead of reconstructing derivations by re-running joins. The
-construction step also restores aggregate witness edges, attaches queries and
-evidence, and records graph statistics. The pruning step keeps only nodes and
-edges that can affect requested outputs or evidence.
+construction step also restores aggregate witness edges, attaches requested
+queries, and records graph statistics. The pruning step keeps only nodes and
+edges that can affect requested outputs.
 
 Key sources:
 
@@ -77,7 +86,7 @@ Key sources:
 - [src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h):
   indexes aggregate witnesses during graph construction.
 - [src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h):
-  prunes the graph to output and evidence requirements.
+  prunes the graph to output requirements.
 
 ## 3. Solve Probabilities
 

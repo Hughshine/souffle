@@ -6,7 +6,7 @@ program before running the larger `problog-benchmark` cases.
 
 The examples below are also regression tests. CTest compiles each program,
 runs exact inference with and without `--rewrite`, and checks that both runs
-produce the same output tuple probabilities.
+produce the same output tuple keys and probabilities within `1e-8`.
 
 ## Files
 
@@ -208,10 +208,10 @@ over the three widget objects. The output tuple
 `class_total_bytes("other",10)` means the same thing for class `other`; its
 total is the single object size `10`.
 
-The current aggregate support records aggregate witnesses as dependencies of
-the derived total. In this example, the `widget` total depends on all three
-widget size facts, and the `other` total depends on the one `other` size
-fact:
+For the single-relation aggregate pattern used here, the derived total depends
+on the object-size facts that contributed to the sum. In this example, the
+`widget` total depends on all three widget size facts, and the `other` total
+depends on the one `other` size fact:
 
 ```text
 class_total_bytes("widget",15) = 0.82 * 0.77 * 0.69 = 0.435666
@@ -223,9 +223,8 @@ artifact derived the fact "the selected widget-class objects have total byte
 size 15", and this derived fact depends on the three probabilistic size facts
 for `obj-a`, `obj-b`, and `obj-c`. This example mainly illustrates
 symbol-valued facts, numeric attributes, string constants, and object-property
-joins. The aggregate is included only as the supported single-relation pattern
-used by the current pipeline; it is not a complete specification of aggregate
-semantics.
+joins. The aggregate is included because this single-relation pattern appears
+in the benchmark workload.
 
 ## Run the Examples
 

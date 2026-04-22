@@ -187,21 +187,10 @@ bison_target(parser parser/parser.yy ${CMAKE_CURRENT_BINARY_DIR}/parser/parser.c
 add_flex_bison_dependency(scanner parser)
 
 
-if (MSVC)
-  set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/parser/scanner.cc PROPERTIES
-             COMPILE_FLAGS "/wd4005 /wd4996")
-  set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/parser/parser.cc PROPERTIES
-             COMPILE_FLAGS "/wd4005 /wd26819")
-elseif (EMSCRIPTEN)
-  set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/parser/parser.cc PROPERTIES
-             COMPILE_FLAGS "-Wno-error=unused-but-set-variable")
-else ()
-  # OSX compiler doesn't recognise `(void)var;` ideom
-  set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/parser/scanner.cc PROPERTIES
-             COMPILE_FLAGS "-Wno-error=unused-parameter")
-  set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/parser/parser.cc PROPERTIES
-             COMPILE_FLAGS "-Wno-error=unused-but-set-variable")
-endif ()
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/parser/scanner.cc PROPERTIES
+           COMPILE_FLAGS "-Wno-error=unused-parameter")
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/parser/parser.cc PROPERTIES
+           COMPILE_FLAGS "-Wno-error=unused-but-set-variable")
 
 # --------------------------------------------------
 # Souffle library
@@ -220,9 +209,6 @@ target_include_directories(libsouffle
                                   "${CMAKE_CURRENT_SOURCE_DIR}"
                                   "${CMAKE_CURRENT_BINARY_DIR}"
                            )
-
-# install souffle directory
-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/souffle DESTINATION include)
 
 add_library(compiled STATIC
   Derivation.cpp
@@ -246,11 +232,7 @@ set_target_properties(libsouffle PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(compiled PROPERTIES CXX_EXTENSIONS OFF)
 set_target_properties(compiled PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-if (NOT MSVC)
-  target_compile_options(libsouffle PUBLIC -Wall -Wextra -fwrapv)
-else ()
-  target_compile_options(libsouffle PUBLIC /W3)
-endif ()
+target_compile_options(libsouffle PUBLIC -Wall -Wextra -fwrapv)
 
 target_compile_options(compiled PUBLIC "")
 
@@ -330,7 +312,6 @@ add_executable(souffle
                souffle.cpp)
 target_link_libraries(souffle libsouffle)
 add_dependencies(souffle compiled)
-install(TARGETS souffle DESTINATION bin)
 
 # --------------------------------------------------
 # Exact-inference helper libraries
@@ -346,81 +327,6 @@ endif ()
 if (SDDXX_LIBRARY)
   list(APPEND SOUFFLE_PROBLOG_PIPELINE_LIBS ${SDDXX_LIBRARY})
 endif ()
-
-if (EMSCRIPTEN)
-target_link_libraries(souffle -sMODULARIZE=1
-                      -s'EXPORTED_RUNTIME_METHODS=["FS"]' -sEXPORT_NAME="SOUFFLE")
-endif()
-
-# Copy the dlls in the same directory as Souffle so that they will
-# be immediately found by the operating system.
-
-if (SOUFFLE_USE_SQLITE)
-  add_custom_command(TARGET souffle POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    ${SQLite3_LIBRARY}
-    $<TARGET_FILE_DIR:souffle>)
-  if (WIN32)
-    cmake_path(GET SQLite3_LIBRARY PARENT_PATH SQLite3_LIBRARY_DIR)
-    add_custom_command(TARGET souffle POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${SQLite3_LIBRARY_DIR}/../bin/sqlite3.dll
-      $<TARGET_FILE_DIR:souffle>)
-  endif ()
-endif ()
-
-if (SOUFFLE_USE_ZLIB)
-add_custom_command(TARGET souffle POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-  ${ZLIB_LIBRARY_RELEASE}
-  $<TARGET_FILE_DIR:souffle>)
-endif ()
-
-if (MSVC)
-  target_compile_options(libsouffle PUBLIC /Zc:__cplusplus)
-  target_compile_options(compiled PUBLIC /Zc:__cplusplus)
-
-  target_compile_options(libsouffle PUBLIC /bigobj)
-  target_compile_options(compiled PUBLIC /bigobj)
-
-  target_compile_options(libsouffle PUBLIC /wd5105)
-  target_compile_options(compiled PUBLIC /wd5105)
-
-  target_compile_options(libsouffle PUBLIC /wd6326)
-  target_compile_options(compiled PUBLIC /wd6326)
-
-  target_compile_options(libsouffle PUBLIC /wd26110)
-  target_compile_options(libsouffle PUBLIC /wd4065 /wd4200)
-
-  # to prevent old versions of Flex from redeclaring int types
-  target_compile_definitions(libsouffle PRIVATE __STDC_LIMIT_MACROS)
-
-  target_compile_definitions(libsouffle PUBLIC _CRT_SECURE_NO_WARNINGS)
-
-  if (NOT (MSVC_VERSION LESS 1910))
-    target_compile_options(libsouffle PUBLIC /permissive-)
-    target_compile_options(compiled PUBLIC /permissive-)
-  endif()
-
-  target_compile_options(libsouffle PUBLIC /Zc:preprocessor)
-  target_compile_options(compiled PUBLIC /Zc:preprocessor)
-
-  target_compile_options(libsouffle PUBLIC /EHsc)
-  target_compile_options(compiled PUBLIC /EHsc)
-
-  target_compile_definitions(libsouffle PUBLIC USE_CUSTOM_GETOPTLONG)
-  target_compile_definitions(compiled PUBLIC USE_CUSTOM_GETOPTLONG)
-endif (MSVC)
-
-if (APPLE)
-  if ("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "arm64")
-    # work around a known issue with xcode15 linker
-    # c++ exceptions handling is broken otherwise
-    set(CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} -Wl,-ld_classic")
-    target_link_options(libsouffle PUBLIC "-ld_classic")
-    target_link_options(compiled PUBLIC "-ld_classic")
-  endif()
-endif()
 
 # --------------------------------------------------
 # Substitutions for souffle-compile.py
@@ -484,37 +390,17 @@ endif()
 
 list(INSERT SOUFFLE_COMPILED_LIBS 0 "$<TARGET_FILE:compiled>")
 
-if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  # using Python3 PEP 3101 Format String:
-  set(OUTNAME_FMT "-o {}")
-  set(LIBDIR_FMT "-L{}")
-  set(LIBNAME_FMT "-l{}")
-  set(RPATH_FMT "-Wl,-rpath,{}")
-  set(EXE_EXTENSION "")
-  set(OS_PATH_DELIMITER ":")
-elseif (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-  # using Python3 PEP 3101 Format String:
-  set(OUTNAME_FMT "/Fe:{}")
-  set(LIBDIR_FMT "/libpath:{}")
-  set(LIBNAME_FMT "{}.lib")
-  set(RPATH_FMT "")
-  set(EXE_EXTENSION ".exe")
-  set(OS_PATH_DELIMITER ";")
+if (NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  message(FATAL_ERROR "This artifact CMake configuration supports GNU and Clang compilers.")
 endif ()
 
-if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-  ## Is is very important that the Runtime Library match between
-  ## the Souffle compiled program and any dynamically loaded functor library.
-  if (CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "^MultiThreaded(Debug)?$")
-    # static multi-threaded library
-    string(APPEND SOUFFLE_COMPILED_DEBUG_CXX_FLAGS " /MTd")
-    string(APPEND SOUFFLE_COMPILED_RELEASE_CXX_FLAGS " /MT")
-  else ()
-    # dynamic multi-threaded library
-    string(APPEND SOUFFLE_COMPILED_DEBUG_CXX_FLAGS " /MDd")
-    string(APPEND SOUFFLE_COMPILED_RELEASE_CXX_FLAGS " /MD")
-  endif ()
-endif ()
+# Python3 PEP 3101 format strings used by souffle-compile.py.
+set(OUTNAME_FMT "-o {}")
+set(LIBDIR_FMT "-L{}")
+set(LIBNAME_FMT "-l{}")
+set(RPATH_FMT "-Wl,-rpath,{}")
+set(EXE_EXTENSION "")
+set(OS_PATH_DELIMITER ":")
 
 list(JOIN SOUFFLE_COMPILED_OPTS " " SOUFFLE_COMPILED_CXX_OPTIONS)
 
@@ -522,10 +408,6 @@ list(JOIN SOUFFLE_COMPILED_LIBS " " SOUFFLE_COMPILED_LINK_OPTIONS1)
 list(JOIN SOUFFLE_COMPILED_LINK_OPTS " " SOUFFLE_COMPILED_LINK_OPTIONS2)
 set(SOUFFLE_COMPILED_LINK_OPTIONS "")
 string(APPEND SOUFFLE_COMPILED_LINK_OPTIONS " ${SOUFFLE_COMPILED_LINK_OPTIONS1}" " ${SOUFFLE_COMPILED_LINK_OPTIONS2}")
-
-if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-  set(SOUFFLE_COMPILED_LINK_OPTIONS "/link ${SOUFFLE_COMPILED_LINK_OPTIONS}")
-endif ()
 
 list(JOIN SOUFFLE_COMPILED_RPATHS "${OS_PATH_DELIMITER}" SOUFFLE_COMPILED_RPATH_LIST)
 
@@ -544,7 +426,6 @@ JSON_DATA_TEXT = \"\"\"{
   \"compiler\": \"${SOUFFLE_COMPILED_CXX_COMPILER}\",
   \"compiler_id\": \"${SOUFFLE_COMPILED_CXX_COMPILER_ID}\",
   \"compiler_version\": \"${SOUFFLE_COMPILED_CXX_COMPILER_VERSION}\",
-  \"msvc_version\": \"${MSVC_VERSION}\",
   \"includes\": \"${SOUFFLE_COMPILED_INCLUDES}\",
   \"std_flag\": \"${SOUFFLE_COMPILED_CXX_STANDARD}\",
   \"cxx_flags\": \"${SOUFFLE_COMPILED_CXX_FLAGS}\",
@@ -567,6 +448,5 @@ ${TEMPLATE}
 ")
 
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/souffle-compile.py" CONTENT "${SOUFFLE_COMPILE_PY}")
-install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/souffle-compile.py DESTINATION bin)
 
 # ---------------------------------------

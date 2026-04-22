@@ -6,7 +6,6 @@ if not JSON_DATA_TEXT:
       "compiler": "/usr/bin/c++",
       "compiler_id": "GNU",
       "compiler_version": "8.3.0",
-      "msvc_version": "",
       "includes": "-I/usr/include",
       "std_flag": "-std=c++17",
       "cxx_flags": " -fopenmp",
