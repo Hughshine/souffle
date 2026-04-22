@@ -333,8 +333,8 @@ def case_language_symbolization_mini(souffle_bin: Path, work_root: Path) -> None
     run_language_example_case(
         case_id="language_symbolization_mini",
         expected={
-            'object_total("other",10)': 0.51,
-            'object_total("widget",15)': 0.435666,
+            'class_total_bytes("other",10)': 0.51,
+            'class_total_bytes("widget",15)': 0.435666,
         },
         souffle_bin=souffle_bin,
         work_root=work_root,

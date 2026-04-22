@@ -1,5 +1,5 @@
-.decl data_point(obj:symbol, points:number)
-.input data_point
+.decl object_size(obj:symbol, bytes:number)
+.input object_size
 
 .decl object_kind(obj:symbol, kind:symbol)
 .input object_kind
@@ -8,15 +8,15 @@
 selected("widget").
 selected("other").
 
-.decl selected_point(kind:symbol, points:number)
-selected_point(Kind, Points) :-
-    data_point(Obj, Points),
+.decl class_object_size(kind:symbol, bytes:number)
+class_object_size(Kind, Bytes) :-
+    object_size(Obj, Bytes),
     object_kind(Obj, Kind).
 
-.decl object_total(kind:symbol, total:number)
-.output object_total
-object_total(Kind, Total) :-
+.decl class_total_bytes(kind:symbol, total_bytes:number)
+.output class_total_bytes
+class_total_bytes(Kind, TotalBytes) :-
     selected(Kind),
-    Total = sum Points : { selected_point(Kind, Points) }.
+    TotalBytes = sum Bytes : { class_object_size(Kind, Bytes) }.
 
-query(object_total(_, _)).
+query(class_total_bytes(_, _)).

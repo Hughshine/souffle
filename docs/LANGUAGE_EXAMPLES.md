@@ -26,17 +26,32 @@ as deterministic.
 The examples use `_` in `query(...)`. `_` is an unnamed wildcard variable. A
 query such as `query(explained(_)).` asks for every tuple in the one-column
 relation `explained`. A two-column relation uses one wildcard per column, for
-example `query(object_total(_, _)).`.
+example `query(class_total_bytes(_, _)).`.
+
+The output file `facts.prob` should be read as a list of probabilistic answers.
+For example, a line such as
+
+```text
+class_total_bytes("widget",15) : 0.435666
+```
+
+means: the derived fact `class_total_bytes("widget",15)` is true with
+probability `0.435666`. The relation name tells the predicate being answered.
+The tuple fields give the values in that answer. The number after `:` is the
+probability computed by exact inference.
 
 ## Mini Side-Channel Case
 
 Source: [../tests/regression/cases/language_side_channel_mini/compute.dl](../tests/regression/cases/language_side_channel_mini/compute.dl)
 
-This program is a two-event toy model. A hidden value may be `admin` or `guest`.
-If the hidden value is `admin`, the deterministic table `mapping` says that the
-observable event is `cache-hit`. If the hidden value is `guest`, the event is
-`cache-miss`. A second probabilistic relation, `monitor`, says whether that
-event is visible to the observer.
+This program answers the question: which observable events are explained by a
+possible hidden value?
+
+The toy setting has two possible hidden-value hypotheses: `admin` and `guest`.
+They are represented as probabilistic facts. The deterministic table `mapping`
+says what observation each hidden value would produce. `admin` maps to
+`cache-hit`; `guest` maps to `cache-miss`. A second probabilistic relation,
+`monitor`, says whether each observation is visible to the observer.
 
 The input probabilities are:
 
@@ -58,12 +73,17 @@ query(explained(_)).
 ```
 
 The query asks for the whole `explained` relation, not one selected tuple. The
-runtime therefore reports both possible observations:
+runtime therefore reports every observation that can be explained:
 
 ```text
 explained("cache-hit")  = 0.72 * 0.91 = 0.6552
 explained("cache-miss") = 0.18 * 0.85 = 0.153
 ```
+
+The first output tuple means: "`cache-hit` is explained by some possible hidden
+value and is visible to the observer." Its probability is the probability that
+`secret("admin")` and `monitor("cache-hit")` are both true. The second tuple has
+the same meaning for `cache-miss` and `guest`.
 
 This shape resembles the side-channel benchmark at a small scale:
 probabilistic inputs feed deterministic propagation rules, then the solver
@@ -73,11 +93,12 @@ computes probabilities for all requested output tuples.
 
 Source: [../tests/regression/cases/language_taint_mini/compute.dl](../tests/regression/cases/language_taint_mini/compute.dl)
 
-This program is a small data-flow analysis. A value is tainted when it starts
-from a probabilistic source or when taint flows into it along a probabilistic
-edge. A deterministic `sanitizer` relation blocks propagation into selected
-nodes. A deterministic `sink` relation marks the nodes that should raise an
-alarm if they become tainted.
+This program answers the question: which sink values may raise a taint alarm?
+
+The toy setting has values such as `user`, `cache`, `log`, and `network`.
+`source(X)` means value `X` may start tainted. `flow(X,Y)` means taint may flow
+from `X` to `Y`. `sanitizer(Y)` means taint cannot propagate into `Y`.
+`sink(Y)` marks a value that should be reported if it becomes tainted.
 
 The relevant input probabilities are:
 
@@ -92,9 +113,10 @@ flow("log","network") = 0.64
 
 `parser` is listed in `sanitizer.facts`, so the path
 `user -> parser -> network` is blocked even though the corresponding flow facts
-exist. The recursive rule below computes transitive taint flow through the
-remaining graph. The probabilistic rule says that a tainted sink raises an
-alarm with probability `0.80`.
+exist. The first rule marks probabilistic sources as tainted. The recursive
+rule computes transitive taint flow through the remaining graph. The
+probabilistic rule says that a tainted sink raises an alarm with probability
+`0.80`.
 
 ```souffle
 tainted(Value) :- source(Value).
@@ -116,6 +138,13 @@ alarm("network") = 0.80 * (1 - (1 - 0.55*0.66*0.74)
                  = 0.26129241
 ```
 
+The first tuple means: "`cache` is a sink and the alarm for `cache` fires." The
+probability multiplies the chance that `user` starts tainted, the chance that
+taint flows from `user` to `cache`, and the probabilistic alarm rule. The second
+tuple means the same thing for `network`; its probability first combines two
+ways for `network` to become tainted, then multiplies by the alarm-rule
+probability.
+
 The example covers recursion, deterministic negation, probabilistic facts, and
 a probabilistic rule. This shape exercises the rewrite path used for workloads
 whose rules have probabilities.
@@ -124,51 +153,79 @@ whose rules have probabilities.
 
 Source: [../tests/regression/cases/language_symbolization_mini/compute.dl](../tests/regression/cases/language_symbolization_mini/compute.dl)
 
-This program mirrors the symbolization benchmark style: input facts describe
-objects, object classes, and numeric attributes. A first rule joins symbolic
-object names with their numeric points. A second rule computes the requested
-total for each selected class:
+This program answers the question: what total byte size is derived for each
+selected object class?
 
-The input facts say that `obj-a`, `obj-b`, and `obj-c` are widgets with point
-values `4`, `6`, and `5`. `obj-noise` belongs to class `other` and has point
-value `10`. The `data_point` facts are probabilistic:
+The toy setting has objects such as `obj-a`, `obj-b`, and `obj-c`. Each object
+has a class, such as `widget` or `other`. Each object also has a byte size.
+This shape mirrors the symbolization benchmark style: input facts describe
+program objects, object classes, and numeric attributes.
+
+The input facts say that `obj-a`, `obj-b`, and `obj-c` are widgets with byte
+sizes `4`, `6`, and `5`. `obj-noise` belongs to class `other` and has byte size
+`10`. The `object_size` facts are probabilistic:
 
 ```text
-data_point("obj-a",4)     = 0.82
-data_point("obj-b",6)     = 0.77
-data_point("obj-c",5)     = 0.69
-data_point("obj-noise",10)= 0.51
+object_size("obj-a",4)      = 0.82
+object_size("obj-b",6)      = 0.77
+object_size("obj-c",5)      = 0.69
+object_size("obj-noise",10) = 0.51
 ```
+
+`object_kind` facts are deterministic. They assign each object to a class:
+
+```text
+object_kind("obj-a","widget")
+object_kind("obj-b","widget")
+object_kind("obj-c","widget")
+object_kind("obj-noise","other")
+```
+
+The first rule joins the object-class table with the object-size table. It
+turns object-level size facts into class-level size facts, such as
+`class_object_size("widget",4)`. The second rule derives the total byte size
+for each selected class.
 
 ```souffle
 selected("widget").
 selected("other").
 
-selected_point(Kind, Points) :-
-    data_point(Obj, Points),
+class_object_size(Kind, Bytes) :-
+    object_size(Obj, Bytes),
     object_kind(Obj, Kind).
 
-object_total(Kind, Total) :-
+class_total_bytes(Kind, TotalBytes) :-
     selected(Kind),
-    Total = sum Points : { selected_point(Kind, Points) }.
+    TotalBytes = sum Bytes : { class_object_size(Kind, Bytes) }.
 
-query(object_total(_, _)).
+query(class_total_bytes(_, _)).
 ```
 
-The query asks for the whole `object_total` relation. The current aggregate
-support records the aggregate witnesses as dependencies of the derived total.
-For this example, the `widget` total depends on all three widget point facts,
-and the `other` total depends on the one `other` point fact:
+The query asks for the whole `class_total_bytes` relation. The output tuple
+`class_total_bytes("widget",15)` means: for class `widget`, the derived total
+byte size is `15`. The value `15` comes from the deterministic sum `4 + 6 + 5`
+over the three widget objects. The output tuple
+`class_total_bytes("other",10)` means the same thing for class `other`; its
+total is the single object size `10`.
+
+The current aggregate support records aggregate witnesses as dependencies of
+the derived total. In this example, the `widget` total depends on all three
+widget size facts, and the `other` total depends on the one `other` size
+fact:
 
 ```text
-object_total("widget",15) = 0.82 * 0.77 * 0.69 = 0.435666
-object_total("other",10)  = 0.51
+class_total_bytes("widget",15) = 0.82 * 0.77 * 0.69 = 0.435666
+class_total_bytes("other",10)  = 0.51
 ```
 
-This example mainly illustrates symbol-valued facts, numeric attributes,
-string constants, and object-property joins. The aggregate is included only as
-the supported single-relation pattern used by the current pipeline; it is not a
-complete specification of aggregate semantics.
+Thus `class_total_bytes("widget",15) : 0.435666` should be read as: the
+artifact derived the fact "the selected widget-class objects have total byte
+size 15", and this derived fact depends on the three probabilistic size facts
+for `obj-a`, `obj-b`, and `obj-c`. This example mainly illustrates
+symbol-valued facts, numeric attributes, string constants, and object-property
+joins. The aggregate is included only as the supported single-relation pattern
+used by the current pipeline; it is not a complete specification of aggregate
+semantics.
 
 ## Run the Examples
 
