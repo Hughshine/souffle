@@ -40,7 +40,8 @@ struct GraphRewriteStats {
     size_t totalDetectedRegionNodes = 0;  ///< Total node count summed over detected SISO regions
     size_t totalDetectedRegionEdges = 0;  ///< Total edge count summed over detected SISO regions
     size_t numRegionsRewritten = 0;    ///< Total SISO regions rewritten
-    size_t numGeneralRegionsRewritten = 0;  ///< Regions summarized via general BDD rewrite
+    size_t numGeneralRegionsRewritten = 0;  ///< Regions summarized via general rewrite
+    size_t numFastGeneralRegions = 0;       ///< General regions summarized by conjunctive fast path
     size_t numNodesRemoved = 0;        ///< Internal nodes removed from the view
     size_t numEdgesRemoved = 0;        ///< Internal edges removed from the view
     size_t numEdgesAdded = 0;          ///< Synthetic edges added
@@ -53,6 +54,7 @@ struct GraphRewriteStats {
     double totalBddManagerInitMs = 0.0;  ///< Total CUDD manager init time attributed to rewrite
     double totalBddBuildMs = 0.0;      ///< Total BDD build/compilation time across rewritten regions
     double totalBddWmcMs = 0.0;        ///< Total BDD WMC time across rewritten regions
+    double totalFastGeneralMs = 0.0;   ///< Total time spent in conjunctive general-region summaries
     double totalApplyMs = 0.0;         ///< Total rewrite apply time for general regions
     double totalCompactionMs = 0.0;    ///< Total deterministic edge compaction time
     double totalCleanupMs = 0.0;       ///< Total isolated-node cleanup time
@@ -68,7 +70,9 @@ enum class SplitMode {
 
 /**
  * Feature switches for SISO detection / rewrite passes.
- * All flags default to true to preserve current behavior.
+ * Specialized SISO patterns run first. A bounded general SISO pass then scans
+ * for remaining local regions without turning rewrite detection into a full
+ * graph decomposition algorithm.
  */
 struct RewriteFeatureFlags {
     bool enableSingleHyperedge  = true;
@@ -76,7 +80,7 @@ struct RewriteFeatureFlags {
     bool enableLinearTwoEdge    = true;
     bool enableParallelEdge     = true;   ///< enable parallel single-input edge detection/rewrite
     bool enableFanOutConverge   = true;
-    bool enableGeneral          = true;   ///< fallback BDD-based rewrite
+    bool enableGeneral          = true;   ///< bounded general SISO rewrite after specialized patterns
     bool enableCompaction       = true;   ///< edge compaction after each SISO pass
     bool restrictCompactionToDirty = false;  ///< only compact edges adjacent to the last rewrite frontier
     SplitMode splitMode         = SplitMode::Naive;  ///< split disjoint fan-out branches into shadow facts
@@ -87,6 +91,7 @@ struct RewriteFeatureFlags {
     bool enableCleanupIsolated  = true;   ///< drop isolated fact/shadow nodes at end of iteration
     bool forceFullSisoDetect = false; ///< force full-graph SISO detect (disable dirty-frontier detect)
     bool relaxCompactionDirty   = true;   ///< reseed only the surviving compacted edge endpoints
+    size_t maxGeneralPasses     = 1;      ///< bounded general-SISO passes after fast fixpoint
 };
 
 /**
@@ -129,6 +134,7 @@ public:
         stats.randomVarsBefore = countRandomVarsInView(view);
         stats.initialCountRandomVarsMs = toMs(std::chrono::steady_clock::now() - initialCountStart);
         stats.randomVarsAfter = stats.randomVarsBefore;
+        const bool generalRewriteEnabled = flags.enableGeneral;
         auto initialEvidenceStart = std::chrono::steady_clock::now();
         const auto evidenceAffectedNodes = collectEvidenceAffectedNodes(view);
         stats.initialEvidenceAffectedMs = toMs(std::chrono::steady_clock::now() - initialEvidenceStart);
@@ -142,6 +148,7 @@ public:
         bool hasDetectDirty = false;
         bool previousPassOnlyLinearParallel = false;
         bool previousPassOnlyFactAbsorption = false;
+        size_t generalDetectPasses = 0;
 
         auto runSplitPass = [&](const std::unordered_set<NodePtr>* splitSeedNodes,
                                 const std::unordered_set<EdgePtr>* splitSeedEdges,
@@ -248,6 +255,11 @@ public:
             fullDetectOptions.enableParallelEdge = flags.enableParallelEdge;
             fullDetectOptions.enableAllFactsToSO = flags.enableAllFactsToSO;
             fullDetectOptions.enableFanOutConverge = flags.enableFanOutConverge;
+            // General SISO detection is intentionally run only after the
+            // cheaper pattern detectors reach a fixpoint. Running it in every
+            // pass scans many candidates that will be consumed by simple
+            // rewrites anyway.
+            fullDetectOptions.enableGeneral = false;
             GraphAnalyzer::FastPathDetectOptions detectOptions = fullDetectOptions;
             bool primaryDetectMask = false;
             bool primaryDetectCanFallback = false;
@@ -286,10 +298,22 @@ public:
             if (regions.empty() && primaryDetectMask && primaryDetectCanFallback) {
                 regions = detectRegions(fullDetectOptions);
             }
+            if (regions.empty() && generalRewriteEnabled && generalDetectPasses < flags.maxGeneralPasses) {
+                ++generalDetectPasses;
+                GraphAnalyzer::FastPathDetectOptions generalDetectOptions;
+                generalDetectOptions.enableSingleHyperedge = false;
+                generalDetectOptions.enableLinearTwoEdge = false;
+                generalDetectOptions.enableParallelEdge = false;
+                generalDetectOptions.enableAllFactsToSO = false;
+                generalDetectOptions.enableFanOutConverge = false;
+                generalDetectOptions.enableGeneral = true;
+                regions = GraphAnalyzer::detectAllSISOStrictFromExit(
+                        view, nullptr, nullptr, true, &generalDetectOptions);
+            }
             // Filter by enabled flags.
             if (!flags.enableSingleHyperedge || !flags.enableAllFactsToSO ||
                     !flags.enableLinearTwoEdge || !flags.enableParallelEdge ||
-                    !flags.enableFanOutConverge || !flags.enableGeneral) {
+                    !flags.enableFanOutConverge || !generalRewriteEnabled) {
                 std::vector<SISORegionInfo> filtered;
                 filtered.reserve(regions.size());
                 for (const auto& r : regions) {
@@ -310,7 +334,7 @@ public:
                             if (!flags.enableFanOutConverge) continue;
                             break;
                         case SISORegionKind::General:
-                            if (!flags.enableGeneral) continue;
+                            if (!generalRewriteEnabled) continue;
                             break;
                         default:
                             break;
@@ -850,10 +874,12 @@ public:
                         ++stats.numRegionsRewritten;
                         continue;
                     }
-                    default:
-                        if (!flags.enableGeneral) {
+                    case SISORegionKind::General:
+                        if (!generalRewriteEnabled) {
                             continue;
                         }
+                        break;
+                    default:
                         continue;
                 }
 
@@ -878,6 +904,8 @@ public:
                 RegionTiming timing;
                 double condProb = 0.0;
                 auto condStart = std::chrono::steady_clock::now();
+                bool usedFastGeneralSummary = false;
+                bool usedBddSummary = false;
 
                 bool isSimple = isSimpleFactRegion(region);
                 EdgePtr oldSimpleEdge = nullptr;
@@ -911,31 +939,40 @@ public:
                     timing.wmcMs = 0.0;
                     timing.applyMs = 0.0;
                 } else {
-                    // Lazy init BDD manager when first needed.
-                    if (!managerInitialized) {
-                        auto managerStart = std::chrono::steady_clock::now();
-                        bddManager = std::make_unique<WeightedBDDManager>();
-                        auto managerEnd = std::chrono::steady_clock::now();
-                        managerInitMs = std::chrono::duration<double, std::milli>(
-                                                managerEnd - managerStart)
-                                                .count();
-                        managerInitialized = true;
-                        if (dumpStats) {
-                            std::cout << "[GraphRewriter] CUDD manager init took "
-                                      << managerInitMs << " ms" << std::endl;
+                    usedFastGeneralSummary = region.kind == SISORegionKind::General &&
+                            tryComputeFastConjConditionalProbability(
+                                    region, regionView, condProb, dumpStats, &timing);
+                    if (!usedFastGeneralSummary) {
+                        usedBddSummary = true;
+                        // Lazy init BDD manager when first needed.
+                        if (!managerInitialized) {
+                            auto managerStart = std::chrono::steady_clock::now();
+                            auto config = makeLocalRewriteBddConfig();
+                            bddManager = std::make_unique<WeightedBDDManager>(config);
+                            auto managerEnd = std::chrono::steady_clock::now();
+                            managerInitMs = std::chrono::duration<double, std::milli>(
+                                                    managerEnd - managerStart)
+                                                    .count();
+                            managerInitialized = true;
+                            if (dumpStats) {
+                                std::cout << "[GraphRewriter] CUDD manager init took "
+                                          << managerInitMs << " ms" << std::endl;
+                            }
                         }
+                        double effectiveMgrInitMs = firstRegionTiming ? managerInitMs : 0.0;
+                        condProb = computeRegionConditionalProbability(
+                            *bddManager, effectiveMgrInitMs, regionView, region.entry, region.exit, dumpStats, &timing);
                     }
-                    double effectiveMgrInitMs = firstRegionTiming ? managerInitMs : 0.0;
-                    condProb = computeRegionConditionalProbability(
-                        *bddManager, effectiveMgrInitMs, regionView, region.entry, region.exit, dumpStats, &timing);
                 }
                 double condMs = toMs(std::chrono::steady_clock::now() - condStart);
                 loopCondMs += condMs;
-                if (!isSimple) {
+                if (usedBddSummary) {
                     stats.totalBddManagerInitMs += timing.mgrInitMs;
                     stats.totalBddBuildMs += timing.buildMs;
                     stats.totalBddWmcMs += timing.wmcMs;
                     firstRegionTiming = false;
+                } else if (usedFastGeneralSummary) {
+                    stats.totalFastGeneralMs += timing.buildMs;
                 }
 
                 if (condProb <= 0.0) {
@@ -954,6 +991,9 @@ public:
                 if (!isSimple) {
                     stats.totalApplyMs += applyMs;
                     ++stats.numGeneralRegionsRewritten;
+                    if (usedFastGeneralSummary) {
+                        ++stats.numFastGeneralRegions;
+                    }
                 }
 
                 if (dumpStats) {
@@ -977,7 +1017,8 @@ public:
                     std::cout << ", BDD live nodes=" << timing.liveNodes
                               << ", mem=" << timing.memMb << " MB"
                               << ", randomVars=" << regionRandomVars
-                              << ", kind=" << (isSimple ? "simple_fact" : "general")
+                              << ", kind=" << (isSimple ? "simple_fact" :
+                                      (usedFastGeneralSummary ? "general_fast_conj" : "general_bdd"))
                               << std::endl;
                 }
                 markDirtyRegion(region);
@@ -1342,6 +1383,15 @@ private:
         double memMb = 0.0;
     };
 
+    static WeightedBDDManager::InitConfig makeLocalRewriteBddConfig() {
+        WeightedBDDManager::InitConfig config;
+        config.numVars = 32;
+        config.numSlots = 512;
+        config.cacheSize = 1u << 18;
+        config.maxMemory = 1024UL * 1024 * 1024;
+        return config;
+    }
+
     static const char* splitModeToString(SplitMode mode) {
         switch (mode) {
             case SplitMode::None: return "none";
@@ -1361,6 +1411,50 @@ private:
         if (!edge) return false;
         double p = edge->getProbability();
         return p > 0.0 && p < 1.0;
+    }
+
+    static bool addIndependentSupportTokens(const std::vector<SupportToken>& tokens,
+            const std::unordered_set<SupportToken>& blocked,
+            std::unordered_set<SupportToken>& seen) {
+        for (SupportToken token : tokens) {
+            if (blocked.count(token) > 0) {
+                return false;
+            }
+            if (!seen.insert(token).second) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static bool fastConjSupportsIndependent(const SISORegionInfo& region) {
+        std::unordered_set<SupportToken> entrySupport;
+        if (region.entry) {
+            for (SupportToken token : region.entry->getProbabilisticSupportTokens()) {
+                entrySupport.insert(token);
+            }
+        }
+
+        std::unordered_set<SupportToken> seenSupport;
+        for (const auto& node : region.internalNodes) {
+            if (!node || node == region.entry || node == region.exit || !isRandomVarNode(node)) {
+                continue;
+            }
+            if (!addIndependentSupportTokens(
+                        node->getProbabilisticSupportTokens(), entrySupport, seenSupport)) {
+                return false;
+            }
+        }
+        for (const auto& edge : region.internalEdges) {
+            if (!edge || !isRandomVarEdge(edge)) {
+                continue;
+            }
+            if (!addIndependentSupportTokens(
+                        edge->getProbabilisticSupportTokens(), entrySupport, seenSupport)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     std::unordered_set<NodePtr> collectEvidenceAffectedNodes(const WorkingSubgraphView& view) const {
@@ -2102,6 +2196,60 @@ private:
             << ", |edges|=" << region.internalEdges.size()
             << "]";
         return oss.str();
+    }
+
+    bool tryComputeFastConjConditionalProbability(const SISORegionInfo& region,
+            SubgraphView& regionView, double& condProb, bool debug,
+            RegionTiming* timingOut = nullptr) const {
+        if (!region.entry || !region.exit) {
+            return false;
+        }
+        auto start = std::chrono::steady_clock::now();
+        if (!fastConjSupportsIndependent(region)) {
+            return false;
+        }
+
+        ConjFormulaManager manager;
+        std::map<NodePtr, ConjNodeRef> nodeFormulas;
+        std::map<EdgePtr, ConjNodeRef> edgeFormulas;
+        std::unordered_set<NodePtr> seedTrue = {region.entry};
+
+        buildFormulasCyclewise(regionView, manager, nodeFormulas, edgeFormulas, seedTrue);
+        auto end = std::chrono::steady_clock::now();
+        double evalMs = std::chrono::duration<double, std::milli>(end - start).count();
+
+        if (!manager.isValid()) {
+            return false;
+        }
+        auto itExit = nodeFormulas.find(region.exit);
+        if (itExit == nodeFormulas.end() || !itExit->second.get()) {
+            return false;
+        }
+
+        double pExitGivenEntry = manager.computeWeightedModelCount(itExit->second);
+        if (pExitGivenEntry < 0.0) {
+            pExitGivenEntry = 0.0;
+        }
+        if (pExitGivenEntry > 1.0) {
+            pExitGivenEntry = 1.0;
+        }
+        condProb = pExitGivenEntry;
+
+        if (timingOut) {
+            timingOut->mgrInitMs = 0.0;
+            timingOut->buildMs = evalMs;
+            timingOut->wmcMs = 0.0;
+            timingOut->roundTimingsMs.clear();
+            timingOut->liveNodes = 0;
+            timingOut->memMb = 0.0;
+        }
+        if (debug) {
+            std::cout << "[GraphRewriter]   Fast conjunctive SISO "
+                      << regionToString(region)
+                      << " => Pr(exit|entry)=" << condProb
+                      << " [eval " << evalMs << " ms]" << std::endl;
+        }
+        return true;
     }
 
     double computeRegionConditionalProbability(WeightedBDDManager& bddManager,

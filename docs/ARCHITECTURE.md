@@ -102,6 +102,10 @@ metadata and chooses a graph reduction strategy automatically:
 - Programs whose rules are deterministic skip split bookkeeping and use direct
   graph reduction.
 
+After common rewrite patterns reach a local fixpoint, the same pipeline runs a
+bounded general SISO detector. Accepted SISO regions use a direct conjunctive
+fast path when possible, with the decision diagram backend as the fallback.
+
 The reduced graph is then decomposed into independent components. Components
 with no random variables, one random variable, or simple conjunction structure
 are solved directly. The remaining components are compiled to a decision
@@ -115,6 +119,8 @@ Key sources:
   exact-inference path, including direct component solvers and WMC.
 - [src/include/souffle/problog/GraphRewriter.h:99](../src/include/souffle/problog/GraphRewriter.h#L99):
   explicit SISO graph rewrite.
+- [src/include/souffle/problog/GraphAnalyzer.h:437](../src/include/souffle/problog/GraphAnalyzer.h#L437):
+  bounded general SISO detection.
 - [src/problog/ImplicitSplitRewrite.cpp:2288](../src/problog/ImplicitSplitRewrite.cpp#L2288):
   implicit split rewrite pipeline.
 - [src/include/souffle/problog/PipelineComponents.h:32](../src/include/souffle/problog/PipelineComponents.h#L32):

@@ -2202,6 +2202,8 @@ void runPipeline(
                         implicitGraphStats.totalBddBuildMs);
                 addImplicitInfo("implicit_graph_bdd_wmc_ms",
                         implicitGraphStats.totalBddWmcMs);
+                addImplicitInfo("implicit_graph_fast_general_ms",
+                        implicitGraphStats.totalFastGeneralMs);
                 addImplicitInfo("implicit_graph_apply_ms", implicitGraphStats.totalApplyMs);
                 addImplicitTextInfo("implicit_graph_detected_regions",
                         std::to_string(implicitGraphStats.numRegionsDetected));
@@ -2214,6 +2216,11 @@ void runPipeline(
                 rewriteHybridStage->logMessage(Level::INFO,
                         "implicit_graph_general_regions=" +
                                 std::to_string(implicitGraphStats.numGeneralRegionsRewritten));
+                debugger.addInfo("implicit_graph_fast_general_regions",
+                        std::to_string(implicitGraphStats.numFastGeneralRegions));
+                rewriteHybridStage->logMessage(Level::INFO,
+                        "implicit_graph_fast_general_regions=" +
+                                std::to_string(implicitGraphStats.numFastGeneralRegions));
             }
         } else {
             runGraphRewrite();
@@ -2260,6 +2267,9 @@ void runPipeline(
                     std::to_string(rewriteStats.totalBddManagerInitMs));
             debugger.addInfo("rewrite_bdd_compile_ms", std::to_string(rewriteStats.totalBddBuildMs));
             debugger.addInfo("rewrite_bdd_wmc_ms", std::to_string(rewriteStats.totalBddWmcMs));
+            debugger.addInfo("rewrite_fast_general_ms", std::to_string(rewriteStats.totalFastGeneralMs));
+            debugger.addInfo("rewrite_fast_general_regions",
+                    std::to_string(rewriteStats.numFastGeneralRegions));
             debugger.addInfo("rewrite_apply_total_ms", std::to_string(rewriteStats.totalApplyMs));
             debugger.addInfo("rewrite_compaction_ms", std::to_string(rewriteStats.totalCompactionMs));
             debugger.addInfo("rewrite_cleanup_ms", std::to_string(rewriteStats.totalCleanupMs));
@@ -2275,6 +2285,10 @@ void runPipeline(
                     std::to_string(rewriteStats.totalBddBuildMs));
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_bdd_wmc_ms=" +
                     std::to_string(rewriteStats.totalBddWmcMs));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_fast_general_ms=" +
+                    std::to_string(rewriteStats.totalFastGeneralMs));
+            rewriteHybridStage->logMessage(Level::INFO, "rewrite_fast_general_regions=" +
+                    std::to_string(rewriteStats.numFastGeneralRegions));
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_apply_total_ms=" +
                     std::to_string(rewriteStats.totalApplyMs));
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_compaction_ms=" +
@@ -2305,6 +2319,8 @@ void runPipeline(
                         rewriteStats.totalBddManagerInitMs);
                 addGraphRewriteInfo("graph_rewrite_bdd_compile_ms", rewriteStats.totalBddBuildMs);
                 addGraphRewriteInfo("graph_rewrite_bdd_wmc_ms", rewriteStats.totalBddWmcMs);
+                addGraphRewriteInfo("graph_rewrite_fast_general_ms",
+                        rewriteStats.totalFastGeneralMs);
                 addGraphRewriteInfo("graph_rewrite_apply_ms", rewriteStats.totalApplyMs);
                 addGraphRewriteInfo("graph_rewrite_compaction_ms", rewriteStats.totalCompactionMs);
                 addGraphRewriteInfo("graph_rewrite_cleanup_ms", rewriteStats.totalCleanupMs);
@@ -2319,6 +2335,11 @@ void runPipeline(
                 rewriteHybridStage->logMessage(Level::INFO,
                         "graph_rewrite_general_regions=" +
                                 std::to_string(rewriteStats.numGeneralRegionsRewritten));
+                debugger.addInfo("graph_rewrite_fast_general_regions",
+                        std::to_string(rewriteStats.numFastGeneralRegions));
+                rewriteHybridStage->logMessage(Level::INFO,
+                        "graph_rewrite_fast_general_regions=" +
+                                std::to_string(rewriteStats.numFastGeneralRegions));
             }
         }
         if (opt.isDumpDotEnabled()) {

@@ -131,17 +131,17 @@ void buildFormulasCyclewiseInternal(
         if (!node) {
             return false;
         }
+        auto it = formulas.find(node);
+        if (it != formulas.end()) {
+            out = negated ? formulaManager.makeNot(it->second) : it->second;
+            return true;
+        }
         const bool hasIncomingInView = !view.getIncomingEdges(node).empty();
         if (!node->isFact && !hasIncomingInView) {
             out = negated ? formulaManager.getTrue() : formulaManager.getFalse();
             return true;
         }
-        auto it = formulas.find(node);
-        if (it == formulas.end()) {
-            return false;
-        }
-        out = negated ? formulaManager.makeNot(it->second) : it->second;
-        return true;
+        return false;
     };
 
     // 1. Initialize formulas

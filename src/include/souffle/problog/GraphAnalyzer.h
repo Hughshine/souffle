@@ -7,6 +7,7 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <queue>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -84,12 +85,15 @@ private:
         long parallelTwoEdgeMs = 0;
         long allFactsToSOMs    = 0;
         long fanOutConvergeMs  = 0;
+        long generalBoundedMs  = 0;
         long semanticFactStatsMs = 0;
         size_t singleHyperedgeCount = 0;
         size_t linearTwoEdgeCount   = 0;
         size_t parallelTwoEdgeCount = 0;
         size_t allFactsToSOCount    = 0;
         size_t fanOutConvergeCount  = 0;
+        size_t generalBoundedCount  = 0;
+        size_t generalBoundedCandidates = 0;
     };
 
 public:
@@ -99,6 +103,13 @@ public:
         bool enableParallelEdge = true;
         bool enableAllFactsToSO = true;
         bool enableFanOutConverge = true;
+        bool enableGeneral = false;
+        size_t maxGeneralNodes = 8;
+        size_t maxGeneralEdges = 5;
+        size_t maxGeneralExitIncoming = 4;
+        size_t maxGeneralRegionsPerDetect = 256;
+        size_t maxGeneralCandidateEntries = 16;
+        bool requireGeneralRandomVariable = true;
     };
 
 private:
@@ -184,6 +195,28 @@ private:
         return node && node->isFact && node->getProbability() > 0.0 && node->getProbability() < 1.0;
     }
 
+    static bool isProbabilisticEdge(const EdgePtr& edge) {
+        return edge && edge->getProbability() > 0.0 && edge->getProbability() < 1.0;
+    }
+
+    static bool hasInternalRandomVariable(
+            const NodeSet& nodes, const EdgeSet& edges, NodePtr entry, NodePtr exit) {
+        for (EdgePtr edge : edges) {
+            if (isProbabilisticEdge(edge)) {
+                return true;
+            }
+        }
+        for (NodePtr node : nodes) {
+            if (node == entry || node == exit) {
+                continue;
+            }
+            if (isProbabilisticFact(node)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static SemanticFactUseStats buildSemanticFactUseStats(const DerivationGraphViewInterface& g) {
         SemanticFactUseStats stats;
         for (auto node : g.getNodes()) {
@@ -225,6 +258,206 @@ private:
         return occIt != semanticStats.inputOccurrences.end() && occIt->second == localOccurrences;
     }
 
+    static std::unordered_map<NodePtr, std::size_t> countLocalFactOccurrences(const EdgeSet& edges) {
+        std::unordered_map<NodePtr, std::size_t> occurrences;
+        for (EdgePtr edge : edges) {
+            if (!edge) continue;
+            for (NodePtr input : edge->getInputs()) {
+                if (input && input->isFact) {
+                    ++occurrences[input];
+                }
+            }
+        }
+        return occurrences;
+    }
+
+    static bool canAbsorbSourceFact(const DerivationGraphViewInterface& g, NodePtr node,
+            const SemanticFactUseStats& semanticStats,
+            const std::unordered_map<NodePtr, std::size_t>& localOccurrences) {
+        auto it = localOccurrences.find(node);
+        std::size_t occurrences = it == localOccurrences.end() ? 0 : it->second;
+        return occurrences > 0 && canAbsorbFactLiteral(g, node, semanticStats, occurrences);
+    }
+
+    static std::vector<NodePtr> collectBoundedGeneralEntryCandidates(
+            const DerivationGraphViewInterface& g, NodePtr exit, const FastPathDetectOptions& opts) {
+        std::vector<NodePtr> candidates;
+        NodeSet seenCandidates;
+        NodeSet seenNodes;
+        EdgeSet seenEdges;
+        std::queue<NodePtr> worklist;
+        auto addCandidate = [&](NodePtr node) {
+            if (!node || node == exit) return;
+            if (seenCandidates.insert(node).second) {
+                candidates.push_back(node);
+            }
+        };
+
+        seenNodes.insert(exit);
+        worklist.push(exit);
+
+        while (!worklist.empty() && candidates.size() < opts.maxGeneralCandidateEntries) {
+            NodePtr node = worklist.front();
+            worklist.pop();
+            if (!isNodeInView(g, node)) continue;
+            for (EdgePtr edge : g.getIncomingEdges(node)) {
+                if (!isEdgeInView(g, edge)) continue;
+                if (seenEdges.insert(edge).second && seenEdges.size() > opts.maxGeneralEdges * 2) {
+                    break;
+                }
+                for (NodePtr input : edge->getInputs()) {
+                    if (!isNodeInView(g, input)) continue;
+                    addCandidate(input);
+                    if (seenNodes.insert(input).second && seenNodes.size() <= opts.maxGeneralNodes * 2) {
+                        worklist.push(input);
+                    }
+                }
+            }
+        }
+
+        std::stable_sort(candidates.begin(), candidates.end(), [](NodePtr a, NodePtr b) {
+            const bool aFact = a && a->isFact;
+            const bool bFact = b && b->isFact;
+            return aFact < bFact;
+        });
+        return candidates;
+    }
+
+    static SISORegionInfo tryBuildBoundedGeneralRegionForEntry(const DerivationGraphViewInterface& g,
+            NodePtr exit, NodePtr entry, const FastPathDetectOptions& opts,
+            const SemanticFactUseStats& semanticStats) {
+        SISORegionInfo invalid;
+        if (!isNodeInView(g, exit) || !isNodeInView(g, entry) || entry == exit) {
+            return invalid;
+        }
+
+        NodeSet regionNodes;
+        EdgeSet regionEdges;
+        std::queue<NodePtr> worklist;
+        regionNodes.insert(exit);
+        worklist.push(exit);
+
+        bool aborted = false;
+        bool reachedEntry = false;
+        while (!worklist.empty() && !aborted) {
+            NodePtr node = worklist.front();
+            worklist.pop();
+            if (!isNodeInView(g, node)) {
+                aborted = true;
+                break;
+            }
+            if (node == entry) {
+                reachedEntry = true;
+                continue;
+            }
+            for (EdgePtr edge : g.getIncomingEdges(node)) {
+                if (!isEdgeInView(g, edge)) continue;
+                if (regionEdges.insert(edge).second && regionEdges.size() > opts.maxGeneralEdges) {
+                    aborted = true;
+                    break;
+                }
+                for (NodePtr input : edge->getInputs()) {
+                    if (!isNodeInView(g, input)) {
+                        aborted = true;
+                        break;
+                    }
+                    if (regionNodes.insert(input).second) {
+                        if (regionNodes.size() > opts.maxGeneralNodes) {
+                            aborted = true;
+                            break;
+                        }
+                        worklist.push(input);
+                    }
+                }
+                if (aborted) break;
+            }
+        }
+        if (aborted || !reachedEntry || regionEdges.empty() || regionNodes.size() <= 2) {
+            return invalid;
+        }
+
+        NodeSet hasInternalIncoming;
+        for (EdgePtr edge : regionEdges) {
+            NodePtr out = g.getOutput(edge);
+            if (out) {
+                hasInternalIncoming.insert(out);
+            }
+        }
+        auto localOccurrences = countLocalFactOccurrences(regionEdges);
+
+        for (NodePtr node : regionNodes) {
+            if (!node) {
+                return invalid;
+            }
+            if (!hasInternalIncoming.count(node)) {
+                if (node == entry) {
+                    continue;
+                }
+                // A bounded general SISO may have several source facts. They
+                // are local support for the single entry, not additional SISO
+                // inputs, so they can be folded only when they are not pinned
+                // and their semantic fact is not used outside this region.
+                if (!canAbsorbSourceFact(g, node, semanticStats, localOccurrences)) {
+                    return invalid;
+                }
+            }
+        }
+        if (opts.requireGeneralRandomVariable &&
+                !hasInternalRandomVariable(regionNodes, regionEdges, entry, exit)) {
+            return invalid;
+        }
+
+        for (NodePtr node : regionNodes) {
+            if (!node) {
+                return invalid;
+            }
+            if (node != entry) {
+                for (EdgePtr incoming : g.getIncomingEdges(node)) {
+                    if (isEdgeInView(g, incoming) && !regionEdges.count(incoming)) {
+                        return invalid;
+                    }
+                }
+            }
+            if (node != entry && node != exit) {
+                if (node->needOutput || node->hasEvidence()) {
+                    return invalid;
+                }
+                for (EdgePtr outgoing : g.getOutgoingEdges(node)) {
+                    if (isEdgeInView(g, outgoing) && !regionEdges.count(outgoing)) {
+                        return invalid;
+                    }
+                }
+            }
+        }
+
+        std::vector<EdgePtr> edges(regionEdges.begin(), regionEdges.end());
+        return makeRegion(entry, exit, edges, SISORegionKind::General);
+    }
+
+    static SISORegionInfo tryBuildBoundedGeneralRegion(const DerivationGraphViewInterface& g,
+            NodePtr exit, const FastPathDetectOptions& opts, const SemanticFactUseStats& semanticStats) {
+        SISORegionInfo invalid;
+        if (!isNodeInView(g, exit)) {
+            return invalid;
+        }
+        const auto& exitIncoming = g.getIncomingEdges(exit);
+        if (exitIncoming.empty() || exitIncoming.size() > opts.maxGeneralExitIncoming) {
+            return invalid;
+        }
+        if (exitIncoming.size() == 1 && exitIncoming.front() &&
+                exitIncoming.front()->getInputs().size() <= 1) {
+            return invalid;
+        }
+
+        for (NodePtr entry : collectBoundedGeneralEntryCandidates(g, exit, opts)) {
+            auto region = tryBuildBoundedGeneralRegionForEntry(g, exit, entry, opts, semanticStats);
+            if (region.valid) {
+                return region;
+            }
+        }
+        return invalid;
+    }
+
     // Fast-path detectors (<=2 edges).
     // If candidate sets are provided, scanning is restricted to that local frontier.
     static std::vector<SISORegionInfo> detectFastPathRegions(
@@ -262,7 +495,8 @@ private:
         }
         auto tSemanticStart = std::chrono::steady_clock::now();
         SemanticFactUseStats semanticFactStats;
-        if (opts.enableSingleHyperedge || opts.enableAllFactsToSO || opts.enableFanOutConverge) {
+        if (opts.enableSingleHyperedge || opts.enableAllFactsToSO || opts.enableFanOutConverge ||
+                opts.enableGeneral) {
             semanticFactStats = buildSemanticFactUseStats(g);
         }
         auto tSemanticEnd = std::chrono::steady_clock::now();
@@ -534,6 +768,41 @@ private:
                                            .count();
         }
 
+        auto tGeneralStart = std::chrono::steady_clock::now();
+        if (opts.enableGeneral) {
+            size_t acceptedGeneralRegions = 0;
+            for (NodePtr exit : nodeScan) {
+                if (!exit || !isNodeInView(g, exit)) {
+                    continue;
+                }
+                const auto& incoming = g.getIncomingEdges(exit);
+                if (incoming.empty() || incoming.size() > opts.maxGeneralExitIncoming) {
+                    continue;
+                }
+                if (stats) {
+                    ++stats->generalBoundedCandidates;
+                }
+                auto region = tryBuildBoundedGeneralRegion(g, exit, opts, semanticFactStats);
+                if (!region.valid) {
+                    continue;
+                }
+                regions.push_back(std::move(region));
+                ++acceptedGeneralRegions;
+                if (stats) {
+                    ++stats->generalBoundedCount;
+                }
+                if (acceptedGeneralRegions >= opts.maxGeneralRegionsPerDetect) {
+                    break;
+                }
+            }
+        }
+        auto tGeneralEnd = std::chrono::steady_clock::now();
+        if (stats) {
+            stats->generalBoundedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    tGeneralEnd - tGeneralStart)
+                                             .count();
+        }
+
         return regions;
     }
 
@@ -691,6 +960,8 @@ public:
                   << "parallel=" << fastStats.parallelTwoEdgeMs << " ms (" << fastStats.parallelTwoEdgeCount << ") "
                   << "all-facts=" << fastStats.allFactsToSOMs << " ms (" << fastStats.allFactsToSOCount << ") "
                   << "fan-out-conv=" << fastStats.fanOutConvergeMs << " ms (" << fastStats.fanOutConvergeCount << ") "
+                  << "general-bounded=" << fastStats.generalBoundedMs << " ms ("
+                  << fastStats.generalBoundedCount << "/" << fastStats.generalBoundedCandidates << ") "
                   << "semantic-stats=" << fastStats.semanticFactStatsMs << " ms"
                   << std::endl;
         std::cout << "[siso-prof] detect=" << detectMs << " ms"
