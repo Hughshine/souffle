@@ -22,14 +22,10 @@ jobs:
             cmake \
             curl \
             flex \
-            graphviz \
-            libffi-dev \
             libreadline-dev \
-            libsqlite3-dev \
             libtool \
             mcpp \
-            python3 \
-            zlib1g-dev
+            python3
 
       - name: Install CUDD
         run: |

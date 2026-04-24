@@ -149,12 +149,8 @@ extern bool fcProfileEnabled;
 extern bool incDeleteProfileEnabled;
 extern bool wmcProfileEnabled;
 extern bool incRegionalProfileEnabled;
-extern bool incRegionalProfileHeavyEnabled;
-extern std::string incRegionalTraceTuples;
 extern bool depGraphProfileEnabled;
-extern bool postDelEnabled;
 extern bool reuseVarIndexEnabled;
-extern bool incReorderEnabled;
 
 class DerivationManager {
 public:
@@ -341,7 +337,6 @@ void dumpInputFacts(std::ostream& os = std::cout);
 extern std::unordered_map<UntypedTuple, double> fact_prob;
 extern std::unordered_map<std::string, bool> relationHasProbFact;
 extern bool detOptEnabled;
-extern bool detForceEnabled;
 extern std::unordered_map<std::string, bool> relationIsDet;
 inline bool isDetRelation(const std::string& rel) {
     auto it = relationIsDet.find(rel);

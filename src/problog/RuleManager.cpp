@@ -1,5 +1,7 @@
 #include "souffle/problog/RuleManager.h"
 
+RuleManager ruleManager({});
+
 RuleManager::RuleManager(std::vector<Rule> rules, std::vector<std::string> eqrelRelations) {
     for (const auto& rel : eqrelRelations) {
         addEqrelRelation(rel);
@@ -98,66 +100,4 @@ std::string RuleManager::toString() const {
     }
 
     return oss.str();
-}
-
-const ExampleRuleComponents& ExampleRuleComponents::getInstance() {
-    static ExampleRuleComponents instance;
-    return instance;
-}
-
-ExampleRuleComponents::ExampleRuleComponents()
-        : var_x(SymbolicField::makeVariable("x")),
-          var_y(SymbolicField::makeVariable("y")),
-          var_z(SymbolicField::makeVariable("z")),
-          edge_relation("edge"),
-          path_relation("path"),
-          edge_xy(edge_relation, {var_x, var_y}),
-          edge_zy(edge_relation, {var_z, var_y}),
-          path_xy(path_relation, {var_x, var_y}),
-          path_xz(path_relation, {var_x, var_z}),
-          rule1(1, path_xy, {edge_xy}),
-          rule2(2, path_xy, {path_xz, edge_zy}, {"x", "y", "z"}, 1.0),
-          ruleManager({rule1, rule2}),
-          exampleRuleApps{
-                  {UntypedTuple{"path", {1, 2}}, new std::unordered_set<RuleApplication>{{1, {1, 2}}}},
-                  {UntypedTuple{"path", {2, 3}}, new std::unordered_set<RuleApplication>{{1, {2, 3}}}},
-                  {UntypedTuple{"path", {1, 3}}, new std::unordered_set<RuleApplication>{{2, {1, 2, 3}}}},
-          },
-          exampleDeltaInsertRuleApps{
-                  {UntypedTuple{"path", {3, 4}}, new std::unordered_set<RuleApplication>{{1, {3, 4}}}},
-                  {UntypedTuple{"path", {2, 4}}, new std::unordered_set<RuleApplication>{{2, {2, 4, 3}}}},
-          },
-          exampleDeltaDeleteRuleApps{
-                  {UntypedTuple{"path", {1, 2}}, new std::unordered_set<RuleApplication>{{1, {1, 2}}}},
-                  {UntypedTuple{"path", {1, 3}}, new std::unordered_set<RuleApplication>{{2, {1, 3, 2}}}},
-          },
-          fact_prob{
-                  {UntypedTuple{"edge", {1, 2}}, 0.9},
-                  {UntypedTuple{"edge", {2, 3}}, 0.8},
-          },
-          fact_prob_inc{
-                  {UntypedTuple{"edge", {3, 4}}, 0.7},
-          },
-          deletedFacts{
-                  UntypedTuple{"edge", {1, 2}},
-          },
-          exampleRuleApps2{
-                  {UntypedTuple{"path", {1, 2}}, new std::unordered_set<RuleApplication>{{1, {1, 2}}, {2, {1, 2, 3}}}},
-                  {UntypedTuple{"path", {2, 3}}, new std::unordered_set<RuleApplication>{{1, {2, 3}}, {2, {2, 3, 2}}}},
-                  {UntypedTuple{"path", {1, 3}}, new std::unordered_set<RuleApplication>{{2, {1, 3, 2}}}},
-                  {UntypedTuple{"path", {3, 2}}, new std::unordered_set<RuleApplication>{{1, {3, 2}}, {2, {3, 2, 3}}}},
-                  {UntypedTuple{"path", {2, 2}}, new std::unordered_set<RuleApplication>{{2, {2, 2, 3}}}},
-                  {UntypedTuple{"path", {3, 3}}, new std::unordered_set<RuleApplication>{{2, {3, 3, 2}}}},
-          } {}
-
-ExampleRuleComponents::~ExampleRuleComponents() {
-    auto freeMap = [](const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& map) {
-        for (const auto& [_, ptr] : map) {
-            delete ptr;
-        }
-    };
-    freeMap(exampleRuleApps);
-    freeMap(exampleDeltaInsertRuleApps);
-    freeMap(exampleDeltaDeleteRuleApps);
-    freeMap(exampleRuleApps2);
 }

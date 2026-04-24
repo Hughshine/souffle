@@ -178,11 +178,6 @@ void compileToBinary(
 
     argv.push_back(command);
 
-    if (glb.config().has("swig")) {
-        argv.push_back("-s");
-        argv.push_back(glb.config().get("swig"));
-    }
-
     if (glb.config().has("verbose")) {
         argv.push_back("-v");
     }
@@ -444,20 +439,15 @@ static WarnSet process_warn_opts(const Global& glb) {
 }
 
 Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) {
-    // TODO: should check the transformer sequence; keep the useful ones; modify the others to fit the prob setting
     // clang-format off
-    // Equivalence pipeline
-    // TODO: move 0.0 prob clauses transformer
     auto equivalencePipeline =
             mk<ast::transform::PipelineTransformer>(mk<ast::transform::NameUnnamedVariablesTransformer>(),
                     mk<ast::transform::FixpointTransformer>(mk<ast::transform::MinimiseProgramTransformer>()),
-                    // mk<ast::transform::ReplaceSingletonVariablesTransformer>(),
                     mk<ast::transform::RemoveRelationCopiesTransformer>(),
                     mk<ast::transform::RemoveEmptyRelationsTransformer>()
                     ,mk<ast::transform::RemoveRedundantRelationsTransformer>()
                     );
 
-    // Magic-Set pipeline
     auto magicPipeline = mk<ast::transform::PipelineTransformer>(
             mk<ast::transform::ConditionalTransformer>(
                     glb.config().has("magic-transform"), mk<ast::transform::ExpandEqrelsTransformer>()),
@@ -465,46 +455,16 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
             mk<ast::transform::RemoveRelationCopiesTransformer>(),
             mk<ast::transform::RemoveEmptyRelationsTransformer>(),
             mk<ast::transform::RemoveRedundantRelationsTransformer>(), clone(equivalencePipeline));
-    //
-    // // Partitioning pipeline
-    // auto partitionPipeline =
-    //         mk<ast::transform::PipelineTransformer>(mk<ast::transform::NameUnnamedVariablesTransformer>(),
-    //                 mk<ast::transform::PartitionBodyLiteralsTransformer>()
-    //                 ,  mk<ast::transform::ReplaceSingletonVariablesTransformer>()
-    //                 );
-    //
-    // // Provenance pipeline
-    // auto provenancePipeline = mk<ast::transform::ConditionalTransformer>(glb.config().has("provenance"),
-    //         mk<ast::transform::PipelineTransformer>(mk<ast::transform::ExpandEqrelsTransformer>(),
-    //                 mk<ast::transform::NameUnnamedVariablesTransformer>()));
-    //
-    // // Main pipeline // TODO: Maybe some passes is unused or invalid or should be changed under prob setting
     auto pipeline = mk<ast::transform::PipelineTransformer>(mk<ast::transform::ComponentChecker>(),
             mk<ast::transform::EvidenceSemanticChecker>(),
             mk<ast::transform::ComponentInstantiationTransformer>(),
-            // mk<ast::transform::LatticeTransformer>(),
             mk<ast::transform::ProbQueryChecker>(),
             mk<ast::transform::DebugDeltaRelationTransformer>(),
             mk<ast::transform::IODefaultsTransformer>(),
-            // mk<ast::transform::SimplifyAggregateTargetExpressionTransformer>(),
-            // mk<ast::transform::UniqueAggregationVariablesTransformer>(),
-            // mk<ast::transform::FixpointTransformer>(mk<ast::transform::PipelineTransformer>(  // TODO: useless
-            //         mk<ast::transform::ResolveAnonymousRecordAliasesTransformer>(),
-            //         mk<ast::transform::FoldAnonymousRecords>())),
-            // mk<ast::transform::SubsumptionQualifierTransformer>(), mk<ast::transform::SemanticChecker>(),  // TODO: useless
-            // mk<ast::transform::GroundWitnessesTransformer>(),  // TODO: we (pdatalog) will never support aggregation and other datalog extensions right?
-            // mk<ast::transform::UniqueAggregationVariablesTransformer>(),
-            // mk<ast::transform::MaterializeSingletonAggregationTransformer>(),
-            // mk<ast::transform::FixpointTransformer>(
-            //         mk<ast::transform::MaterializeAggregationQueriesTransformer>()),
-            // mk<ast::transform::RemoveRedundantSumsTransformer>(),
-            // mk<ast::transform::NormaliseGeneratorsTransformer>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
             mk<ast::transform::RemoveBooleanConstraintsTransformer>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
-            mk<ast::transform::MinimiseProgramTransformer>(),  // TODO, avoid removing probablistic clauses
-            // mk<ast::transform::InlineUnmarkExcludedTransform>(),
-            // mk<ast::transform::InlineRelationsTransformer>(),
+            mk<ast::transform::MinimiseProgramTransformer>(),
             mk<ast::transform::GroundedTermsChecker>(),
             mk<ast::transform::ResolveAliasesTransformer>(),
             mk<ast::transform::SimplifyConstantBinaryConstraintsTransformer>(),
@@ -515,14 +475,11 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
             // mk<ast::transform::ReplaceSingletonVariablesTransformer>(),
             mk<ast::transform::FixpointTransformer>(mk<ast::transform::PipelineTransformer>(
                     mk<ast::transform::ReduceExistentialsTransformer>(),
-                    mk<ast::transform::RemoveRedundantRelationsTransformer>())),
+            mk<ast::transform::RemoveRedundantRelationsTransformer>())),
             mk<ast::transform::RemoveRelationCopiesTransformer>(),
-            // std::move(partitionPipeline),
             std::move(equivalencePipeline),
             mk<ast::transform::RemoveRelationCopiesTransformer>(),
             std::move(magicPipeline), mk<ast::transform::RemoveEmptyRelationsTransformer>(),
-            // mk<ast::transform::AddNullariesToAtomlessAggregatesTransformer>(),
-            // mk<ast::transform::ExecutionPlanChecker>(), // std::move(provenancePipeline),
             mk<ast::transform::IOAttributesTransformer>(),
             mk<ast::transform::ConstantNormalizationTransformer>());
     // clang-format on
@@ -539,7 +496,6 @@ Own<ast2ram::UnitTranslator> getUnitTranslator(Global& glb) {
 
 Own<ram::transform::Transformer> ramTransformerSequence(Global& glb) {
     using namespace ram::transform;
-    // TODO: should check the transformer sequence; one of them is not compatible with unnamed variables in prob
     // clang-format off
     Own<Transformer> ramTransform = mk<TransformerSequence>(
             mk<LoopTransformer>(mk<TransformerSequence>(mk<ExpandFilterTransformer>(),
@@ -577,20 +533,8 @@ std::string versionFooter() {
     footer << "Version: " << packageVersion() << std::endl;
     footer << "Word size: " << ramDomainSizeInBits() << " bits" << std::endl;
     footer << "Options enabled:";
-#ifdef USE_LIBFFI
-    footer << " ffi";
-#endif
 #ifdef _OPENMP
     footer << " openmp";
-#endif
-#ifdef USE_NCURSES
-    footer << " ncurses";
-#endif
-#ifdef USE_SQLITE
-    footer << " sqlite";
-#endif
-#ifdef USE_LIBZ
-    footer << " zlib";
 #endif
     footer << std::endl;
     footer << "----------------------------------------------------------------------------" << std::endl;
@@ -607,8 +551,6 @@ std::vector<MainOption> getMainOptions() {
     // clang-format off
   std::vector<MainOption> options{
       {"", 0, "", "", false, ""},
-      {"auto-schedule", 'a', "FILE", "", false,
-          "Use profile auto-schedule <FILE> for auto-scheduling."},
       {"compile", 'c', "", "", false,
           "Generate C++ source code, compile to a binary executable, then run this "
           "executable."},
@@ -626,7 +568,7 @@ std::vector<MainOption> getMainOptions() {
           "Generate C++ source code, written to <FILE>, and compile this to a "
           "binary executable (without executing it)."},
       {"emit-statistics", nextOptChar++, "", "", false,
-          "Enable collection of statistics for auto-scheduling"},
+          "Enable collection of RAM join-size statistics."},
       {"fact-dir", 'F', "DIR", ".", false,
           "Specify directory for fact files."},
       {"input-dir", nextOptChar++, "DIR", "", false,
@@ -676,59 +618,16 @@ std::vector<MainOption> getMainOptions() {
           "C preprocessor to use."},
       {"profile", 'p', "FILE", "", false,
           "Enable profiling, and write profile data to <FILE>."},
-      {"profile-file", nextOptChar++, "FILE", "", false,
-          "Canonical alias for --profile when baking runtime defaults."},
-      {"dred-profile", nextOptChar++, "", "", false,
-          "Enable detailed DRed profiling (requires --profile to emit data)."},
       {"profile-frequency", nextOptChar++, "", "", false,
           "Enable the frequency counter in the profiler."},
       {"setmode", 0, incrementalModeOptionSyntax(), "inc-naive", false,
           "Set the incremental mode (default: inc-naive)."},
-      {"sem-mode", nextOptChar++, semModeOptionSyntax(), "", false,
-          "Canonical semantic mode for generated runtime defaults."},
-      {"fc-mode", nextOptChar++, fcModeOptionSyntax(), "", false,
-          "Canonical forward-compilation mode for generated runtime defaults."},
-      {"full-evaluator", nextOptChar++, fullEvaluatorOptionSyntax(), "", false,
-          "Canonical full evaluator for generated runtime defaults."},
-      {"dd-backend", nextOptChar++, ddBackendOptionSyntax(), "", false,
-          "Canonical DD backend for generated runtime defaults."},
-      {"approx-backend", nextOptChar++, approxBackendOptionSyntax(), "", false,
-          "Canonical approximate backend for generated runtime defaults."},
-      {"rewrite-engine", nextOptChar++, rewriteEngineOptionSyntax(), "", false,
-          "Canonical rewrite engine for generated runtime defaults."},
-      {"rewrite-split", nextOptChar++, rewriteSplitOptionSyntax(), "", false,
-          "Canonical rewrite split mode for generated runtime defaults."},
-      {"rewrite-detect", nextOptChar++, rewriteDetectOptionSyntax(), "", false,
-          "Canonical rewrite detection policy for generated runtime defaults."},
-      {"det-mode", nextOptChar++, detModeOptionSyntax(), "", false,
-          "Canonical determinism mode for generated runtime defaults."},
       {"dump", nextOptChar++, dumpKindsOptionSyntax(), "", false,
           "Canonical dump selector for generated runtime defaults."},
       {"profile-stage", nextOptChar++, profileStageOptionSyntax(), "", false,
           "Canonical profile selector for generated runtime defaults."},
-      {"trace-inc-regional", nextOptChar++, "LIST", "", false,
-          "Canonical alias for inc-regional tuple tracing defaults."},
-      {"derv-only", 'd', "", "", false, "Only compute the derivation graph."}, // TODO
-      {"derivation-only", nextOptChar++, "", "", false,
-          "Canonical alias for --derv-only."},
       {"log-file", nextOptChar++, "FILE", "", false,
           "Default debugger log filename for generated runtimes."},
-      {"merge-bi-imp", nextOptChar++, "", "", false,
-          "Enable merge-bi-imp by default in the generated runtime."},
-      {"no-merge-bi-imp", nextOptChar++, "", "", false,
-          "Disable merge-bi-imp in the generated runtime."},
-      {"prune-extra", nextOptChar++, "", "", false,
-          "Enable extra prune pass by default in the generated runtime."},
-      {"no-prune-extra", nextOptChar++, "", "", false,
-          "Disable extra prune pass in the generated runtime."},
-      {"fold-const", nextOptChar++, "", "", false,
-          "Enable deterministic constant pre-analysis by default in the generated runtime."},
-      {"no-fold-const", nextOptChar++, "", "", false,
-          "Disable deterministic constant pre-analysis in the generated runtime."},
-    {"online", 'O', "", "", false,
-          "Enable online compilation that allows interactive incremental updates"}, // TODO
-    {"full-only", 'x', "", "", false,
-        "Debugging purpose... do not generate inc code for online mode"}, // TODO
       {"show", nextOptChar++, "[ <see-list> ]", "", true,
           "Print selected program information.\n"
           "Modes:\n"
@@ -742,9 +641,6 @@ std::vector<MainOption> getMainOptions() {
               "\ttransformed-ast\n"
               "\ttransformed-ram\n"
               "\ttype-analysis"},
-      {"swig", 's', "LANG", "", false,
-          "Generate SWIG interface for given language. The values <LANG> accepts is java and "
-          "python. "},
       {"verbose", 'v', "", "", false,
           "Verbose output."},
       {"version", nextOptChar++, "", "", false,
@@ -753,8 +649,6 @@ std::vector<MainOption> getMainOptions() {
           "Enable a warning."},
       {"wno", nextOptChar++, "WARN", "none", true,
           "Disable a specific warning."},
-      // TODO(lb):
-      // {"Werror", '\xc', "WARN", "none", false, "Turn a warning into an error."},
   };
   // clang-format off
   return options;
@@ -766,24 +660,8 @@ bool isExplicitlySet(const MainConfig& config, std::string_view key) {
     return config.state(key) == MainConfig::State::set;
 }
 
-void requireNoConflict(const MainConfig& config, std::string_view onKey, std::string_view offKey,
-        const std::string& label) {
-    if (isExplicitlySet(config, onKey) && isExplicitlySet(config, offKey)) {
-        throw std::runtime_error("Conflicting " + label + " flags: --" + std::string(onKey) +
-                                 " and --" + std::string(offKey));
-    }
-}
-
-void setConfigBool(MainConfig& config, std::string_view key, bool enabled) {
-    if (enabled) {
-        config.set(std::string(key));
-    } else {
-        config.unset(key);
-    }
-}
-
-void applyListAliasToLegacyFlags(MainConfig& config, std::string_view key,
-        const std::vector<std::pair<std::string, std::string>>& tokenToLegacyKey) {
+void applyListAliasToBackingFlags(MainConfig& config, std::string_view key,
+        const std::vector<std::pair<std::string, std::string>>& tokenToBackingKey) {
     if (!isExplicitlySet(config, key)) {
         return;
     }
@@ -792,14 +670,14 @@ void applyListAliasToLegacyFlags(MainConfig& config, std::string_view key,
     if (specs.empty()) {
         throw std::runtime_error("Empty value for --" + std::string(key));
     }
-    for (const auto& [_, legacy] : tokenToLegacyKey) {
-        config.unset(legacy);
+    for (const auto& [_, backingKey] : tokenToBackingKey) {
+        config.unset(backingKey);
     }
     for (const auto& spec : specs) {
         bool matched = false;
-        for (const auto& [token, legacy] : tokenToLegacyKey) {
+        for (const auto& [token, backingKey] : tokenToBackingKey) {
             if (normalizeFlagToken(spec) == token) {
-                config.set(legacy);
+                config.set(backingKey);
                 matched = true;
                 break;
             }
@@ -814,157 +692,27 @@ void canonicalizeForkRuntimeDefaults(MainConfig& config) {
     if (isExplicitlySet(config, "input-dir")) {
         config.set("fact-dir", config.get("input-dir"));
     }
-    if (isExplicitlySet(config, "profile-file")) {
-        config.set("profile", config.get("profile-file"));
-    }
-    if (isExplicitlySet(config, "derivation-only")) {
-        config.set("derv-only");
-    }
     if (isExplicitlySet(config, "log-file")) {
         config.set("logfile", config.get("log-file"));
     }
-    if (isExplicitlySet(config, "trace-inc-regional")) {
-        config.set("inc-regional-trace-tuples", config.get("trace-inc-regional"));
-    }
-
-    requireNoConflict(config, "merge-bi-imp", "no-merge-bi-imp", "merge-bi-imp");
-    requireNoConflict(config, "prune-extra", "no-prune-extra", "prune-extra");
-    requireNoConflict(config, "fold-const", "no-fold-const", "fold-const");
-    setConfigBool(config, "merge-bi-imp", isExplicitlySet(config, "merge-bi-imp"));
-    if (isExplicitlySet(config, "no-merge-bi-imp")) {
-        config.unset("merge-bi-imp");
-    }
-    setConfigBool(config, "prune-extra", isExplicitlySet(config, "prune-extra"));
-    if (isExplicitlySet(config, "no-prune-extra")) {
-        config.unset("prune-extra");
-    }
-    setConfigBool(config, "fold-const", isExplicitlySet(config, "fold-const"));
-    if (isExplicitlySet(config, "no-fold-const")) {
-        config.unset("fold-const");
-    }
-
     IncrementalModeSpec mode;
     std::string canonicalMode;
-    if (!parseLegacyModeToken(config.get("setmode"), mode, &canonicalMode)) {
+    if (!parseModeToken(config.get("setmode"), mode, &canonicalMode)) {
         throw std::runtime_error(
-                "--setmode expects a legacy mode (" + std::string(incrementalLegacyModeHelpText()) + ")");
+                "--setmode expects one of: " + std::string(incrementalModeHelpText()));
     }
     config.set("setmode", canonicalMode);
-
-    if (isExplicitlySet(config, "sem-mode")) {
-        SemMode sem = mode.sem;
-        if (!parseSemModeToken(config.get("sem-mode"), sem)) {
-            throw std::runtime_error("--sem-mode expects " + std::string(semModeOptionSyntax()));
-        }
-        mode.sem = sem;
-        if (!isExplicitlySet(config, "fc-mode")) {
-            mode.fc = reconcileFcModeForSem(mode.sem, mode.fc);
-        }
-    }
-    if (isExplicitlySet(config, "fc-mode")) {
-        FcMode fc = mode.fc;
-        if (!parseFcModeToken(config.get("fc-mode"), fc)) {
-            throw std::runtime_error("--fc-mode expects " + std::string(fcModeOptionSyntax()));
-        }
-        mode.fc = fc;
-    }
     config.set("sem-mode", semModeTokenLabel(mode.sem));
     config.set("fc-mode", fcModeTokenLabel(mode.fc));
 
-    FullEvaluator evaluator = FullEvaluator::EXACT;
-    if (isExplicitlySet(config, "full-evaluator")) {
-        if (!parseFullEvaluatorToken(config.get("full-evaluator"), evaluator)) {
-            throw std::runtime_error("--full-evaluator expects " + std::string(fullEvaluatorOptionSyntax()));
-        }
-        if (evaluator == FullEvaluator::APPROX) {
-            throw std::runtime_error(
-                    "--full-evaluator=approx is not supported for generated runtimes yet");
-        }
-    }
-    config.set("full-evaluator", fullEvaluatorLabel(evaluator));
-    setConfigBool(config, "scbf", evaluator == FullEvaluator::SCBF);
-
-    if (isExplicitlySet(config, "approx-backend")) {
-        ApproxBackend backend = ApproxBackend::NONE;
-        if (!parseApproxBackendToken(config.get("approx-backend"), backend)) {
-            throw std::runtime_error("--approx-backend expects " + std::string(approxBackendOptionSyntax()));
-        }
-        if (backend != ApproxBackend::NONE) {
-            throw std::runtime_error(
-                    "--approx-backend is not supported for generated runtimes yet");
-        }
-        config.set("approx-backend", approxBackendLabel(backend));
-    } else {
-        config.set("approx-backend", approxBackendLabel(ApproxBackend::NONE));
-    }
-
-    std::string ddBackend = "bdd";
-    if (isExplicitlySet(config, "dd-backend")) {
-        if (!parseDdBackendToken(config.get("dd-backend"), ddBackend)) {
-            throw std::runtime_error("--dd-backend expects " + std::string(ddBackendOptionSyntax()));
-        }
-    }
-    config.set("dd-backend", ddBackend);
-    config.set("knowledge", ddBackend);
-
-    RewriteEngine rewriteEngine = RewriteEngine::OFF;
-    if (isExplicitlySet(config, "rewrite-engine")) {
-        if (!parseRewriteEngineToken(config.get("rewrite-engine"), rewriteEngine)) {
-            throw std::runtime_error("--rewrite-engine expects " + std::string(rewriteEngineOptionSyntax()));
-        }
-    }
-    config.set("rewrite-engine", rewriteEngineLabel(rewriteEngine));
-    setConfigBool(config, "rewrite", rewriteEngine == RewriteEngine::LEGACY);
-    setConfigBool(config, "implicit-rewrite", rewriteEngine == RewriteEngine::IMPLICIT ||
-                                               rewriteEngine == RewriteEngine::IMPLICIT_ITER);
-    setConfigBool(config, "implicit-iterate-split-rewrite", rewriteEngine == RewriteEngine::IMPLICIT_ITER);
-
-    RewriteSplitMode splitMode = RewriteSplitMode::NAIVE;
-    if (isExplicitlySet(config, "rewrite-split")) {
-        if (!parseRewriteSplitModeToken(config.get("rewrite-split"), splitMode)) {
-            throw std::runtime_error("--rewrite-split expects " + std::string(rewriteSplitOptionSyntax()));
-        }
-    }
-    config.set("rewrite-split", rewriteSplitModeLabel(splitMode));
-    switch (splitMode) {
-        case RewriteSplitMode::OFF:
-            config.set("split-mode", "no-split");
-            break;
-        case RewriteSplitMode::NAIVE:
-            config.set("split-mode", "naive-split");
-            break;
-        case RewriteSplitMode::COMPLETE:
-            config.set("split-mode", "complete-split");
-            break;
-    }
-
-    RewriteDetectMode detectMode = RewriteDetectMode::DIRTY_FRONTIER;
-    if (isExplicitlySet(config, "rewrite-detect")) {
-        if (!parseRewriteDetectModeToken(config.get("rewrite-detect"), detectMode)) {
-            throw std::runtime_error("--rewrite-detect expects " + std::string(rewriteDetectOptionSyntax()));
-        }
-    }
-    config.set("rewrite-detect", rewriteDetectModeLabel(detectMode));
-    setConfigBool(config, "force-complete-siso-detect", detectMode == RewriteDetectMode::COMPLETE);
-
-    DetMode detMode = DetMode::AUTO;
-    if (isExplicitlySet(config, "det-mode")) {
-        if (!parseDetModeToken(config.get("det-mode"), detMode)) {
-            throw std::runtime_error("--det-mode expects " + std::string(detModeOptionSyntax()));
-        }
-    }
-    config.set("det-mode", detModeLabel(detMode));
-    setConfigBool(config, "det-opt", detMode == DetMode::AUTO);
-    setConfigBool(config, "no-det-opt", detMode == DetMode::OFF);
-    setConfigBool(config, "det-force", detMode == DetMode::FORCE);
-
-    applyListAliasToLegacyFlags(config, "dump",
-            {{"json", "dumpjson"}, {"dot", "dumpdot"}, {"stat", "dumpstat"}, {"const", "dumpconst"}});
-    applyListAliasToLegacyFlags(config, "profile-stage",
+    applyListAliasToBackingFlags(config, "dump",
+            {{"json", "dumpjson"}, {"json-before-graph", "dumpjson-before-graph"},
+                    {"json-before-prune", "dumpjson-before-prune"}, {"dot", "dumpdot"},
+                    {"stat", "dumpstat"}});
+    applyListAliasToBackingFlags(config, "profile-stage",
             {{"dred", "dred-profile"}, {"inc", "inc-profile"}, {"fc", "fc-profile"},
                     {"wmc", "profile-wmc"}, {"inc-delete", "profile-inc-delete"},
                     {"inc-regional", "profile-inc-regional"},
-                    {"inc-regional-heavy", "profile-inc-regional-heavy"},
                     {"dep-graph", "profile-dep-graph"}});
 }
 
@@ -980,7 +728,7 @@ int main(Global& glb, const char* souffle_executable) {
             ast::transform::PragmaChecker::Merger merger(glb);
 
             for (auto&& option : glb.config().getMany("pragma")) {
-                // TODO: escape sequences for `:` to allow `:` in a pragma key?
+                // Pragmas use ':' as the key/value separator.
                 std::size_t splitPoint = option.find(':');
 
                 std::string optionName = option.substr(0, splitPoint);
@@ -1017,16 +765,12 @@ int main(Global& glb, const char* souffle_executable) {
 
         const bool hasCompileOption = glb.config().has("compile") || glb.config().has("compile-many") ||
                                       glb.config().has("generate") || glb.config().has("generate-many") ||
-                                      glb.config().has("dl-program") || glb.config().has("swig");
+                                      glb.config().has("dl-program");
         if (!hasCompileOption) {
             std::string defaultOutput = simpleName(glb.config().get(""));
             glb.config().set("dl-program", defaultOutput);
             std::cerr << "No compile option specified; defaulting to -o " << defaultOutput
                       << " (compile only)." << std::endl;
-        }
-        if (!glb.config().has("online")) {
-            glb.config().set("online");
-            std::cout << "Defaulting to --online" << std::endl;
         }
         canonicalizeForkRuntimeDefaults(glb.config());
 
@@ -1093,13 +837,6 @@ int main(Global& glb, const char* souffle_executable) {
     } catch (std::exception& e) {
         std::cerr << e.what() << std::endl;
         exit(EXIT_FAILURE);
-    }
-
-    /**
-     * Ensure that code generation is enabled if using SWIG interface option.
-     */
-    if (glb.config().has("swig") && !glb.config().has("generate")) {
-        glb.config().set("generate", simpleName(glb.config().get("")));
     }
 
     // ------ start souffle -------------
@@ -1232,8 +969,6 @@ int main(Global& glb, const char* souffle_executable) {
     if (hasShowOpt("transformed-ast", "transformed-datalog")) {
         std::cout << astTranslationUnit->getProgram() << std::endl;
     }
-    // TODO: if all grounded, then directly converted to derivation graph, skip semi-naive evaluation
-
     auto& newAstProgram = astTranslationUnit->getProgram();
     // Output the precedence graph in graphviz dot format
     if (hasShowOpt("precedence-graph")) {
@@ -1268,103 +1003,6 @@ int main(Global& glb, const char* souffle_executable) {
     // bail if we've nothing else left to show
     if (glb.config().has("show") && !hasShowOpt("initial-ram", "transformed-ram")) return 0;
 
-//     if (groundness.allGroundRules) {
-//         auto synthesiser = mk<synthesiser::GroundSynthesiser>(*astTranslationUnit);
-//         const bool execute_mode = glb.config().has("compile") || glb.config().has("compile-many");
-//         const bool compile_mode = glb.config().has("dl-program");
-//         const bool generate_mode = glb.config().has("generate");
-//         const bool generate_many_mode = glb.config().has("generate-many");
-
-//         const bool must_interpret = !execute_mode && !compile_mode && !generate_mode && !generate_many_mode &&
-//                                     !glb.config().has("swig");
-//         const bool must_execute = execute_mode;
-//         const bool must_compile = must_execute || compile_mode || glb.config().has("swig");
-//         std::string baseFilename;
-//         if (compile_mode) {
-//             baseFilename = glb.config().get("dl-program");
-//         } else if (generate_mode) {
-//             baseFilename = glb.config().get("generate");
-
-//             // trim .cpp extension if it exists
-//             if (baseFilename.size() >= 4 && baseFilename.substr(baseFilename.size() - 4) == ".cpp") {
-//                 baseFilename = baseFilename.substr(0, baseFilename.size() - 4);
-//             }
-//         } else if (generate_many_mode) {
-//             baseFilename = glb.config().get("generate-many");
-//         } else {
-//             baseFilename = tempFile();
-//         }
-
-//         if (baseName(baseFilename) == "/" || baseName(baseFilename) == ".") {
-//             baseFilename = tempFile();
-//         }
-
-//         std::string baseIdentifier = identifier(simpleName(baseFilename));
-
-//         std::string binaryFilename = baseFilename;
-
-//         auto synthesisStart = std::chrono::high_resolution_clock::now();
-//         const bool emitToStdOut = glb.config().has("generate", "-");
-//         const bool emitMultipleFiles =
-//                 glb.config().has("generate-many") || glb.config().has("compile-many");
-
-//         synthesiser::GenDb db;
-//         synthesiser->generateCode(db, baseIdentifier);
-//         std::vector<fs::path> srcFiles;
-
-//         if (emitToStdOut) {
-//             db.emitSingleFile(std::cout);
-//         } else if (emitMultipleFiles) {
-//             fs::path directory = glb.config().has("generate-many")
-//                                          ? fs::path(glb.config().get("generate-many"))
-//                                          : fs::temp_directory_path() / baseIdentifier;
-//             std::string mainClass = db.emitMultipleFilesInDir(directory, srcFiles);
-//             binaryFilename = (directory / fs::path(mainClass)).string();
-//         } else {
-//             {
-//                 std::string sourceFilename = baseFilename + ".cpp";
-//                 std::ofstream os{sourceFilename};
-//                 db.emitSingleFile(os);
-//                 os.close();
-//                 srcFiles.push_back(fs::path(sourceFilename));
-//             }
-//         }
-
-
-//         // Output relationId to relationStr mapping
-
-//         if (glb.config().has("verbose")) {
-//             auto synthesisEnd = std::chrono::high_resolution_clock::now();
-//             std::cout << "Synthesis time: "
-//                       << std::chrono::duration<double>(synthesisEnd - synthesisStart).count() << "sec\n";
-//         }
-
-
-//         if (must_compile) {
-//             /* Fail if a souffle-compile executable is not found */
-//             const auto souffle_compile = findTool("souffle-compile.py", souffleExecutable, ".");
-//             if (!souffle_compile) throw std::runtime_error("failed to locate souffle-compile.py");
-
-//             auto t_bgn = std::chrono::high_resolution_clock::now();
-//             fs::path output(binaryFilename);
-//             compileToBinary(glb, *souffle_compile, srcFiles, output);
-//             auto t_end = std::chrono::high_resolution_clock::now();
-
-//             if (glb.config().has("verbose")) {
-//                 std::cout << "Compilation time: " << std::chrono::duration<double>(t_end - t_bgn).count()
-//                           << "sec\n";
-//             }
-//         }
-
-//         // run compiled C++ program if requested.
-//         if (must_execute) {
-// #if defined(_MSC_VER)
-//             binaryFilename += ".exe";
-// #endif
-//             executeBinaryAndExit(glb, binaryFilename);
-//         }
-//     }
-//     else
         {
         // ------- execution -------------
         /* translate AST to RAM */
@@ -1401,7 +1039,7 @@ int main(Global& glb, const char* souffle_executable) {
         const bool generate_many_mode = glb.config().has("generate-many");
 
         const bool must_execute = execute_mode;
-        const bool must_compile = must_execute || compile_mode || glb.config().has("swig");
+        const bool must_compile = must_execute || compile_mode;
 
         try {
             // ------- compiler -------------
@@ -1460,7 +1098,7 @@ int main(Global& glb, const char* souffle_executable) {
                     srcFiles.push_back(fs::path(sourceFilename));
                 }
                 {
-                    // TODO emit TranslationContext.clauseNums here
+                    // Emit TranslationContext clause-number mapping alongside generated sources.
                     std::string clauseMapFilename = baseFilename + "-clauses.txt";
                     std::ofstream os{clauseMapFilename};
                     unitTranslator->context->dumpClauseNums(os);

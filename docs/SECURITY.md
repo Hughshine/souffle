@@ -1,35 +1,24 @@
 # Security
 
-## Source references
-- [.env.example](.env.example)
-- [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)
+## Source References
 
+- [../README.md:1](../README.md#L1): branch scope.
+- [topics/evaluation/README.artifact.inc.md:1](topics/evaluation/README.artifact.inc.md#L1): benchmark workflow.
+- [../.gitignore:1](../.gitignore#L1): ignored local artifacts.
 
 ## Scope
-This is a research fork intended for local experiments. There is no production
-security policy defined in this repo yet.
 
-## Secrets and Configuration
-- Do not commit secrets, credentials, or private datasets.
-- Use environment variables for local configuration; `.env` is not auto-loaded.
+This branch is a research artifact branch, not a production distribution.
 
 ## Data Handling
-- Treat input facts and output logs as potentially sensitive.
-- Keep generated artifacts out of commits (see `docs/process/README.git.md`).
+
+- Do not commit private datasets, generated benchmark outputs, or timing logs.
+- Treat fact files, probability files, and JSON logs as experiment data.
+- Keep large or machine-local runs outside the repository checkout.
 
 ## Dependency Hygiene
-- Dependency install scripts live under `sh/setup/`.
-- CUDD is required for the BDD backend; SDD is optional for `-k sdd`.
-- Review and pin dependency versions when preparing releases.
 
-## Disclosure / Reporting
-TODO: define a security contact and disclosure process for this fork.
-
-## Pre-Release Checklist
-- Verify dependency sources and versions.
-- Ensure no secrets or datasets are present in the working tree.
-- Update docs and run the recommended verification steps.
-
-## Related commits
-- `UNCOMMITTED` — docs(process): update security hygiene reference to docs/process commit guide
-- `aaa18c137` — docs(repo): add core docs
+- The artifact build depends on the system C++ toolchain, CMake, Flex/Bison,
+  Python 3, Readline, and CUDD.
+- Pin dependency versions in external artifact instructions when preparing a
+  release archive.

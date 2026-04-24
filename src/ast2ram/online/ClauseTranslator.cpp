@@ -111,7 +111,6 @@ std::string ClauseTranslator::getClauseAtomName(const ast::Clause& clause, const
     return getAtomName(clause, atom, sccAtoms, version, isRecursive(), mode, isDelete);
 }
 
-// TODO: change to heap
 std::map<std::string, Own<ram::Expression>> ClauseTranslator::getClauseVars(const ast::Clause& clause) const {
     std::map<std::string, Own<ram::Expression>> varExprMap{};
     // iterate all body literals and translate it to expression
@@ -247,7 +246,6 @@ Own<ram::Operation> ClauseTranslator::addVariableBindingConstraints(Own<ram::Ope
         const auto& first = *references.begin();
         for (const auto& reference : references) {
             if (first != reference && !valueIndex->isGenerator(reference.identifier)) {
-                // TODO: float type equivalence check
                 op = addEqualityCheck(
                         std::move(op), makeRamTupleElement(first), makeRamTupleElement(reference), false);
             }
@@ -443,7 +441,6 @@ Own<ram::Operation> ClauseTranslator::instantiateAggregator(Own<ram::Operation> 
     auto addAggEqCondition = [&](Own<ram::Condition> aggr, Own<ram::Expression> value, std::size_t pos) {
         if (isUndefValue(value.get())) return aggr;
 
-        // TODO: float type equivalence check
         return addConjunctiveTerm(
                 std::move(aggr), mk<ram::Constraint>(BinaryConstraintOp::EQ,
                                          mk<ram::TupleElement>(curLevel, pos), std::move(value)));

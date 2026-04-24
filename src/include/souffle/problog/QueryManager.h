@@ -1,20 +1,9 @@
 #ifndef QUERYMANAGER_H
 #define QUERYMANAGER_H
 
-#include "souffle/RamTypes.h"
-#include "souffle/problog/Atom.h"
 #include "souffle/problog/Query.h"
-#include "souffle/problog/Rule.h"
-#include <cassert>
 #include <cstddef>
-#include <iostream>
-#include <map>
-#include <memory>
-#include <sstream>
-#include <string>
 #include <unordered_map>
-#include <unordered_set>
-#include <variant>
 #include <vector>
 
 class QueryManager {

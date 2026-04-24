@@ -1,47 +1,51 @@
 # Runbook
 
-## Source references
-- [examples/running_example/run.sh](examples/running_example/run.sh)
-- [sh/setup/install_ubuntu_deps.sh](sh/setup/install_ubuntu_deps.sh)
-- [src/MainDriver.cpp](src/MainDriver.cpp)
+## Source References
 
+- [../README.md:25](../README.md#L25): build command.
+- [../src/MainDriver.cpp:623](../src/MainDriver.cpp#L623): compiler-facing incremental options.
+- [../src/synthesiser/Synthesiser.cpp:673](../src/synthesiser/Synthesiser.cpp#L673): generated runtime entry.
+- [../src/include/souffle/CompiledOptions.h:700](../src/include/souffle/CompiledOptions.h#L700): runtime flags.
+- [topics/evaluation/README.artifact.inc.md:1](topics/evaluation/README.artifact.inc.md#L1): benchmark workflow.
 
-## Start / Build
-- Follow the Quickstart in `README.md` for dependency install and build steps.
-- The bundled example uses `examples/running_example/run.sh` (set `SOUFFLE_BIN`
-  if your build directory is not the default).
-- CUDD is required for the BDD backend; SDD is optional for `-k sdd`.
-- TODO (unconfirmed): add standardized CUDD/SDD install commands (no repo script or
-  config currently defines them).
+## Build
 
-## Operate / Run Experiments
-- Full-mode evaluation: see `docs/topics/evaluation/README.eval.md`.
-- Incremental evaluation: see `docs/topics/evaluation/README.eval.inc.md`.
-- Evaluation docs map and historical logs: `docs/topics/evaluation/README.md`.
-- Interactive incremental runs use the turn-based CLI (`insert`, `delete`, `commit`).
+```bash
+JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
+cmake -S . -B build
+cmake --build build -j${JOBS}
+```
 
-## Rollback
-- Keep the last known-good build directory and point `SOUFFLE_BIN` at it.
-- For regressions, revert the commit and rebuild to restore previous behavior.
+CUDD must be available for generated probabilistic runtimes. The AE branch uses
+the BDD backend as a fixed implementation default.
 
-## Logs and Metrics
-- `--logfile <name>` writes JSON reports to the output directory (`-D`).
-- `--dumpjson`, `--dumpdot`, `--dumpstat` emit artifacts in the output directory.
-- `-p <file>` enables profiling output when compiled with profiling.
+## Local Run
+
+```bash
+./build/src/souffle -F input -D output compute.souffle.dl -o compute
+./compute -F input -D output --setmode inc-regional < delta.txt
+```
+
+Run `full` on the same delta stream as the recomputation oracle:
+
+```bash
+./compute -F input -D output --setmode full < delta.txt
+```
+
+## Benchmark Run
+
+Use the companion `problog-benchmark` repository on branch `CAV-INC`:
+
+```bash
+SOUFFLE_BIN=/path/to/inc-artifact-ae/build/src/souffle \
+python3 benchmarks/side_channel/cli/side_channel_inc.py <command> ...
+```
+
+The current AE subset is `P13` through `P20`.
 
 ## Troubleshooting
-- Need regression coverage: run `ctest --test-dir build -L regression`; see
-  `docs/TESTING.md` for the maintained test entry points.
-- `souffle` not found: set `SOUFFLE_BIN` or add the built binary to `PATH`.
-- Missing BDD/SDD backend: ensure CUDD is installed (SDD optional for `-k sdd`).
-- `--inc` not recognized: the legacy backend is removed; use online incremental modes.
-- Large outputs/logs: avoid committing generated artifacts (see `docs/process/README.git.md`).
 
-## Common Checks
-- Compare `facts.prob` outputs across runs for consistency.
-- Inspect stdout timing lines and JSON logs for hot stages before tuning.
-
-## Related commits
-- `UNCOMMITTED` — docs(system): align runbook troubleshooting with maintained regression workflow
-- `UNCOMMITTED` — docs(process): update artifact-commit hygiene reference path
-- `812ea4081` — docs(repo): refine README narratives
+- Missing CUDD headers or library: install CUDD and rebuild.
+- Generated binary link failure: confirm the generated compile script sees the intended CUDD installation.
+- Incremental mismatch: compare the same delta stream under `full`.
+- Regression failure: inspect the per-case work directory under `build/tests/regression`.

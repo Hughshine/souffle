@@ -1,74 +1,21 @@
 # Usage
 
-This document describes the incremental artifact interface. The normal workflow
-has two phases: compile a Datalog program into an online binary, then run that
-binary on a fact directory and incremental turns.
+## Source References
 
-## Build the Compiler
+- [../src/MainDriver.cpp:619](../src/MainDriver.cpp#L619): compiler options.
+- [../src/MainDriver.cpp:691](../src/MainDriver.cpp#L691): runtime-default canonicalization.
+- [../src/synthesiser/Synthesiser.cpp:673](../src/synthesiser/Synthesiser.cpp#L673): generated online pipeline call.
+- [../src/synthesiser/Synthesiser.cpp:4550](../src/synthesiser/Synthesiser.cpp#L4550): generated runtime defaults.
+- [../src/include/souffle/CompiledOptions.h:191](../src/include/souffle/CompiledOptions.h#L191): mode and output syntax.
+- [../src/include/souffle/CompiledOptions.h:700](../src/include/souffle/CompiledOptions.h#L700): generated runtime parser.
+- [../src/include/souffle/cli/Cli.h:657](../src/include/souffle/cli/Cli.h#L657): online CLI commands.
 
-```bash
-JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
-cmake -S . -B build
-cmake --build build -j${JOBS}
-```
+## Input Format
 
-Use `./build/src/souffle` from this build tree for artifact runs.
-
-## Generate an Online Binary
-
-```bash
-./build/src/souffle -F <facts-dir> -D <output-dir> compute.souffle.dl -o compute
-```
-
-The `-F` and `-D` arguments set default input and output directories in the
-generated binary. Runtime arguments can override them.
-
-## Run the Incremental CLI
-
-Start the binary in a selected mode:
-
-```bash
-./compute -F <facts-dir> -D <output-dir> --setmode inc-naive
-```
-
-The first turn loads `<facts-dir>` and computes the baseline. Subsequent turns
-apply queued deltas through the CLI:
-
-```text
-insert 0.4::edge(1,2)
-delete edge(3,4)
-commit
-q
-```
-
-The maintained runtime modes are:
-
-- `inc-naive`
-- `inc-regional`
-- `full-hard`
-- `full-soft`
-- staged combinations via `--sem-mode` and `--fc-mode`
-
-`elastic` is accepted as a compatibility mode and currently falls back to
-`inc-naive`.
-
-## Input Files
-
-Each input relation reads facts from `<relation>.facts` in the directory passed
-with `-F`. Optional `<relation>.prob` files align line-for-line with those
-facts.
-
-Example:
-
-```text
-edge.facts
-1	2
-2	3
-
-edge.prob
-0.91
-0.74
-```
+For each `.input` relation `R`, provide `R.facts` in the fact directory. A
+tuple is one tab-separated line matching the `.decl` order. An optional
+`R.prob` file supplies one probability per fact line; absent `.prob` files make
+the relation deterministic.
 
 Rules may also carry ProbLog-style probabilities:
 
@@ -76,59 +23,81 @@ Rules may also carry ProbLog-style probabilities:
 0.7::path(x,y) :- edge(x,y).
 ```
 
-## Output Files
+## Compile
 
-The generated binary writes output tuple probabilities to `facts.prob` in the
-directory passed with `-D`. Incremental turns also write per-turn probability
-snapshots such as `fact-iter2-inc-naive.prob` and JSON timing logs controlled by
-`--logfile`.
+```bash
+./build/src/souffle -F input -D output compute.souffle.dl -o compute
+```
 
-## Runtime Flags
+Compile-time `-F` and `-D` bake default runtime directories into the generated
+binary. Runtime flags can override them.
 
-The artifact-facing runtime flags are:
+AE-facing compiler options:
 
-- `-F`, `--facts`, `--input-dir`
-- `-D`, `--output`
-- `-l`, `--logfile`, `--log-file`
-- `-m`, `--setmode`
-- `--sem-mode`, `--fc-mode`
-- `--det-opt`, `--no-det-opt`, `--det-mode`
-- `--dumpjson`, `--dumpdot`, `--dumpstat`, `--dump=<...>`
-- `--profile-stage=<inc,fc,wmc,inc-delete,inc-regional,dep-graph>`
-- `--post-del`
-- `--no-reuse-var-index`
-- `--trace-inc-regional=<tuple,...>`
+- `-F, --fact-dir <DIR>`: default fact directory.
+- `-D, --output-dir <DIR>`: default output directory.
+- `-o, --dl-program <FILE>`: generated executable.
+- `--setmode=<MODE>`: default runtime mode, one of `inc-naive`, `inc-regional`, `full`.
+- `--dump=<json|json-before-graph|json-before-prune|dot|stat>`: bake default graph dumps.
+- `--profile-stage=<dred|inc|fc|wmc|inc-delete|inc-regional|dep-graph>`: bake default profiling stages.
+- `--log-file=<FILE>`: default debugger log filename.
 
-The online CLI also supports:
+Inherited Souffle options such as `--jobs`, `--include-dir`, `--profile`,
+`--show`, and warning controls remain available but are not incremental knobs.
 
-- `setmode`
-- `set sem-mode`
-- `set fc-mode`
-- `set dump` / `unset dump`
-- `set profile-stage` / `unset profile-stage`
+## Runtime
+
+AE-facing generated runtime options:
+
+- `-F, --facts, --input-dir <DIR>`: fact directory.
+- `-D, --output, --output-dir <DIR>`: output directory.
+- `-m, --setmode=<MODE>`: turn mode, one of `inc-naive`, `inc-regional`, `full`.
+- `--dump=<json|json-before-graph|json-before-prune|dot|stat>`: default-off graph dumps.
+- `--profile-stage=<dred|inc|fc|wmc|inc-delete|inc-regional|dep-graph>`: default-off profiling output.
+- `--logfile=<FILE>` or `--log-file=<FILE>`: debugger log filename.
+- `-p, --profile=<FILE>`: profile output, only for binaries compiled with profiling enabled.
+- `-j, --jobs=<N>`: runtime thread count when OpenMP is available.
+
+There are no public backend, determinism, variable-index reuse, or reordering
+switches in this AE branch. BDD, deterministic-relation analysis, variable index
+reuse, and CUDD adaptive reordering are fixed implementation defaults.
+
+## Online CLI
+
+Commands:
+
+- `insert [prob::]Rel(v1, v2, ...) [prob]`
+- `delete Rel(v1, v2, ...)`
+- `commit`
+- `setmode inc-naive|inc-regional|full`
+- `set dump <kind>` and `unset dump <kind>`
+- `set profile-stage <stage>` and `unset profile-stage <stage>`
 - `show config`
 - `list`
-- `commit`
 - `help`
 - `q`
 
-## Companion Benchmark Workflow
-
-For the side-channel artifact runs, use the companion `CAV-INC` benchmark tree
-with:
+Example:
 
 ```bash
-sh/run_artifact_inc.sh
+./compute -F input -D output --setmode inc-regional
+insert 0.3::edge(1,2)
+delete edge(3,4)
+commit
+q
 ```
 
-That helper drives generate/delta/compile/run/collect on the benchmark side.
+## Optional Outputs
 
-## Source Map
+The default run writes `facts.prob` and per-turn snapshots such as
+`fact-iter2-inc-regional.prob`. To collect graph material:
 
-- [../src/MainDriver.cpp](../src/MainDriver.cpp): compiler driver options.
-- [../src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h):
-  generated-binary options.
-- [../src/include/souffle/cli/Cli.h](../src/include/souffle/cli/Cli.h):
-  online CLI and per-turn mode handling.
-- [../src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp):
-  incremental runtime pipeline.
+```bash
+./compute -F input -D output --setmode inc-regional \
+  --dump=dot,json,stat --profile-stage=inc,wmc,fc
+```
+
+`dot` writes derivation graph DOT files, `json` writes post-prune graph JSON,
+`json-before-graph` writes rule-application JSON before graph materialization,
+`json-before-prune` writes the graph before pruning, and `stat` writes graph
+statistics.

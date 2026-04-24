@@ -24,11 +24,6 @@
 #include "souffle/io/WriteStreamCSV.h"
 #include "souffle/io/WriteStreamJSON.h"
 
-#ifdef USE_SQLITE
-#include "souffle/io/ReadStreamSQLite.h"
-#include "souffle/io/WriteStreamSQLite.h"
-#endif
-
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -86,10 +81,6 @@ private:
         registerWriteStreamFactory(std::make_shared<WriteCoutPrintSizeFactory>());
         registerWriteStreamFactory(std::make_shared<WriteFileJSONFactory>());
         registerWriteStreamFactory(std::make_shared<WriteCoutJSONFactory>());
-#ifdef USE_SQLITE
-        registerReadStreamFactory(std::make_shared<ReadSQLiteFactory>());
-        registerWriteStreamFactory(std::make_shared<WriteSQLiteFactory>());
-#endif
     };
     std::map<std::string, std::shared_ptr<WriteStreamFactory>> outputFactories;
     std::map<std::string, std::shared_ptr<ReadStreamFactory>> inputFactories;

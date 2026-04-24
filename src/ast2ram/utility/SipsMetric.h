@@ -29,8 +29,6 @@ class Expression;
 
 namespace souffle::ast::analysis {
 class IOTypeAnalysis;
-class ProfileUseAnalysis;
-class PolymorphicObjectsAnalysis;
 class SCCGraphAnalysis;
 }  // namespace souffle::ast::analysis
 namespace souffle::ast {
@@ -72,28 +70,6 @@ protected:
     const ast::analysis::SCCGraphAnalysis* sccGraph = nullptr;
 };
 
-class SelingerProfileSipsMetric : public SipsMetric {
-public:
-    SelingerProfileSipsMetric(const TranslationUnit& tu);
-    std::vector<std::size_t> getReordering(
-            const Clause* clause, const std::vector<std::string>& atomNames) const override;
-
-    // type aliases
-    using AtomIdx = std::size_t;
-    using AtomSet = std::set<std::size_t>;
-    using ArgIdx = std::size_t;
-
-private:
-    /* helper struct for Selinger */
-    struct PlanTuplesCost {
-        std::vector<std::size_t> plan;
-        std::vector<double> tuplesPerIteration;
-        std::vector<double> costsPerIteration;
-    };
-
-    const ast::analysis::PolymorphicObjectsAnalysis* polyAnalysis = nullptr;
-    const ast::analysis::ProfileUseAnalysis* profileUseAnalysis = nullptr;
-};
 
 class StaticSipsMetric : public SipsMetric {
 public:

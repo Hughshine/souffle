@@ -1,90 +1,76 @@
-# Incremental Artifact (Side-Channel)
+# Incremental Artifact Evaluation
 
-## Source references
-- [problog-benchmark/benchmarks/side_channel/cli/side_channel_inc.py](problog-benchmark/benchmarks/side_channel/cli/side_channel_inc.py)
-- [problog-benchmark/benchmarks/side_channel/docs/README.side-channel-inc.md](problog-benchmark/benchmarks/side_channel/docs/README.side-channel-inc.md)
-- [sh/run_artifact_inc.sh](sh/run_artifact_inc.sh)
-- [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
-- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+This document is the AE run guide for the compiler branch `inc-artifact-ae`.
+The side-channel benchmark driver lives in the companion `problog-benchmark`
+repository on branch `CAV-INC`.
 
+## Source References
 
-This document provides a minimal, reproducible path to run the incremental
-artifact experiments for the side-channel benchmark:
+- [../../../README.md:1](../../../README.md#L1): branch scope.
+- [../../../src/MainDriver.cpp:623](../../../src/MainDriver.cpp#L623): AE compiler parameters.
+- [../../../src/include/souffle/CompiledOptions.h:191](../../../src/include/souffle/CompiledOptions.h#L191): runtime mode syntax.
+- [../../../src/include/souffle/cli/Cli.h:657](../../../src/include/souffle/cli/Cli.h#L657): update commands.
+- [../../../tests/regression/run_regression_case.py:166](../../../tests/regression/run_regression_case.py#L166): maintained compile invocation.
 
-- SEM stage performance (per-turn SEM/PRN/FC/WMC from logs)
-- INC_NAIVE delete/insert performance (setmode `inc`)
+## Scope
 
-For full script details, see:
-`problog-benchmark/benchmarks/side_channel/docs/README.side-channel-inc.md`.
+Current AE scope is side-channel cases `P13` through `P20`. The benchmark grid
+is 3 by 5:
 
-## Prereqs
+- delta sizes: `0.5%`, `1.0%`, `1.5%`;
+- delete ratios: `0`, `0.25`, `0.5`, `0.75`, `1`.
 
-- Python 3.9+
-- Souffle built with `--online` CLI support (use repo build commands).
-- This compiler tree checked out on the `inc-artifact-ae` branch.
-- The companion `problog-benchmark` repo checked out on the `CAV-INC` branch.
+Keep the 3 by 5 table shape even when a case has fewer valid measurements; use
+empty or `NA` cells rather than changing the grid.
 
-Build Souffle from the repo root:
+## Build Compiler
+
 ```bash
-cmake -S . -B build
 JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
+cmake -S . -B build
 cmake --build build -j${JOBS}
 ```
 
-## Quick Run (P12–P20, full ruleset)
+## Benchmark Driver
 
-Run the helper script from the Souffle repo root:
+From the companion `problog-benchmark` checkout on `CAV-INC`:
+
 ```bash
-sh/run_artifact_inc.sh
+SOUFFLE_BIN=/path/to/inc-artifact-ae/build/src/souffle \
+python3 benchmarks/side_channel/cli/side_channel_inc.py --help
 ```
 
-Optional (for regional/disjunction experiments): run strengthen before delta:
+The compiler invocation should not pass removed algorithm switches. The
+generated runtime defaults to BDD, deterministic-relation analysis, CUDD
+variable-index reuse, and adaptive reordering.
+
+## Run Shape
+
+The expected sequence is:
+
+1. generate or verify inputs for `P13` through `P20`;
+2. generate mixed deltas for the 3 by 5 grid;
+3. compile with this branch's `souffle` binary;
+4. run incremental modes and compare against `full`;
+5. collect TSV/JSON summaries for paper tables and figures.
+
+Use `inc-naive` and `inc-regional` for incremental runs. Use `full` only
+as the exact oracle.
+
+## Optional Outputs
+
+For debugging a specific cell, enable default-off outputs explicitly:
+
 ```bash
-cd /path/to/problog-benchmark
-python3 side_channel_inc.py --base-dir <base-dir> strengthen --cases P12,P13,... --augment-derivations 200
+./compute -F input -D output --setmode inc-regional \
+  --dump=dot,json,stat --profile-stage=inc,fc,wmc,inc-regional
 ```
 
-The script defaults to:
-- Cases: `P12`–`P20`
-- Rule set: `full`
-- Delta sizes: `inc0p1=0.001`, `inc0p3=0.003`, `inc0p5=0.005`
-- Runs: det-opt behavior default on (use `--run-arg=--no-det-opt` to disable for ablation;
-  reuse-var-index remains enabled by default and can be disabled with `--no-reuse-var-index`)
-- Output base dir: `../problog-benchmark/side_channel_inc_artifact`
+Do not enable these outputs in timing runs unless the timing protocol requires
+them; they add I/O and instrumentation overhead.
 
-You can override defaults via environment variables:
-```bash
-PROBLOG_BENCH=/path/to/problog-benchmark \
-BASE_DIR=/tmp/side_channel_inc_artifact \
-CASES=P12,P13,P14 \
-RULE_SET=full \
-CHANGE_SPEC=inc0p1=0.001,inc0p3=0.003,inc0p5=0.005 \
-DELTA_LABELS=inc0p1,inc0p3,inc0p5 \
-DELTA_SAMPLES=1 \
-TIMEOUT=1200 \
-sh/run_artifact_inc.sh
-```
+## Result Files
 
-## Outputs to Inspect
-
-Under `<base-dir>/P*/output/`:
-- `facts.full.prob`, `facts.inc.prob` (baseline outputs)
-- `delta-<label>-<sample>-*.prob` (per-run outputs)
-- `delta-<label>-<sample>.json` (comparisons + per-turn stage summaries)
-
-Summary file:
-- `<base-dir>/results-souffle-inc.tsv` (end-to-end times + `OK` flag)
-
-Stage breakdown (SEM/PRN/FC/WMC) is recorded per turn in each
-`delta-<label>-<sample>.json`. Compare turn 2 (delete) and turn 3 (insert)
-between `inc` and `full`.
-
-## Notes
-
-- `setmode inc` maps to `INC_NAIVE` in the CLI.
-- Incremental runs keep a persistent DD manager across turns.
-- Full runs reset the manager each turn in `full-hard`; `full-soft` reuses the manager state.
-- `--full-only` must remain disabled for incremental runs (the script does not use it).
-
-## Related commits
-- `b22a891b0` — fix(inc): sync det-opt deltas and artifact docs
+The benchmark driver should produce per-turn probability files, per-run logs,
+per-cell summaries, and a collected `results-souffle-inc.tsv`. A mismatch
+against `full` is a correctness failure, not a timing datapoint.

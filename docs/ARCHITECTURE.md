@@ -1,95 +1,69 @@
 # Architecture
 
-This artifact evaluates probabilistic Datalog programs under incremental
-updates. The evaluator supplies a `.dl` program, a fact directory, and a stream
-of online updates. The compiler produces an online binary. That binary computes
-the baseline, applies incremental turns, and writes output tuple probabilities.
+This artifact evaluates probabilistic Datalog programs under online updates.
+The compiler emits an interactive runtime. The runtime computes a baseline
+derivation graph, accepts insert/delete turns, and writes output tuple
+probabilities after each commit.
 
-The artifact-facing comparison is `full-hard` versus incremental modes
-(`inc-naive`, `inc-regional`, and staged mixed modes). All compared runs should
-produce the same tuple keys and probabilities.
+The AE comparison is `full` versus `inc-naive` or `inc-regional`.
+`full` is the exact recomputation oracle; incremental modes must produce
+matching tuple keys and probabilities on the same delta stream.
 
-The two implementation contributions are:
+## Source References
 
-1. Incremental derivation maintenance for mixed insert/delete turns.
-2. Incremental forward compilation with naive and regional update paths.
+- [../src/MainDriver.cpp:623](../src/MainDriver.cpp#L623): compiler-facing incremental options.
+- [../src/synthesiser/Synthesiser.cpp:673](../src/synthesiser/Synthesiser.cpp#L673): generated runtime pipeline entry.
+- [../src/synthesiser/Synthesiser.cpp:4550](../src/synthesiser/Synthesiser.cpp#L4550): baked runtime defaults.
+- [../src/problog/Pipeline.cpp:914](../src/problog/Pipeline.cpp#L914): baseline pipeline and online CLI handoff.
+- [../src/include/souffle/cli/Cli.h:657](../src/include/souffle/cli/Cli.h#L657): interactive command surface.
+- [../src/include/souffle/cli/Executor.h:233](../src/include/souffle/cli/Executor.h#L233): incremental commit graph update.
+- [../src/include/souffle/problog/ForwardCompilation.h:512](../src/include/souffle/problog/ForwardCompilation.h#L512): naive incremental forward compilation.
+- [../src/include/souffle/problog/ForwardCompilation.h:1960](../src/include/souffle/problog/ForwardCompilation.h#L1960): regional incremental forward compilation.
+- [../src/include/souffle/problog/formula/CuddManager.h:565](../src/include/souffle/problog/formula/CuddManager.h#L565): CUDD adaptive reordering.
 
-## 0. Compile
+## 1. Compile
 
-`souffle` first compiles the input `.dl` program through the normal AST and RAM
-pipeline, then emits an online binary with incremental relation metadata and CLI
-controls.
+The normal Souffle frontend parses and transforms the program. This branch
+selects the online AST-to-RAM translator and emits a binary wired to the
+probabilistic incremental pipeline.
 
-Key sources:
+Compile-time AE parameters set runtime defaults only. They do not expose
+backend, determinism, variable-index reuse, or reordering switches.
 
-- [../src/MainDriver.cpp](../src/MainDriver.cpp)
-- [../src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp)
-- [../src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h)
-
-## 1. Baseline Turn
+## 2. Baseline
 
 The generated binary reads `<relation>.facts` and optional `<relation>.prob`
 files, runs the compiled semi-naive evaluator, records rule applications, and
-builds the baseline derivation graph. This gives the persistent state consumed
-by later turns.
+builds the baseline derivation graph. The baseline initializes BDD formulas and
+writes the initial probability output.
 
-Key sources:
+## 3. Commit
 
-- [../src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp)
-- [../src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp)
-- [../src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h)
+Each `commit` applies queued insertions and deletions. The runtime:
 
-## 2. Commit a Delta Turn
+1. stages tuple operations from the CLI;
+2. reruns the generated incremental RAM relations for the delta;
+3. applies graph deletes before inserts;
+4. prunes the graph to output-relevant state;
+5. runs the selected forward-compilation mode;
+6. writes per-turn probabilities.
 
-Each `commit` applies queued insertions and deletions. The runtime updates the
-derivation graph view, performs delete/rederive where needed, and maintains the
-`@post_delete_*` snapshot family required for exact mixed-update semantics in
-non-recursive upper strata.
+`@post_delete_*` snapshots are part of the generated RAM protocol for exact
+mixed insert/delete semantics in non-recursive upper strata.
 
-Key sources:
+## 4. Forward Compilation
 
-- [../src/include/souffle/cli/Cli.h](../src/include/souffle/cli/Cli.h)
-- [../src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h)
-- [../src/ast2ram/online/UnitTranslator.cpp](../src/ast2ram/online/UnitTranslator.cpp)
+`inc-naive` updates formulas on the delta-reachable scope. It handles deletion,
+rederive, insertion, CUDD variable reuse, and incremental weighted model
+counting without exposing those internal choices as flags.
 
-## 3. Incremental Forward Compilation
+`inc-regional` analyzes the delta-reachable region, chooses boundaries, reuses
+unaffected formulas outside the region, and calibrates boundary weights. If a
+regional turn would consume unsafe persistent state, the runtime falls back on
+the forward-compilation side while preserving semantic mode.
 
-After the graph delta is ready, the runtime solves probabilities in one of two
-incremental forward-compilation modes:
+## 5. Outputs
 
-- `inc-naive`: rebuild on the delta-reachable scope.
-- `inc-regional`: reuse unaffected outside-of-region formulas and rebuild only
-  the selected regional subgraph.
-
-`full-hard` remains the exact oracle and resets the formula state each turn.
-`full-soft` keeps the formula manager but still recomputes from full semantics.
-
-Key sources:
-
-- [../src/include/souffle/problog/ForwardCompilation.h](../src/include/souffle/problog/ForwardCompilation.h)
-- [../src/include/souffle/problog/RegionalIncremental.h](../src/include/souffle/problog/RegionalIncremental.h)
-
-## 4. Multi-Turn Regional State Machine
-
-Regional reuse is not always safe to compose across turns. The runtime
-classifies the persistent forward-compilation state as normalized versus
-regionalized. When a requested regional consumer would read unsafe incoming
-state, only the FC side falls back to `inc-naive`; semantic mode is preserved.
-
-This is the maintained multi-turn regional guard used by the artifact branch.
-
-Key sources:
-
-- [../src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h)
-- [../src/include/souffle/cli/Cli.h](../src/include/souffle/cli/Cli.h)
-
-## 5. Output and Logs
-
-The runtime writes output tuple probabilities to `facts.prob` and per-turn
-snapshots such as `fact-iter2-inc-regional.prob`. JSON logs and graph statistics
-are controlled by `--logfile` and dump/profile flags.
-
-Key sources:
-
-- [../src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h)
-- [../src/problog/debug/Debugger.cpp](../src/problog/debug/Debugger.cpp)
+Default probability outputs are always written. Additional material is opt-in:
+graph DOT/JSON/stat dumps use `--dump`, and timing or diagnostic streams use
+`--profile-stage`.

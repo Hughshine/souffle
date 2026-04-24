@@ -107,13 +107,12 @@ protected:
     Own<ram::Statement> generateStoreRelation(const ast::Relation* relation) const;
     Own<ram::Statement> generateLoadRelation(const ast::Relation* relation) const;
     Own<ram::Statement> generateLoadRelationInc(const ast::Relation* relation) const;
-    Own<ram::Statement> generateLoadRelationForIDB(const ast::Relation* relation) const;
 
     /** Low-level stratum translation */
     Own<ram::Statement> translateEvidence(const ast::Evidence& evidence);
     Own<ram::Statement> generateStratum(std::size_t scc) const;
     Own<ram::Statement> generateStratumInc(std::size_t scc) const;
-    Own<ram::Statement> generateIncTableUpdate(const std::vector<std::size_t>& sccOrderings) const;  // TODO
+    Own<ram::Statement> generateIncTableUpdate(const std::vector<std::size_t>& sccOrderings) const;
     Own<ram::Statement> generateStratumPreamble(const ast::RelationSet& scc) const;
     Own<ram::Statement> generateStratumPreambleInc(const ast::RelationSet& scc, bool isDelete = false) const;
     Own<ram::Statement> generateStratumRederive(

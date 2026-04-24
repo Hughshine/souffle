@@ -21,9 +21,6 @@
 #include "souffle/utility/ContainerUtil.h"
 #include "souffle/utility/MiscUtil.h"
 #include "souffle/utility/ParallelUtil.h"
-#ifdef USE_LIBZ
-#include "souffle/io/gzfstream.h"
-#endif
 
 #include <cstddef>
 #include <fstream>
@@ -165,49 +162,6 @@ protected:
     }
 };
 
-#ifdef USE_LIBZ
-class WriteGZipFileCSV : public WriteStreamCSV {
-public:
-    WriteGZipFileCSV(const std::map<std::string, std::string>& rwOperation, const SymbolTable& symbolTable,
-            const RecordTable& recordTable)
-            : WriteStreamCSV(rwOperation, symbolTable, recordTable),
-              file(getFileName(rwOperation), std::ios::out | std::ios::binary) {
-        if (getOr(rwOperation, "headers", "false") == "true") {
-            file << rwOperation.at("attributeNames") << std::endl;
-        }
-        file << std::setprecision(std::numeric_limits<RamFloat>::max_digits10);
-    }
-
-    ~WriteGZipFileCSV() override = default;
-
-protected:
-    void writeNullary() override {
-        file << "()\n";
-    }
-
-    void writeNextTuple(const RamDomain* tuple) override {
-        writeNextTupleCSV(file, tuple);
-    }
-
-    /**
-     * Return given filename or construct from relation name.
-     * Default name is [configured path]/[relation name].csv
-     *
-     * @param rwOperation map of IO configuration options
-     * @return input filename
-     */
-    static std::string getFileName(const std::map<std::string, std::string>& rwOperation) {
-        auto name = getOr(rwOperation, "filename", rwOperation.at("name") + ".csv.gz");
-        if (name.front() != '/') {
-            name = getOr(rwOperation, "output-dir", ".") + "/" + name;
-        }
-        return name;
-    }
-
-    gzfstream::ogzfstream file;
-};
-#endif
-
 class WriteCoutCSV : public WriteStreamCSV {
 public:
     WriteCoutCSV(const std::map<std::string, std::string>& rwOperation, const SymbolTable& symbolTable,
@@ -265,11 +219,6 @@ class WriteFileCSVFactory : public WriteStreamFactory {
 public:
     Own<WriteStream> getWriter(const std::map<std::string, std::string>& rwOperation,
             const SymbolTable& symbolTable, const RecordTable& recordTable) override {
-#ifdef USE_LIBZ
-        if (contains(rwOperation, "compress")) {
-            return mk<WriteGZipFileCSV>(rwOperation, symbolTable, recordTable);
-        }
-#endif
         return mk<WriteFileCSV>(rwOperation, symbolTable, recordTable);
     }
     const std::string& getName() const override {

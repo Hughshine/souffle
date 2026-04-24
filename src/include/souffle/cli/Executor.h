@@ -81,9 +81,6 @@ public:
         } modeRestore{cli, requestedMode};
         cli.modeSpec = effectiveMode;
 
-        if (cli.isElasticFcMode()) {
-            std::cout << "[cli] fc-mode elastic currently falls back to inc-naive" << std::endl;
-        }
         cli.stagePendingOperationsForProgram();
         dumpInitialInputRelations(
                 cli.opt.getOutputFileDir() + "/initial-input-relations-iter" +
@@ -257,7 +254,6 @@ private:
         }
         IncSubgraphView view = [&] {
             FunctionTimer timer("PRUNING_INC: prune");
-            DerivationGraph::setMergeBiImpEnabled(false);
             cli.graph->setBuildInsertImpacts(useRegional);
             return cli.graph->prune(cli.program->getOutputRelations());
         }();
@@ -274,10 +270,6 @@ private:
         debugger.endStage();
         cli.logPrunedDeltaSummary(view, useRegional ? "INC_REGIONAL" : "INC_NAIVE");
         cli.changedNodes.clear();
-        if (cli.derivationOnly) {
-            cli.finishTurn();
-            return;
-        }
         if (cli.isIncrementalFcMode()) {
             debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
             if (useRegional) {
@@ -307,7 +299,7 @@ private:
             debugger.endStage();
             cli.dumpCurrentTurnProbabilitiesWithStage(StageKind::IO_DUMP_FULL);
         } else {
-            assert(false && "Unsupported fc mode for sem=inc");
+            assert(false && "Unsupported incremental turn mode");
         }
         cli.finishTurn();
     }
@@ -319,7 +311,6 @@ private:
         IncrementalDerivationGraph* oldGraph = cli.graph;
         std::unique_ptr<IncSubgraphView> oldPrunedView;
         if (useIncFc && cli.graph != nullptr) {
-            DerivationGraph::setMergeBiImpEnabled(false);
             oldPrunedView = std::make_unique<IncSubgraphView>(cli.graph->prune(cli.program->getOutputRelations()));
         }
 
@@ -363,7 +354,6 @@ private:
         debugger.startStage(StageKind::PRUNING_FULL);
         IncSubgraphView view = [&] {
             FunctionTimer timer("PRUNING_FULL: prune");
-            DerivationGraph::setMergeBiImpEnabled(false);
             return cli.graph->prune(cli.program->getOutputRelations());
         }();
         if (cli.opt.isDumpDotEnabled()) {
@@ -377,16 +367,12 @@ private:
                     cli.outputTimestampedPath("derivation-full-after-prune", cli.iteration, ".json"));
         }
         debugger.endStage();
-        if (cli.derivationOnly) {
-            cli.finishTurn();
-            return;
-        }
 
         std::unique_ptr<IncSubgraphView> diffView;
         IncSubgraphView* activeView = &view;
         if (useIncFc) {
             if (!oldPrunedView) {
-                assert(false && "sem=full with fc=inc-* requires existing previous pruned view");
+                assert(false && "Full refresh with incremental FC requires existing previous pruned view");
             }
             std::unordered_map<NodePtr, NodePtr> oldToNewNodes;
             std::unordered_map<EdgePtr, EdgePtr> oldToNewEdges;

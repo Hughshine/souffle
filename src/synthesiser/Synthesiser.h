@@ -32,7 +32,6 @@
 #include <regex>
 #include <set>
 #include <string>
-#include <ast/Constant.h>
 #include <ast/Program.h>
 
 namespace souffle::synthesiser {
@@ -210,44 +209,4 @@ public:
     void generateCode(GenDb& db, const std::string& id, bool& withSharedLibrary);
 };
 
-/**
- * @class GroundSynthesiser
- * @brief Synthesiser for fully ground Datalog programs.
- *
- * This synthesiser bypasses the traditional semi-naive evaluation by constructing
- * a static PreDerivationGraph at compile time. At runtime, it performs a single
- * graph traversal to compute the result, materializes a DerivationGraph, and
- * then runs the Problog pipeline.
- */
-class GroundSynthesiser {
-public:
-    explicit GroundSynthesiser(ast::TranslationUnit& tu);
-    ~GroundSynthesiser() = default;
-
-    /**
-     * Generate C++ code for the given ground Soufflé program.
-     *
-     * @param db The code generation database.
-     * @param id The identifier for the generated C++ class.
-     */
-    void generateCode(GenDb& db, const std::string& id);
-
-private:
-    Global& glb;
-    ast::GroundnessInfo groundnessInfo;
-    /** The AST translation unit. */
-    ast::TranslationUnit& translationUnit;
-
-    /** A map from string constants to their index in the symbol table. */
-    mutable std::map<std::string, std::size_t> symbolMap;
-
-    /** An ordered list of symbols for initializing the symbol table. */
-    mutable std::vector<std::string> symbolIndex;
-
-    /** Converts a string constant to its symbol table index. */
-    std::size_t getSymbolIndex(const std::string& symbol) const;
-
-    /** Converts an AST constant to its RamDomain representation. */
-    RamDomain convertConstant(const ast::Constant& constant) const;
-};
 }  // namespace souffle::synthesiser

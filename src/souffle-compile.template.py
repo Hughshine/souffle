@@ -13,9 +13,9 @@ if not JSON_DATA_TEXT:
       "cxx_link_flags": "",
       "release_cxx_flags": "-O3 ",
       "debug_cxx_flags": "-g",
-      "definitions": "-DRAM_DOMAIN_SIZE=64 -DUSE_NCURSES -DUSE_LIBZ -DUSE_SQLITE",
+      "definitions": "-DRAM_DOMAIN_SIZE=64",
       "compile_options": "",
-      "link_options": "-pthread -ldl -lreadline -lstdc++fs /usr/lib/x86_64-linux-gnu/libsqlite3.so /usr/lib/x86_64-linux-gnu/libz.so /usr/lib/x86_64-linux-gnu/libncurses.so",
+      "link_options": "-pthread -ldl -lreadline -lstdc++fs",
       "rpaths": "/usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu",
       "outname_fmt": "-o {}",
       "libdir_fmt": "-L{}",
@@ -23,18 +23,15 @@ if not JSON_DATA_TEXT:
       "rpath_fmt": "-Wl,-rpath,{}",
       "path_delimiter": ":",
       "exe_extension": "",
-      "source_include_dir": "",
-      "jni_includes": ""
+      "source_include_dir": ""
     }"""
 
 import argparse
 import json
 import os
 import pathlib
-import shutil
 import subprocess
 import sys
-import tempfile
 
 # run command and return status object
 def launch_command(cmd, descr, verbose=False):
@@ -47,12 +44,6 @@ def launch_command(cmd, descr, verbose=False):
         raise RuntimeError("Error: {}. Command: {}".format(descr, cmd))
     return status
 
-# run command and return the standard output as a string
-def capture_command_output(cmd, descr, verbose=False):
-    status = launch_command(cmd, descr, verbose)
-    return status.stdout
-
-
 conf = json.loads(JSON_DATA_TEXT)
 OUTNAME_FMT = conf['outname_fmt']
 LIBDIR_FMT = conf['libdir_fmt']
@@ -62,7 +53,6 @@ PATH_DELIMITER = conf['path_delimiter']
 RPATHS = conf['rpaths'].split(PATH_DELIMITER)
 exeext = conf['exe_extension']
 SOURCE_INCLUDE_DIR = conf['source_include_dir']
-JNI_INCLUDES = conf['jni_includes'].split(PATH_DELIMITER)
 
 workdir = os.getcwd()
 scriptdir = pathlib.Path(os.path.dirname(os.path.abspath(__file__)))
@@ -71,7 +61,6 @@ parser = argparse.ArgumentParser(description="Compile a C++ source file generate
 parser.add_argument('-l', action='append', default=[], metavar='LIBNAME', dest='lib_names', type=str, help="Basename of a functors library. eg: `-l functors` => libfunctors.dll")
 parser.add_argument('-L', action='append', default=[], metavar='LIBDIR', dest='lib_dirs', type=lambda p: pathlib.Path(p).absolute(), help="Search directory for functors libraries")
 parser.add_argument('-g', action='store_true', dest='debug', help="Debug build type")
-parser.add_argument('-s', metavar='LANG', dest='swiglang', choices=["java", "python"], help="use SWIG interface to generate into LANG language")
 parser.add_argument('-v', action='store_true', dest='verbose', help="Verbose output")
 parser.add_argument('-I', action='append', default=[], metavar='INCDIR', dest='inc_dirs', type=lambda p: pathlib.Path(p).absolute(), help="Additional include directories")
 parser.add_argument('--with-cudd', action='store_true', dest='with_cudd', help="Link with CUDD library")
@@ -151,128 +140,44 @@ if args.with_cudd:
     cudd_lib_path = str(cudd_dir / "lib")
     if cudd_lib_path not in RPATHS:
         RPATHS.append(cudd_lib_path)
-    additional_libs.extend(["sdd++", "sdd"])
 
+exepath = pathlib.Path("{}{}".format(args.output, exeext))
 
-if args.swiglang:
-    if not (souffle_include_dir and (souffle_include_dir / "souffle" / "swig").exists()):
-        raise RuntimeError("Cannot find 'souffle/swig' include directory")
+cmd = []
+cmd.append('"{}"'.format(conf['compiler']))
+cmd.append(conf['definitions'])
+cmd.append(conf['compile_options'])
+cmd.append(conf['includes'])
+cmd.append(" ".join(additional_includes))  # Add our additional includes
+cmd.append(conf['std_flag'])
+cmd.append(conf['cxx_flags'])
 
-    swig_include_dir = (souffle_include_dir / "souffle" / "swig")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        shutil.copy(swig_include_dir / "SwigInterface.h", tmpdir)
-        shutil.copy(swig_include_dir / "SwigInterface.i", tmpdir)
-
-        os.chdir(tmpdir)
-        launch_command("swig -c++ -\"{}\" SwigInterface.i".format(args.swiglang), "SWIG generation", verbose=args.verbose)
-
-        if args.swiglang == "python":
-            swig_flags = capture_command_output("python3-config --cflags", "Python config", verbose=args.verbose)
-            swig_ldflags = capture_command_output("python3-config --ldflags", "Python config", verbose=args.verbose)
-            swig_outname = "_SwigInterface.so"
-        elif args.swiglang == "java":
-            swig_flags = " ".join(["-I{}".format(dir) for dir in JNI_INCLUDES])
-            swig_ldflags = ""
-            swig_outname = "libSwigInterface.so"
-
-        # compile swig interface and program
-        cmd = []
-        cmd.append('"{}"'.format(conf['compiler']))
-        cmd.append("-fPIC")
-        cmd.append("-c")
-        cmd.append("-D__EMBEDDED_SOUFFLE__")
-        cmd.append("SwigInterface_wrap.cxx")
-        for f in args.source:
-            cmd.append(str(f))
-        cmd.append(conf['definitions'])
-        cmd.append(conf['compile_options'])
-        cmd.append(conf['includes'])
-        cmd.append(" ".join(additional_includes))  # Add our additional includes
-        cmd.append(conf['std_flag'])
-        cmd.append(conf['cxx_flags'])
-        if args.debug:
-            cmd.append(conf['debug_cxx_flags'])
-        else:
-            cmd.append(conf['release_cxx_flags'])
-        cmd.append(swig_flags)
-        cmd = " ".join(cmd)
-        launch_command(cmd, "Compilation of SWIG C++", verbose=args.verbose)
-
-        # link swig interface and program
-        cmd = []
-        cmd.append('"{}"'.format(conf['compiler']))
-        cmd.append("-shared")
-        cmd.append("SwigInterface_wrap.o")
-        cmd.append(os.path.basename(args.output) + ".o")
-        cmd.append("-o")
-        cmd.append(swig_outname)
-        cmd.append(conf['definitions'])
-        cmd.append(conf['compile_options'])
-        cmd.append(conf['includes'])
-        cmd.append(" ".join(additional_includes))  # Add our additional includes
-        cmd.append(conf['std_flag'])
-        cmd.append(conf['cxx_flags'])
-        if args.debug:
-            cmd.append(conf['debug_cxx_flags'])
-        else:
-            cmd.append(conf['release_cxx_flags'])
-        cmd.append(conf['link_options'])
-        cmd.append(additional_link_options)  # Add our additional link options
-        cmd.extend(list(map(lambda rpath: RPATH_FMT.format(rpath), RPATHS)))
-        cmd.extend(list(map(lambda libdir: LIBDIR_FMT.format(libdir), args.lib_dirs + additional_lib_dirs)))
-        cmd.extend(list(map(lambda libname: LIBNAME_FMT.format(libname), args.lib_names + additional_libs)))
-        cmd.append(swig_ldflags)
-        cmd = " ".join(cmd)
-        launch_command(cmd, "Link of SWIG C++", verbose=args.verbose)
-
-        if args.swiglang == "python":
-            shutil.copy("_SwigInterface.so", workdir)
-            shutil.copy("SwigInterface.py", workdir)
-        elif args.swiglang == "java":
-            shutil.copy("libSwigInterface.so", workdir)
-            for javasrc in pathlib.Path(tmpdir).glob("*.java"):
-                shutil.copy(javasrc, workdir)
-
-        # move generated files to same directory as cpp file
-        os.sys.exit(0)
+if args.debug:
+    cmd.append(conf['debug_cxx_flags'])
 else:
-    exepath = pathlib.Path("{}{}".format(args.output, exeext))
+    cmd.append(conf['release_cxx_flags'])
 
-    cmd = []
-    cmd.append('"{}"'.format(conf['compiler']))
-    cmd.append(conf['definitions'])
-    cmd.append(conf['compile_options'])
-    cmd.append(conf['includes'])
-    cmd.append(" ".join(additional_includes))  # Add our additional includes
-    cmd.append(conf['std_flag'])
-    cmd.append(conf['cxx_flags'])
+cmd.append(OUTNAME_FMT.format(exepath))
+for f in args.source:
+    cmd.append(str(f))
 
-    if args.debug:
-        cmd.append(conf['debug_cxx_flags'])
-    else:
-        cmd.append(conf['release_cxx_flags'])
+cmd.append(conf['link_options'])
+cmd.append(additional_link_options)  # Add our additional link options
+cmd.extend(list(map(lambda rpath: RPATH_FMT.format(rpath), RPATHS)))
+cmd.extend(list(map(lambda libdir: LIBDIR_FMT.format(libdir), args.lib_dirs + additional_lib_dirs)))
+cmd.extend(list(map(lambda libname: LIBNAME_FMT.format(libname), args.lib_names + additional_libs)))
 
-    cmd.append(OUTNAME_FMT.format(exepath))
-    for f in args.source:
-        cmd.append(str(f))
+cmd = " ".join(cmd)
 
-    cmd.append(conf['link_options'])
-    cmd.append(additional_link_options)  # Add our additional link options
-    cmd.extend(list(map(lambda rpath: RPATH_FMT.format(rpath), RPATHS)))
-    cmd.extend(list(map(lambda libdir: LIBDIR_FMT.format(libdir), args.lib_dirs + additional_lib_dirs)))
-    cmd.extend(list(map(lambda libname: LIBNAME_FMT.format(libname), args.lib_names + additional_libs)))
+if args.verbose:
+    sys.stderr.write(cmd + "\n")
 
-    cmd = " ".join(cmd)
+if exepath.exists():
+    exepath.unlink()
 
-    if args.verbose:
-        sys.stderr.write(cmd + "\n")
+status = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+if status.returncode != 0:
+    sys.stdout.write(status.stdout)
+    sys.stderr.write(status.stderr)
 
-    if exepath.exists():
-        exepath.unlink()
-
-    status = subprocess.run(cmd, capture_output=True, text=True, shell=True)
-    if status.returncode != 0:
-        sys.stdout.write(status.stdout)
-        sys.stderr.write(status.stderr)
-
-    os.sys.exit(status.returncode)
+os.sys.exit(status.returncode)

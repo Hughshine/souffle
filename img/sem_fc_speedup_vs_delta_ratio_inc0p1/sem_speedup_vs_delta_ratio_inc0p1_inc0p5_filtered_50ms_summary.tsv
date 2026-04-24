@@ -1,5 +1,0 @@
-DeltaRatioBin	Count	AvgDeltaEdgeRatio	AvgSpeedup	MedianSpeedup
-[0,0.05)	6	0.0177	4.227	4.328
-[0.05,0.1)	9	0.0739	4.034	4.173
-[0.1,0.3)	18	0.1645	3.470	3.696
-[0.3,1.0]	15	0.4618	2.681	2.568

@@ -1,16 +1,25 @@
 # Incremental Probabilistic Souffle Artifact
 
-This branch contains the Souffle compiler and generated runtime used by the
-incremental probabilistic inference artifact. It compiles a Datalog program
-into an online binary. That binary computes a baseline from a fact directory,
-then applies incremental turns through the online CLI.
+This branch is the incremental AE compiler/runtime branch. The compiler always
+emits the interactive incremental runtime. The public AE surface is intentionally
+small: `inc-naive`, `inc-regional`, `full`, canonical dump/profile output
+selectors, and the maintained regression suite.
 
-The benchmark inputs and orchestration scripts live in the companion
-`problog-benchmark` artifact on branch `CAV-INC`.
+The companion benchmark repository is `problog-benchmark` on branch `CAV-INC`.
+Use this repository for the compiler and generated runtimes, and use the
+companion repository for side-channel case generation and result collection.
 
-## Artifact Workflow
+## Source References
 
-Build the compiler:
+- [src/MainDriver.cpp:623](src/MainDriver.cpp#L623): compiler mode/output options.
+- [src/MainDriver.cpp:691](src/MainDriver.cpp#L691): compiler default canonicalization.
+- [src/synthesiser/Synthesiser.cpp:673](src/synthesiser/Synthesiser.cpp#L673): generated runtime enters the online pipeline.
+- [src/include/souffle/CompiledOptions.h:191](src/include/souffle/CompiledOptions.h#L191): supported mode syntax.
+- [src/include/souffle/CompiledOptions.h:700](src/include/souffle/CompiledOptions.h#L700): generated runtime option parser.
+- [src/include/souffle/cli/Cli.h:657](src/include/souffle/cli/Cli.h#L657): interactive update commands.
+- [tests/regression/CMakeLists.txt:22](tests/regression/CMakeLists.txt#L22): maintained regression cases.
+
+## Build
 
 ```bash
 JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
@@ -18,60 +27,58 @@ cmake -S . -B build
 cmake --build build -j${JOBS}
 ```
 
-Generate a benchmark binary:
+## Run
+
+Compile a probabilistic Datalog program:
 
 ```bash
-./build/src/souffle -F <facts-dir> -D <output-dir> compute.souffle.dl -o compute
+./build/src/souffle -F input -D output compute.souffle.dl -o compute
 ```
 
 Run an incremental session:
 
 ```bash
-./compute -F <facts-dir> -D <output-dir> --setmode inc-naive
+./compute -F input -D output --setmode inc-regional
 insert 0.3::edge(1,2)
 delete edge(3,4)
 commit
 q
 ```
 
-Or use the companion benchmark helper:
+Use `full` on the same delta stream as the exact recomputation oracle.
+
+## Optional Outputs
+
+Extra graph/profiling outputs are off by default. Enable them explicitly when
+collecting AE debugging material:
 
 ```bash
-sh/run_artifact_inc.sh
+./compute -F input -D output --setmode inc-regional \
+  --dump=dot,json,stat --profile-stage=inc,wmc,fc
 ```
 
-## Inputs and Outputs
+## Benchmark
 
-Input facts live in `<facts-dir>` as `<relation>.facts`. Optional
-`<relation>.prob` files align line-for-line with the facts. Missing probability
-files mean probability `1.0`.
+From the companion `problog-benchmark` checkout on `CAV-INC`:
 
-The generated binary writes output tuple probabilities to `facts.prob` in
-`<output-dir>`. Incremental runs also emit per-turn probability snapshots and
-JSON timing logs whose base name comes from `--logfile`.
+```bash
+SOUFFLE_BIN=/path/to/inc-artifact-ae/build/src/souffle \
+python3 benchmarks/side_channel/cli/side_channel_inc.py <command> ...
+```
 
-## Expected Comparisons
+For the current AE subset, run cases `P13` through `P20`.
 
-Artifact comparisons use `full-hard` as the oracle and compare it against
-incremental modes:
+## Verification
 
-- `inc-naive`
-- `inc-regional`
-- staged mixed modes such as `sem=full fc=inc-regional`
-
-The compared outputs must have the same tuple keys. Probability values are
-checked with a small absolute tolerance.
+```bash
+ctest --test-dir build -L regression --output-on-failure --progress -j${JOBS}
+cmake --build build --target check-regression
+```
 
 ## Documentation
 
-- [docs/USAGE.md](docs/USAGE.md): incremental compiler/runtime interface.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): incremental pipeline map.
-- [docs/TESTING.md](docs/TESTING.md): build and regression checks.
-- [docs/topics/testing/README.regression.md](docs/topics/testing/README.regression.md):
-  maintained incremental regression suite.
-- [docs/topics/evaluation/README.artifact.inc.md](docs/topics/evaluation/README.artifact.inc.md):
-  artifact runner and side-channel workflow.
-- [docs/topics/pipeline/README.dred.md](docs/topics/pipeline/README.dred.md):
-  delete/rederive mechanics.
-- [docs/topics/pipeline/README.inc.region.md](docs/topics/pipeline/README.inc.region.md):
-  regional incremental compilation path.
+- [docs/INDEX.md](docs/INDEX.md): reading order.
+- [docs/USAGE.md](docs/USAGE.md): compiler/runtime interface.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): control-flow map.
+- [docs/TESTING.md](docs/TESTING.md): regression checks.
+- [docs/topics/evaluation/README.artifact.inc.md](docs/topics/evaluation/README.artifact.inc.md): AE benchmark workflow.

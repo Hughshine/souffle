@@ -1,136 +1,39 @@
-CAV*
-Makefile
-Makefile.in
-
-aclocal.m4
-lt*.m4
-autom4te.cache
-config.status
-configure
-env
-
-*.o
-*.a
-*.lo
-*.la
-*~
-.dirstamp
-
-libtool
-/include
-/auxfiles
-/packaging
-warn.log
-
-m4/libtool.m4
-m4/ltoptions.m4
-m4/ltsugar.m4
-m4/ltversion.m4
-m4/lt~obsolete.m4
-
-profiler_html/
-
-doc
-
-# used by clangd
-/.cache
-.idea/
+# Build outputs
+/build/
+/build-*/
+/cmake-build-*/
 *build*/
+/CMakeCache.txt
+/CMakeFiles/
+/Makefile
+/compile_commands.json
 
-# local heavy workspaces live under work/
-/work/*
-!/work/README.md
-/research/
-/.deps-src/
+# Generated compiler/runtime outputs
+/compute
+/compute_*
+/compute.cpp
+/compute.souffle*
+/preDG*
+/dg_*
+/derivation*.json
+/graph-*.json
+/facts.prob
+/fact-iter*.prob
+/*.log
+/*.tsv
 
-# local problog benchmark clone
+# Local benchmark/checkouts
 /problog-benchmark/
-# local side-channel experiment workspace
 /side_channel_inc/
 /side_channel_inc_*/
+/research/
 
-# local experiment archive:
-# keep README files tracked, ignore bulky artifacts
-/archive/*
-!/archive/README.md
-!/archive/*/
-/archive/*/*
-!/archive/*/README.md
-
-# local plotting cache
-**/.mplconfig/
-
-# local incremental benchmark summaries and ad-hoc plots
-/end2end_combo_*.tsv
-/fc_inc_regional_vs_inc_naive_speedup_per_delta*.tsv
-/inc_regional_vs_naive_fc_wmc_per_*.tsv
-/region_ratio_pie.pdf
-/region_ratio_pie.png
-/img/region_ratio_pie.pdf
-/img/region_ratio_pie.png
-/img/runtime_breakdown_pie.pdf
-/img/runtime_breakdown_pie.png
-
-# generated souffle scratch files in repo root
-/compute.souffle*
-/codex_work.log
-
+# Editor/cache
+/.cache/
+.idea/
+.vscode/
 *.swp
-*.tgz
-*-pak
-*.deb
-#macosx
+*~
 .DS_Store
-
-.vscode
-# cmake generated file used by various tools
-/compile_commands.json
-gmon.out
-stamp-h1
-.worktrees/
-experiments/*
-
-utilities/bash-completion
-debian/changelog
-
-__pycache__
-
-experiments/**/*.o
-experiments/**/*.txt
-experiments/**/*.log
-experiments/**/*.csv
-experiments/**/*.pdf
-experiments/**/test-*
-experiments/**/test_readline
-experiments/**/*.dot
-experiments/**/main
-experiments/**/demo
-test
-
-experiments/**/output
-experiments/**/test.cpp
-experiments/**/compute
-experiments/**/compute_*
-experiments/**/compute[0-9]*
-experiments/**/compute.cpp
-experiments/**/preDG*
-experiments/**/dg_*
-experiments/**/*.cpp
-experiments/**/*.json
-experiments/inc_regional_demo/
-experiments/side_channel_full*/
-experiments/side_channel_inc_eval/
-experiments/side_channel_inc_mini/*/
-experiments/smokers_*/
-
-# keep a maintained ApproxMC usage demo under experiments/
-!experiments/approxmc_demo/
-!experiments/approxmc_demo/CMakeLists.txt
-!experiments/approxmc_demo/*.md
-!experiments/approxmc_demo/*.cnf
-!experiments/approxmc_demo/*.h
-!experiments/approxmc_demo/*.cpp
-!experiments/approxmc_demo/*.py
-!experiments/approxmc_demo/*.sh
-experiments/approxmc_demo/bin/
-experiments/approxmc_demo/tmp/
+__pycache__/
+*.pyc

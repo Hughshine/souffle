@@ -266,12 +266,8 @@ bool fcProfileEnabled = false;
 bool incDeleteProfileEnabled = false;
 bool wmcProfileEnabled = false;
 bool incRegionalProfileEnabled = false;
-bool incRegionalProfileHeavyEnabled = false;
-std::string incRegionalTraceTuples;
 bool depGraphProfileEnabled = false;
-bool postDelEnabled = false;
 bool reuseVarIndexEnabled = true;
-bool incReorderEnabled = false;
 
 void DerivationManager::clearDetDeltaTuples() {
     detDeltaDeleteTuples.clear();
@@ -746,8 +742,7 @@ void dumpInputFacts(std::ostream& os) {
 
 std::unordered_map<UntypedTuple, double> fact_prob;
 std::unordered_map<std::string, bool> relationHasProbFact;
-bool detOptEnabled = false;
-bool detForceEnabled = false;
+bool detOptEnabled = true;
 std::unordered_map<std::string, bool> relationIsDet;
 
 std::map<std::string, std::set<UntypedTuple>> initialInputRelations;

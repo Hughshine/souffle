@@ -220,7 +220,7 @@ public:
 
     std::vector<souffle::RamDomain> instantiatedFields(const std::vector<std::string>& vars,
             const std::vector<souffle::RamDomain>& values) const {
-        std::vector<souffle::RamDomain> result;  // TODO
+        std::vector<souffle::RamDomain> result;
         for (const auto& field : fields) {
             if (std::holds_alternative<VariableField>(field.field)) {
                 const std::string& varName = std::get<VariableField>(field.field).name;

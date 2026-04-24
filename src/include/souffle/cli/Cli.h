@@ -20,7 +20,7 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include "souffle/SouffleInterface.h"
-#include "souffle/Derivation.h" // TODO: should change timer to Misc header
+#include "souffle/Derivation.h"
 #include "souffle/cli/Command.h"
 #include "souffle/cli/PendingOperation.h"
 #include "souffle/cli/PendingOperationStager.h"
@@ -118,10 +118,6 @@ private:
 
     bool isRegionalFcMode() const {
         return souffle::isRegionalFcMode(modeSpec.fc);
-    }
-
-    bool isElasticFcMode() const {
-        return souffle::isElasticFcMode(modeSpec.fc);
     }
 
     const char* semModeLabel() const {
@@ -236,16 +232,7 @@ private:
         debugger.endStage();
     }
 
-    void assertModeCompatibleWithGraphState(const IncrementalModeSpec& mode) const {
-        if (!souffle::modeUsesIncrementalState(mode) || graph == nullptr) {
-            return;
-        }
-        if (graph->isBiImpMerged()) {
-            assert(false && "bi-imp merged graph cannot use incremental state");
-        }
-        if (graph->isConstFolded()) {
-            assert(false && "const-folded graph cannot use incremental state");
-        }
+    void assertModeCompatibleWithGraphState(const IncrementalModeSpec&) const {
     }
 
     void assertCurrentModeCompatibleWithGraphState() const {
@@ -340,18 +327,6 @@ private:
                   << " delNodes=" << formatRatio(delNodes, totalNodes)
                   << " delEdges=" << formatRatio(delEdges, totalEdges)
                   << std::endl;
-        // NOTE: Temporarily disabled because deltaInsertReachableNodes/Edges are not populated yet.
-        // Re-enable once reachability is computed during pruning or elsewhere.
-        // if (modeLabel == "INC_REGIONAL") {
-        //     const size_t reachNodes = view.getDeltaInsertReachableNodes().size();
-        //     const size_t reachEdges = view.getDeltaInsertReachableEdges().size();
-        //     std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel
-        //               << " deltaReach_ratio: insNodes=" << formatRatio(insNodes, reachNodes)
-        //               << " insEdges=" << formatRatio(insEdges, reachEdges)
-        //               << " reachNodes=" << reachNodes
-        //               << " reachEdges=" << reachEdges
-        //               << std::endl;
-        // }
     }
 
     static std::unordered_map<UntypedTuple, NodePtr> buildNodeTupleIndex(
@@ -550,16 +525,7 @@ private:
             std::cout << "Current mode: " << modeSummaryLabel() << std::endl;
             return;
         }
-        if (specs.size() == 1 && specs[0].find('=') == std::string::npos) {
-            if (!setLegacyMode(specs[0], true)) {
-                std::cout << "Unknown mode: " << specs[0] << std::endl;
-                std::cout << "Available legacy modes: " << souffle::incrementalLegacyModeHelpText() << std::endl;
-                std::cout << "Current mode unchanged: " << modeSummaryLabel() << std::endl;
-            }
-            return;
-        }
-
-        IncrementalModeSpec parsed;
+        IncrementalModeSpec parsed = currentModeSpec();
         std::string error;
         if (souffle::parseIncrementalModeSpecs(specs, currentModeSpec(), parsed, &error)) {
             setModeSpec(parsed);
@@ -568,6 +534,7 @@ private:
         }
 
         std::cout << error << std::endl;
+        std::cout << "Available modes: " << souffle::incrementalModeHelpText() << std::endl;
         std::cout << "Current mode unchanged: " << modeSummaryLabel() << std::endl;
     }
 
@@ -575,7 +542,6 @@ private:
     IncrementalDerivationGraph* graph;
     RuleManager* ruleManager;
     QueryManager* queryManager;
-//    std::map<NodePtr, BddNodeRef>* nodeFormulas;
     DDManager<NodeRef>* ddManager = nullptr;
     std::map<NodePtr, NodeRef>* nodeFormulas;
     std::map<EdgePtr, NodeRef>* edgeFormulas;
@@ -592,10 +558,7 @@ private:
     size_t lastTurnRegionNodes = 0;
     size_t lastTurnDeltaReachNodes = 0;
     size_t consecutiveRegionalTurns = 0;
-    bool derivationOnly = false;
     void syncRuntimeTogglesFromOptions() {
-        DerivationGraph::setConstFoldEnabled(opt.isConstFoldEnabled());
-        DerivationGraph::setConstDumpEnabled(opt.isDumpConstEnabled());
         DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
         DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());
         DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());
@@ -605,12 +568,7 @@ private:
         incDeleteProfileEnabled = opt.isIncDeleteProfileEnabled();
         wmcProfileEnabled = opt.isWmcProfileEnabled();
         incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();
-        incRegionalProfileHeavyEnabled = opt.isIncRegionalProfileHeavyEnabled();
-        incRegionalTraceTuples = opt.getIncRegionalTraceTuples();
         depGraphProfileEnabled = opt.isDepGraphProfileEnabled();
-        postDelEnabled = opt.isPostDelEnabled();
-        reuseVarIndexEnabled = opt.isReuseVarIndexEnabled();
-        incReorderEnabled = opt.isIncReorderEnabled();
     }
 public:
     IncrementalCLI(souffle::SouffleProgram* prog = nullptr,
@@ -644,8 +602,6 @@ public:
     souffle::CmdOptions opt;
     void setCmdOptions(const souffle::CmdOptions& options) {
         opt = options;
-        setDerivationOnly(options.isDerivationOnly());
-        DerivationGraph::setMergeBiImpEnabled(false);
         syncRuntimeTogglesFromOptions();
         setModeSpec(options.getIncrementalModeSpec());
     }
@@ -657,22 +613,6 @@ public:
 
     void setModes(SemMode sem, FcMode fc) {
         setModeSpec(IncrementalModeSpec{sem, fc});
-    }
-
-    bool setLegacyMode(const std::string& token, bool print = true) {
-        IncrementalModeSpec mode = currentModeSpec();
-        if (!souffle::parseLegacyModeToken(token, mode)) {
-            return false;
-        }
-        setModeSpec(mode);
-        if (print) {
-            std::cout << "Set mode to " << modeSummaryLabel() << std::endl;
-        }
-        return true;
-    }
-
-    void setDerivationOnly(bool val) {
-        derivationOnly = val;
     }
 
 private:
@@ -724,14 +664,11 @@ private:
                   << "list   List all pending operations\n"
                   << "show config\n"
                   << "       Show current online mode and mutable runtime toggles\n"
-                  << "set sem-mode <full|inc>\n"
-                  << "set fc-mode <full-hard|full-soft|inc-naive|inc-regional|elastic>\n"
-                  << "set dump <json|json-before-prune|dot|stat|const>\n"
-                  << "unset dump <json|json-before-prune|dot|stat|const>\n"
-                  << "set profile-stage <dred|inc|fc|wmc|inc-delete|inc-regional|inc-regional-heavy|dep-graph>\n"
+                  << "setmode <inc-naive|inc-regional|full>\n"
+                  << "set dump <json|json-before-graph|json-before-prune|dot|stat>\n"
+                  << "unset dump <json|json-before-graph|json-before-prune|dot|stat>\n"
+                  << "set profile-stage <dred|inc|fc|wmc|inc-delete|inc-regional|dep-graph>\n"
                   << "unset profile-stage <...>\n"
-                  << "set dumpjson|dumpdot|dumpstat\n"
-                  << "unset dumpjson|dumpdot|dumpstat\n"
                   << "commit Apply queued changes and run incremental computation\n"
                   << "help, h Display this help message\n"
                   << "exit, quit, q Exit the CLI\n"
@@ -832,14 +769,7 @@ private:
     void handleShowCommand(const ParsedCommand& command) const {
         const std::string topic = command.args.empty() ? std::string() : command.args.front();
         if (topic.empty() || topic == "config") {
-            std::cout << "sem-mode=" << souffle::semModeTokenLabel(modeSpec.sem)
-                      << " fc-mode=" << souffle::fcModeTokenLabel(modeSpec.fc)
-                      << " full-evaluator=" << souffle::fullEvaluatorLabel(opt.getFullEvaluator())
-                      << " rewrite-engine=" << souffle::rewriteEngineLabel(opt.getRewriteEngine())
-                      << " rewrite-split=" << souffle::rewriteSplitModeLabel(opt.getRewriteSplitMode())
-                      << " rewrite-detect=" << souffle::rewriteDetectModeLabel(opt.getRewriteDetectMode())
-                      << " det-mode=" << souffle::detModeLabel(opt.getDetMode())
-                      << " dd-backend=" << opt.getKnowledgeRepresentation()
+            std::cout << "mode=" << souffle::incrementalModeTokenLabel(modeSpec)
                       << " dumps=" << joinTokens(opt.getEnabledDumpKinds())
                       << " profile-stages=" << joinTokens(opt.getEnabledProfileStages())
                       << " fc-state=" << souffle::fcStateClassLabel(fcStateClass)
@@ -850,66 +780,8 @@ private:
         std::cout << "Unknown show topic: " << topic << std::endl;
     }
 
-    bool setDumpOption(const std::string& key, bool enabled) {
-        if (key == "dumpjson") {
-            opt.setDumpJsonEnabled(enabled);
-            syncRuntimeTogglesFromOptions();
-            std::cout << "Set dumpjson to " << (enabled ? "true" : "false") << std::endl;
-            return true;
-        }
-        if (key == "dumpdot") {
-            opt.setDumpDotEnabled(enabled);
-            syncRuntimeTogglesFromOptions();
-            std::cout << "Set dumpdot to " << (enabled ? "true" : "false") << std::endl;
-            return true;
-        }
-        if (key == "dumpstat") {
-            opt.setDumpStatEnabled(enabled);
-            syncRuntimeTogglesFromOptions();
-            std::cout << "Set dumpstat to " << (enabled ? "true" : "false") << std::endl;
-            return true;
-        }
-        if (key == "dumpconst") {
-            opt.setDumpConstEnabled(enabled);
-            syncRuntimeTogglesFromOptions();
-            std::cout << "Set dumpconst to " << (enabled ? "true" : "false") << std::endl;
-            return true;
-        }
-        return false;
-    }
-
     bool setMutableConfigOption(
             const std::string& key, const std::vector<std::string>& args, bool enabled) {
-        if (key == "sem-mode") {
-            if (!enabled) {
-                std::cout << "sem-mode cannot be unset; use `set sem-mode <value>`" << std::endl;
-                return true;
-            }
-            const std::string value = args.size() > 1 ? args[1] : std::string();
-            SemMode sem = modeSpec.sem;
-            if (value.empty() || !souffle::parseSemModeToken(value, sem)) {
-                std::cout << "Usage: set sem-mode " << souffle::semModeOptionSyntax() << std::endl;
-                return true;
-            }
-            setModeSpec(IncrementalModeSpec{sem, souffle::reconcileFcModeForSem(sem, modeSpec.fc)});
-            std::cout << "Set mode to " << modeSummaryLabel() << std::endl;
-            return true;
-        }
-        if (key == "fc-mode") {
-            if (!enabled) {
-                std::cout << "fc-mode cannot be unset; use `set fc-mode <value>`" << std::endl;
-                return true;
-            }
-            const std::string value = args.size() > 1 ? args[1] : std::string();
-            FcMode fc = modeSpec.fc;
-            if (value.empty() || !souffle::parseFcModeToken(value, fc)) {
-                std::cout << "Usage: set fc-mode " << souffle::fcModeOptionSyntax() << std::endl;
-                return true;
-            }
-            setModeSpec(IncrementalModeSpec{modeSpec.sem, fc});
-            std::cout << "Set mode to " << modeSummaryLabel() << std::endl;
-            return true;
-        }
         if (key == "dump") {
             const std::string value = args.size() > 1 ? args[1] : std::string();
             if (value.empty() || !opt.setDumpKindToken(value, enabled)) {
@@ -934,12 +806,6 @@ private:
                       << souffle::normalizeFlagToken(value) << std::endl;
             return true;
         }
-        if (key == "rewrite-engine" || key == "rewrite-split" || key == "rewrite-detect" ||
-                key == "full-evaluator" || key == "dd-backend" || key == "approx-backend" ||
-                key == "det-mode") {
-            std::cout << key << " is fixed at startup and cannot be changed in the online CLI" << std::endl;
-            return true;
-        }
         return false;
     }
 
@@ -949,7 +815,7 @@ private:
             std::cout << "Usage: set <option> <value>" << std::endl;
             return;
         }
-        if (!setMutableConfigOption(key, command.args, true) && !setDumpOption(key, true)) {
+        if (!setMutableConfigOption(key, command.args, true)) {
             std::cout << "Unknown option: " << key << std::endl;
         }
     }
@@ -960,7 +826,7 @@ private:
             std::cout << "Usage: unset <option> <value>" << std::endl;
             return;
         }
-        if (!setMutableConfigOption(key, command.args, false) && !setDumpOption(key, false)) {
+        if (!setMutableConfigOption(key, command.args, false)) {
             std::cout << "Unknown option: " << key << std::endl;
         }
     }
@@ -1328,7 +1194,7 @@ public:
         auto nodeLoopStart = Clock::now();
         auto logOutputDecision = [&](const NodePtr& node, const char* action, const char* reason,
                                      bool useOriginalWeights) {
-            if (!regionalOutputProfile || (!incRegionalProfileEnabled && !incRegionalProfileHeavyEnabled) || !node) {
+            if (!regionalOutputProfile || !incRegionalProfileEnabled || !node) {
                 return;
             }
             const bool inRegion = incRegionalOutputProfile.regionNodes.count(node) > 0;
@@ -1352,7 +1218,7 @@ public:
         };
         auto logUpstreamRestore = [&](const NodePtr& node, const std::vector<int>& vars,
                                       const char* reason) {
-            if (!regionalOutputProfile || (!incRegionalProfileEnabled && !incRegionalProfileHeavyEnabled) ||
+            if (!regionalOutputProfile || !incRegionalProfileEnabled ||
                     !node || vars.empty()) {
                 return;
             }

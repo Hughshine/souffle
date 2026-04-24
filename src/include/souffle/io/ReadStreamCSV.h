@@ -22,11 +22,7 @@
 #include "souffle/utility/FileUtil.h"
 #include "souffle/utility/StringUtil.h"
 
-#ifdef USE_LIBZ
-#include "souffle/io/gzfstream.h"
-#else
 #include <fstream>
-#endif
 
 #include <algorithm>
 #include <cassert>
@@ -420,11 +416,7 @@ protected:
     // * Or .facts.insert/.facts.delete for delta inputs
 
     std::string baseName;
-#ifdef USE_LIBZ
-    gzfstream::igzfstream fileHandle;
-#else
     std::ifstream fileHandle;
-#endif
 };
 
 class ReadCinCSVFactory : public ReadStreamFactory {

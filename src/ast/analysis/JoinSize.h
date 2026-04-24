@@ -11,7 +11,7 @@
  * @file JoinSize.h
 
  * Computes for every stratum, which EstimateJoinSize nodes to emit in the RAM
- * This is useful for the auto-scheduler to accumulate selectivity statistics
+ * This is useful for accumulating selectivity statistics
  *
  ***********************************************************************/
 

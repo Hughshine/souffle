@@ -68,7 +68,6 @@ set(SOUFFLE_SOURCES
     ast/analysis/Ground.cpp
     ast/analysis/IOType.cpp
     ast/analysis/PrecedenceGraph.cpp
-    ast/analysis/ProfileUse.cpp
     ast/analysis/RecursiveClauses.cpp
     ast/analysis/RedundantRelations.cpp
     ast/analysis/RelationSchedule.cpp
@@ -158,7 +157,6 @@ set(SOUFFLE_SOURCES
     reports/ErrorReport.cpp
     reports/DebugReport.cpp
     synthesiser/Synthesiser.cpp
-    # synthesiser/GroundSynthesiser.cpp
     synthesiser/Relation.cpp
     synthesiser/Utils.cpp
     synthesiser/GenDb.cpp
@@ -289,14 +287,6 @@ if (SOUFFLE_DOMAIN_64BIT)
     target_compile_definitions(compiled PUBLIC RAM_DOMAIN_SIZE=64)
 endif()
 
-if (SOUFFLE_USE_LIBFFI)
-if (libffi_FOUND)
-  target_link_libraries(libsouffle PUBLIC libffi)
-else ()
-  target_link_libraries(libsouffle PUBLIC LibFFI::LibFFI)
-endif ()
-endif ()
-
 if (OPENMP_FOUND)
     target_link_libraries(libsouffle PUBLIC OpenMP::OpenMP_CXX)
     target_link_libraries(compiled PUBLIC OpenMP::OpenMP_CXX)
@@ -307,33 +297,6 @@ if (SOUFFLE_CUSTOM_GETOPTLONG)
                                PUBLIC USE_CUSTOM_GETOPTLONG)
     target_compile_definitions(compiled
                                PUBLIC USE_CUSTOM_GETOPTLONG)
-endif()
-
-if (SOUFFLE_USE_CURSES)
-    target_compile_definitions(libsouffle PUBLIC USE_NCURSES)
-    target_compile_definitions(compiled PUBLIC USE_NCURSES)
-    target_link_libraries(libsouffle PUBLIC Curses::NCurses)
-    target_link_libraries(compiled PUBLIC Curses::NCurses)
-endif()
-
-if (SOUFFLE_USE_ZLIB)
-    target_compile_definitions(libsouffle PUBLIC USE_LIBZ)
-    target_compile_definitions(compiled PUBLIC USE_LIBZ)
-    target_link_libraries(libsouffle PUBLIC ZLIB::ZLIB)
-    target_link_libraries(compiled PUBLIC ZLIB::ZLIB)
-endif()
-
-if (SOUFFLE_USE_SQLITE)
-    target_compile_definitions(libsouffle PUBLIC USE_SQLITE)
-    target_compile_definitions(compiled PUBLIC USE_SQLITE)
-    target_link_libraries(libsouffle PUBLIC SQLite::SQLite3)
-    target_link_libraries(compiled PUBLIC SQLite::SQLite3)
-    target_include_directories(compiled PUBLIC ${SQLite3_INCLUDE_DIRS})
-endif()
-
-if (SOUFFLE_USE_LIBFFI)
-    target_compile_definitions(libsouffle
-      PUBLIC USE_LIBFFI)
 endif()
 
 # The target names "souffle" for the library and "souffle" for the binary
@@ -352,164 +315,6 @@ target_link_libraries(souffle libsouffle)
 add_dependencies(souffle compiled)
 install(TARGETS souffle DESTINATION bin)
 
-# --------------------------------------------------
-# Standalone derivation graph probability query tool
-# --------------------------------------------------
-option(SOUFFLE_ENABLE_GRAPH_QUERY "Build the standalone derivation-graph replay tool" OFF)
-
-find_library(CUDD_LIBRARY NAMES cudd)
-find_library(SDD_LIBRARY NAMES sdd)
-find_library(SDDXX_LIBRARY NAMES sdd++)
-
-if (SOUFFLE_ENABLE_GRAPH_QUERY)
-  if (CUDD_LIBRARY)
-    set(SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS ${CUDD_LIBRARY} m)
-
-    add_executable(souffle-problog-graph-query
-                   problog_graph_query.cpp
-                   problog/approx/WeightedConversion.cpp)
-    if (SDD_LIBRARY)
-      target_compile_definitions(souffle-problog-graph-query PRIVATE SOUFFLE_STANDALONE_HAS_SDD=1)
-      list(APPEND SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS ${SDD_LIBRARY})
-      if (SDDXX_LIBRARY)
-        list(APPEND SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS ${SDDXX_LIBRARY})
-      endif ()
-    else ()
-      message(STATUS "Building souffle-problog-graph-query without SDD backend: SDD library not found")
-    endif ()
-    target_link_libraries(souffle-problog-graph-query PRIVATE libsouffle compiled ${SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS})
-    add_dependencies(souffle-problog-graph-query compiled)
-    install(TARGETS souffle-problog-graph-query DESTINATION bin)
-  else ()
-    message(WARNING "Skipping souffle-problog-graph-query: CUDD library not found")
-  endif ()
-endif ()
-
-set(SOUFFLE_PROBLOG_PIPELINE_LIBS ${CUDD_LIBRARY} m readline)
-if (SDD_LIBRARY)
-  list(APPEND SOUFFLE_PROBLOG_PIPELINE_LIBS ${SDD_LIBRARY})
-endif ()
-if (SDDXX_LIBRARY)
-  list(APPEND SOUFFLE_PROBLOG_PIPELINE_LIBS ${SDDXX_LIBRARY})
-endif ()
-
-# --------------------------------------------------
-# Standalone SCBF IR smoke test (independent from runtime pipeline)
-# --------------------------------------------------
-add_executable(souffle-scbf-ir-smoke
-               problog/scbf/ScbfIr.cpp)
-target_compile_definitions(souffle-scbf-ir-smoke PRIVATE SOUFFLE_SCBF_IR_SMOKE_MAIN=1)
-target_link_libraries(souffle-scbf-ir-smoke PRIVATE libsouffle compiled)
-add_dependencies(souffle-scbf-ir-smoke compiled)
-install(TARGETS souffle-scbf-ir-smoke DESTINATION bin)
-
-# --------------------------------------------------
-# Standalone SCBF evaluator smoke (independent from runtime pipeline)
-# --------------------------------------------------
-add_executable(souffle-scbf-evaluator-smoke
-               problog/scbf/ScbfEvaluator.cpp)
-if (CUDD_LIBRARY)
-  target_compile_definitions(souffle-scbf-evaluator-smoke PRIVATE
-                             SOUFFLE_SCBF_EVAL_BUNDLE_REWRITE=1
-                             SOUFFLE_SCBF_EVAL_HAS_REWRITE=1
-                             SOUFFLE_SCBF_EVAL_SMOKE_MAIN=1)
-  target_link_libraries(souffle-scbf-evaluator-smoke PRIVATE libsouffle compiled ${CUDD_LIBRARY} m)
-else ()
-  target_compile_definitions(souffle-scbf-evaluator-smoke PRIVATE
-                             SOUFFLE_SCBF_EVAL_BUNDLE_FORMULA=1
-                             SOUFFLE_SCBF_EVAL_SMOKE_MAIN=1)
-  target_link_libraries(souffle-scbf-evaluator-smoke PRIVATE libsouffle compiled)
-endif ()
-add_dependencies(souffle-scbf-evaluator-smoke compiled)
-install(TARGETS souffle-scbf-evaluator-smoke DESTINATION bin)
-
-# --------------------------------------------------
-# Standalone SCBF formula bundle smoke (independent from runtime pipeline)
-# --------------------------------------------------
-add_executable(souffle-scbf-formula-smoke
-               problog/scbf/ScbfFormula.cpp)
-target_compile_definitions(souffle-scbf-formula-smoke PRIVATE
-                           SOUFFLE_SCBF_FORMULA_BUNDLE_IR=1
-                           SOUFFLE_SCBF_FORMULA_SMOKE_MAIN=1)
-target_link_libraries(souffle-scbf-formula-smoke PRIVATE libsouffle compiled)
-add_dependencies(souffle-scbf-formula-smoke compiled)
-install(TARGETS souffle-scbf-formula-smoke DESTINATION bin)
-
-# --------------------------------------------------
-# Standalone SCBF global stitched formula smoke (independent from runtime pipeline)
-# --------------------------------------------------
-add_executable(souffle-scbf-global-formula-smoke
-               problog/scbf/ScbfGlobalFormula.cpp)
-target_compile_definitions(souffle-scbf-global-formula-smoke PRIVATE
-                           SOUFFLE_SCBF_GLOBAL_FORMULA_BUNDLE_FORMULA=1
-                           SOUFFLE_SCBF_GLOBAL_FORMULA_SMOKE_MAIN=1)
-target_link_libraries(souffle-scbf-global-formula-smoke PRIVATE libsouffle compiled)
-add_dependencies(souffle-scbf-global-formula-smoke compiled)
-install(TARGETS souffle-scbf-global-formula-smoke DESTINATION bin)
-
-# --------------------------------------------------
-# Standalone SCBF global rewrite smoke (independent from runtime pipeline)
-# --------------------------------------------------
-if (CUDD_LIBRARY)
-  add_executable(souffle-scbf-global-rewrite-smoke
-                 problog/scbf/ScbfGlobalFormulaRewriter.cpp)
-  target_compile_definitions(souffle-scbf-global-rewrite-smoke PRIVATE
-                             SOUFFLE_SCBF_GLOBAL_REWRITE_GLOBAL_FORMULA=1
-                             SOUFFLE_SCBF_GLOBAL_REWRITE_SMOKE_MAIN=1)
-  target_link_libraries(souffle-scbf-global-rewrite-smoke PRIVATE libsouffle compiled ${CUDD_LIBRARY} m)
-  add_dependencies(souffle-scbf-global-rewrite-smoke compiled)
-  install(TARGETS souffle-scbf-global-rewrite-smoke DESTINATION bin)
-else ()
-  message(WARNING "Skipping souffle-scbf-global-rewrite-smoke: CUDD library not found")
-endif ()
-
-# --------------------------------------------------
-# Standalone SCBF formula rewrite smoke (independent from runtime pipeline)
-# --------------------------------------------------
-if (CUDD_LIBRARY)
-  add_executable(souffle-scbf-rewrite-smoke
-                 problog/scbf/ScbfFormulaRewriter.cpp)
-  target_compile_definitions(souffle-scbf-rewrite-smoke PRIVATE
-                             SOUFFLE_SCBF_REWRITE_BUNDLE_FORMULA=1
-                             SOUFFLE_SCBF_REWRITE_SMOKE_MAIN=1)
-  target_link_libraries(souffle-scbf-rewrite-smoke PRIVATE libsouffle compiled ${CUDD_LIBRARY} m)
-  add_dependencies(souffle-scbf-rewrite-smoke compiled)
-  install(TARGETS souffle-scbf-rewrite-smoke DESTINATION bin)
-else ()
-  message(WARNING "Skipping souffle-scbf-rewrite-smoke: CUDD library not found")
-endif ()
-
-# --------------------------------------------------
-# Standalone SCBF derivation.json benchmark
-# --------------------------------------------------
-if (CUDD_LIBRARY)
-  add_executable(souffle-scbf-json-benchmark
-                 problog/scbf/ScbfJsonBenchmark.cpp)
-  target_link_libraries(souffle-scbf-json-benchmark PRIVATE libsouffle compiled ${CUDD_LIBRARY} m)
-  add_dependencies(souffle-scbf-json-benchmark compiled)
-  install(TARGETS souffle-scbf-json-benchmark DESTINATION bin)
-else ()
-  message(WARNING "Skipping souffle-scbf-json-benchmark: CUDD library not found")
-endif ()
-
-# --------------------------------------------------
-# Standalone implicit split overlay smoke (experimental, does not affect runtime pipeline)
-# --------------------------------------------------
-add_executable(souffle-implicit-split-smoke
-               problog/ImplicitSplitSmokeMain.cpp)
-target_link_libraries(souffle-implicit-split-smoke PRIVATE libsouffle compiled ${SOUFFLE_PROBLOG_PIPELINE_LIBS})
-add_dependencies(souffle-implicit-split-smoke compiled)
-install(TARGETS souffle-implicit-split-smoke DESTINATION bin)
-
-# --------------------------------------------------
-# Standalone implicit split derivation.json benchmark (experimental, does not affect runtime pipeline)
-# --------------------------------------------------
-add_executable(souffle-implicit-split-json-benchmark
-               problog/ImplicitSplitJsonBenchmarkMain.cpp)
-target_link_libraries(souffle-implicit-split-json-benchmark PRIVATE libsouffle compiled ${SOUFFLE_PROBLOG_PIPELINE_LIBS})
-add_dependencies(souffle-implicit-split-json-benchmark compiled)
-install(TARGETS souffle-implicit-split-json-benchmark DESTINATION bin)
-
 if (EMSCRIPTEN)
 target_link_libraries(souffle -sMODULARIZE=1
                       -s'EXPORTED_RUNTIME_METHODS=["FS"]' -sEXPORT_NAME="SOUFFLE")
@@ -518,52 +323,9 @@ endif()
 # Copy the dlls in the same directory as Souffle so that they will
 # be immediately found by the operating system.
 
-if (SOUFFLE_USE_SQLITE)
-  add_custom_command(TARGET souffle POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    ${SQLite3_LIBRARY}
-    $<TARGET_FILE_DIR:souffle>)
-  if (WIN32)
-    cmake_path(GET SQLite3_LIBRARY PARENT_PATH SQLite3_LIBRARY_DIR)
-    add_custom_command(TARGET souffle POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${SQLite3_LIBRARY_DIR}/../bin/sqlite3.dll
-      $<TARGET_FILE_DIR:souffle>)
-  endif ()
-endif ()
-
-if (SOUFFLE_USE_ZLIB)
-add_custom_command(TARGET souffle POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-  ${ZLIB_LIBRARY_RELEASE}
-  $<TARGET_FILE_DIR:souffle>)
-endif ()
-
-if (SOUFFLE_USE_CURSES)
-add_custom_command(TARGET souffle POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-  ${CURSES_NCURSES_LIBRARY}
-  $<TARGET_FILE_DIR:souffle>)
-endif ()
-
-# --------------------------------------------------
-# Souffle's profiler binary
-# --------------------------------------------------
-
-
-add_executable(souffleprof
-  souffle_prof.cpp)
-target_include_directories(souffleprof PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-install(TARGETS souffleprof DESTINATION bin)
-
-# Set C++ standard to C++17
-target_compile_features(souffleprof
-  PUBLIC cxx_std_17)
-
 if (MSVC)
   target_compile_options(libsouffle PUBLIC /Zc:__cplusplus)
   target_compile_options(compiled PUBLIC /Zc:__cplusplus)
-  target_compile_options(souffleprof PUBLIC /Zc:__cplusplus)
 
   target_compile_options(libsouffle PUBLIC /bigobj)
   target_compile_options(compiled PUBLIC /bigobj)
@@ -589,15 +351,12 @@ if (MSVC)
 
   target_compile_options(libsouffle PUBLIC /Zc:preprocessor)
   target_compile_options(compiled PUBLIC /Zc:preprocessor)
-  target_compile_options(souffleprof PUBLIC /Zc:preprocessor)
 
   target_compile_options(libsouffle PUBLIC /EHsc)
   target_compile_options(compiled PUBLIC /EHsc)
-  target_compile_options(souffleprof PUBLIC /EHsc)
 
   target_compile_definitions(libsouffle PUBLIC USE_CUSTOM_GETOPTLONG)
   target_compile_definitions(compiled PUBLIC USE_CUSTOM_GETOPTLONG)
-  target_compile_definitions(souffleprof PUBLIC USE_CUSTOM_GETOPTLONG)
 endif (MSVC)
 
 if (APPLE)
@@ -607,7 +366,6 @@ if (APPLE)
     set(CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} -Wl,-ld_classic")
     target_link_options(libsouffle PUBLIC "-ld_classic")
     target_link_options(compiled PUBLIC "-ld_classic")
-    target_link_options(souffleprof PUBLIC "-ld_classic")
   endif()
 endif()
 
@@ -650,36 +408,6 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 list(APPEND SOUFFLE_COMPILED_LIBS -lreadline)
-
-if (SOUFFLE_USE_SQLITE)
-  list(APPEND SOUFFLE_COMPILED_LIBS ${SQLite3_LIBRARY})
-  if (COMMAND cmake_path)
-    cmake_path(GET SQLite3_LIBRARY PARENT_PATH SQLite3_RPATH)
-  else ()
-    get_filename_component(SQLite3_RPATH ${SQLite3_LIBRARY} DIRECTORY)
-  endif ()
-  list(APPEND SOUFFLE_COMPILED_RPATHS ${SQLite3_RPATH})
-endif()
-
-if (SOUFFLE_USE_ZLIB)
-  list(APPEND SOUFFLE_COMPILED_LIBS ${ZLIB_LIBRARY_RELEASE})
-  if (COMMAND cmake_path)
-    cmake_path(GET ZLIB_LIBRARY_RELEASE PARENT_PATH ZLIB_RPATH)
-  else ()
-    get_filename_component(ZLIB_RPATH ${ZLIB_LIBRARY_RELEASE} DIRECTORY)
-  endif ()
-  list(APPEND SOUFFLE_COMPILED_RPATHS ${ZLIB_RPATH})
-endif()
-
-if (SOUFFLE_USE_CURSES)
-  list(APPEND SOUFFLE_COMPILED_LIBS ${CURSES_NCURSES_LIBRARY})
-  if (COMMAND cmake_path)
-    cmake_path(GET CURSES_NCURSES_LIBRARY PARENT_PATH NCURSES_RPATH)
-  else ()
-    get_filename_component(NCURSES_RPATH ${CURSES_NCURSES_LIBRARY} DIRECTORY)
-  endif ()
-  list(APPEND SOUFFLE_COMPILED_RPATHS ${NCURSES_RPATH})
-endif()
 
 list(INSERT SOUFFLE_COMPILED_LIBS 0 "$<TARGET_FILE:compiled>")
 
@@ -760,8 +488,7 @@ JSON_DATA_TEXT = \"\"\"{
   \"rpath_fmt\": \"${RPATH_FMT}\",
   \"path_delimiter\": \"${OS_PATH_DELIMITER}\",
   \"exe_extension\": \"${EXE_EXTENSION}\",
-  \"source_include_dir\": \"${CMAKE_CURRENT_SOURCE_DIR}/include\",
-  \"jni_includes\": \"${JAVA_INCLUDE_PATH}${OS_PATH_DELIMITER}${JAVA_INCLUDE_PATH2}\"
+  \"source_include_dir\": \"${CMAKE_CURRENT_SOURCE_DIR}/include\"
 }\"\"\"
 ${TEMPLATE}
 ")
@@ -770,11 +497,3 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/souffle-compile.py" CONTENT "$
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/souffle-compile.py DESTINATION bin)
 
 # ---------------------------------------
-
-# FIXME: Ideally, eventually we will move these out to the "tests" subdirectory
-# now that we have a sane(er?) build system
-if (SOUFFLE_ENABLE_TESTING)
-#    add_subdirectory(ast/tests)
-#    add_subdirectory(ram/tests)
-#    add_subdirectory(interpreter/tests)
-endif()

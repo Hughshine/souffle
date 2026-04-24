@@ -20,7 +20,6 @@
 #include "ast/QualifiedName.h"
 #include "ast/UserDefinedAggregator.h"
 #include "ast/analysis/JoinSize.h"
-#include "ast/analysis/ProfileUse.h"
 #include "ast/analysis/typesystem/Type.h"
 #include "ast2ram/ClauseTranslator.h"
 #include "ram/Aggregator.h"
@@ -63,7 +62,6 @@ namespace souffle::ast::analysis {
 class FunctorAnalysis;
 class IOTypeAnalysis;
 class PolymorphicObjectsAnalysis;
-class ProfileUseAnalysis;
 class RecursiveClausesAnalysis;
 class RelationScheduleAnalysis;
 class SumTypeBranchesAnalysis;

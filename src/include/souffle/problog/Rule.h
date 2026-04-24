@@ -3,16 +3,7 @@
 
 #include <string>
 #include <vector>
-#include <unordered_set>
-#include <unordered_map>
-#include <cassert>
 #include <cstddef>
-#include <iostream>
-#include <variant>
-#include <memory>
-#include <sstream>
-#include <map>
-#include "souffle/RamTypes.h"
 #include "souffle/problog/Atom.h"
 
 class Rule {

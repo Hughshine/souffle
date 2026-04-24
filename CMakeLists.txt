@@ -22,7 +22,7 @@ if (SOUFFLE_GIT)
                     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
                     RESULT_VARIABLE GIT_RESULT
                     OUTPUT_VARIABLE GIT_PACKAGE_VERSION)
-                    # FIXME: Use in cmake 3.19 or later
+                    # COMMAND_ERROR_IS_FATAL is available in CMake 3.19 or later.
                     # COMMAND_ERROR_IS_FATAL ANY)
 
     # Figure out the version number, depends on whether building from the git repo
@@ -84,31 +84,17 @@ set(SOUFFLE_ENABLE_TESTING_DEFAULT ON)
 # User options available from the command line/cache
 # --------------------------------------------------
 option(SOUFFLE_DOMAIN_64BIT "Enable/Disable 64-bit number values in Datalog tuples" OFF)
-option(SOUFFLE_USE_CURSES "Enable/Disable ncurses-based provenance display" ON)
-option(SOUFFLE_SWIG "Enable/Disable all SWIG builds" OFF)
-option(SOUFFLE_SWIG_PYTHON "Enable/Disable Python SWIG" OFF)
-option(SOUFFLE_SWIG_JAVA "Enable/Disable Java SWIG" OFF)
-option(SOUFFLE_USE_ZLIB "Enable/Disable use of libz file compression" ON)
-option(SOUFFLE_USE_SQLITE "Enable/Disable use sqlite IO" ON)
 option(SOUFFLE_USE_OPENMP "Enable/Disable use of openmp if available" ON)
 option(SOUFFLE_SANITISE_MEMORY "Enable/Disable memory sanitiser" OFF)
 option(SOUFFLE_SANITISE_THREAD "Enable/Disable thread sanitiser" OFF)
 # SOUFFLE_NDEBUG = ON means -DNDEBUG on the compiler command line = no cassert
 # Therefor SOUFFLE_NDEBUG = OFF means keep asserts
 option(SOUFFLE_NDEBUG "Enable/Disable runtime checks even in release mode" OFF)
-# By default, the "test/example" directory is not part of testing
-# this flag enables the tests to run
-option(SOUFFLE_TEST_EXAMPLES "Enable/Disable testing of code examples in tests/examples" OFF)
-option(SOUFFLE_TEST_EVALUATION "Enable/Disable testing of evaluation examples in tests/examples" ON)
 option(SOUFFLE_ENABLE_TESTING "Enable/Disable testing" ${SOUFFLE_ENABLE_TESTING_DEFAULT})
 option(SOUFFLE_ENABLE_REGRESSION_TESTS "Enable/Disable the maintained regression test suite" ON)
 option(SOUFFLE_DISABLE_CTEST "Disable ctest invocations with the legacy fatal guard" OFF)
-option(SOUFFLE_GENERATE_DOXYGEN "Generate Doxygen files (html;htmlhelp;man;rtf;xml;latex)" "")
 option(SOUFFLE_CODE_COVERAGE "Enable coverage reporting" OFF)
-option(SOUFFLE_BASH_COMPLETION "Enable/Disable bash completion" OFF)
-option(SOUFFLE_USE_LIBFFI "Enable/Disable use of libffi" ON)
 option(SOUFFLE_CUSTOM_GETOPTLONG "Enable/Disable custom getopt_long implementation" OFF)
-option(SOUFFLE_TEST_DEBUG_REPORT "Enable/Disable generating debug-report for all tests" OFF)
 
 cmake_dependent_option(SOUFFLE_USE_LIBCPP "Link to libc++ instead of libstdc++" ON
     "CMAKE_CXX_COMPILER_ID STREQUAL Clang" OFF)
@@ -150,26 +136,9 @@ endif ()
 
 
 if(EMSCRIPTEN)
-  set(SOUFFLE_USE_SQLITE off)
   set(SOUFFLE_USE_OPENMP off)
-  set(SOUFFLE_USE_ZLIB off)
-  set(SOUFFLE_USE_LIBFFI off)
-  set(SOUFFLE_USE_CURSES off)
   set(SOUFFLE_ENABLE_TESTING off)
 endif ()
-# --------------------------------------------------
-# curses libraries for Provenance information
-# --------------------------------------------------
-if (SOUFFLE_USE_CURSES)
-    find_package(Curses REQUIRED)
-    if(NOT TARGET Curses::NCurses)
-        add_library(Curses::NCurses UNKNOWN IMPORTED)
-        set_target_properties(Curses::NCurses PROPERTIES
-            IMPORTED_LOCATION "${CURSES_NCURSES_LIBRARY}"
-            INTERFACE_INCLUDE_DIRECTORIES "${CURSES_INCLUDE_DIR}"
-        )
-    endif()
-endif()
 
 if (SOUFFLE_DISABLE_CTEST)
     # Keep an escape hatch for older workflows that intentionally block ctest.
@@ -178,31 +147,6 @@ if (SOUFFLE_DISABLE_CTEST)
 else()
     # Clear any prior guard include when ctest is enabled again.
     set_property(DIRECTORY PROPERTY TEST_INCLUDE_FILES "")
-endif()
-
-# --------------------------------------------------
-# swig support
-# --------------------------------------------------
-if (SOUFFLE_SWIG)
-    # Enable both
-    set(SOUFFLE_SWIG_PYTHON "ON" CACHE STRING "" FORCE)
-    set(SOUFFLE_SWIG_JAVA "ON" CACHE STRING "" FORCE)
-endif()
-
-if (SOUFFLE_SWIG_PYTHON OR SOUFFLE_SWIG_JAVA)
-    find_package(SWIG REQUIRED)
-
-    if (SOUFFLE_SWIG_PYTHON)
-        find_package(Python3 3.7 REQUIRED)
-    endif()
-
-    if (SOUFFLE_SWIG_JAVA)
-        find_package(Java REQUIRED
-                     COMPONENTS Development)
-        find_package(JNI REQUIRED)
-        list(APPEND SOUFFLE_JAVA_INCLUDE_PATH ${JAVA_INCLUDE_PATH})
-        list(APPEND SOUFFLE_JAVA_INCLUDE_PATH ${JAVA_INCLUDE_PATH2})
-    endif()
 endif()
 
 # --------------------------------------------------
@@ -241,36 +185,6 @@ find_package(BISON "3.2" REQUIRED)
 find_program(MCPP mcpp)
 
 # --------------------------------------------------
-# libz
-# --------------------------------------------------
-if (SOUFFLE_USE_ZLIB)
-    find_package(ZLIB REQUIRED)
-    if (SOUFFLE_ENABLE_TESTING)
-        find_program(GZIP_BINARY gzip REQUIRED)
-    endif()
-endif()
-
-# --------------------------------------------------
-# sqlite
-# --------------------------------------------------
-if (SOUFFLE_USE_SQLITE)
-    find_package(SQLite3 REQUIRED)
-    if (SOUFFLE_ENABLE_TESTING)
-        find_program(SQLITE3_BINARY sqlite3 REQUIRED)
-    endif()
-endif()
-
-# --------------------------------------------------
-# libffi
-# --------------------------------------------------
-if (SOUFFLE_USE_LIBFFI)
-  find_package(libffi CONFIG QUIET)
-  if (NOT libffi_FOUND)
-    find_package(LibFFI REQUIRED)
-  endif()
-endif()
-
-# --------------------------------------------------
 # pthreads
 # --------------------------------------------------
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -302,39 +216,6 @@ endif()
 if (SOUFFLE_SANITISE_THREAD)
     set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread")
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
-endif()
-
-# --------------------------------------------------
-# Doxygen
-# --------------------------------------------------
-if (SOUFFLE_GENERATE_DOXYGEN)
-    find_package(Doxygen REQUIRED dot)
-    set(DOXYGEN_IN "${PROJECT_SOURCE_DIR}/doxygen.in")
-    set(DOXYGEN_CFG "${PROJECT_SOURCE_DIR}/Doxyfile")
-    set(DOXYGEN_DIR "${PROJECT_SOURCE_DIR}/doc")
-
-    if ("htmlhelp" IN_LIST SOUFFLE_GENERATE_DOXYGEN)
-        set(DOXYGEN_GENERATE_HTMLHELP "YES")
-    endif()
-    if ("man" IN_LIST SOUFFLE_GENERATE_DOXYGEN)
-        set(DOXYGEN_GENERATE_MAN "YES")
-    endif()
-    if ("rtf" IN_LIST SOUFFLE_GENERATE_DOXYGEN)
-        set(DOXYGEN_GENERATE_RTF "YES")
-    endif()
-    if ("xml" IN_LIST SOUFFLE_GENERATE_DOXYGEN)
-        set(DOXYGEN_GENERATE_XML "YES")
-    endif()
-    if ("latex" IN_LIST SOUFFLE_GENERATE_DOXYGEN)
-        set(DOXYGEN_GENERATE_LATEX "YES")
-    endif()
-
-    configure_file(${DOXYGEN_IN} ${DOXYGEN_CFG})
-
-    add_custom_target(doxygen
-        COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_CFG}
-        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-        COMMENT "Generating API documentation with Doxygen")
 endif()
 
 # --------------------------------------------------
@@ -386,92 +267,4 @@ if (SOUFFLE_ENABLE_TESTING AND BUILD_TESTING)
     if (SOUFFLE_ENABLE_REGRESSION_TESTS)
         add_subdirectory(tests/regression)
     endif()
-endif()
-
-
-# --------------------------------------------------
-# Installing bash completion file
-# --------------------------------------------------
-IF (SOUFFLE_BASH_COMPLETION) 
-    if(NOT DEFINED BASH_COMPLETION_COMPLETIONSDIR)
-        find_package (bash-completion)
-        if (BASH_COMPLETION_FOUND)
-            message(STATUS "Using bash completion dir ${BASH_COMPLETION_COMPLETIONSDIR}")
-        else()
-            set (BASH_COMPLETION_COMPLETIONSDIR "/etc/bash_completion.d")
-            message (STATUS "Using fallback bash completion dir ${BASH_COMPLETION_COMPLETIONSDIR}")
-        endif()
-    else()
-        message(STATUS "Using user-provided bash completion dir ${BASH_COMPLETION_COMPLETIONSDIR}")
-    endif()
-
-    install(
-        FILES "${PROJECT_SOURCE_DIR}/debian/souffle.bash-completion"
-        DESTINATION ${BASH_COMPLETION_COMPLETIONSDIR}
-        RENAME "souffle"
-    )
-endif()
-
-
-if (NOT WIN32)
-# --------------------------------------------------
-# CPack configuration
-# --------------------------------------------------
-execute_process(COMMAND bash "${PROJECT_SOURCE_DIR}/sh/check_os.sh"
-                RESULT_VARIABLE CHECK_OS_RESULT
-                OUTPUT_VARIABLE CHECK_OS_OUTPUT)
-
-SET(CPACK_PACKAGE_CONTACT "Bernhard Scholz <bernhard.scholz@sydney.edu.au>")
-SET(CPACK_PACKAGE_DESCRIPTION "Souffle - A Datalog Compiler")
-SET(CPACK_PACKAGE_DESCRIPTION_SUMMARY "A Datalog Compiler")
-
-# Use all available threads (primarily for compression of files)
-SET(CPACK_THREADS 0)
-
-# Make sure changelog, bash-completion and other important files in debian directory also packaged
-SET(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${PROJECT_SOURCE_DIR}/debian/changelog" "${PROJECT_SOURCE_DIR}/debian/souffle.bash-completion" "${PROJECT_SOURCE_DIR}/debian/copyright")
-
-# --------------------------------------------------
-# CPack configuration 
-# --------------------------------------------------
-if (CHECK_OS_RESULT EQUAL 0)
-    if (CHECK_OS_OUTPUT MATCHES "DEBIAN")
-        # Generate DEB packages
-        SET(CPACK_GENERATOR "DEB")
-        # --------------------------------------------------
-        # Variables relevent to DEB packages
-        # --------------------------------------------------
-
-        # Specifying runtime dependencies
-        set(CPACK_DEBIAN_PACKAGE_DEPENDS "g++ (>= 8), libffi-dev, libncurses5-dev, libsqlite3-dev, mcpp, zlib1g-dev, python3")
-
-        # Auto-generate any runtime dependencies that are required
-        SET(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-
-        # Architectures are actually auto-detected so no need to set this variable
-        # SET(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "i386")
-        INCLUDE(CPack)
-    endif()
-
-    if (CHECK_OS_OUTPUT MATCHES "FEDORA")
-      SET(CPACK_RPM_PACKAGE_GROUP "Unspecified")
-      SET(CPACK_RPM_PACKAGE_LICENSE "UPL-1.0 License")
-      SET(CPACK_RPM_PACKAGE_VENDOR "Souffle-lang")
-      SET(CPACK_RPM_PACKAGE_DESCRIPTION "${CPACK_PACKAGE_DESCRIPTION}")
-
-      # Generate RPM packages
-      SET(CPACK_GENERATOR "RPM")
-
-      # --------------------------------------------------
-      # Variables relevent to RPM packages
-      # --------------------------------------------------
-
-      # Specifying runtime dependencies
-      set(CPACK_RPM_PACKAGE_REQUIRES "gcc-c++ >= 8, libffi, libffi-devel, ncurses-devel, sqlite-devel, mcpp, zlib-devel, python3")
-
-      # Note: By default automatic dependency detection is enabled by rpm generator.
-      # SET(CPACK_RPM_PACKAGE_AUTOREQPROV "no")
-      INCLUDE(CPack)
-    endif()
-endif()
 endif()

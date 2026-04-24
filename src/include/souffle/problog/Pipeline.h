@@ -16,15 +16,6 @@ namespace souffle::problog {
 
 std::string makeOutputPath(const CmdOptions& opt, const std::string& filename);
 
-// full-only is a compile-time flag; expose it to the runtime pipeline
-// to guard features that are only safe in full-only mode.
-void setFullOnlyMode(bool enabled);
-bool isFullOnlyMode();
-bool runNegationPostPass(
-        const CmdOptions& opt,
-        SouffleProgram& program,
-        RuleManager& ruleManager);
-
 void runPipeline(
         const CmdOptions& opt,
         SouffleProgram& program,

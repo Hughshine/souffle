@@ -10,7 +10,7 @@
  *
  * @file JoinSize.cpp
  *
- * EstimateJoinSize are used for accumulating selectivity statistics for the auto scheduler
+ * EstimateJoinSize statements accumulate relation selectivity statistics.
  * This analysis determines which EstimateJoinSize statements to emit in the RAM
  *
  ***********************************************************************/

@@ -257,7 +257,7 @@ ram::RelationSet Synthesiser::getReferencedRelations(const Operation& op) {
         } else if (auto derExists = as<DerivationCheck>(node)) {
             res.insert(lookup((derExists->getRelation())));
             for (auto& [_, expr] : derExists->varExprMap) {
-                if (auto* rel = as<RelationOperation>(expr)) {  // TODO: useless?
+                if (auto* rel = as<RelationOperation>(expr)) {
 
                     res.insert(lookup(rel->getRelation()));
                 }
@@ -389,7 +389,7 @@ void Synthesiser::emitRules (std::ostream& out) {
             headRelName = headAtom->getQualifiedName().toString();
             std::vector<std::pair<char, std::string>> fields;
             // std::vector<std::string> fieldVars{};  // only consider variables for now
-            // TODO: change to use serialize()
+            // Field encoding mirrors the generated Atom serializer format.
             for (auto field: headAtom->getArguments()) {
                 if (isA<ast::Variable>(field)) {
                     auto var = as<ast::Variable>(field);
@@ -422,7 +422,6 @@ void Synthesiser::emitRules (std::ostream& out) {
                 } else {
                     std::cout << headAtom->getQualifiedName().toString() << std::endl;
                     assert (false && "Not impl yet, atom");
-                    // TODO: can we just omit all constraints?
                     continue;
                 }
             }
@@ -631,8 +630,6 @@ void Synthesiser::emitRules (std::ostream& out) {
 
     out << "ruleManager = RuleManager({" << join(ruleNames, ", ") << "}"
         << ", {" << join(eqrelNames, ", ") << "});" << std::endl;
-    // out << "RuleManager ruleManager = ExampleRuleComponents::ruleManager;\n";
-        // out << "std::cout << ruleManager.toString();\n";
     const auto& queries = this->newAstProgram->getProbQueries();
     std::vector<std::string> queryNames;
 
@@ -673,10 +670,8 @@ void Synthesiser::emitRules (std::ostream& out) {
 }
 
 void Synthesiser::emitProblogPipeline(std::ostream& out) {
-    out << "souffle::problog::setFullOnlyMode("
-        << (glb.config().has("full-only") ? "true" : "false") << ");\n";
     out << "souffle::problog::runPipeline(opt, obj, ruleManager, queryManager, fact_prob, evidences, "
-        << (glb.config().has("online") && !glb.config().has("full-only") ? "true" : "false") << ");\n";
+        << "true);\n";
 }
 
 void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
@@ -833,7 +828,6 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     const std::string& cache = io.get("cache");
                     // we cache all input facts to a set
                     if (cache == "true") {
-                        // TODO
                         out << "for (auto& tuple: *" << synthesiser.getRelationName(synthesiser.lookup(io.getRelation()))
                             << ") {" << std::endl;
                             out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << getBaseRelationName(io.getRelation()) << "\",tuple);\n";
@@ -845,34 +839,11 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 } else {
                     const std::string& isInsert = io.get("inc-insert");
                     const std::string& isDelete = io.get("inc-delete");
-                    // TODO: update derivations to mapping
                     out << "IOSystem::getInstance().getReader(";
                     out << "directiveMap, symTable, recordTable";
                     out << ")->readAll(*" << synthesiser.getRelationName(synthesiser.lookup(io.getRelation()));
                     out << ");\n";
                     assert(!(isInsert == "true" && isDelete == "true") && "no same-time insertion and deletion");
-                    if (isInsert == "true") {
-                        // the relation name already have inser/delete info
-                        // do not give implicit derivation ifno for input facts?
-                        // out << "for(auto it = " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->begin(); it != " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->end(); ++it) {\n";
-                        // out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\""<< getBaseRelationName(io.getRelation()) <<"\", *it);\n";
-                        // out << "auto*& deltaInsRuleSet = DerivationManager::untypedTuple2DeltaInsertRuleApplications[untypedTuple];\n";
-                        // out << "if (deltaInsRuleSet == nullptr) {\n";
-                        // out << "deltaInsRuleSet = new std::set<RuleApplication>();\n";
-                        // out << "}\n";
-                        // out << "deltaInsRuleSet->insert(naiveRuleApplication);\n";
-                        // out << "}\n";
-                    } else if (isDelete == "true") {
-                        // TODO: could eliminate semoutenously inserted and deleted facts
-                        // out << "for(auto it = " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->begin(); it != " << synthesiser.getRelationName(synthesiser.lookup(io.getRelation())) << "->end(); ++it) {\n";
-                        // out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\""<< getBaseRelationName(io.getRelation()) <<"\", *it);\n";
-                        // out << "auto*& deltaDelRuleSet = DerivationManager::untypedTuple2DeltaDeleteRuleApplications[untypedTuple];\n";
-                        // out << "if (deltaDelRuleSet == nullptr) {\n";
-                        // out << "deltaDelRuleSet = new std::set<RuleApplication>();\n";
-                        // out << "}\n";
-                        // out << "deltaDelRuleSet->insert(naiveRuleApplication);\n";
-                        // out << "}\n";
-                    }
                 }
                 out << "}\n";
                 out << "} catch (std::exception& e) {std::cerr << \"Error loading " << io.getRelation()
@@ -918,7 +889,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 next = &filter->getOperation();
                 // Check terms of outer filter operation whether they can be pushed before
                 // the context-generation for speed imrovements
-                // TODO: check this optimization opportunity
+                // Split context-free filters before context generation for cheaper checks.
                 auto conditions = toConjunctionList(&filter->getCondition());
                 for (auto const& cur : conditions) {
                     bool needContext = false;
@@ -999,7 +970,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 
 
 
-        void visit_(type_identity<Clear>, const Clear& clear, std::ostream& out) override {  // TODO: should not purge real relation
+        void visit_(type_identity<Clear>, const Clear& clear, std::ostream& out) override {
             PRINT_BEGIN_COMMENT(out);
 
             auto relation = synthesiser.lookup(clear.getRelation());
@@ -1014,14 +985,14 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             if (relation->isTemp()) {
                 out << synthesiser.getRelationName(relation) << "->purge();\n";
             } else {
-                // TODO: cannot purge real relations now, but incremental computation might need this
+                // Concrete relations are preserved here; ExactClear handles explicit full purges.
                 // out << synthesiser.getRelationName(relation) << "->purge();\n";
             }
 
             PRINT_END_COMMENT(out);
         }
 
-        void visit_(type_identity<ExactClear>, const ExactClear& clear, std::ostream& out) override {  // TODO: should not purge real relation
+        void visit_(type_identity<ExactClear>, const ExactClear& clear, std::ostream& out) override {
             PRINT_BEGIN_COMMENT(out);
             auto relation = synthesiser.lookup(clear.getRelation());
             out << synthesiser.getRelationName(relation) << "->purge();\n";
@@ -1600,7 +1571,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             auto rangeBounds = getPaddedRangeBounds(*rel, rangePatternLower, rangePatternUpper);
             out << "auto range = " << relName
                 << "->"
-                // TODO (b-scholz): context may be missing here?
+                // Parallel range iteration uses the relation-level range API.
                 << "lowerUpperRange_" << keys << "(" << rangeBounds.first.str() << ","
                 << rangeBounds.second.str() << ");\n";
             out << "auto part = range.partition();\n";
@@ -1680,7 +1651,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             auto rangeBounds = getPaddedRangeBounds(*rel, rangePatternLower, rangePatternUpper);
             out << "auto range = " << relName
                 << "->"
-                // TODO (b-scholz): context may be missing here?
+                // Parallel range iteration uses the relation-level range API.
                 << "lowerUpperRange_" << keys << "(" << rangeBounds.first.str() << ","
                 << rangeBounds.second.str() << ");\n";
             out << "auto part = range.partition();\n";
@@ -1873,7 +1844,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 std::string name = uda->getName();
                 def << "#pragma omp declare reduction("
                     << "reduction_" << name << " : " << getType(aggregator) << " : \\\n";
-                // TODO: does not work for stateful functors
+                // OpenMP reductions assume stateless user-defined aggregators.
                 def << "omp_out = " << name << "(omp_out, omp_in) )\\\n";
                 def << "initializer (omp_priv=(omp_orig))\n";
                 return std::make_tuple("reduction_" + name, def.str(), 0);
@@ -2424,7 +2395,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
 
             // insert tuple and record derivation
             // case 1: insert to delta, (new) to old
-            // TODO
+            // Delta/new insert handling.
             if (insert.getClauseStr() == "UNKNOWN CLAUSE") {
                 // out << relName << "->"
                 //     << "insert(tuple," << ctxName << ");\n";
@@ -2442,7 +2413,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                         << "insert(tuple," << ctxName << ");\n";
                 }
             } else {
-                // TODO: is it ok to just insert the tuple?
+                // Non-UNKNOWN clauses follow the same guarded new-relation insertion policy.
                 if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new"
     && !(tempRelName.size() >= 9 && tempRelName.substr(0, 9) == "@new_derv")) {
                     tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
@@ -2573,7 +2544,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     out << "DerivationManager::dredStats.del_ruleapp_delta_delta++;\n";
                     out << "}\n";
 
-                    // TODO: optimize the dynamic recursive check
+                    // Keep recursive-stratum detection dynamic because rule ids are generated.
                     out << "if (ruleManager.isInRecursiveStratum(ruleApplication.ruleId)) {\n";
                     out << "auto*& ruleSetComplete = DerivationManager::untypedTuple2RuleApplications[untypedTuple];\n";
                     out << "if (DerivationManager::isSemStatsEnabled()) {\n";
@@ -2853,7 +2824,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             // ADD EVERYTHING UP TO NEW
             // out <<
             if (both) {
-                // TODO: should optimize, use erase
+                // Apply tuple deletes explicitly before tuple inserts.
                 out << "for(const auto& deletedTuple: *" << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel())) << ") {\n" << std::endl;
                 out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getNewRel())) << "->erase(deletedTuple);\n" << std::endl;
                 out << "}\n" << std::endl;
@@ -3346,7 +3317,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                     dispatch(*args[0], out);
                     break;
                 }
-                // TODO: change the signature of `STRLEN` to return an unsigned?
+                // STRLEN currently returns a signed RAM value.
                 case FunctorOp::STRLEN: {
                     out << "static_cast<RamSigned>(symTable.decode(";
                     dispatch(*args[0], out);
@@ -3721,18 +3692,8 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         db.addGlobalInclude("\"souffle/profile/ProfileEvent.h\"");
     }
 
-    if (glb.config().has("provenance")) {
-        db.addGlobalInclude("<mutex>");
-        db.addGlobalInclude("\"souffle/provenance/Explain.h\"");
-    }
-
-    if (glb.config().has("live-profile")) {
-        db.addGlobalInclude("<thread>");
-        db.addGlobalInclude("\"souffle/profile/Tui.h\"");
-    }
-
     db.addGlobalInclude("\"souffle/utility/MiscUtil.h\"");
-    if (glb.config().has("profile") || glb.config().has("live-profile")) {
+    if (glb.config().has("profile")) {
         db.addGlobalInclude("\"souffle/profile/Logger.h\"");
         db.addGlobalInclude("\"souffle/profile/ProfileEvent.h\"");
     }
@@ -4228,7 +4189,6 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // emit code
     currentClass = &mainClass;
     emitCode(runFunction.body(), prog.getMain());
-    // TODO: may avoid emitting inc when no inc is set. defaultly getInc will return EmptyStatement, so everything still works fine for now.
     emitCode(runFunctionInc.body(), prog.getInc());
 
     if (glb.config().has("profile")) {
@@ -4277,13 +4237,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     runAll.setNextArg("std::string", "outputDirectoryArg", std::make_optional("\"\""));
     runAll.setNextArg("bool", "performIOArg", std::make_optional("true"));
     runAll.setNextArg("bool", "pruneImdtRelsArg", std::make_optional("false"));
-    if (glb.config().has("live-profile")) {
-        runAll.body() << "std::thread profiler([]() { profile::Tui().runProf(); });\n";
-    }
     runAll.body() << "runFunction(inputDirectoryArg, outputDirectoryArg, performIOArg, pruneImdtRelsArg);\n";
-    if (glb.config().has("live-profile")) {
-        runAll.body() << "if (profiler.joinable()) { profiler.join(); }\n";
-    }
 
     GenFunction& runAllInc = mainClass.addFunction("runAllInc", Visibility::Public);
     runAllInc.setOverride();
@@ -4292,13 +4246,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     runAllInc.setNextArg("std::string", "outputDirectoryArg", std::make_optional("\"\""));
     runAllInc.setNextArg("bool", "performIOArg", std::make_optional("true"));
     runAllInc.setNextArg("bool", "pruneImdtRelsArg", std::make_optional("false"));
-    if (glb.config().has("live-profile")) {
-        runAllInc.body() << "std::thread profiler([]() { profile::Tui().runProf(); });\n";
-    }
     runAllInc.body() << "runFunctionInc(inputDirectoryArg, outputDirectoryArg, performIOArg, pruneImdtRelsArg);\n";
-    if (glb.config().has("live-profile")) {
-        runAllInc.body() << "if (profiler.joinable()) { profiler.join(); }\n";
-    }
 
     // issue printAll method
     GenFunction& printAll = mainClass.addFunction("printAll", Visibility::Public);
@@ -4347,7 +4295,6 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         loadAll.body() << "std::map<std::string, std::string> directiveMap(";
         printDirectives(loadAll.body(), load->getDirectives());
         loadAll.body() << ");\n";
-        // for IDB in inc, we should always use outputDirArg... that makes more sense TODO
         loadAll.body() << R"_(if (!inputDirectoryArg.empty()) {)_";
         loadAll.body() << R"_(directiveMap["fact-dir"] = inputDirectoryArg;)_";
         loadAll.body() << "}\n";
@@ -4372,7 +4319,6 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         loadAllExcept.body() << "std::map<std::string, std::string> directiveMap(";
         printDirectives(loadAllExcept.body(), load->getDirectives());
         loadAllExcept.body() << ");\n";
-        // for IDB in inc, we should always use outputDirArg... that makes more sense TODO
         loadAllExcept.body() << R"_(if (!inputDirectoryArg.empty()) {)_";
         loadAllExcept.body() << R"_(directiveMap["fact-dir"] = inputDirectoryArg;)_";
         loadAllExcept.body() << "}\n";
@@ -4600,31 +4546,14 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "opt.setLogFileName(R\"("
          << (glb.config().has("logfile") ? glb.config().get("logfile") : std::string("log.txt"))
          << ")\");\n";
-    hook << "opt.setDerivationOnly(" << (glb.config().has("derv-only") ? "true" : "false") << ");\n";
-    hook << "opt.setMergeBiImpEnabled(" << (glb.config().has("merge-bi-imp") ? "true" : "false")
-         << ");\n";
-    hook << "opt.setPruneExtraEnabled(" << (glb.config().has("prune-extra") ? "true" : "false")
-         << ");\n";
-    hook << "opt.setConstFoldEnabled(" << (glb.config().has("fold-const") ? "true" : "false")
-         << ");\n";
-    hook << "opt.setSemModeToken(\"" << glb.config().get("sem-mode") << "\");\n";
-    hook << "opt.setFcModeToken(\"" << glb.config().get("fc-mode") << "\");\n";
-    hook << "opt.setKnowledgeRepresentationToken(\"" << glb.config().get("dd-backend", "bdd")
-         << "\");\n";
-    hook << "opt.setFullEvaluatorToken(\"" << glb.config().get("full-evaluator", "exact")
-         << "\");\n";
-    hook << "opt.setRewriteEngineToken(\"" << glb.config().get("rewrite-engine", "off")
-         << "\");\n";
-    hook << "opt.setRewriteSplitModeToken(\"" << glb.config().get("rewrite-split", "naive")
-         << "\");\n";
-    hook << "opt.setRewriteDetectModeToken(\"" << glb.config().get("rewrite-detect", "dirty-frontier")
-         << "\");\n";
-    hook << "opt.setDetModeToken(\"" << glb.config().get("det-mode", "auto") << "\");\n";
+    hook << "opt.setIncrementalMode(\"" << glb.config().get("setmode") << "\");\n";
     hook << "opt.setDumpJsonEnabled(" << (glb.config().has("dumpjson") ? "true" : "false") << ");\n";
+    hook << "opt.setDumpJsonBeforeGraphEnabled("
+         << (glb.config().has("dumpjson-before-graph") ? "true" : "false") << ");\n";
+    hook << "opt.setDumpJsonBeforePruneEnabled("
+         << (glb.config().has("dumpjson-before-prune") ? "true" : "false") << ");\n";
     hook << "opt.setDumpDotEnabled(" << (glb.config().has("dumpdot") ? "true" : "false") << ");\n";
     hook << "opt.setDumpStatEnabled(" << (glb.config().has("dumpstat") ? "true" : "false") << ");\n";
-    hook << "opt.setDumpConstEnabled(" << (glb.config().has("dumpconst") ? "true" : "false")
-         << ");\n";
     hook << "opt.setProfileStageToken(\"dred\", "
          << (glb.config().has("dred-profile") ? "true" : "false") << ");\n";
     hook << "opt.setProfileStageToken(\"inc\", "
@@ -4637,26 +4566,15 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
          << (glb.config().has("profile-inc-delete") ? "true" : "false") << ");\n";
     hook << "opt.setProfileStageToken(\"inc-regional\", "
          << (glb.config().has("profile-inc-regional") ? "true" : "false") << ");\n";
-    hook << "opt.setProfileStageToken(\"inc-regional-heavy\", "
-         << (glb.config().has("profile-inc-regional-heavy") ? "true" : "false") << ");\n";
     hook << "opt.setProfileStageToken(\"dep-graph\", "
          << (glb.config().has("profile-dep-graph") ? "true" : "false") << ");\n";
-    hook << "opt.setApproxBackendToken(\"" << glb.config().get("approx-backend", "none") << "\");\n";
-    hook << "opt.setIncRegionalTraceTuples(R\"("
-         << glb.config().get("inc-regional-trace-tuples", "")
-         << ")\");\n";
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";
-    hook << "detOptEnabled = opt.isDetOptEnabled();\n";
-    hook << "detForceEnabled = opt.isDetForceEnabled();\n";
+    hook << "detOptEnabled = true;\n";
     hook << "dredProfileEnabled = opt.isDredProfileEnabled();\n";
     hook << "incProfileEnabled = opt.isIncProfileEnabled();\n";
     hook << "incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();\n";
-    hook << "incRegionalProfileHeavyEnabled = opt.isIncRegionalProfileHeavyEnabled();\n";
-    hook << "incRegionalTraceTuples = opt.getIncRegionalTraceTuples();\n";
     hook << "depGraphProfileEnabled = opt.isDepGraphProfileEnabled();\n";
-    hook << "reuseVarIndexEnabled = opt.isReuseVarIndexEnabled();\n";
-    hook << "incReorderEnabled = opt.isIncReorderEnabled();\n";
 
     if (!db.getNS(false).empty()) {
         hook << db.getNS(false) << "::";
@@ -4666,14 +4584,6 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     } else {
         hook << classname + " obj;\n";
     }
-
-    // set knowledge representation
-    hook << "if (opt.getKnowledgeRepresentation() == \"bdd\") {\n";
-    hook << "obj.setKnowledge(souffle::Knowledge::BDD);\n";
-    hook << "} else if (opt.getKnowledgeRepresentation() == \"sdd\") {\n";
-    hook << "obj.setKnowledge(souffle::Knowledge::SDD);\n";
-    hook << "} else { std::cout << \"opt.getKnowledgeRepresentation()\" "
-            << "<< opt.getKnowledgeRepresentation() << std::endl;\n assert(false && \"unknown knowledge representation\"); }\n";
 
     hook << "#if defined(_OPENMP) \n";
     hook << "obj.setNumThreads(opt.getNumJobs());\n";
@@ -4700,12 +4610,6 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "debugger.setRunStatus(\"running\");\n";
     hook << "souffle::SignalHandler::instance()->setTerminationStatusFile(reportTerminationFile);\n";
     hook << "souffle::SignalHandler::instance()->set();\n";
-    // if (glb.config().has("inc")) {
-    // hook << "{\n";
-    // hook << "FunctionTimer timer(\"reading derivations\");\n";
-    //     hook << R"(DerivationManager::untypedTuple2RuleApplications = DerivationManager::derivationInfoFromJsonFile(opt.getSourceFileName(),"", opt.getOutputFileDir()==""?")"<< glb.config().get("output-dir") <<"\":opt.getOutputFileDir());\n"; // Read old computation
-    // hook << "}\n";
-    // }
     hook << "debugger.startTurn();\n";
     hook << "auto parseProbFast = [](const std::string& line, double& probOut) {\n";
     hook << "    const char* p = line.c_str();\n";
@@ -4791,7 +4695,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << "}\n";
     }
     hook << "auto preMs = detNowMs(preStart);\n";
-    hook << "std::cout << \"[det-opt] prepass took \" << preMs << \" ms\" << std::endl;\n";
+    hook << "std::cout << \"[det-analysis] prepass took \" << preMs << \" ms\" << std::endl;\n";
     hook << "if (detStage) detStage->logMessage(Level::INFO, \"prepass_ms=\" + std::to_string(preMs));\n";
     hook << "}\n";
     hook << "{\n";
@@ -4831,7 +4735,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "    relationIsDet[det_rel_names[i]] = relIsDet[i];\n";
     hook << "}\n";
     hook << "auto analyzeMs = detNowMs(analyzeStart);\n";
-    hook << "std::cout << \"[det-opt] analyze took \" << analyzeMs << \" ms\" << std::endl;\n";
+    hook << "std::cout << \"[det-analysis] analyze took \" << analyzeMs << \" ms\" << std::endl;\n";
     hook << "if (detStage) detStage->logMessage(Level::INFO, \"analyze_ms=\" + std::to_string(analyzeMs));\n";
     hook << "\n";
     hook << "auto dumpStart = std::chrono::steady_clock::now();\n";
@@ -4862,7 +4766,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "    detSccOut << \"\\n\";\n";
     hook << "}\n";
     hook << "auto dumpMs = detNowMs(dumpStart);\n";
-    hook << "std::cout << \"[det-opt] dump took \" << dumpMs << \" ms\" << std::endl;\n";
+    hook << "std::cout << \"[det-analysis] dump took \" << dumpMs << \" ms\" << std::endl;\n";
     hook << "if (detStage) detStage->logMessage(Level::INFO, \"dump_ms=\" + std::to_string(dumpMs));\n";
     hook << "}\n";
     hook << "debugger.endStage();\n";
@@ -4965,7 +4869,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     db.addGlobalInclude("\"souffle/problog/Pipeline.h\"");
     db.addGlobalInclude("\"souffle/problog/debug/Debugger.h\"");
     // synthesize rules
-    // TODO: should make this pure static?
+    // Rule synthesis currently uses the instance emitter state.
     hook << "debugger.startStage(StageKind::CONSTRUCT_RULE_FULL);\n";
     emitRules(hook);
     hook << "debugger.endStage();\n";
@@ -4985,11 +4889,6 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // }
 
 
-    if (glb.config().get("provenance") == "explain") {
-        hook << "explain(obj, false);\n";
-    } else if (glb.config().get("provenance") == "explore") {
-        hook << "explain(obj, true);\n";
-    }
     hook << "return 0;\n";
     hook << "} catch(std::exception &e) { souffle::SignalHandler::instance()->error(e.what());}\n";
     hook << "}\n";

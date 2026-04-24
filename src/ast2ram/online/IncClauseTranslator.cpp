@@ -122,7 +122,6 @@ std::string IncClauseTranslator::getClauseAtomName(const ast::Clause& clause, co
     return getAtomName(clause, atom, sccAtoms, version, isRecursive(), mode, true);
 }
 
-// TODO: change to heap
 std::map<std::string, Own<ram::Expression>> IncClauseTranslator::getClauseVars(const ast::Clause& clause) const {
     std::map<std::string, Own<ram::Expression>> varExprMap{};
     // iterate all body literals and translate it to expression
@@ -188,12 +187,8 @@ Own<ram::Statement> IncClauseTranslator::translateRecursiveClause(
             [&](auto* atom) { return contains(scc, context.getProgram()->getRelation(*atom)); });
     this->version = version;
 
-    // TODO: maybe missing fact case
-    // TODO: all delta rules are different for recursive to non-recursive
-    // Own<ram::Statement> rule = translateNonRecursiveClause(clause);
     if (isFact(clause)) {
-        // TODO: Currently we allow no rule changes, so the fact must already be inserted
-        // return mk<ram::EmptyStatement>();  // TODO: add EmptyStatement
+        // Recursive fact clauses are owned by fact loading, not by delta rule generation.
         return mk<ram::EmptyStatement>();
     }
     Own<ram::Statement> rule;
@@ -218,12 +213,12 @@ Own<ram::Statement> IncClauseTranslator::translateNonRecursiveClause(const ast::
     // Create the appropriate query
     if (isFact(clause)) {
         // Currently we allow no input program changes, so the fact must already be inserted
-        return createRamFactQuery(clause);  // TODO: we can avoid the reinsertion
+        return createRamFactQuery(clause);
     }
     // INC: for each rule p :- s1, ..., sn, we need to create n queries.
     // The combined path is retained for compatibility, but the maintained
     // non-recursive pipeline now runs delete and insert as separate phases.
-    // we create n delta rules (clauses), and invoke createRamRuleQuery on each o them
+    // we create n delta rules (clauses)
     // ds_i here only contains added or removed tuples; we don't care about how its derivation set changes in details, because rule application is not a transitive information
     // so delta relation is just newly inserted or newly deleted tuples (insert set and delete set has no overlap)
     // but when we calculate delta relations, we need to update corresponding delta derivation information (rule application information) [i.e. delta derivation information is just "output"]
@@ -236,8 +231,7 @@ Own<ram::Statement> IncClauseTranslator::translateNonRecursiveClauseDel(const as
     // Create the appropriate query
     if (isFact(clause)) {
         // Currently we allow no input program changes, so the fact must already be inserted
-        return mk<ram::EmptyStatement>();  // TODO: return nullptr ok?
-        // return createRamFactQuery(clause);  // TODO: we can avoid the reinsertion
+        return mk<ram::EmptyStatement>();
     }
     return createRamDeltaRulesQueryDel(clause);
 }
@@ -246,8 +240,7 @@ Own<ram::Statement> IncClauseTranslator::translateNonRecursiveClauseIns(const as
     // Create the appropriate query
     if (isFact(clause)) {
         // Currently we allow no input program changes, so the fact must already be inserted
-        return mk<ram::EmptyStatement>();  // TODO: return nullptr ok?
-        // return createRamFactQuery(clause);  // TODO: we can avoid the reinsertion
+        return mk<ram::EmptyStatement>();
     }
     return createRamDeltaRulesQueryIns(clause);
 }
@@ -310,7 +303,7 @@ Own<ram::Operation> IncClauseTranslator::createInsertionRederive(const ast::Clau
 Own<ram::Operation> IncClauseTranslator::addNegatedDeltaAtomRederive(
         Own<ram::Operation> op, const ast::Atom* atom) const {
     std::size_t arity = atom->getArity();
-    std::string name = getIncDeltaTupleRederiveRelationName(atom->getQualifiedName());  // TODO:
+    std::string name = getIncDeltaTupleRederiveRelationName(atom->getQualifiedName());
 
     if (arity == 0) {
         // for a nullary, negation is a simple emptiness check
@@ -425,16 +418,12 @@ Own<ram::Operation> IncClauseTranslator::addVariableIntroductionsRederive(
 Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQueryRederive(const ast::Clause& clause) {
     assert(isRule(clause) && "clause should be rule");
     VecOwn<ram::Statement> stmts;
-    // TODO: should create a new clause
     ast::Clause* rederiveVersionClause = clause.cloning();
     Own<ast::Atom> headClone(rederiveVersionClause->getHead()->cloning());
     headClone->isRederive = true;
     rederiveVersionClause->isRederive = true;
     rederiveVersionClause->setClauseId(context.getClauseNum(&clause));
-    // context.clauseNums. rederiveVersionClause] = -1; //
-    rederiveVersionClause->addToBody(std::move(headClone)); // TODO
-    std::cout << "rederiveVersionClause: " << rederiveVersionClause->toString() << std::endl;
-    // TODO: add rederive version for all the methods.
+    rederiveVersionClause->addToBody(std::move(headClone));
     indexClause(*rederiveVersionClause);
     const auto head = rederiveVersionClause->getHead();
     auto headRelationName = getBaseRelationName(head->getQualifiedName());
@@ -443,7 +432,7 @@ Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQueryRederive(con
     auto clauseVarExprs = getClauseVarExprs(*rederiveVersionClause);
     VecOwn<ram::Expression> values;  // how head argument is computed by its body (relation name is anonymous)
     for (const auto* arg : head->getArguments()) {
-        values.push_back(context.translateValue(*valueIndex, arg));  // TODO
+        values.push_back(context.translateValue(*valueIndex, arg));
     }
     // need to add another level of scan
     auto op = createInsertionRederive(*rederiveVersionClause);
@@ -468,15 +457,12 @@ Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQuery(const ast::
     auto clauseVarExprs = getClauseVarExprs(clause);
     VecOwn<ram::Expression> values;  // how head argument is computed by its body (relation name is anonymous)
     for (const auto* arg : head->getArguments()) {
-        values.push_back(context.translateValue(*valueIndex, arg));  // TODO
+        values.push_back(context.translateValue(*valueIndex, arg));
     }
     if (isDelete) {
         for (int i = 0; i < operators.size(); i++) {
             const auto& lit = operators[i];
             if (const auto& atom = as<ast::Atom>(lit)) {
-                // if (sccAtoms.) {  // delta rules for
-                    // continue;
-                // }
                 if (!isPrefill) { // skip delta rules for other stratum relations within the loop body
                     bool inScc = false;
                     for (int j = 0; j < sccAtoms.size(); j++) {
@@ -487,11 +473,6 @@ Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQuery(const ast::
                     }
                     if (!inScc) {continue;}
                 }
-                // Propositions
-                // if (head->getArity() == 0) {
-                //     assert (false && "proposition (0 arity relation) not supported");
-                //     // TODO: maybe there is a clever way
-                // }
                 // Relations with functional dependency constraints
                 if (auto guardedConditions = getFunctionalDependencies(clause)) {
                     assert (false && "functional dependencies not supported");
@@ -512,9 +493,7 @@ Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQuery(const ast::
                 appendStmt(stmts, std::move(mk<ram::Query>(std::move(op))));
             } else if (const auto& negation = as<ast::Negation>(lit)) {
                 // simply omit negation is fine because it's just a "filter"
-                // assert (false && "negation not supported");
-                const auto& atom = negation->getAtom();
-                // TODO: INC NEG
+                static_cast<void>(negation);
             } else {
                 assert(false && "constraints are not supported");
             }
@@ -522,7 +501,7 @@ Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQuery(const ast::
     } else {
         for (int i = 0; i < operators.size(); i++) {
             const auto& lit = operators[i];
-            if (const auto& atom = as<ast::Atom>(lit)) {  // TODO: delta rule for non sccAtoms should executes only ones? no fixpoint computation? lifting to loop front.
+            if (const auto& atom = as<ast::Atom>(lit)) {
                 if (!isPrefill) {
                     bool inScc = false;
                     for (int j = 0; j < sccAtoms.size(); j++) {
@@ -533,11 +512,6 @@ Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQuery(const ast::
                     }
                     if (!inScc) {continue;}
                 }
-                // Propositions
-                // if (head->getArity() == 0) {
-                //     assert (false && "proposition (0 arity relation) not supported");
-                //     // TODO: maybe there is a clever way
-                // }
                 // Relations with functional dependency constraints
                 if (auto guardedConditions = getFunctionalDependencies(clause)) {
                     assert (false && "functional dependencies not supported");
@@ -558,16 +532,13 @@ Own<ram::Statement> IncClauseTranslator::createRamRecDeltaRulesQuery(const ast::
                 appendStmt(stmts, std::move(mk<ram::Query>(std::move(op))));
             } else if (const auto& negation = as<ast::Negation>(lit)) {
                 // simply omit negation is fine because it's just a "filter"
-                // assert (false && "negation not supported");
-                const auto& atom = negation->getAtom();
-                // TODO: INC NEG
+                static_cast<void>(negation);
             } else {
                 assert(false && "constraints are not supported");
             }
         }
     }
 
-    // auto headOldR
     return mk<ram::Sequence>(std::move(stmts));
 }
 
@@ -575,7 +546,7 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQuery(const ast::Cla
     assert(isRule(clause) && "clause should be rule");
     VecOwn<ram::Statement> stmts;
     // Index all variables and generators in the clause
-    indexClause(clause);  // TODO: what does it do?
+    indexClause(clause);
 
     const auto head = clause.getHead();
     auto headRelationName = getClauseAtomName(clause, head);
@@ -586,21 +557,13 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQuery(const ast::Cla
     auto clauseVarExprs = getClauseVarExprs(clause);
     VecOwn<ram::Expression> values;  // how head argument is computed by its body (relation name is anonymous)
     for (const auto* arg : head->getArguments()) {
-        values.push_back(context.translateValue(*valueIndex, arg));  // TODO
+        values.push_back(context.translateValue(*valueIndex, arg));
     }
 
-    // (bodyLiterals<as Atom>.size() == operators.size());
     for (int i = 0; i < operators.size(); i++) {
         const auto& lit = operators[i];
         // INC: now we try to create delta rule for lit
         if (const auto& atom = as<ast::Atom>(lit)) {
-            // TODO: delta rule for non sccAtoms should executes only ones? no fixpoint computation? lifting to loop front.
-            // Propositions
-            // if (head->getArity() == 0) {
-            //      assert (false && "proposition (0 arity relation) not supported");
-            //     // TODO: maybe there is a clever way
-            // }
-
             // Relations with functional dependency constraints
             if (auto guardedConditions = getFunctionalDependencies(clause)) {
                 assert (false && "functional dependencies not supported");
@@ -643,22 +606,20 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQuery(const ast::Cla
             // delete to delta deletion head
         } else if (const auto& negation = as<ast::Negation>(lit)) {
             // simply omit negation is fine because it's just a "filter"
-            // assert (false && "negation not supported");
-            const auto& atom = negation->getAtom();
-            // TODO: INC NEG
+            static_cast<void>(negation);
         } else {
             assert(false && "constraints are not supported");
         }
     }
 
-    return mk<ram::Sequence>(std::move(stmts)); // TODO: stmts
+    return mk<ram::Sequence>(std::move(stmts));
 }
 
 Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQueryDel(const ast::Clause& clause) {
     assert(isRule(clause) && "clause should be rule");
     VecOwn<ram::Statement> stmts;
     // Index all variables and generators in the clause
-    indexClause(clause);  // TODO: what does it do?
+    indexClause(clause);
 
     const auto head = clause.getHead();
     auto headRelationName = getClauseAtomName(clause, head);
@@ -670,20 +631,13 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQueryDel(const ast::
 
     VecOwn<ram::Expression> values;  // how head argument is computed by its body (relation name is anonymous)
     for (const auto* arg : head->getArguments()) {
-        values.push_back(context.translateValue(*valueIndex, arg));  // TODO
+        values.push_back(context.translateValue(*valueIndex, arg));
     }
 
-    // (bodyLiterals<as Atom>.size() == operators.size());
     for (int i = 0; i < operators.size(); i++) {
         const auto& lit = operators[i];
         // INC: now we try to create delta rule for lit
         if (const auto& atom = as<ast::Atom>(lit)) {
-            // Propositions
-            // if (head->getArity() == 0) {
-            //     assert (false && "proposition (0 arity relation) not supported");
-            //     // TODO: maybe there is a clever way
-            // }
-
             // Relations with functional dependency constraints
             if (auto guardedConditions = getFunctionalDependencies(clause)) {
                 assert (false && "functional dependencies not supported");
@@ -708,22 +662,20 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQueryDel(const ast::
             // delete to delta deletion head
         } else if (const auto& negation = as<ast::Negation>(lit)) {
             // simply omit negation is fine because it's just a "filter"
-            // assert (false && "negation not supported");
-            const auto& atom = negation->getAtom();
-            // TODO: INC NEG
+            static_cast<void>(negation);
         } else {
             assert(false && "constraints are not supported");
         }
     }
 
-    return mk<ram::Sequence>(std::move(stmts)); // TODO: stmts
+    return mk<ram::Sequence>(std::move(stmts));
 }
 
 Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQueryIns(const ast::Clause& clause) {
     assert(isRule(clause) && "clause should be rule");
     VecOwn<ram::Statement> stmts;
     // Index all variables and generators in the clause
-    indexClause(clause);  // TODO: what does it do?
+    indexClause(clause);
 
     const auto head = clause.getHead();
     auto headRelationName = getClauseAtomName(clause, head);
@@ -735,20 +687,13 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQueryIns(const ast::
 
     VecOwn<ram::Expression> values;  // how head argument is computed by its body (relation name is anonymous)
     for (const auto* arg : head->getArguments()) {
-        values.push_back(context.translateValue(*valueIndex, arg));  // TODO
+        values.push_back(context.translateValue(*valueIndex, arg));
     }
 
-    // (bodyLiterals<as Atom>.size() == operators.size());
     for (int i = 0; i < operators.size(); i++) {
         const auto& lit = operators[i];
         // INC: now we try to create delta rule for lit
         if (const auto& atom = as<ast::Atom>(lit)) {
-            // Propositions
-            // if (head->getArity() == 0) {
-            //     assert (false && "proposition (0 arity relation) not supported");
-            //     // TODO: maybe there is a clever way
-            // }
-
             // Relations with functional dependency constraints
             if (auto guardedConditions = getFunctionalDependencies(clause)) {
                 assert (false && "functional dependencies not supported");
@@ -773,15 +718,13 @@ Own<ram::Statement> IncClauseTranslator::createRamDeltaRulesQueryIns(const ast::
             }
         } else if (const auto& negation = as<ast::Negation>(lit)) {
             // simply omit negation is fine because it's just a "filter"
-            // assert (false && "negation not supported");
-            const auto& atom = negation->getAtom();
-            // TODO: INC NEG
+            static_cast<void>(negation);
         } else {
             assert(false && "constraints are not supported");
         }
     }
 
-    return mk<ram::Sequence>(std::move(stmts)); // TODO: stmts
+    return mk<ram::Sequence>(std::move(stmts));
 }
 
 
@@ -795,20 +738,9 @@ Own<ram::Statement> IncClauseTranslator::createRamFactQuery(const ast::Clause& c
 }
 
 Own<ram::Statement> IncClauseTranslator::createRamRuleQuery(const ast::Clause& clause) {
-    assert (false && "only support delta rules, WIP");
-    // assert(isRule(clause) && "clause should be rule");
-    //
-    // // Index all variables and generators in the clause
-    // indexClause(clause);
-    //
-    // // Set up the RAM statement bottom-up
-    // auto op = createInsertion(clause);
-    // op = addBodyLiteralConstraints(clause, std::move(op));
-    // op = addVariableBindingConstraints(std::move(op));
-    // op = addGeneratorLevels(std::move(op), clause);
-    // op = addVariableIntroductions(clause, std::move(op), false);
-    // op = addEntryPoint(clause, std::move(op));
-    // return mk<ram::Query>(std::move(op));
+    static_cast<void>(clause);
+    assert(false && "incremental translator uses delta rule paths only");
+    return mk<ram::EmptyStatement>();
 }
 
 Own<ram::Operation> IncClauseTranslator::addEntryPoint(const ast::Clause& clause, Own<ram::Operation> op) const {
@@ -823,7 +755,6 @@ Own<ram::Operation> IncClauseTranslator::addVariableBindingConstraints(Own<ram::
         const auto& first = *references.begin();
         for (const auto& reference : references) {
             if (first != reference && !valueIndex->isGenerator(reference.identifier)) {
-                // TODO: float type equivalence check
                 op = addEqualityCheck(
                         std::move(op), makeRamTupleElement(first), makeRamTupleElement(reference), false);
             }
@@ -848,7 +779,6 @@ Own<ram::Operation> IncClauseTranslator::createInsertion(const ast::Clause & cla
 
     // Propositions
     if (head->getArity() == 0) {
-        // assert (false && "proposition (0 arity relation) not supported"); // TODO: maybe there is a clever way
         return mk<ram::Filter>(mk<ram::EmptinessCheck>(headRelationName),
                 mk<ram::Insert>(headRelationName, std::move(values), context.getClauseNum(&clause), clauseStr, std::move(cloneClauseVarMapDup(clauseVarMap))));
     }
@@ -927,12 +857,11 @@ std::string IncClauseTranslator::getAtomNameForRecIncDeltaRule(const ast::Clause
     //     }
     // }
     // delta case
-    // TODO: non sccAtoms should be different
     if (isInsert) {
         if (sccAtoms.at(version) == atom) {
             return getDeltaInsertionRelationName(atom->getQualifiedName());
         } else {
-            // non sccAtoms, need to consider their delta; TODO: but should only need to consider them once???
+            // Non-SCC atoms use the per-turn tuple delta relation.
             return getIncDeltaTupleInsertRelationName(atom->getQualifiedName());
         }
     } else {
@@ -1084,7 +1013,6 @@ Own<ram::Operation> IncClauseTranslator::addAdtUnpack(
 
 Own<ram::Operation> IncClauseTranslator::addVariableIntroductions(
         const ast::Clause& clause, Own<ram::Operation> op, std::size_t deltaLevel, bool isInsert) {
-    // TODO: add a scan for over-deletion
     for (std::size_t p = operators.size(); p > 0; p--) {
         std::size_t i = p - 1;
         const auto* curOp = operators.at(i);
@@ -1096,9 +1024,8 @@ Own<ram::Operation> IncClauseTranslator::addVariableIntroductions(
                 op = addAtomScan(std::move(op), atom, clause, i, deltaLevel, isInsert);
             }
         } else if (const auto* negation = as<ast::Negation>(curOp)) {
-            // in probabilistic setting, negation can be simply omit; though there is room for optimization for deterministic facts (prob of 1)
-            // and still, it only introduces new constraints, TODO
-            // negation do not introduce new bounded variables, so no additional layer of scan
+            // Negation only contributes constraints and does not introduce a scan level.
+            static_cast<void>(negation);
         } else {
             fatal("Unsupported AST node for creation of scan-level!");
         }
@@ -1111,7 +1038,6 @@ Own<ram::Operation> IncClauseTranslator::instantiateAggregator(Own<ram::Operatio
     auto addAggEqCondition = [&](Own<ram::Condition> aggr, Own<ram::Expression> value, std::size_t pos) {
         if (isUndefValue(value.get())) return aggr;
 
-        // TODO: float type equivalence check
         return addConjunctiveTerm(
                 std::move(aggr), mk<ram::Constraint>(BinaryConstraintOp::EQ,
                                          mk<ram::TupleElement>(curLevel, pos), std::move(value)));

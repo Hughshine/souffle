@@ -715,8 +715,7 @@ public:
 };
 
 enum Knowledge {
-    BDD,
-    SDD
+    BDD
 };
 /**
  * Abstract base class for generated Datalog programs.
@@ -770,8 +769,6 @@ protected:
 
     /**
      */
-
-    Knowledge knowledge = BDD;
 
     bool isGround = false;
     /**
@@ -880,11 +877,7 @@ public:
     }
 
     [[nodiscard]] Knowledge getKnowledge() const {
-        return knowledge;
-    }
-
-    void setKnowledge(const Knowledge knowledge) {
-        this->knowledge = knowledge;
+        return BDD;
     }
 
     /**

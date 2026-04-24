@@ -16,29 +16,19 @@
 #include <fstream>
 #include <sstream>
 #include "souffle/problog/DerivationGraph.h"
-#include "souffle/problog/ConstAnalysis.h"
 #include "souffle/problog/IncRegionAnalyzer.h"
 #include "souffle/problog/formula/FormulaManager.h"
 
-static inline const std::unordered_set<std::string>& incRegionalTraceTargets() {
-    static std::unordered_set<std::string> targets;
-    static std::string last;
-    if (last == incRegionalTraceTuples) {
-        return targets;
+template<typename FormulaManagerT, typename FormulaNodeRef>
+static inline bool regionalInputFormulaLiteral(FormulaManagerT& formulaManager,
+        const std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
+        const NodePtr& node, bool negated, FormulaNodeRef& out) {
+    auto it = nodeFormulas.find(node);
+    if (it == nodeFormulas.end()) {
+        return false;
     }
-    last = incRegionalTraceTuples;
-    targets.clear();
-    if (incRegionalTraceTuples.empty()) {
-        return targets;
-    }
-    std::stringstream ss(incRegionalTraceTuples);
-    std::string tok;
-    while (std::getline(ss, tok, ',')) {
-        if (!tok.empty()) {
-            targets.insert(tok);
-        }
-    }
-    return targets;
+    out = negated ? formulaManager.makeNot(it->second) : it->second;
+    return true;
 }
 
 struct IncRegionalOutputProfile {
@@ -88,18 +78,6 @@ struct IncRegionalTurnSummary {
 };
 
 inline IncRegionalTurnSummary incRegionalTurnSummary;
-
-static inline bool incRegionalTraceEnabled() {
-    return !incRegionalTraceTargets().empty();
-}
-
-static inline bool incRegionalTraceMatch(const NodePtr& node) {
-    if (!node || !incRegionalTraceEnabled()) {
-        return false;
-    }
-    const auto& targets = incRegionalTraceTargets();
-    return targets.find(node->getTuple().toString()) != targets.end();
-}
 
 // forward declare the classic incremental builder to avoid header cycles
 template<typename FormulaNodeRef>
@@ -390,7 +368,6 @@ public:
         std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
         const RegionalInsertPlan& plan,
         const std::unordered_set<EdgePtr>& regionEdges,
-        const ConstAnalysisResult* constInfo = nullptr,
         const CycleDependencyGraph* depGraphOverride = nullptr) {
         Result res;
         auto nowMs = []{ return std::chrono::steady_clock::now(); };
@@ -400,7 +377,6 @@ public:
         auto t0 = nowMs();
         const bool profile = incRegionalProfileEnabled;
         double reorderStartSec = getReorderSeconds(formulaManager, 0);
-        ConstFormulaAccess<FormulaNodeRef> constAccess{constInfo, formulaManager};
         auto makeAndProfile = [&](const std::vector<FormulaNodeRef>& inputs) {
             if (!profile) {
                 return formulaManager.makeAnd(inputs);
@@ -423,10 +399,10 @@ public:
         };
         auto inputLiteralProfile = [&](const NodePtr& node, bool neg, FormulaNodeRef& lit) {
             if (!profile) {
-                return constAccess.inputLiteral(nodeFormulas, node, neg, lit);
+                return regionalInputFormulaLiteral(formulaManager, nodeFormulas, node, neg, lit);
             }
             auto t = nowMs();
-            bool ok = constAccess.inputLiteral(nodeFormulas, node, neg, lit);
+            bool ok = regionalInputFormulaLiteral(formulaManager, nodeFormulas, node, neg, lit);
             res.timing.inputLiteralCalls += 1;
             res.timing.inputLiteralMs += toMs(nowMs() - t);
             if (!ok) {
@@ -543,9 +519,8 @@ public:
                 const auto& ins = view.getInputs(edge);
                 const auto& negs = view.getBodyNegations(edge);
                 FormulaNodeRef newEdge;
-                bool edgeIsConst = constAccess.edgeFormula(edge, newEdge);
                 bool allAvail = true;
-                if (!edgeIsConst) {
+                {
                     FormulaNodeRef base = edge->isDeterministic()
                         ? formulaManager.getTrue()
                         : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
@@ -574,7 +549,7 @@ public:
                     NodePtr out = view.getOutput(edge);
                     if (!out || out->isFact) continue;
                     FormulaNodeRef newNode;
-                    bool hasNewNode = constAccess.nodeFormula(out, newNode);
+                    bool hasNewNode = false;
                     if (!hasNewNode) {
                         std::vector<FormulaNodeRef> incoming;
                         for (auto eIn : view.getIncomingEdges(out)) {
@@ -640,8 +615,7 @@ public:
         const RegionalInsertPlan& plan,
         const std::unordered_set<EdgePtr>& regionEdges,
         const DagPlan& dag,
-        double dagBuildMs,
-        const ConstAnalysisResult* constInfo = nullptr) {
+        double dagBuildMs) {
         Result res;
         auto nowMs = []{ return std::chrono::steady_clock::now(); };
         auto toMs = [](auto dur){
@@ -650,7 +624,6 @@ public:
         auto t0 = nowMs();
         const bool profile = incRegionalProfileEnabled;
         double reorderStartSec = getReorderSeconds(formulaManager, 0);
-        ConstFormulaAccess<FormulaNodeRef> constAccess{constInfo, formulaManager};
         auto makeAndProfile = [&](const std::vector<FormulaNodeRef>& inputs) {
             if (!profile) {
                 return formulaManager.makeAnd(inputs);
@@ -673,10 +646,10 @@ public:
         };
         auto inputLiteralProfile = [&](const NodePtr& node, bool neg, FormulaNodeRef& lit) {
             if (!profile) {
-                return constAccess.inputLiteral(nodeFormulas, node, neg, lit);
+                return regionalInputFormulaLiteral(formulaManager, nodeFormulas, node, neg, lit);
             }
             auto t = nowMs();
-            bool ok = constAccess.inputLiteral(nodeFormulas, node, neg, lit);
+            bool ok = regionalInputFormulaLiteral(formulaManager, nodeFormulas, node, neg, lit);
             res.timing.inputLiteralCalls += 1;
             res.timing.inputLiteralMs += toMs(nowMs() - t);
             if (!ok) {
@@ -753,10 +726,9 @@ public:
                 const auto& ins = view.getInputs(edge);
                 const auto& negs = view.getBodyNegations(edge);
                 FormulaNodeRef newEdge;
-                bool edgeIsConst = constAccess.edgeFormula(edge, newEdge);
                 bool allAvail = true;
                 bool missingInsideRegion = false;
-                if (!edgeIsConst) {
+                {
                     FormulaNodeRef base = edge->isDeterministic()
                         ? formulaManager.getTrue()
                         : formulaManager.createVar(formulaManager.getVarIndex(*edge), *edge);
@@ -799,7 +771,7 @@ public:
             }
             if (abortDag) break;
             FormulaNodeRef newNode;
-            bool hasNewNode = constAccess.nodeFormula(head, newNode);
+            bool hasNewNode = false;
             if (!hasNewNode) {
                 std::vector<FormulaNodeRef> incoming;
                 for (auto eIn : view.getIncomingEdges(head)) {
@@ -937,102 +909,8 @@ public:
         std::unordered_map<int, NodePtr> usedAnchorVars;
         usedAnchorVars.reserve(plan.boundaryNodes.size());
         res.timing.boundaryTotal = plan.boundaryNodes.size();
-        const auto& traceBoundaries = incra::incRegionalTraceBoundaryHits();
         for (auto& v : plan.boundaryNodes) {
             res.timing.boundaryVisited++;
-            const bool traceThis = !traceBoundaries.empty() && incra::incRegionalTraceBoundaryMatch(v);
-            auto reportAnchorReach = [&](const NodePtr& start, const incra::IncRegionAnalysis::AnchorCandidate& anchor) {
-                if (!traceThis || !start) {
-                    return;
-                }
-                const size_t kMaxVisited = 50000;
-                std::unordered_set<NodePtr> visited;
-                std::queue<NodePtr> q;
-                visited.insert(start);
-                q.push(start);
-                bool reachesBoundary = (start.get() == v.get());
-                std::vector<NodePtr> hitBoundaries;
-                std::vector<std::string> hitTraces;
-                const auto& traceTargets = incra::incRegionalTraceTargets();
-                std::vector<std::string> bypassTraces;
-                while (!q.empty() && visited.size() < kMaxVisited) {
-                    NodePtr cur = q.front();
-                    q.pop();
-                    if (cur.get() == v.get()) {
-                        reachesBoundary = true;
-                    } else if (plan.boundaryNodes.count(cur) && hitBoundaries.size() < 5) {
-                        hitBoundaries.push_back(cur);
-                    }
-                    const auto tuple = cur->getTuple().toString();
-                    if (traceTargets.count(tuple) && hitTraces.size() < 5) {
-                        hitTraces.push_back(tuple);
-                    }
-                    for (const auto& e : view.getOutgoingEdges(cur)) {
-                        if (!e) continue;
-                        auto out = view.getOutput(e);
-                        if (!out) continue;
-                        if (visited.insert(out).second) {
-                            q.push(out);
-                        }
-                    }
-                }
-                if (!traceTargets.empty() && start.get() != v.get()) {
-                    std::unordered_set<NodePtr> visitedNoBoundary;
-                    std::queue<NodePtr> q2;
-                    if (start.get() != v.get()) {
-                        visitedNoBoundary.insert(start);
-                        q2.push(start);
-                    }
-                    while (!q2.empty() && visitedNoBoundary.size() < kMaxVisited) {
-                        NodePtr cur = q2.front();
-                        q2.pop();
-                        if (cur.get() == v.get()) {
-                            continue;
-                        }
-                        const auto tuple = cur->getTuple().toString();
-                        if (traceTargets.count(tuple) && bypassTraces.size() < 8) {
-                            bypassTraces.push_back(tuple);
-                        }
-                        for (const auto& e : view.getOutgoingEdges(cur)) {
-                            if (!e) continue;
-                            auto out = view.getOutput(e);
-                            if (!out) continue;
-                            if (out.get() == v.get()) {
-                                continue;
-                            }
-                            if (visitedNoBoundary.insert(out).second) {
-                                q2.push(out);
-                            }
-                        }
-                    }
-                }
-                std::cout << "[inc-regional-trace-anchor-reach] head=" << incra::node_id(v)
-                          << " anchor=" << incra::anchor_id(anchor, view)
-                          << " visited_nodes=" << visited.size()
-                          << " truncated=" << (visited.size() >= kMaxVisited ? 1 : 0)
-                          << " reaches_boundary=" << (reachesBoundary ? 1 : 0)
-                          << " hit_boundaries=" << hitBoundaries.size()
-                          << " boundaries=[";
-                for (size_t i = 0; i < hitBoundaries.size(); ++i) {
-                    if (i) std::cout << ", ";
-                    std::cout << incra::node_id(hitBoundaries[i]);
-                }
-                std::cout << "]"
-                          << " hit_traces=" << hitTraces.size()
-                          << " traces=[";
-                for (size_t i = 0; i < hitTraces.size(); ++i) {
-                    if (i) std::cout << ", ";
-                    std::cout << hitTraces[i];
-                }
-                std::cout << "]"
-                          << " bypass_traces=" << bypassTraces.size()
-                          << " bypass=[";
-                for (size_t i = 0; i < bypassTraces.size(); ++i) {
-                    if (i) std::cout << ", ";
-                    std::cout << bypassTraces[i];
-                }
-                std::cout << "]\n";
-            };
             if (skipNodes && skipNodes->count(v)) {
                 res.timing.boundarySkipped++;
                 continue;
@@ -1071,18 +949,10 @@ public:
                     std::cout << "[inc-regional] calibrate fail head=" << incra::node_id(v)
                               << " reason=no_anchor_candidates\n";
                 }
-                if (traceThis) {
-                    std::cout << "[inc-regional-trace-anchor] head=" << incra::node_id(v)
-                              << " decision=reject reason=no_anchor_candidates\n";
-                }
                 res.failedNodes.insert(v);
                 continue;
             }
             res.timing.anchorCandidates += anchorIt->second.size();
-            if (traceThis) {
-                std::cout << "[inc-regional-trace-anchor] head=" << incra::node_id(v)
-                          << " candidates=" << anchorIt->second.size() << "\n";
-            }
             bool calibrated = false;
             size_t tried = 0;
             size_t missingSnapshot = 0;
@@ -1101,15 +971,6 @@ public:
                               << " reason=" << reason
                               << "\n";
                 };
-                auto logTraceDecision = [&](const char* decision, const char* reason) {
-                    if (!traceThis) return;
-                    std::cout << "[inc-regional-trace-anchor] head=" << incra::node_id(v)
-                              << " idx=" << idx
-                              << " anchor=" << anchorLabel
-                              << " decision=" << decision
-                              << " reason=" << reason
-                              << "\n";
-                };
                 int varIdx = -1;
                 if (anchor.kind == incra::IncRegionAnalysis::AnchorKind::Node) {
                     if (!anchor.node) {
@@ -1119,7 +980,6 @@ public:
                         }
                         res.timing.anchorInvalid++;
                         logDecision("reject", "node_null");
-                        logTraceDecision("reject", "node_null");
                         continue;
                     }
                     if (!anchor.node->isFact) {
@@ -1130,7 +990,6 @@ public:
                         }
                         res.timing.anchorInvalid++;
                         logDecision("reject", "node_not_fact");
-                        logTraceDecision("reject", "node_not_fact");
                         continue;
                     }
                     if (anchor.node->getProbability() >= 1.0) {
@@ -1141,7 +1000,6 @@ public:
                         }
                         res.timing.anchorInvalid++;
                         logDecision("reject", "node_prob_one");
-                        logTraceDecision("reject", "node_prob_one");
                         continue;
                     }
                     varIdx = formulaManager.getVarIndex(*anchor.node);
@@ -1153,7 +1011,6 @@ public:
                         }
                         res.timing.anchorInvalid++;
                         logDecision("reject", "edge_null");
-                        logTraceDecision("reject", "edge_null");
                         continue;
                     }
                     varIdx = formulaManager.getVarIndex(*anchor.edge);
@@ -1170,7 +1027,6 @@ public:
                     }
                     res.timing.anchorUsed++;
                     logDecision("reject", "anchor_var_used");
-                    logTraceDecision("reject", "anchor_var_used");
                     continue;
                 }
                 tried++;
@@ -1186,7 +1042,6 @@ public:
                                   << " reason=missing_snapshot\n";
                     }
                     logDecision("reject", "missing_snapshot");
-                    logTraceDecision("reject", "missing_snapshot");
                     continue;
                 }
                 double oldVal = 0.0;
@@ -1248,7 +1103,6 @@ public:
                     degenerate++;
                     res.timing.degenerate++;
                     logDecision("reject", "degenerate");
-                    logTraceDecision("reject", "degenerate");
                     continue;
                 }
                 double pStar = (target - alpha) / (beta - alpha);
@@ -1264,7 +1118,6 @@ public:
                                   << "\n";
                     }
                     logDecision("reject", "pstar_non_finite");
-                    logTraceDecision("reject", "pstar_non_finite");
                     continue;
                 }
                 if (pStar < -eps) {
@@ -1279,7 +1132,6 @@ public:
                                   << "\n";
                     }
                     logDecision("reject", "pstar_negative");
-                    logTraceDecision("reject", "pstar_negative");
                     continue;
                 }
                 const bool pStarOutOfRange = (pStar > 1.0 + eps);
@@ -1307,27 +1159,6 @@ public:
                 usedAnchorVars[varIdx] = v;
                 calibrated = true;
                 logDecision("accept", pStarOutOfRange ? "pstar_out_of_range" : "ok");
-                if (traceThis) {
-                    std::cout << "[inc-regional-trace-anchor] head=" << incra::node_id(v)
-                              << " idx=" << idx
-                              << " anchor=" << incra::anchor_id(anchor, view)
-                              << " decision=accept"
-                              << " reason=" << (pStarOutOfRange ? "pstar_out_of_range" : "ok")
-                              << " varIdx=" << varIdx
-                              << " pStar=" << pStar
-                              << " alpha=" << alpha
-                              << " beta=" << beta
-                              << " target=" << target
-                              << " oldValue=" << oldVal
-                              << "\n";
-                    NodePtr start;
-                    if (anchor.kind == incra::IncRegionAnalysis::AnchorKind::Node) {
-                        start = anchor.node;
-                    } else if (anchor.edge) {
-                        start = view.getOutput(anchor.edge);
-                    }
-                    reportAnchorReach(start, anchor);
-                }
                 break;
             }
             res.timing.anchorLoopMs += toMs(nowMs() - tAnchorStart);
@@ -1430,7 +1261,6 @@ public:
         std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
         std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
         std::set<NodePtr>& changedNodes,
-        const ConstAnalysisResult* constInfo = nullptr,
         const CycleDependencyGraph* existingDepGraph = nullptr) {
         Debugger& debugger = Debugger::getInstance();
         const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
@@ -1958,166 +1788,6 @@ public:
                 return dr.edges.empty() || dr.edges.count(e);
             };
 
-            std::set<std::pair<std::uintptr_t, std::uintptr_t>> loggedOverlapPairs;
-            bool sccAdjReady = false;
-            std::vector<std::vector<size_t>> sccAdj;
-            const CycleDependencyGraph* sccGraph = nullptr;
-            auto ensureSccAdj = [&]() -> const CycleDependencyGraph& {
-                if (sccAdjReady) {
-                    return *sccGraph;
-                }
-                sccGraph = &depGraphForReachable("overlap_scc", analyzer.lastDeltaReachable());
-                sccAdj.assign(sccGraph->dependencies.size(), {});
-                for (size_t i = 0; i < sccGraph->dependencies.size(); ++i) {
-                    for (auto j : sccGraph->dependencies[i]) {
-                        if (j < sccAdj.size()) {
-                            sccAdj[i].push_back(j);
-                        }
-                    }
-                    for (auto j : sccGraph->reverseDependencies[i]) {
-                        if (j < sccAdj.size()) {
-                            sccAdj[i].push_back(j);
-                        }
-                    }
-                    if (!sccAdj[i].empty()) {
-                        std::sort(sccAdj[i].begin(), sccAdj[i].end());
-                        sccAdj[i].erase(std::unique(sccAdj[i].begin(), sccAdj[i].end()), sccAdj[i].end());
-                    }
-                }
-                sccAdjReady = true;
-                return *sccGraph;
-            };
-            auto logOverlapScc = [&](const NodePtr& b1, const NodePtr& b2) {
-                if (!incRegionalProfileHeavyEnabled) {
-                    return;
-                }
-                if (!b1 || !b2) {
-                    return;
-                }
-                const std::uintptr_t id1 = reinterpret_cast<std::uintptr_t>(b1.get());
-                const std::uintptr_t id2 = reinterpret_cast<std::uintptr_t>(b2.get());
-                std::pair<std::uintptr_t, std::uintptr_t> key =
-                        id1 < id2 ? std::make_pair(id1, id2) : std::make_pair(id2, id1);
-                if (!loggedOverlapPairs.insert(key).second) {
-                    return;
-                }
-                auto& depGraph = ensureSccAdj();
-                auto it1 = depGraph.nodeToCycleIndex.find(b1);
-                auto it2 = depGraph.nodeToCycleIndex.find(b2);
-                if (it1 == depGraph.nodeToCycleIndex.end() || it2 == depGraph.nodeToCycleIndex.end()) {
-                    std::cout << "[inc-regional-overlap-scc]"
-                              << " b1=" << incra::node_id(b1)
-                              << " b2=" << incra::node_id(b2)
-                              << " reason=missing_scc";
-                    if (it1 != depGraph.nodeToCycleIndex.end()) {
-                        std::cout << " scc1=" << it1->second
-                                  << " size1=" << depGraph.nodeCycles[it1->second].size();
-                    }
-                    if (it2 != depGraph.nodeToCycleIndex.end()) {
-                        std::cout << " scc2=" << it2->second
-                                  << " size2=" << depGraph.nodeCycles[it2->second].size();
-                    }
-                    std::cout << "\n";
-                    return;
-                }
-                const size_t s1 = it1->second;
-                const size_t s2 = it2->second;
-                const size_t size1 = depGraph.nodeCycles[s1].size();
-                const size_t size2 = depGraph.nodeCycles[s2].size();
-                auto emitList = [&](const std::vector<size_t>& items) {
-                    for (size_t i = 0; i < items.size(); ++i) {
-                        if (i) {
-                            std::cout << ",";
-                        }
-                        std::cout << items[i];
-                    }
-                };
-                if (s1 == s2) {
-                    std::cout << "[inc-regional-overlap-scc]"
-                              << " b1=" << incra::node_id(b1)
-                              << " b2=" << incra::node_id(b2)
-                              << " scc1=" << s1
-                              << " scc2=" << s2
-                              << " dist=0"
-                              << " size1=" << size1
-                              << " size2=" << size2
-                              << " path_sccs=" << s1
-                              << " path_sizes=" << size1
-                              << " mid_sizes="
-                              << "\n";
-                    return;
-                }
-                std::vector<int> prev(sccAdj.size(), -1);
-                std::queue<size_t> sccQ;
-                sccQ.push(s1);
-                prev[s1] = static_cast<int>(s1);
-                while (!sccQ.empty()) {
-                    size_t cur = sccQ.front();
-                    sccQ.pop();
-                    if (cur == s2) {
-                        break;
-                    }
-                    for (size_t next : sccAdj[cur]) {
-                        if (prev[next] >= 0) {
-                            continue;
-                        }
-                        prev[next] = static_cast<int>(cur);
-                        sccQ.push(next);
-                    }
-                }
-                if (s2 >= prev.size() || prev[s2] < 0) {
-                    std::cout << "[inc-regional-overlap-scc]"
-                              << " b1=" << incra::node_id(b1)
-                              << " b2=" << incra::node_id(b2)
-                              << " scc1=" << s1
-                              << " scc2=" << s2
-                              << " dist=-1"
-                              << " size1=" << size1
-                              << " size2=" << size2
-                              << " reason=disconnected"
-                              << " path_sccs="
-                              << " path_sizes="
-                              << " mid_sizes="
-                              << "\n";
-                    return;
-                }
-                std::vector<size_t> path;
-                for (size_t cur = s2;; cur = static_cast<size_t>(prev[cur])) {
-                    path.push_back(cur);
-                    if (cur == s1) {
-                        break;
-                    }
-                }
-                std::reverse(path.begin(), path.end());
-                std::vector<size_t> pathSizes;
-                pathSizes.reserve(path.size());
-                for (size_t scc : path) {
-                    pathSizes.push_back(depGraph.nodeCycles[scc].size());
-                }
-                std::vector<size_t> midSizes;
-                if (path.size() > 2) {
-                    midSizes.reserve(path.size() - 2);
-                    for (size_t i = 1; i + 1 < path.size(); ++i) {
-                        midSizes.push_back(depGraph.nodeCycles[path[i]].size());
-                    }
-                }
-                std::cout << "[inc-regional-overlap-scc]"
-                          << " b1=" << incra::node_id(b1)
-                          << " b2=" << incra::node_id(b2)
-                          << " scc1=" << s1
-                          << " scc2=" << s2
-                          << " dist=" << (path.size() - 1)
-                          << " size1=" << size1
-                          << " size2=" << size2
-                          << " path_sccs=";
-                emitList(path);
-                std::cout << " path_sizes=";
-                emitList(pathSizes);
-                std::cout << " mid_sizes=";
-                emitList(midSizes);
-                std::cout << "\n";
-            };
-
             std::vector<NodePtr> boundaries;
             std::unordered_set<NodePtr> boundarySet;
             boundarySet.reserve(analysis.boundaries.out_induced.size() +
@@ -2140,31 +1810,6 @@ public:
                 return false;
             }
 
-            std::vector<std::pair<std::string, NodePtr>> traceNodes;
-            if (incRegionalProfileHeavyEnabled && !incRegionalTraceTargets().empty()) {
-                std::unordered_map<std::string, NodePtr> tuple_index;
-                tuple_index.reserve(view.getValidNodes().size());
-                for (const auto& n : view.getValidNodes()) {
-                    if (!n) continue;
-                    tuple_index.emplace(n->getTuple().toString(), n);
-                }
-                traceNodes.reserve(incRegionalTraceTargets().size());
-                for (const auto& name : incRegionalTraceTargets()) {
-                    auto it = tuple_index.find(name);
-                    if (it != tuple_index.end()) {
-                        traceNodes.emplace_back(name, it->second);
-                    }
-                }
-            }
-
-            if (incRegionalProfileHeavyEnabled) {
-                std::cout << "[inc-regional-overlap] boundaries=" << boundaries.size() << "\n";
-                const size_t sampleLimit = 5;
-                for (size_t i = 0; i < boundaries.size() && i < sampleLimit; ++i) {
-                    std::cout << "[inc-regional-overlap] boundary_sample="
-                              << incra::node_id(boundaries[i]) << "\n";
-                }
-            }
 
             struct NodeLabel {
                 bool multi = false;
@@ -2174,40 +1819,7 @@ public:
             std::queue<NodePtr> q;
             std::unordered_set<NodePtr> overlapNodes;
             std::unordered_set<NodePtr> multiNodes;
-            struct OverlapPairSeeds {
-                NodePtr b1;
-                NodePtr b2;
-                std::vector<NodePtr> seeds;
-            };
-            struct PairHash {
-                size_t operator()(const std::pair<std::uintptr_t, std::uintptr_t>& key) const noexcept {
-                    return std::hash<std::uintptr_t>{}(key.first) ^ (std::hash<std::uintptr_t>{}(key.second) << 1);
-                }
-            };
-            std::unordered_map<std::pair<std::uintptr_t, std::uintptr_t>, OverlapPairSeeds, PairHash> overlapSeeds;
-            auto recordOverlapSeed = [&](const NodePtr& b1, const NodePtr& b2, const NodePtr& seed) {
-                if (!incRegionalProfileHeavyEnabled) {
-                    return;
-                }
-                if (!b1 || !b2 || !seed) {
-                    return;
-                }
-                std::uintptr_t id1 = reinterpret_cast<std::uintptr_t>(b1.get());
-                std::uintptr_t id2 = reinterpret_cast<std::uintptr_t>(b2.get());
-                NodePtr first = b1;
-                NodePtr second = b2;
-                if (id2 < id1) {
-                    std::swap(id1, id2);
-                    std::swap(first, second);
-                }
-                auto& entry = overlapSeeds[std::make_pair(id1, id2)];
-                if (!entry.b1) {
-                    entry.b1 = first;
-                    entry.b2 = second;
-                }
-                entry.seeds.push_back(seed);
-            };
-            size_t debugDependentSamples = 0;
+
             auto updateMulti = [&](const NodePtr& node) -> bool {
                 auto it = labels.find(node);
                 if (it == labels.end()) {
@@ -2236,16 +1848,6 @@ public:
                 }
                 if (label.boundary && label.boundary.get() != boundary.get()) {
                     planProfile.overlapClosureDependent += 1;
-                    if (incRegionalProfileHeavyEnabled && debugDependentSamples < 5) {
-                        std::cout << "[inc-regional-overlap] type=overlap"
-                                  << " node=" << incra::node_id(node)
-                                  << " b1=" << incra::node_id(label.boundary)
-                                  << " b2=" << incra::node_id(boundary)
-                                  << "\n";
-                        debugDependentSamples++;
-                    }
-                    recordOverlapSeed(label.boundary, boundary, node);
-                    logOverlapScc(label.boundary, boundary);
                     label.multi = true;
                     label.boundary.reset();
                     q.push(node);
@@ -2288,171 +1890,6 @@ public:
                     }
                 }
             }
-            if (incRegionalProfileHeavyEnabled && !multiNodes.empty()) {
-                const auto& regionBefore = analysis.region.nodes;
-                struct BackClosure {
-                    size_t nodes = 0;
-                    size_t edges = 0;
-                    size_t newNodes = 0;
-                    std::vector<NodePtr> nodeList;
-                    std::vector<NodePtr> boundaryList;
-                };
-                auto collectBackClosure = [&](const NodePtr& start, bool listNodes, bool listBoundaries) -> BackClosure {
-                    BackClosure out;
-                    if (!start || !inDrNode(start)) {
-                        return out;
-                    }
-                    std::unordered_set<NodePtr> visitedNodes;
-                    std::unordered_set<EdgePtr> visitedEdges;
-                    std::unordered_set<NodePtr> boundaryHits;
-                    std::queue<NodePtr> localQ;
-                    visitedNodes.insert(start);
-                    localQ.push(start);
-                    if (boundarySet.count(start)) {
-                        boundaryHits.insert(start);
-                    }
-                    while (!localQ.empty()) {
-                        NodePtr cur = localQ.front();
-                        localQ.pop();
-                        for (const auto& e : view.getIncomingEdges(cur)) {
-                            if (!inDrEdge(e)) continue;
-                            visitedEdges.insert(e);
-                            for (const auto& in : view.getInputs(e)) {
-                                if (!inDrNode(in)) continue;
-                                if (visitedNodes.insert(in).second) {
-                                    if (boundarySet.count(in)) {
-                                        boundaryHits.insert(in);
-                                    }
-                                    localQ.push(in);
-                                }
-                            }
-                        }
-                    }
-                    out.nodes = visitedNodes.size();
-                    out.edges = visitedEdges.size();
-                    size_t newNodes = 0;
-                    for (const auto& n : visitedNodes) {
-                        if (!regionBefore.count(n)) {
-                            newNodes++;
-                        }
-                    }
-                    out.newNodes = newNodes;
-                    if (listNodes) {
-                        out.nodeList.assign(visitedNodes.begin(), visitedNodes.end());
-                        std::sort(out.nodeList.begin(), out.nodeList.end(),
-                                [&](const NodePtr& a, const NodePtr& b) {
-                                    return incra::node_id(a) < incra::node_id(b);
-                                });
-                    }
-                    if (listBoundaries) {
-                        out.boundaryList.assign(boundaryHits.begin(), boundaryHits.end());
-                        std::sort(out.boundaryList.begin(), out.boundaryList.end(),
-                                [&](const NodePtr& a, const NodePtr& b) {
-                                    return incra::node_id(a) < incra::node_id(b);
-                                });
-                    }
-                    return out;
-                };
-
-                std::vector<NodePtr> multiList(multiNodes.begin(), multiNodes.end());
-                std::sort(multiList.begin(), multiList.end(),
-                        [&](const NodePtr& a, const NodePtr& b) {
-                            return incra::node_id(a) < incra::node_id(b);
-                        });
-                for (const auto& node : multiList) {
-                    auto info = collectBackClosure(node, true, true);
-                    std::cout << "[inc-regional-overlap-backclosure]"
-                              << " node=" << incra::node_id(node)
-                              << " visited_nodes=" << info.nodes
-                              << " visited_edges=" << info.edges
-                              << " new_nodes=" << info.newNodes
-                              << " boundary_hits=" << info.boundaryList.size()
-                              << " boundaries=[";
-                    for (size_t i = 0; i < info.boundaryList.size(); ++i) {
-                        if (i) std::cout << ", ";
-                        std::cout << incra::node_id(info.boundaryList[i]);
-                    }
-                    std::cout << "]\n";
-                    std::cout << "[inc-regional-overlap-backclosure-nodes]"
-                              << " node=" << incra::node_id(node)
-                              << " nodes=[";
-                    for (size_t i = 0; i < info.nodeList.size(); ++i) {
-                        if (i) std::cout << ", ";
-                        std::cout << incra::node_id(info.nodeList[i]);
-                    }
-                    std::cout << "]\n";
-                }
-
-                if (!overlapSeeds.empty()) {
-                    std::vector<OverlapPairSeeds> pairs;
-                    pairs.reserve(overlapSeeds.size());
-                    for (const auto& entry : overlapSeeds) {
-                        pairs.push_back(entry.second);
-                    }
-                    std::sort(pairs.begin(), pairs.end(),
-                            [&](const OverlapPairSeeds& a, const OverlapPairSeeds& b) {
-                                const auto a1 = incra::node_id(a.b1);
-                                const auto b1 = incra::node_id(b.b1);
-                                if (a1 != b1) return a1 < b1;
-                                return incra::node_id(a.b2) < incra::node_id(b.b2);
-                            });
-                    for (const auto& pair : pairs) {
-                        std::unordered_set<NodePtr> unionNodes;
-                        std::unordered_set<EdgePtr> unionEdges;
-                        for (const auto& seed : pair.seeds) {
-                            if (!seed || !inDrNode(seed)) {
-                                continue;
-                            }
-                            std::unordered_set<NodePtr> visitedNodes;
-                            std::unordered_set<EdgePtr> visitedEdges;
-                            std::queue<NodePtr> localQ;
-                            visitedNodes.insert(seed);
-                            localQ.push(seed);
-                            while (!localQ.empty()) {
-                                NodePtr cur = localQ.front();
-                                localQ.pop();
-                                for (const auto& e : view.getIncomingEdges(cur)) {
-                                    if (!inDrEdge(e)) continue;
-                                    visitedEdges.insert(e);
-                                    for (const auto& in : view.getInputs(e)) {
-                                        if (!inDrNode(in)) continue;
-                                        if (visitedNodes.insert(in).second) {
-                                            localQ.push(in);
-                                        }
-                                    }
-                                }
-                            }
-                            unionNodes.insert(visitedNodes.begin(), visitedNodes.end());
-                            unionEdges.insert(visitedEdges.begin(), visitedEdges.end());
-                        }
-                        size_t newNodes = 0;
-                        for (const auto& n : unionNodes) {
-                            if (!regionBefore.count(n)) {
-                                newNodes++;
-                            }
-                        }
-                        std::vector<NodePtr> seedList = pair.seeds;
-                        std::sort(seedList.begin(), seedList.end(),
-                                [&](const NodePtr& a, const NodePtr& b) {
-                                    return incra::node_id(a) < incra::node_id(b);
-                                });
-                        std::cout << "[inc-regional-overlap-pair]"
-                                  << " b1=" << incra::node_id(pair.b1)
-                                  << " b2=" << incra::node_id(pair.b2)
-                                  << " seed_nodes=" << seedList.size()
-                                  << " closure_nodes=" << unionNodes.size()
-                                  << " closure_edges=" << unionEdges.size()
-                                  << " new_nodes=" << newNodes
-                                  << " seeds=[";
-                        for (size_t i = 0; i < seedList.size(); ++i) {
-                            if (i) std::cout << ", ";
-                            std::cout << incra::node_id(seedList[i]);
-                        }
-                        std::cout << "]\n";
-                    }
-                }
-            }
-
             size_t addedNodes = 0;
             size_t addedEdges = 0;
             size_t scopeSeeds = 0;
@@ -2546,73 +1983,6 @@ public:
                           << " multi_nodes_total=" << (multiNonEmpty + multiEmpty)
                           << "\n";
             }
-            if (incRegionalProfileHeavyEnabled && !traceNodes.empty()) {
-                auto inBoundary = [&](const NodePtr& node) {
-                    return boundarySet.count(node) > 0;
-                };
-                for (const auto& entry : traceNodes) {
-                    const auto& name = entry.first;
-                    const auto& node = entry.second;
-                    auto lit = labels.find(node);
-                    std::cout << "[inc-regional-overlap-trace] tuple=" << name
-                              << " in_dr=" << (inDrNode(node) ? 1 : 0)
-                              << " in_region=" << (analysis.region.nodes.count(node) ? 1 : 0)
-                              << " labeled=" << (lit == labels.end() ? 0 : 1);
-                    if (lit != labels.end()) {
-                        std::cout << " multi=" << (lit->second.multi ? 1 : 0)
-                                  << " boundary=" << incra::node_id(lit->second.boundary)
-                                  << " in_overlap=" << (overlapNodes.count(node) ? 1 : 0);
-                    }
-                    std::cout << "\n";
-
-                    std::unordered_set<NodePtr> boundaryHits;
-                    std::unordered_set<NodePtr> visitedNodes;
-                    std::unordered_set<EdgePtr> visitedEdges;
-                    std::queue<NodePtr> q;
-                    if (node && inDrNode(node)) {
-                        visitedNodes.insert(node);
-                        q.push(node);
-                        if (inBoundary(node)) {
-                            boundaryHits.insert(node);
-                        }
-                    }
-                    while (!q.empty()) {
-                        NodePtr cur = q.front();
-                        q.pop();
-                        for (const auto& e : view.getIncomingEdges(cur)) {
-                            if (!inDrEdge(e)) continue;
-                            visitedEdges.insert(e);
-                            for (const auto& in : view.getInputs(e)) {
-                                if (!inDrNode(in)) continue;
-                                if (visitedNodes.insert(in).second) {
-                                    if (inBoundary(in)) {
-                                        boundaryHits.insert(in);
-                                    }
-                                    q.push(in);
-                                }
-                            }
-                        }
-                    }
-                    std::cout << "[inc-regional-overlap-trace-closure] tuple=" << name
-                              << " boundary_hits=" << boundaryHits.size()
-                              << " visited_nodes=" << visitedNodes.size()
-                              << " visited_edges=" << visitedEdges.size();
-                    if (!boundaryHits.empty() && boundaryHits.size() <= 8) {
-                        std::vector<NodePtr> sorted(boundaryHits.begin(), boundaryHits.end());
-                        std::sort(sorted.begin(), sorted.end(),
-                                [&](const NodePtr& a, const NodePtr& b) {
-                                    return incra::node_id(a) < incra::node_id(b);
-                                });
-                        std::cout << " boundaries=[";
-                        for (size_t i = 0; i < sorted.size(); ++i) {
-                            if (i) std::cout << ", ";
-                            std::cout << incra::node_id(sorted[i]);
-                        }
-                        std::cout << "]";
-                    }
-                    std::cout << "\n";
-                }
-            }
             if (incRegionalProfileEnabled && (addedNodes > 0 || addedEdges > 0)) {
                 std::cout << "[inc-regional] overlap closure reason=" << reason
                           << " added_nodes=" << addedNodes
@@ -2622,12 +1992,6 @@ public:
                           << " region_nodes=" << analysis.region.nodes.size()
                           << " region_edges=" << analysis.region.edges.size()
                           << "\n";
-            }
-            if (incRegionalProfileHeavyEnabled &&
-                    planProfile.overlapClosureDependent == 0 &&
-                    planProfile.overlapClosureIndependent == 0 &&
-                    planProfile.overlapClosureEmptyOwners == 0) {
-                std::cout << "[inc-regional-overlap] no_multi_boundary_nodes_found\n";
             }
             return addedNodes > 0 || addedEdges > 0;
         };
@@ -2883,30 +2247,6 @@ public:
                       << "\n";
         }
 
-        if (incRegionalProfileEnabled && !incRegionalTraceTargets().empty()) {
-            std::unordered_map<std::string, NodePtr> tuple_index;
-            tuple_index.reserve(view.getValidNodes().size());
-            for (const auto& n : view.getValidNodes()) {
-                if (!n) continue;
-                tuple_index.emplace(n->getTuple().toString(), n);
-            }
-            std::stringstream ss(incRegionalTraceTuples);
-            std::string tok;
-            while (std::getline(ss, tok, ',')) {
-                if (tok.empty()) continue;
-                auto it = tuple_index.find(tok);
-                if (it == tuple_index.end()) {
-                    std::cout << "[inc-regional-plan-trace] tuple=" << tok << " found=0\n";
-                    continue;
-                }
-                NodePtr node = it->second;
-                std::cout << "[inc-regional-plan-trace] tuple=" << tok
-                          << " in_region=" << (plan.regionNodes.count(node) ? 1 : 0)
-                          << " in_boundary=" << (plan.boundaryNodes.count(node) ? 1 : 0)
-                          << "\n";
-            }
-        }
-
         auto t3 = nowMs();
         lastTiming_.planMs = toMs(t3 - t2);
 
@@ -3056,7 +2396,7 @@ public:
                 }
                 if (dagFastPath) {
                     rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegionDag(
-                        view, formulaManager, nodeFormulas, edgeFormulas, plan, analysis.region.edges, dagPlan, dagBuildMs, constInfo);
+                        view, formulaManager, nodeFormulas, edgeFormulas, plan, analysis.region.edges, dagPlan, dagBuildMs);
                     if (rebuildRes.fallbackToCycle) {
                         if (incRegionalProfileEnabled) {
                             std::cout << "[inc-regional] dag_fast_path fallback reason=missing_inside_region"
@@ -3069,7 +2409,7 @@ public:
                         auto tDepGraphEnd = nowMs();
                         const double depGraphMs = toMs(tDepGraphEnd - tDepGraphStart);
                         rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegion(
-                            view, formulaManager, nodeFormulas, edgeFormulas, plan, analysis.region.edges, constInfo, depGraphPtr);
+                            view, formulaManager, nodeFormulas, edgeFormulas, plan, analysis.region.edges, depGraphPtr);
                         rebuildRes.timing.depGraphMs += depGraphMs;
                         rebuildRes.timing.totalMs += depGraphMs;
                     }
@@ -3080,7 +2420,7 @@ public:
                     auto tDepGraphEnd = nowMs();
                     const double depGraphMs = toMs(tDepGraphEnd - tDepGraphStart);
                     rebuildRes = RegionalDDRebuilder<FormulaManagerT, FormulaNodeRef>::rebuildInsertRegion(
-                        view, formulaManager, nodeFormulas, edgeFormulas, plan, analysis.region.edges, constInfo, depGraphPtr);
+                        view, formulaManager, nodeFormulas, edgeFormulas, plan, analysis.region.edges, depGraphPtr);
                     rebuildRes.timing.depGraphMs += depGraphMs;
                     rebuildRes.timing.totalMs += depGraphMs;
                 }
@@ -3118,22 +2458,6 @@ public:
                 lastTiming_.rebuildTotalMs += rebuildMs;
                 lastTiming_.rebuildDetail = rebuildRes.timing;
 
-                if (incRegionalTraceEnabled()) {
-                    for (const auto& node : plan.regionNodes) {
-                        if (!incRegionalTraceMatch(node)) {
-                            continue;
-                        }
-                        auto it = nodeFormulas.find(node);
-                        if (it == nodeFormulas.end()) {
-                            std::cout << "[inc-regional-rebuild] post-rebuild head=" << incra::node_id(node)
-                                      << " formula_missing\n";
-                            continue;
-                        }
-                        double wmc = formulaManager.computeWeightedModelCount(it->second);
-                        std::cout << "[inc-regional-rebuild] post-rebuild head=" << incra::node_id(node)
-                                  << " wmc=" << wmc << "\n";
-                    }
-                }
                 rebuiltOnce = true;
             }
 

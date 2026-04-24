@@ -29,42 +29,6 @@
 #include <chrono>
 #include <cstdint>
 
-int nextFormulaNodeId = 0;
-std::unordered_map<size_t, int> nodeIdMap;
-std::unordered_map<int, size_t> idNodeMap;
-std::unordered_map<size_t, int> edgeIdMap;
-std::unordered_map<int, size_t> idEdgeMap;
-
-inline void resetFormulaIdMapping() {
-    nextFormulaNodeId = 0;
-    nodeIdMap.clear();
-    idNodeMap.clear();
-    edgeIdMap.clear();
-    idEdgeMap.clear();
-}
-
-int mapNodeId(size_t id) {
-    if (nodeIdMap.find(id) == nodeIdMap.end()) {
-        nodeIdMap[id] = nextFormulaNodeId++;
-        idNodeMap[nextFormulaNodeId - 1] = id;
-    }
-    return nodeIdMap[id];
-}
-int mapEdgeId(size_t id) {
-    if (edgeIdMap.find(id) == edgeIdMap.end()) {
-        edgeIdMap[id] = nextFormulaNodeId++;
-        idEdgeMap[nextFormulaNodeId - 1] = id;
-    }
-    return edgeIdMap[id];
-}
-
-// example rule application sets
-// rule 1: path(x,y) :- edge(x,y).
-// rule 2: path(x,y) :- path(x,z), edge(z,y).
-// facts: edge(1,2), edge(2,3)
-// (derived) paths: path(1,2), path(2,3), path(1,3)
-// evidence(path(1,3), true).
-
 // Forward declarations
 class Node;
 class Hyperedge;
@@ -126,27 +90,6 @@ inline std::vector<SupportToken> mergeSupportTokenLists(
     sortUniqueSupportTokens(merged);
     return merged;
 }
-// TODO: derivation graph now does not support negation...
-// TODO: MST GRAPH FUSE
-/** class Evidence {
-public:
-    friend class DerivationGraph;
-    friend class IncrementalDerivationGraph;
-    Evidence(const UntypedTuple tuple, bool value) : tuple(tuple), value(value) {}
-
-    const UntypedTuple& getTuple() const {return tuple;}
-    bool getValue() const {return value;}
-
-    std::string toString() const {
-        std::stringstream ss;
-        ss << "evidence(" << tuple.toString() << ", " << (value ? "true" : "false") << ")";
-        return ss.str();
-    }
-private:
-    UntypedTuple tuple;
-    bool value;
-}; **/
-
 class Node {
 public:
     friend class DerivationGraph;
@@ -191,8 +134,8 @@ public:
     std::string toString() const {
         std::stringstream ss;
         ss << tuple.toString();
-        if (has_evidence) {  // Check has_evidence
-            ss << "[E:" << (evidenceValue ? "true" : "false") << "]";  // Use evidenceValue
+        if (has_evidence) {
+            ss << "[E:" << (evidenceValue ? "true" : "false") << "]";
         }
         return ss.str();
     }
@@ -327,15 +270,7 @@ public:
     bool isDeterministic() const {return probability == 1.0;}
 
     std::string toString() const {
-//        if (rule == nullptr) {
-//            return "Hyperedge(" + std::to_string(id) + ")";
-//        } else {
-//
-//            return "Rule" + std::to_string(rule->getRuleId()) + "("+ std::to_string(id) + ")";
-//        }
-    // inputs to outputs
         std::stringstream ss;
-        // ss << "Hyperedge(" << id << ")[";
         ss << "Hyperedge[";
         ss << "rule" << ((rule)?std::to_string(rule->getRuleId()):" nil") << ",";
         for (size_t i = 0; i < bodyNegations.size(); ++i) {
@@ -436,10 +371,6 @@ private:
         if (probability > 0.0 && probability < 1.0) {
             probabilisticSupportTokens = {makeEdgeSupportToken(id)};
         }
-//        for (size_t i = 0; i < inputs.size(); ++i) {
-//            std::cout << "input: " << inputs[i]->toString() << std::endl;
-//            std::cout << "isNegated: " << bodyNegations[i] << std::endl;
-//        }
     }
 
 
@@ -455,7 +386,6 @@ private:
 
 class DerivationGraphViewInterface {
 public:
-    // TODO: consider using unordered_map
     virtual const std::unordered_set<NodePtr>& getNodes() const = 0;
     virtual const std::unordered_set<EdgePtr>& getEdges() const = 0;
     void dumpDot(const std::string& filename) const;
@@ -662,15 +592,7 @@ std::vector<NodePtr> DerivationGraphViewInterface::getInputs(EdgePtr edge) const
     if (getEdges().count(edge) == 0) {
         return std::vector<NodePtr>();
     }
-    // if edge is in the view, then all of its input nodes should be in the view
     return edge->getInputs();
-//    std::vector<NodePtr> result;
-//    for (const auto& input : edge->getInputs()) {
-//        if (getNodes().count(input)) {
-//            result.push_back(input);
-//        }
-//    }
-//    return result;
 }
 
 std::vector<NodePtr> DerivationGraphViewInterface::getInputsStable(EdgePtr edge) const {
@@ -687,8 +609,6 @@ NodePtr DerivationGraphViewInterface::getOutput(EdgePtr edge) const {
         if (fcProfileEnabled) {
             std::cout << "Node not in view: " << out->toString() << std::endl;
         }
-        // assert (getNodes().count(out) != 0);
-//        std::cerr << "Warning: Output node not in view or being deleted: " << out->toString() << std::endl;
     }
     return getNodes().count(out) ? out : nullptr;
 }
@@ -697,15 +617,7 @@ std::vector<bool> DerivationGraphViewInterface::getBodyNegations(EdgePtr edge) c
     if (getEdges().count(edge) == 0) {
         return std::vector<bool>();
     }
-    // if edge is not pruned, then all of its input nodes should be in the view
     return edge->getBodyNegations();
-//    std::vector<bool> result;
-//    for (size_t i = 0; i < edge->getBodyNegations().size(); ++i) {
-//        if (getNodes().count(edge->getInputs()[i])) {
-//            result.push_back(edge->getBodyNegations()[i]);
-//        }
-//    }
-//    return result;
 }
 
 std::vector<bool> DerivationGraphViewInterface::getBodyNegationsStable(EdgePtr edge) const {
@@ -724,7 +636,7 @@ public:
     const std::unordered_set<NodePtr>& getNodes() const override { return nodes_; }
     const std::unordered_set<EdgePtr>& getEdges() const override { return edges_; }
 
-    // Allow callers (e.g., GraphRewriter) to mutate the working view in-place.
+    // Allow callers to mutate the working view in-place.
     std::unordered_set<NodePtr>& mutableNodes() { return nodes_; }
     std::unordered_set<EdgePtr>& mutableEdges() { return edges_; }
 
@@ -844,7 +756,7 @@ void DerivationGraphViewInterface::dumpDot(const std::string& filename) const {
         out << "  edge" << edge->getId() << ";\n";
 
         for (const auto& input : inputs) {
-            if (getNodes().count(input)) {  // TODO: seems redundant
+            if (getNodes().count(input)) {
                 out << "  node" << input->getId()
                     << " -> edge" << edge->getId() << ";\n";
             }
@@ -952,7 +864,7 @@ public:
         return deletedNonDeterministicFacts_;
     }
 
-    // Drop cached validity/adjacency info after structural rewrites.
+    // Drop cached validity/adjacency info after structural updates.
     void invalidateCaches() {
         validNodes_.clear();
         validEdges_.clear();
@@ -1115,34 +1027,6 @@ protected:
 
 class DerivationGraph: virtual public DerivationGraphViewInterface {
 public:
-    static void setMergeBiImpEnabled(bool enabled) {
-        mergeBiImpEnabled = enabled;
-    }
-    static void setPruneExtraEnabled(bool enabled) {
-        pruneExtraEnabled = enabled;
-    }
-    static bool isPruneExtraEnabled() {
-        return pruneExtraEnabled;
-    }
-    static void setConstFoldEnabled(bool enabled) {
-        constFoldEnabled = enabled;
-    }
-    static bool isConstFoldEnabled() {
-        return constFoldEnabled;
-    }
-    static void setConstDumpEnabled(bool enabled) {
-        constDumpEnabled = enabled;
-    }
-    static bool isConstDumpEnabled() {
-        return constDumpEnabled;
-    }
-    bool isBiImpMerged() const {
-        return biImpMerged;
-    }
-    bool isConstFolded() const {
-        return constFolded;
-    }
-
     struct EdgeLookupTiming {
         size_t find_calls;
         double find_key_s;
@@ -1213,7 +1097,6 @@ public:
         // Create a new node if not found.
         auto node = std::shared_ptr<Node>(new Node(tuple, nextNodeId++));
         nodes.insert(node);
-        nodeRepMap[node->getId()] = node;
         node->setProbability(weight);
         if (detOptEnabled && isDetRelation(tuple.relation_name)) {
             node->isFact = true;
@@ -1222,6 +1105,7 @@ public:
 
         // Add to the map.
         tupleToNodeMap[tuple] = node;
+        existingTuples.insert(tuple);
         return node;
     }
 
@@ -1289,6 +1173,10 @@ public:
     }
 
 
+    bool tupleExistsInUniverse(const UntypedTuple& tuple) const {
+        return existingTuples.find(tuple) != existingTuples.end();
+    }
+
     EdgePtr createHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& rm) {
         const bool timing = DerivationGraphViewInterface::isDumpStatsEnabled();
 
@@ -1320,6 +1208,9 @@ public:
             for (const auto& bodyAtom : rule->getBodyAtoms()) {
                 UntypedTuple bodyTuple{bodyAtom.getRelation(),
                         bodyAtom.instantiatedFields(vars, ruleApp.varValuesPure)};
+                if (bodyAtom.isNegatedAtom() && !tupleExistsInUniverse(bodyTuple)) {
+                    continue;
+                }
                 auto bodyNode = createNode(bodyTuple);
                 bodyNodes.push_back(bodyNode);
                 bodyNegations.push_back(bodyAtom.isNegatedAtom());
@@ -1384,6 +1275,10 @@ public:
             UntypedTuple bodyTuple{bodyAtom.getRelation(),
                     bodyAtom.instantiatedFields(vars, ruleApp.varValuesPure)};
             const auto t_body_inst1 = std::chrono::steady_clock::now();
+            if (bodyAtom.isNegatedAtom() && !tupleExistsInUniverse(bodyTuple)) {
+                body_inst_s += std::chrono::duration<double>(t_body_inst1 - t_body_inst0).count();
+                continue;
+            }
             auto bodyNode = createNode(bodyTuple);
             const auto t_body_node1 = std::chrono::steady_clock::now();
             bodyNodes.push_back(bodyNode);
@@ -1395,11 +1290,6 @@ public:
             body_neg_s += std::chrono::duration<double>(t_body_neg1 - t_body_neg0).count();
             body_atoms++;
         }
-//        std::cout << "creating hyperedge from ruleApp: " << ruleApp.ruleId << std::endl;
-//        for (size_t i = 0; i < bodyNodes.size(); ++i) {
-//            std::cout << "bodyNode: " << bodyNodes[i]->toString() << std::endl;
-//            std::cout << "isNegated: " << bodyNegations[i] << std::endl;
-//        }
         const auto t_edge0 = std::chrono::steady_clock::now();
         auto newEdge = createHyperedge(bodyNodes, headNode, rule, bodyNegations, ruleApp);
         const auto t_edge1 = std::chrono::steady_clock::now();
@@ -1487,20 +1377,20 @@ public:
         {
             FunctionTimer scopeTimer("create graph: init fact nodes");
             for (const auto& [tuple, prob] : fact_prob) {
+                graph->existingTuples.insert(tuple);
                 auto node = graph->createNode(tuple);  // actually "find node" here
                 node->setProbability(prob);
                 node->isFact = true;
                 node->setOriginalFact(true);
             }
         }
+        for (const auto& [tuple, _] : ruleApps) {
+            graph->existingTuples.insert(tuple);
+        }
         {
             FunctionTimer scopeTimer("create graph: build rule apps");
             for (const auto& [tuple, ruleAppSet] : ruleApps) {
                 auto node = graph->createNode(tuple);
-                // if (node->isFact) {
-                //     // std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
-                //     continue;  // skip fact nodes currently
-                // }
                 for (const auto& ruleApp : *ruleAppSet) {
                     auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
                 }
@@ -1561,8 +1451,7 @@ public:
         double filterNodeMs = 0.0;
         double filterEdgeMs = 0.0;
         double updateEdgesMs = 0.0;
-        double outputlessMs = 0.0;
-        double mergeMs = 0.0;
+        double cleanupMs = 0.0;
         std::unordered_set<std::string> outputRelationNames(outputRelations.begin(), outputRelations.end());
 
         // Mark reachable nodes and edges.
@@ -1575,7 +1464,6 @@ public:
             auto t0 = Clock::now();
             for (const auto& node : nodes) {
                 if (outputRelationNames.count(node->getTuple().relation_name) > 0) {
-//                std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
                     reachableNodes.insert(node);
                     workQueue.push(node);
                     node->setQuery();
@@ -1642,7 +1530,6 @@ public:
             }
         }
 
-        // TODO: update nodes incoming and outgoing edges
         {
             auto t0 = Clock::now();
             for (const auto& node : newNodes) {
@@ -1666,21 +1553,12 @@ public:
             }
         }
 
-        if (pruneExtraEnabled) {
-            auto t0 = Clock::now();
-            pruneOutputlessComponents(newNodes, newEdges);
-            if (incProfile) {
-                outputlessMs = toMs(t0);
-            }
-        }
-
-        // eqrel merge (if enabled) and cleanup
+        // Cleanup self dependencies after reachability pruning.
         {
             auto t0 = Clock::now();
-            mergeBiImpEquivalences(newNodes, newEdges);
             removeSelfLoopEdges(newNodes, newEdges);
             if (incProfile) {
-                mergeMs = toMs(t0);
+                cleanupMs = toMs(t0);
             }
         }
         if (incProfile) {
@@ -1693,33 +1571,13 @@ public:
                       << " filter_nodes_ms=" << filterNodeMs
                       << " filter_edges_ms=" << filterEdgeMs
                       << " update_edges_ms=" << updateEdgesMs
-                      << " outputless_ms=" << outputlessMs
-                      << " merge_ms=" << mergeMs
+                      << " cleanup_ms=" << cleanupMs
                       << " live_nodes=" << liveNodeCount
                       << " live_edges=" << liveEdgeCount
                       << std::endl;
         }
 
         return SubgraphView(std::move(newNodes), std::move(newEdges));
-    }
-
-    static DerivationGraph createExample() {
-        DerivationGraph graph;
-
-        auto edge1 = graph.createNode(UntypedTuple{"edge", {1, 2}});
-        auto edge2 = graph.createNode(UntypedTuple{"edge", {2, 3}});
-
-        auto path1 = graph.createNode(UntypedTuple{"path", {1, 2}});
-        auto path2 = graph.createNode(UntypedTuple{"path", {2, 3}});
-
-        auto path3 = graph.createNode(UntypedTuple{"path", {1, 3}});
-
-        graph.createHyperedge({edge1}, path1);
-        graph.createHyperedge({edge2}, path2);
-
-        graph.createHyperedge({edge1, path2}, path3);
-
-        return graph;
     }
 
     void setRuleManager(RuleManager* rm) {
@@ -1745,7 +1603,7 @@ public:
         return edge;
     }
 
-    // Just for test; this one does not check if the edge already exists
+    // Test helper; this one does not check if the edge already exists.
     EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, RuleApplication ruleApp = naiveRuleApplication) {
         auto edge = std::shared_ptr<Hyperedge>(new Hyperedge(inputs, output, nextEdgeId++, ruleApp));
 
@@ -1759,12 +1617,6 @@ public:
     }
 
 protected:
-    static void pruneOutputlessComponents(
-            std::unordered_set<NodePtr>& liveNodes,
-            std::unordered_set<EdgePtr>& liveEdges,
-            std::unordered_set<NodePtr>* reachableNodes = nullptr,
-            std::unordered_set<EdgePtr>* reachableEdges = nullptr);
-
 //    std::vector<NodePtr> nodes;
 //    std::vector<EdgePtr> edges;
     std::unordered_set<NodePtr> nodes;
@@ -1772,17 +1624,10 @@ protected:
     size_t nextNodeId;
     size_t nextEdgeId;
     const RuleManager* ruleManager;
-    static inline bool mergeBiImpEnabled = true;
-    static inline bool pruneExtraEnabled = false;
-    static inline bool constFoldEnabled = false;
-    static inline bool constDumpEnabled = false;
-    bool biImpMerged = false;
-    bool constFolded = false;
-    // map original node id to its current representative after merges
-    std::unordered_map<size_t, NodePtr> nodeRepMap;
 
     // Map tuples to nodes.
     std::map<UntypedTuple, NodePtr> tupleToNodeMap;
+    std::unordered_set<UntypedTuple> existingTuples;
 
     // Map edge keys to edges.
     std::map<std::string, EdgePtr> edgeKeyToEdgeMap;
@@ -1797,40 +1642,15 @@ protected:
 
         // Sort by variable name to ensure a stable key.
         std::vector<std::string> varNames = vars;
-//        for (const auto& [name, _] : varValues) {
-//            varNames.push_back(name);
-//        }
         std::sort(varNames.begin(), varNames.end());
 
         for (size_t i = 0; i < varNames.size(); ++i) {
             ss << varNames[i] << ":" << values[i] << ";";
         }
-//        for (const auto& name : varNames) {
-//            ss << name << ":" << varValues.at(name) << ";";
-//        }
 
         return ss.str();
     }
 
-    NodePtr findRepresentative(const NodePtr& node) const {
-        if (!node) return node;
-        auto it = nodeRepMap.find(node->getId());
-        if (it != nodeRepMap.end()) {
-            return it->second;
-        }
-        return node;
-    }
-
-    void setRepresentative(const NodePtr& node, const NodePtr& rep) {
-        if (node) {
-            nodeRepMap[node->getId()] = rep;
-        }
-    }
-
-    void mergeBiImpEquivalences(
-            std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges);
-    void foldDeterministicConstants(
-            std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges);
     void removeSelfLoopEdges(std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges);
 
     static void resetEdgeLookupTiming() {
@@ -1881,16 +1701,12 @@ void Node::addOutgoingEdge(EdgePtr edge) {
 
 class IncrementalDerivationGraph : public DerivationGraph, virtual public IncrementalDerivationGraphViewInterface {
 public:
-    friend class PreDerivationGraph;
-
     // Constructors
     IncrementalDerivationGraph() : DerivationGraph() {}
     IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
     IncSubgraphView prune(const std::vector<souffle::Relation*>& outputRelations);
     IncSubgraphView prune(const std::vector<std::string>& outputRelations);
     
-    static IncrementalDerivationGraph* loadFromJsonInc(const std::string& filename);
-
     static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {}) {
         FunctionTimer timer(" creating derivation graph ");
         if (DerivationGraphViewInterface::isDumpStatsEnabled()) {
@@ -1901,20 +1717,20 @@ public:
         {
             FunctionTimer scopeTimer("create graph: init fact nodes");
             for (const auto& [tuple, prob] : fact_prob) {
+                graph->existingTuples.insert(tuple);
                 auto node = graph->createNode(tuple);  // actually "find node" here
                 node->setProbability(prob);
                 node->isFact = true;
                 node->setOriginalFact(true);
             }
         }
+        for (const auto& [tuple, _] : ruleApps) {
+            graph->existingTuples.insert(tuple);
+        }
         {
             FunctionTimer scopeTimer("create graph: build rule apps");
             for (const auto& [tuple, ruleAppSet] : ruleApps) {
                 auto node = graph->createNode(tuple, 0.0);
-//            if (node->isFact) {
-//                std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
-//                continue;  // skip fact nodes currently
-//            }
                 for (const auto& ruleApp : *ruleAppSet) {
                     auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
                 }
@@ -2030,18 +1846,6 @@ public:
             }
         }
 
-//        for (auto& insertedRuleApp : deltaInsertRuleApps) {
-//            std::cout << "For tuple: " << insertedRuleApp.first.toString() << std::endl;
-//            for (const auto& ruleApp : *(insertedRuleApp.second)) {
-//                std::cout << "  Inserted Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
-//            }
-//        }
-//        for (auto& deletedRuleApp : deltaDeleteRuleApps) {
-//            std::cout << "For tuple: " << deletedRuleApp.first.toString() << std::endl;
-//            for (const auto& ruleApp : *(deletedRuleApp.second)) {
-//                std::cout << "  Deleted Rule application: " << RuleApplication::toString(ruleApp) << std::endl;
-//            }
-//        }
         // Apply deletes first, then inserts
         {
             auto t0 = Clock::now();
@@ -2138,25 +1942,6 @@ public:
         return deltaInsertReachableEdges;
     }
 
-//    std::set<NodePtr> validNodes_;
-//    std::set<NodePtr> deletedFacts_;
-//    std::set<NodePtr> deletedDeterminsticFacts_;
-//    std::set<NodePtr> deletedNonDeterministicFacts_;
-//    const std::set<NodePtr>& getValidNodes() {
-//        if (validNodes_.size() > 0) {
-//            return validNodes_;
-//        }
-//        for (const auto& node : getNodes()) {
-//            if (getDeltaDeleteNodes().count(node) == 0 && node->pruned == false) {
-//                validNodes_.insert(node);
-//            }
-//        }
-//        return validNodes_;
-//    }
-//
-//    const std::set<NodePtr>& getDeletedFacts() = 0; // nodes - deleted nodes
-//    const std::set<NodePtr>& getDeletedDeterminsticFacts() = 0; // nodes - deleted nodes
-//    const std::set<NodePtr>& getDeletedNonDeterminsticFacts() = 0; // nodes - deleted nodes
 };
 
 void IncrementalDerivationGraph::applyDeltaInserts(
@@ -2173,11 +1958,11 @@ void IncrementalDerivationGraph::applyDeltaInserts(
     {
         FunctionTimer scope("applyDeltaInserts: upsert facts");
         for (const auto& [tuple, prob] : fact_prob) {
+            existingTuples.insert(tuple);
             auto node = this->findNode(tuple);
             if (node == nullptr) {
                 node = createNode(tuple);
                 deltaInsertNodes.insert(node);
-//                std::cout << "new fact inserted: " << node->toString() << std::endl;
             }
             node->setProbability(prob);
             node->isFact = true;
@@ -2188,6 +1973,9 @@ void IncrementalDerivationGraph::applyDeltaInserts(
 
     {
         FunctionTimer scope("applyDeltaInserts: add rule edges");
+        for (const auto& [tuple, _] : deltaInsertRuleApps) {
+            existingTuples.insert(tuple);
+        }
         for (const auto& [tuple, ruleAppSet] : deltaInsertRuleApps) {
             // Process each rule application associated with this tuple.
             for (const auto& ruleApp : *ruleAppSet) {
@@ -2205,7 +1993,7 @@ void IncrementalDerivationGraph::applyDeltaInserts(
                 // Mark the edge as a delta insert.
                 deltaInsertEdges.insert(newEdge);
 
-                // Ensure fact inputs (e.g., det-opt facts) are initialized during incremental FC.
+                // Ensure fact inputs are initialized during incremental FC.
                 for (const auto& inputNode : newEdge->getInputs()) {
                     if (inputNode->isFact) {
                         deltaInsertNodes.insert(inputNode);
@@ -2225,8 +2013,6 @@ void IncrementalDerivationGraph::applyDeltaInserts(
                     deltaDeleteNodes.erase(outputNode);
                 } else {
                     // Otherwise, add to insert set (if not already added).
-//                    std::cout << "Inserting new node: " << outputNode->toString() << std::endl;
-//                    std::cout << "Incoming edge count: " << outputNode->getIncomingEdges().size() << std::endl;
                     if (!outputNode->isFact && (outputNode->pruned || outputNode->getIncomingEdges().size() == 1))
                         deltaInsertNodes.insert(outputNode);
                 }
@@ -2238,14 +2024,6 @@ void IncrementalDerivationGraph::applyDeltaInserts(
         // Impacted info is rebuilt after prune on the subgraph; no propagation here.
     }
 
-    // For debugging
-//    for (const auto& [insertedFact, impactedNodes] : insertedFactImpactedNodes) {
-//        std::cout << "Inserted fact: " << insertedFact->toString() << " impacts nodes: ";
-//        for (const auto& impactedNode : impactedNodes) {
-//            std::cout << impactedNode->toString() << ", ";
-//        }
-//        std::cout << std::endl;
-//    }
 }
 
 void IncrementalDerivationGraph::applyDeltaDeletes(
@@ -2253,7 +2031,6 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
     const RuleManager& ruleManager,
     const std::vector<UntypedTuple>& deletedFacts
 ) {
-    // TODO: should delete corresponding inserting and deleting edges
     if (deltaDeleteRuleApps.empty() && deletedFacts.empty()) {
         return;
     }
@@ -2390,9 +2167,8 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
         for (const auto& nodeToRemove : nodesToRemove) {
             // Remove from map.
             tupleToNodeMap.erase(nodeToRemove->getTuple());
-//        std::cout << "removing node " << nodeToRemove->toString() << std::endl;
+            existingTuples.erase(nodeToRemove->getTuple());
             // Remove from the node list.
-//        nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeToRemove), nodes.end());
             nodes.erase(nodeToRemove);
         }
         if (incProfile) {
@@ -2410,7 +2186,6 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
                 explicitDeletedFacts_.insert(node);
                 // Remove from map.
 
-//            node->isFact = false;
                 tupleToNodeMap.erase(node->getTuple());
                 deltaDeleteNodes.insert(node);
                 if (!node->getIncomingEdges().empty()) {
@@ -2424,6 +2199,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
                         }
                     }
                 } else {
+                    existingTuples.erase(node->getTuple());
                     nodes.erase(node);
                     nodesToRemove.push_back(node);
                 }
@@ -2432,7 +2208,6 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
             } else {
                 // It's possible that the deleted fact has been removed from the graph; but it has to be with deleted derivations
                 std::cout << "deleted fact not found: " << tuple.toString() << std::endl;
-                // assert (false && "deleted fact not found");
             }
         }
         if (incProfile) {
@@ -2461,7 +2236,6 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
                 } else {
                     ++it;
                 }
-//            std::cout << "Deleted fact: " << fact->toString() << " impacts node: " << impactedNode->toString() << std::endl;
             }
         }
         if (incProfile) {
@@ -2492,13 +2266,6 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
               << ", inVecScan=" << totalInVecScan
               << ", outVecScan=" << totalOutVecScan
               << std::endl;
-//    for (const auto& [deletedFact, impactedNodes] : deletedFactImpactedNodes) {
-//        std::cout << "Deleted fact: " << deletedFact->toString() << " impacts nodes: ";
-//        for (const auto& impactedNode : impactedNodes) {
-//            std::cout << impactedNode->toString() << ", ";
-//        }
-//        std::cout << std::endl;
-//    }
 }
 
 IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Relation*>& outputRelations) {
@@ -2522,21 +2289,13 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     double initOutputsMs = 0.0;
     double bfsMs = 0.0;
     double markMs = 0.0;
-    double outputlessMs = 0.0;
     double filterMs = 0.0;
-    double mergeMs = 0.0;
+    double cleanupMs = 0.0;
     double impactMs = 0.0;
     double buildViewMs = 0.0;
     double dumpViewMs = 0.0;
     std::cout << "[prune-inc] delta-delete counts (start): nodes=" << deltaDeleteNodes.size()
               << " edges=" << deltaDeleteEdges.size() << std::endl;
-    // std::cout << "[prune-inc] pre-prune graph nodes=" << nodes.size()
-    //           << " edges=" << edges.size()
-    //           << " deltaInsertNodes=" << deltaInsertNodes.size()
-    //           << " deltaInsertEdges=" << deltaInsertEdges.size()
-    //           << " deltaDeleteNodes=" << deltaDeleteNodes.size()
-    //           << " deltaDeleteEdges=" << deltaDeleteEdges.size()
-    //           << std::endl;
     {
         auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: dumpStatisticsInc");
@@ -2563,7 +2322,6 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         // Initialize: start from all output relation nodes.
         for (const auto& node : nodes) {
             if (outputRelationNames.count(node->getTuple().relation_name) > 0 || node->isQueryNode()) {
-                // std::cout << "Found output node: " << node->getTuple().toString() << std::endl;
                 reachableNodes.insert(node);
                 workQueue.push(node);
                 node->setQuery();
@@ -2581,7 +2339,6 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     {
         auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: evidence + backward BFS");
-        // TODO
         for (const auto& node : evidenceNodes) {
             if (reachableNodes.insert(node).second) {
                 std::cout << "Found evidence node: " << node->toString()
@@ -2623,7 +2380,6 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         for (const auto& node : nodes) {
             if (liveNodes.count(node)){
                 if (node->pruned) {
-//                std::cout << "reusing a pruned node: " << node->getTuple().toString() << std::endl;
                     deltaInsertNodes.insert(node);
                 }
                 node->pruned = false;  // reset pruned flag
@@ -2635,7 +2391,6 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         for (const auto& edge : edges) {
             if (liveEdges.count(edge)) {
                 if (edge->pruned) {
-//                std::cout << "reusing a pruned edge: " << edge->toString() << std::endl;
                     deltaInsertEdges.insert(edge);
                 }
                 edge->pruned = false;  // reset pruned flag
@@ -2649,14 +2404,6 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     }
     std::cout << "[prune-inc] delta-delete counts (post-mark-pruned): nodes=" << deltaDeleteNodes.size()
               << " edges=" << deltaDeleteEdges.size() << std::endl;
-
-    if (pruneExtraEnabled) {
-        auto t0 = Clock::now();
-        pruneOutputlessComponents(liveNodes, liveEdges);
-        if (incProfile) {
-            outputlessMs = toMs(t0);
-        }
-    }
 
     // Filter nodes and edges.
     std::set<NodePtr> newDeltaDeletedNodes;
@@ -2708,50 +2455,18 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         }
     }
 
-    // eqrel merge (if enabled) and cleanup
+    // Cleanup self dependencies after reachability pruning.
     {
         auto t0 = Clock::now();
-        FunctionTimer scopeTimer("prune-inc: mergeBiImp + cleanup");
-        if (mergeBiImpEnabled) {
-            mergeBiImpEquivalences(liveNodes, liveEdges);
-        }
+        FunctionTimer scopeTimer("prune-inc: cleanup self-loop edges");
         removeSelfLoopEdges(liveNodes, liveEdges);
         if (incProfile) {
-            mergeMs = toMs(t0);
+            cleanupMs = toMs(t0);
         }
     }
 
-    if (mergeBiImpEnabled) {
-        if (newDeltaDeletedNodes.size() > 0 || newDeltaDeletedEdges.size() > 0) {
-            assert (false);
-        }
-        if (deltaInsertNodes.size() > 0 || deltaInsertEdges.size() > 0) {
-            assert (false);
-        }
-    }
     std::cout << "[prune-inc] delta-delete counts (canonicalised): nodes=" << newDeltaDeletedNodes.size()
               << " edges=" << newDeltaDeletedEdges.size() << std::endl;
-
-
-
-    // TODO: update nodes incoming and outgoing edges
-//    for (const auto& node : liveNodes) {
-//        std::vector<EdgePtr> newIncomingEdges;
-//        std::vector<EdgePtr> newOutgoingEdges;
-//        for (const auto& edge : node->getIncomingEdges()) {
-//            if (liveEdges.count(edge)) {
-//                newIncomingEdges.push_back(edge);
-//            }
-//        }
-//        for (const auto& edge : node->getOutgoingEdges()) {
-//            if (liveEdges.count(edge)) {
-//                newOutgoingEdges.push_back(edge);
-//            }
-//        }
-//        node->incomingEdges = std::move(newIncomingEdges);
-//        node->outgoingEdges = std::move(newOutgoingEdges);
-//    }
-
 
     std::unordered_set<NodePtr> newInsertedReachableNodes;
     std::unordered_set<EdgePtr> newInsertedReachableEdges;
@@ -2834,9 +2549,8 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                   << " init_ms=" << initOutputsMs
                   << " bfs_ms=" << bfsMs
                   << " mark_ms=" << markMs
-                  << " outputless_ms=" << outputlessMs
                   << " filter_ms=" << filterMs
-                  << " merge_ms=" << mergeMs
+                  << " cleanup_ms=" << cleanupMs
                   << " impact_ms=" << impactMs
                   << " build_view_ms=" << buildViewMs
                   << " dump_view_ms=" << dumpViewMs
@@ -2845,368 +2559,6 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
                   << std::endl;
     }
     return view;
-}
-
-void DerivationGraph::mergeBiImpEquivalences(
-        std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges) {
-    std::cout << "[bi-imp] mergeBiImpEquivalences: enabled=" << std::boolalpha << mergeBiImpEnabled
-              << ", liveNodes=" << liveNodes.size() << ", liveEdges=" << liveEdges.size()
-              << std::endl;
-    if (!mergeBiImpEnabled || liveNodes.size() < 2) {
-        return;
-    }
-
-    auto isEqEdge = [](const EdgePtr& e) {
-        if (!e || !e->isDeterministic()) return false;
-        if (e->getInputs().size() != 1) return false;
-        for (bool neg : e->getBodyNegations()) {
-            if (neg) return false;
-        }
-        return true;
-    };
-
-    std::unordered_map<NodePtr, std::vector<NodePtr>> adj;
-    for (const auto& n : liveNodes) {
-        adj[n];  // consider all nodes; eqrel tag no longer gates merging
-    }
-    for (const auto& e : liveEdges) {
-        if (!isEqEdge(e)) continue;
-        NodePtr dst = e->getOutput();
-        for (const auto& src : e->getInputs()) {
-            if (liveNodes.count(src) && liveNodes.count(dst)) {
-                adj[src].push_back(dst);
-            }
-        }
-    }
-
-    // Tarjan SCC
-    std::unordered_map<NodePtr, int> index, lowlink;
-    std::vector<NodePtr> stack;
-    std::unordered_set<NodePtr> onStack;
-    int idx = 0;
-    std::vector<std::vector<NodePtr>> sccs;
-
-    std::function<void(NodePtr)> strongConnect = [&](NodePtr v) {
-        index[v] = lowlink[v] = idx++;
-        stack.push_back(v);
-        onStack.insert(v);
-        for (const auto& w : adj[v]) {
-            if (!index.count(w)) {
-                strongConnect(w);
-                lowlink[v] = std::min(lowlink[v], lowlink[w]);
-            } else if (onStack.count(w)) {
-                lowlink[v] = std::min(lowlink[v], index[w]);
-            }
-        }
-        if (lowlink[v] == index[v]) {
-            std::vector<NodePtr> component;
-            while (true) {
-                NodePtr w = stack.back();
-                stack.pop_back();
-                onStack.erase(w);
-                component.push_back(w);
-                if (w == v) break;
-            }
-            sccs.push_back(std::move(component));
-        }
-    };
-
-    for (const auto& [node, _] : adj) {
-        if (!index.count(node)) {
-            strongConnect(node);
-        }
-    }
-    std::cout << "[bi-imp] detected SCCs=" << sccs.size() << std::endl;
-
-    auto hasSelfLoop = [&](NodePtr n) {
-        auto it = adj.find(n);
-        if (it == adj.end()) return false;
-        return std::find(it->second.begin(), it->second.end(), n) != it->second.end();
-    };
-
-    std::size_t mergedClasses = 0;
-    std::size_t mergedNodes = 0;
-    bool mergeChanged = false;
-
-    for (const auto& comp : sccs) {
-        if (comp.size() <= 1 && !hasSelfLoop(comp.front())) continue;
-
-        NodePtr rep = *std::min_element(comp.begin(), comp.end(),
-                [](const NodePtr& a, const NodePtr& b) { return a->getId() < b->getId(); });
-
-        bool hasEvidence = false;
-        bool evidenceValue = false;
-        bool conflict = false;
-        for (const auto& n : comp) {
-            if (n->hasEvidence()) {
-                if (!hasEvidence) {
-                    hasEvidence = true;
-                    evidenceValue = n->getEvidenceValue();
-                } else if (n->getEvidenceValue() != evidenceValue) {
-                    conflict = true;
-                    break;
-                }
-            }
-        }
-        if (conflict) {
-            std::cerr << "Skip merging SCC with conflicting evidence: " << rep->toString() << std::endl;
-            continue;
-        }
-
-        std::cerr << "[bi-imp-merge] merging class (size=" << comp.size()
-                  << ") -> rep " << rep->toString() << "_" << rep->getId() << std::endl;
-        for (const auto& n : comp) {
-            std::cerr << "    member: " << n->toString() << "_" << n->getId() << std::endl;
-        }
-
-        for (const auto& n : comp) {
-            setRepresentative(n, rep);
-            if (n->isQueryNode()) rep->setQuery();
-            rep->needOutput = rep->needOutput || n->needOutput;
-        }
-        if (hasEvidence) {
-            rep->setEvidence(evidenceValue);
-        }
-
-        for (const auto& n : comp) {
-            if (n == rep) continue;
-
-            auto incoming = n->incomingEdges;
-            for (const auto& e : incoming) {
-                e->replaceOutput(rep);
-                // drop self-loop edges created by symmetric fusion
-                bool allInputsRep = std::all_of(e->inputs.begin(), e->inputs.end(),
-                        [&](const NodePtr& in) { return in == rep; });
-                if (allInputsRep && e->getOutput() == rep) {
-                    e->pruned = true;
-                } else {
-                    rep->incomingEdges.push_back(e);
-                }
-            }
-
-            auto outgoing = n->outgoingEdges;
-            for (const auto& e : outgoing) {
-                e->replaceInput(n, rep);
-                bool allInputsRep = std::all_of(e->inputs.begin(), e->inputs.end(),
-                        [&](const NodePtr& in) { return in == rep; });
-                if (allInputsRep && e->getOutput() == rep) {
-                    e->pruned = true;
-                } else {
-                    rep->outgoingEdges.push_back(e);
-                }
-            }
-
-            tupleToNodeMap[n->getTuple()] = rep;
-            n->incomingEdges.clear();
-            n->outgoingEdges.clear();
-            liveNodes.erase(n);
-            nodes.erase(n);
-            mergedNodes++;
-        }
-        mergedClasses++;
-    }
-    if (mergedClasses > 0) {
-        mergeChanged = true;
-    }
-
-    auto edgeSig = [](const EdgePtr& e) {
-        std::stringstream ss;
-        ss << (e->getRule() ? e->getRule()->getRuleId() : e->getRuleApp().ruleId) << "|";
-        ss << e->getOutput()->getTuple().toString() << "|";
-        auto inputs = e->getInputsStable();
-        auto negs = e->getBodyNegationsStable();
-        for (size_t i = 0; i < inputs.size(); ++i) {
-            ss << (negs[i] ? "!" : "") << inputs[i]->getTuple().toString() << ";";
-        }
-        return ss.str();
-    };
-
-    std::unordered_map<std::string, EdgePtr> seen;
-    std::unordered_set<EdgePtr> toRemove;
-    // remove edges whose body already contains the head (self-loop style)
-    for (const auto& e : liveEdges) {
-        if (e->hasSelfDependency()) {
-            e->pruned = true;
-            toRemove.insert(e);
-            continue;
-        }
-        auto sig = edgeSig(e);
-        auto[it, inserted] = seen.emplace(sig, e);
-        if (!inserted) {
-            toRemove.insert(e);
-        }
-    }
-
-    if (!toRemove.empty()) {
-        mergeChanged = true;
-    }
-    for (const auto& e : toRemove) {
-        liveEdges.erase(e);
-        edges.erase(e);
-        auto out = e->getOutput();
-        auto& inVec = out->incomingEdges;
-        inVec.erase(std::remove(inVec.begin(), inVec.end(), e), inVec.end());
-        for (const auto& in : e->getInputs()) {
-            auto& outVec = in->outgoingEdges;
-            outVec.erase(std::remove(outVec.begin(), outVec.end(), e), outVec.end());
-        }
-    }
-
-    for (const auto& n : liveNodes) {
-        std::vector<EdgePtr> newIn;
-        std::vector<EdgePtr> newOut;
-        std::unordered_set<EdgePtr> seenIn, seenOut;
-        for (const auto& e : n->incomingEdges) {
-            if (liveEdges.count(e) && seenIn.insert(e).second) {
-                newIn.push_back(e);
-            }
-        }
-        for (const auto& e : n->outgoingEdges) {
-            if (liveEdges.count(e) && seenOut.insert(e).second) {
-                newOut.push_back(e);
-            }
-        }
-        n->incomingEdges = std::move(newIn);
-        n->outgoingEdges = std::move(newOut);
-    }
-
-    if (mergeChanged) {
-        biImpMerged = true;
-    }
-    if (mergedClasses > 0) {
-        std::cerr << "[bi-imp-merge] merged classes: " << mergedClasses
-                  << ", merged nodes: " << mergedNodes
-                  << ", remaining nodes: " << liveNodes.size()
-                  << ", remaining edges: " << liveEdges.size() << std::endl;
-    } else {
-        std::cerr << "[bi-imp-merge] no deterministic SCCs found" << std::endl;
-    }
-}
-
-void DerivationGraph::foldDeterministicConstants(
-        std::unordered_set<NodePtr>& liveNodes, std::unordered_set<EdgePtr>& liveEdges) {
-    if (!constFoldEnabled) {
-        return;
-    }
-    // NOTE: Conservative constant folding.
-    // - Only propagates deterministic TRUE (p==1) through positive edges.
-    // - Ignores negation/false/evidence/output nodes (not handled here).
-    // - Intended for full-only use; not safe for incremental updates.
-    std::unordered_set<NodePtr> trueNodes;
-    std::queue<NodePtr> work;
-    size_t foldedNodes = 0;
-    size_t foldedEdges = 0;
-    for (const auto& node : liveNodes) {
-        if (node && node->isFact && node->getProbability() == 1.0) {
-            trueNodes.insert(node);
-            work.push(node);
-        }
-    }
-
-    auto isEligibleEdge = [&](const EdgePtr& e) {
-        if (!e || !e->isDeterministic()) return false;
-        for (bool neg : e->getBodyNegations()) {
-            if (neg) return false;
-        }
-        return liveEdges.count(e) > 0;
-    };
-
-    std::unordered_map<EdgePtr, size_t> remainingInputs;
-    for (const auto& e : liveEdges) {
-        if (!isEligibleEdge(e)) {
-            continue;
-        }
-        size_t remaining = 0;
-        for (const auto& in : e->getInputs()) {
-            if (!trueNodes.count(in)) {
-                ++remaining;
-            }
-        }
-        remainingInputs.emplace(e, remaining);
-    }
-
-    for (const auto& [e, remaining] : remainingInputs) {
-        if (remaining == 0) {
-            NodePtr out = e->getOutput();
-            if (out && trueNodes.insert(out).second) {
-                work.push(out);
-            }
-        }
-    }
-
-    auto removeEdgeFromGraph = [&](const EdgePtr& e) {
-        if (!e) return;
-        if (liveEdges.erase(e) == 0) {
-            return;
-        }
-        edges.erase(e);
-        e->pruned = true;
-        foldedEdges++;
-        NodePtr out = e->getOutput();
-        if (out) {
-            auto& inVec = out->incomingEdges;
-            inVec.erase(std::remove(inVec.begin(), inVec.end(), e), inVec.end());
-        }
-        for (const auto& in : e->getInputs()) {
-            auto& outVec = in->outgoingEdges;
-            outVec.erase(std::remove(outVec.begin(), outVec.end(), e), outVec.end());
-        }
-    };
-
-    bool changed = false;
-    while (!work.empty()) {
-        NodePtr node = work.front();
-        work.pop();
-        if (!node || !liveNodes.count(node)) {
-            continue;
-        }
-        if (!node->isFact || node->getProbability() != 1.0) {
-            node->isFact = true;
-            node->setProbability(1.0);
-            foldedNodes++;
-            changed = true;
-        }
-
-        std::vector<EdgePtr> incoming = node->incomingEdges;
-        for (const auto& e : incoming) {
-            if (!liveEdges.count(e)) {
-                continue;
-            }
-            removeEdgeFromGraph(e);
-            remainingInputs.erase(e);
-            changed = true;
-        }
-
-        std::vector<EdgePtr> outgoing = node->outgoingEdges;
-        for (const auto& e : outgoing) {
-            if (!isEligibleEdge(e)) {
-                continue;
-            }
-            auto it = remainingInputs.find(e);
-            if (it == remainingInputs.end()) {
-                continue;
-            }
-            if (it->second == 0) {
-                continue;
-            }
-            it->second -= 1;
-            if (it->second == 0) {
-                NodePtr out = e->getOutput();
-                if (out && trueNodes.insert(out).second) {
-                    work.push(out);
-                }
-            }
-        }
-    }
-
-    if (changed) {
-        constFolded = true;
-    }
-    std::cout << "[fold-const] folded nodes=" << foldedNodes
-              << " edges=" << foldedEdges
-              << " remaining nodes=" << liveNodes.size()
-              << " edges=" << liveEdges.size()
-              << std::endl;
 }
 
 void DerivationGraph::removeSelfLoopEdges(
@@ -3933,82 +3285,6 @@ private:
     }
 };
 
-void DerivationGraph::pruneOutputlessComponents(
-        std::unordered_set<NodePtr>& liveNodes,
-        std::unordered_set<EdgePtr>& liveEdges,
-        std::unordered_set<NodePtr>* reachableNodes,
-        std::unordered_set<EdgePtr>* reachableEdges) {
-    if (liveNodes.empty()) {
-        return;
-    }
-    struct LocalView : DerivationGraphViewInterface {
-        std::unordered_set<NodePtr>& nodes;
-        std::unordered_set<EdgePtr>& edges;
-        LocalView(std::unordered_set<NodePtr>& n, std::unordered_set<EdgePtr>& e)
-                : nodes(n), edges(e) {}
-        const std::unordered_set<NodePtr>& getNodes() const override { return nodes; }
-        const std::unordered_set<EdgePtr>& getEdges() const override { return edges; }
-    };
-    LocalView view(liveNodes, liveEdges);
-    auto& depGraph = view.getCycleDependencyGraph();
-    size_t componentCount = depGraph.getComponentCount();
-    if (componentCount == 0) {
-        return;
-    }
-    std::vector<bool> componentHasOutput(componentCount, false);
-    for (const auto& node : liveNodes) {
-        if (node->needOutput) {
-            componentHasOutput[depGraph.getComponentId(node)] = true;
-        }
-    }
-
-    bool removed = false;
-    std::unordered_set<NodePtr> keptNodes;
-    keptNodes.reserve(liveNodes.size());
-    for (const auto& node : liveNodes) {
-        if (componentHasOutput[depGraph.getComponentId(node)]) {
-            keptNodes.insert(node);
-        } else {
-            node->pruned = true;
-            removed = true;
-        }
-    }
-    if (!removed) {
-        return;
-    }
-
-    std::unordered_set<EdgePtr> keptEdges;
-    keptEdges.reserve(liveEdges.size());
-    for (const auto& edge : liveEdges) {
-        NodePtr out = edge->getOutput();
-        if (!keptNodes.count(out)) {
-            edge->pruned = true;
-            continue;
-        }
-        bool keep = true;
-        for (const auto& in : edge->getInputs()) {
-            if (!keptNodes.count(in)) {
-                keep = false;
-                break;
-            }
-        }
-        if (keep) {
-            keptEdges.insert(edge);
-        } else {
-            edge->pruned = true;
-        }
-    }
-
-    liveNodes.swap(keptNodes);
-    liveEdges.swap(keptEdges);
-    if (reachableNodes) {
-        *reachableNodes = liveNodes;
-    }
-    if (reachableEdges) {
-        *reachableEdges = liveEdges;
-    }
-}
-
 CycleDependencyGraph& DerivationGraphViewInterface::getCycleDependencyGraph() const {
     if (!cachedCycleDependencyGraph_) {
         cachedCycleDependencyGraph_ = std::make_shared<CycleDependencyGraph>(*this);
@@ -4237,259 +3513,5 @@ void IncrementalDerivationGraphViewInterface::dumpJsonInc(const std::string& fil
     out << root.dump();
     out.close();
 }
-
-// ====================== loadFromJsonInc implementation ======================
-static inline std::string _trim(std::string s) {
-    auto issp = [](unsigned char c){ return std::isspace(c); };
-    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [&](unsigned char c){ return !issp(c); }));
-    s.erase(std::find_if(s.rbegin(), s.rend(), [&](unsigned char c){ return !issp(c); }).base(), s.end());
-    return s;
-}
-
-static inline UntypedTuple _parse_tuple(const std::string& s_in) {
-    std::string s = _trim(s_in);
-    auto lp = s.find('(');
-    if (lp == std::string::npos) {
-        // Allow 0-arity relations
-        return UntypedTuple{s, {}};
-    }
-    auto rp = s.rfind(')');
-    if (rp == std::string::npos || rp <= lp) {
-        throw std::runtime_error("Bad tuple string: " + s);
-    }
-    std::string rel = _trim(s.substr(0, lp));
-    std::string inside = s.substr(lp + 1, rp - lp - 1);
-    std::vector<souffle::RamDomain> fields;
-    std::stringstream ss(inside);
-    std::string tok;
-    while (std::getline(ss, tok, ',')) {
-        tok = _trim(tok);
-        if (tok.empty()) continue;
-        // Parse uniformly as integers (consistent with UntypedTuple::fields).
-        long long v = std::stoll(tok);
-        fields.push_back(static_cast<souffle::RamDomain>(v));
-    }
-    return UntypedTuple{rel, fields};
-}
-
-static EdgePtr _find_edge_by_structure(
-    IncrementalDerivationGraph* g,
-    const NodePtr& head,
-    const std::vector<NodePtr>& inputs,
-    const std::vector<bool>& negs
-) {
-    // Generate a stably sorted (tuple, neg) sequence.
-    std::vector<std::pair<UntypedTuple,bool>> desired;
-    desired.reserve(inputs.size());
-    for (size_t i=0;i<inputs.size();++i) {
-        bool neg = (i < negs.size()) ? negs[i] : false;
-        desired.emplace_back(inputs[i]->getTuple(), neg);
-    }
-    std::sort(desired.begin(), desired.end());
-
-    for (const auto& e : g->getEdges()) {  // Protected member, but accessible in a class static function.
-        if (e->getOutput()->getTuple() != head->getTuple()) continue;
-        const auto& sin  = e->getInputsStable();       // Stable (sorted by tuple).
-        const auto& sneg = e->getBodyNegationsStable();
-        if (sin.size() != desired.size() || sneg.size() != desired.size()) continue;
-        bool ok = true;
-        for (size_t i = 0; i < desired.size(); ++i) {
-            if (sin[i]->getTuple() != desired[i].first || sneg[i] != desired[i].second) {
-                ok = false; break;
-            }
-        }
-        if (ok) return e;
-    }
-    return nullptr;
-}
-
-IncrementalDerivationGraph* IncrementalDerivationGraph::loadFromJsonInc(const std::string& filename) {
-    using json11::Json;
-
-    // Read file and parse JSON.
-    std::ifstream in(filename);
-    if (!in.is_open()) {
-        throw std::runtime_error("Cannot open JSON file: " + filename);
-    }
-    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    std::string err;
-    Json root = Json::parse(content, err);
-    if (!err.empty()) {
-        throw std::runtime_error("JSON parse error: " + err);
-    }
-
-    auto* g = new IncrementalDerivationGraph();
-
-    auto arr_or = [](const Json& j)->std::vector<Json> {
-        if (!j.is_array()) return {};
-        return j.array_items();
-    };
-
-    // ---------- 1) Baseline: facts ----------
-    for (const auto& jf : arr_or(root["facts"])) {
-        auto name = jf["name"].string_value();
-        double p  = jf["probability"].number_value();
-        UntypedTuple t = _parse_tuple(name);
-        NodePtr n = g->createNode(t);
-        n->isFact = true;
-        n->setProbability(p);
-        n->setOriginalFact(true);
-    }
-
-    // ---------- 2) Baseline: rules ----------
-    for (const auto& je : arr_or(root["rules"])) {
-        auto headName = je["head"].string_value();
-        double p      = je["probability"].number_value();
-
-        UntypedTuple ht = _parse_tuple(headName);
-        NodePtr head = g->createNode(ht);
-
-        std::vector<NodePtr> inputs;
-        std::vector<bool>    negs;
-        for (const auto& jb : arr_or(je["bodies"])) {
-            UntypedTuple bt = _parse_tuple(jb["name"].string_value());
-            bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
-            inputs.push_back(g->createNode(bt));
-            negs.push_back(neg);
-        }
-        EdgePtr e = g->createHyperedge(inputs, head, /*rule=*/nullptr, /*negs=*/negs);
-        if (e) e->setProbability(p);
-    }
-
-    // ---------- 3) delta.insert ----------
-    const Json& jdelta      = root["delta"];
-    const Json& jins        = jdelta["insert"];
-    for (const auto& jf : arr_or(jins["facts"])) {
-        UntypedTuple t = _parse_tuple(jf["name"].string_value());
-        double p = jf["probability"].number_value();
-        NodePtr n = g->createNode(t);
-        n->isFact = true; n->setProbability(p);
-        n->setOriginalFact(true);
-        g->deltaInsertNodes.insert(n);
-    }
-    for (const auto& jn : arr_or(jins["nodes"])) {
-        UntypedTuple t = _parse_tuple(jn.string_value());
-        NodePtr n = g->createNode(t);
-        g->deltaInsertNodes.insert(n);
-    }
-    for (const auto& je : arr_or(jins["edges"])) {
-        UntypedTuple ht = _parse_tuple(je["head"].string_value());
-        double p = je["probability"].number_value();
-        NodePtr head = g->createNode(ht);
-
-        std::vector<NodePtr> inputs;
-        std::vector<bool>    negs;
-        for (const auto& jb : arr_or(je["bodies"])) {
-            UntypedTuple bt = _parse_tuple(jb["name"].string_value());
-            bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
-            inputs.push_back(g->createNode(bt));
-            negs.push_back(neg);
-        }
-        EdgePtr e = _find_edge_by_structure(g, head, inputs, negs);
-        if (!e) {
-            e = g->createHyperedge(inputs, head, /*rule=*/nullptr, /*negs=*/negs);
-        }
-        if (e) {
-            e->setProbability(p);
-            g->deltaInsertEdges.insert(e);
-        }
-    }
-
-    // ---------- 4) delta.delete ----------
-    const Json& jdel = jdelta["delete"];
-    for (const auto& jf : arr_or(jdel["facts"])) {
-        UntypedTuple t = _parse_tuple(jf["name"].string_value());
-        double p = jf["probability"].number_value();
-        NodePtr n = g->createNode(t);
-        n->isFact = true; n->setProbability(p);
-        n->setOriginalFact(true);
-        g->deltaDeleteNodes.insert(n);
-        g->explicitDeletedFacts_.insert(n);
-    }
-    for (const auto& jn : arr_or(jdel["nodes"])) {
-        UntypedTuple t = _parse_tuple(jn.string_value());
-        NodePtr n = g->createNode(t);
-        g->deltaDeleteNodes.insert(n);
-    }
-    for (const auto& je : arr_or(jdel["edges"])) {
-        UntypedTuple ht = _parse_tuple(je["head"].string_value());
-        double p = je["probability"].number_value();
-        NodePtr head = g->createNode(ht);
-
-        std::vector<NodePtr> inputs;
-        std::vector<bool>    negs;
-        for (const auto& jb : arr_or(je["bodies"])) {
-            UntypedTuple bt = _parse_tuple(jb["name"].string_value());
-            bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
-            inputs.push_back(g->createNode(bt));
-            negs.push_back(neg);
-        }
-        EdgePtr e = _find_edge_by_structure(g, head, inputs, negs);
-        if (!e) {
-            e = g->createHyperedge(inputs, head, /*rule=*/nullptr, /*negs=*/negs);
-        }
-        if (e) {
-            e->setProbability(p);
-            g->deltaDeleteEdges.insert(e);
-        }
-    }
-
-    // ---------- 5) impact_by_delete ----------
-    const Json& jbdel = jdelta["impact_by_delete"];
-    for (const auto& jmap : arr_or(jbdel["nodes"])) {
-        NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
-        for (const auto& jv : arr_or(jmap["impacted"])) {
-            NodePtr n = g->createNode(_parse_tuple(jv.string_value()));
-            g->deletedFactImpactedNodes[d].insert(n);
-        }
-    }
-    for (const auto& jmap : arr_or(jbdel["edges"])) {
-        NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
-        for (const auto& je : arr_or(jmap["impacted"])) {
-            UntypedTuple ht = _parse_tuple(je["head"].string_value());
-            double p = je["probability"].number_value();
-            NodePtr head = g->createNode(ht);
-            std::vector<NodePtr> inputs; std::vector<bool> negs;
-            for (const auto& jb : arr_or(je["bodies"])) {
-                UntypedTuple bt = _parse_tuple(jb["name"].string_value());
-                bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
-                inputs.push_back(g->createNode(bt)); negs.push_back(neg);
-            }
-            EdgePtr e = _find_edge_by_structure(g, head, inputs, negs);
-            if (!e) e = g->createHyperedge(inputs, head, nullptr, negs);
-            if (e) { e->setProbability(p); g->deletedFactImpactedEdges[d].insert(e); }
-        }
-    }
-
-    // ---------- 6) impact_by_insert ----------
-    const Json& jbins = jdelta["impact_by_insert"];
-    for (const auto& jmap : arr_or(jbins["nodes"])) {
-        NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
-        for (const auto& jv : arr_or(jmap["impacted"])) {
-            NodePtr n = g->createNode(_parse_tuple(jv.string_value()));
-            g->insertedFactImpactedNodes[d].insert(n);
-        }
-    }
-    for (const auto& jmap : arr_or(jbins["edges"])) {
-        NodePtr d = g->createNode(_parse_tuple(jmap["delta"].string_value()));
-        for (const auto& je : arr_or(jmap["impacted"])) {
-            UntypedTuple ht = _parse_tuple(je["head"].string_value());
-            double p = je["probability"].number_value();
-            NodePtr head = g->createNode(ht);
-            std::vector<NodePtr> inputs; std::vector<bool> negs;
-            for (const auto& jb : arr_or(je["bodies"])) {
-                UntypedTuple bt = _parse_tuple(jb["name"].string_value());
-                bool neg = jb["negation"].is_bool() ? jb["negation"].bool_value() : false;
-                inputs.push_back(g->createNode(bt)); negs.push_back(neg);
-            }
-            EdgePtr e = _find_edge_by_structure(g, head, inputs, negs);
-            if (!e) e = g->createHyperedge(inputs, head, nullptr, negs);
-            if (e) { e->setProbability(p); g->insertedFactImpactedEdges[d].insert(e); }
-        }
-    }
-
-    return g;
-}
-
 
 #endif //DERIVATIONGRAPH_H

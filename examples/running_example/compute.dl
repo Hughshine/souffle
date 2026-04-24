@@ -1,8 +1,0 @@
-// Simple reachability example.
-.decl edge(u:number, v:number)
-.decl path(u:number, v:number)
-.input edge
-.output path
-
-path(x, y) :- edge(x, y).
-path(x, z) :- path(x, y), edge(y, z).

@@ -5,17 +5,8 @@
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
-#include <cassert>
 #include <cstddef>
-#include <iostream>
-#include <variant>
-#include <memory>
-#include <sstream>
-#include <map>
-#include "souffle/RamTypes.h"
-#include "souffle/problog/Atom.h"
 #include "souffle/problog/Rule.h"
-#include "souffle/Derivation.h"
 
 class RuleManager {
 public:
@@ -48,40 +39,6 @@ private:
     std::unordered_set<std::string> eqrelRelations;
 };
 
-class ExampleRuleComponents {
-public:
-    static const ExampleRuleComponents& getInstance();
+extern RuleManager ruleManager;
 
-    const SymbolicField var_x;
-    const SymbolicField var_y;
-    const SymbolicField var_z;
-
-    const std::string edge_relation;
-    const std::string path_relation;
-
-    const Atom edge_xy;
-    const Atom edge_zy;
-    const Atom path_xy;
-    const Atom path_xz;
-
-    const Rule rule1;
-    const Rule rule2;
-
-    const RuleManager ruleManager;
-
-    const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> exampleRuleApps;
-    const std::unordered_map<UntypedTuple, double> fact_prob;
-    const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> exampleDeltaInsertRuleApps;
-    const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> exampleDeltaDeleteRuleApps;
-    const std::unordered_map<UntypedTuple, double> fact_prob_inc;
-    const std::vector<UntypedTuple> deletedFacts;
-    const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> exampleRuleApps2;
-
-private:
-    ExampleRuleComponents();
-    ~ExampleRuleComponents();
-    ExampleRuleComponents(const ExampleRuleComponents&) = delete;
-    ExampleRuleComponents& operator=(const ExampleRuleComponents&) = delete;
-};
-static RuleManager ruleManager({});
 #endif //RULEMANAGER_H

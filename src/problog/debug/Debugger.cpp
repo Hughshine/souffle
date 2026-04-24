@@ -8,12 +8,11 @@ Debugger::Debugger()
 
 TurnInfo* Debugger::startTurn(const std::string& mode) {
     std::lock_guard<std::mutex> lock(mtx_);
-    assert(mode == "DEFAULT" || mode == "FULL" || mode == "FULL-HARD" || mode == "FULL-SOFT" ||
-            mode == "INC");
+    assert(mode == "DEFAULT" || mode == "FULL" || mode == "INC");
     std::string realMode;
     if (mode == "DEFAULT") {
-        realMode = (turnCount_ == 0) ? "FULL-HARD" : "INC";
-    } else if (mode == "FULL" || mode == "FULL-HARD" || mode == "FULL-SOFT") {
+        realMode = (turnCount_ == 0) ? "FULL" : "INC";
+    } else if (mode == "FULL") {
         realMode = mode;
     } else {
         realMode = "INC";
