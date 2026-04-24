@@ -6,6 +6,7 @@
 #include <vector>
 #include <unordered_map>
 #include <stdexcept>
+#include <cstdlib>
 #include <iostream>
 #include <cmath>
 #include <optional>
@@ -32,6 +33,9 @@ inline void setCuddPreConfigTag(const std::string& tag) {
 }
 inline const std::string& getCuddPreConfigTag() {
     return cuddPreConfigTag;
+}
+inline bool isDdResetProbeEnabled() {
+    return std::getenv("SOUFFLE_DD_RESET_PROBE") != nullptr;
 }
 Cudd_ReorderingType currentReorderingType = CUDD_REORDER_SAME;
 std::chrono::time_point<Clock> _cudd_gc_start_time;
@@ -390,8 +394,34 @@ public:
         wmcCacheEpoch_ = 0;
         last_reordering_time_ = 0;
         reorderConfigured_ = false;
+        const bool ddResetProbe = isDdResetProbeEnabled();
+        DdManager* oldManagerRaw = nullptr;
+        std::weak_ptr<DdManager> oldManagerWeak;
+        if (ddResetProbe) {
+            oldManagerRaw = manager.get();
+            const auto useCountBeforeReset = manager.use_count();
+            const auto externalRefsBeforeReset =
+                    (useCountBeforeReset > 0) ? (useCountBeforeReset - 1) : 0;
+            std::cerr << "[dd-reset-probe] before_member_reset manager="
+                      << static_cast<const void*>(oldManagerRaw)
+                      << " use_count=" << useCountBeforeReset
+                      << " external_refs=" << externalRefsBeforeReset << std::endl;
+            oldManagerWeak = manager;
+        }
         manager.reset();
+        if (ddResetProbe) {
+            const auto survivingRefCount = oldManagerWeak.use_count();
+            std::cerr << "[dd-reset-probe] after_member_reset manager="
+                      << static_cast<const void*>(oldManagerRaw)
+                      << " expired=" << (oldManagerWeak.expired() ? 1 : 0)
+                      << " surviving_strong_refs=" << survivingRefCount << std::endl;
+        }
         manager = initManager();
+        if (ddResetProbe) {
+            std::cerr << "[dd-reset-probe] after_init new_manager="
+                      << static_cast<const void*>(manager.get())
+                      << " use_count=" << manager.use_count() << std::endl;
+        }
     }
     void stopDynamicOptimization() override {
         Cudd_AutodynDisable(manager.get());
@@ -908,7 +938,13 @@ std::shared_ptr<DdManager> WeightedBDDManager::initManager() {
     Cudd_AddHook(m, myVRFunc, CUDD_PRE_REORDERING_HOOK);
     Cudd_AddHook(m, myVRFunc, CUDD_POST_REORDERING_HOOK);
     return std::shared_ptr<DdManager>(m, [](DdManager* m) {
-        if (m) Cudd_Quit(m);
+        if (isDdResetProbeEnabled()) {
+            std::cerr << "[dd-reset-probe] deleter manager="
+                      << static_cast<const void*>(m) << std::endl;
+        }
+        if (m) {
+            Cudd_Quit(m);
+        }
     });
 }
 

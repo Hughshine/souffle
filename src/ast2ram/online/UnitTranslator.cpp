@@ -312,6 +312,16 @@ Own<ram::Statement> UnitTranslator::generateStratum(std::size_t scc) const {
 
 Own<ram::Statement> UnitTranslator::generateNonRecursiveRelationInc(const ast::Relation& rel) const {
     VecOwn<ram::Statement> result;
+    const auto& clauses = context->getProgram()->getClauses(rel);
+
+    // Pure EDB relations already maintain old/post-delete/current in generateLoadRelationInc().
+    // Running the generic non-recursive phase again would overwrite post_delete from final current.
+    // TODO: Mixed EDB+IDB relations still need a dedicated relation-level post_delete owner and
+    // a regression that exercises that path explicitly.
+    if (clauses.empty()) {
+        return mk<ram::Sequence>(std::move(result));
+    }
+
     std::string mainRelation = getConcreteRelationName(rel.getQualifiedName());
     std::string postDeleteRelation = getPostDeleteRelationName(rel.getQualifiedName());
 
