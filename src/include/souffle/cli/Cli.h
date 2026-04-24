@@ -540,6 +540,7 @@ private:
 
     souffle::SouffleProgram* program;
     IncrementalDerivationGraph* graph;
+    std::unique_ptr<IncrementalDerivationGraph>* graphOwner = nullptr;
     RuleManager* ruleManager;
     QueryManager* queryManager;
     DDManager<NodeRef>* ddManager = nullptr;
@@ -563,6 +564,7 @@ private:
         DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());
         DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());
         DerivationManager::setSemStatsEnabled(opt.isDumpStatEnabled());
+        dredProfileEnabled = opt.isDredProfileEnabled();
         incProfileEnabled = opt.isIncProfileEnabled();
         fcProfileEnabled = opt.isFcProfileEnabled();
         incDeleteProfileEnabled = opt.isIncDeleteProfileEnabled();
@@ -573,6 +575,7 @@ private:
 public:
     IncrementalCLI(souffle::SouffleProgram* prog = nullptr,
             IncrementalDerivationGraph* graph = nullptr,
+            std::unique_ptr<IncrementalDerivationGraph>* graphOwner = nullptr,
             RuleManager* rm = nullptr,
             QueryManager* qm = nullptr,
             DDManager<NodeRef>* ddManager = nullptr,
@@ -581,6 +584,7 @@ public:
             )
             : program(prog),
               graph(graph),
+              graphOwner(graphOwner),
               ruleManager(rm),
               queryManager(qm),
               ddManager(ddManager),
@@ -617,6 +621,15 @@ public:
 
 private:
     using OperationStager = souffle::cli::PendingOperationStager<Operation>;
+
+    void replaceGraph(std::unique_ptr<IncrementalDerivationGraph> nextGraph) {
+        if (graphOwner != nullptr) {
+            *graphOwner = std::move(nextGraph);
+            graph = graphOwner->get();
+        } else {
+            graph = nextGraph.release();
+        }
+    }
 
     OperationStager makeOperationStager() {
         return OperationStager(program, initialInputRelations, fact_prob);
