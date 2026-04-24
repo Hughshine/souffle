@@ -2,7 +2,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROBLOG_BENCH="${PROBLOG_BENCH:-$ROOT/../problog-benchmark}"
+DEFAULT_BENCH="$ROOT/../problog-benchmark"
+if [[ -d "$ROOT/problog-benchmark" ]]; then
+  DEFAULT_BENCH="$ROOT/problog-benchmark"
+fi
+PROBLOG_BENCH="${PROBLOG_BENCH:-$DEFAULT_BENCH}"
 BASE_DIR="${BASE_DIR:-$PROBLOG_BENCH/side_channel_inc_artifact}"
 CASES="${CASES:-P12,P13,P14,P15,P16,P17,P18,P19,P20}"
 RULE_SET="${RULE_SET:-full}"
@@ -23,8 +27,8 @@ fi
 
 if git -C "$PROBLOG_BENCH" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   BRANCH="$(git -C "$PROBLOG_BENCH" rev-parse --abbrev-ref HEAD)"
-  if [[ "$BRANCH" != "inc-artifact" ]]; then
-    echo "Expected problog-benchmark branch 'inc-artifact' but found '$BRANCH'." >&2
+  if [[ "$BRANCH" != "CAV-INC" ]]; then
+    echo "Expected problog-benchmark branch 'CAV-INC' but found '$BRANCH'." >&2
   fi
 fi
 

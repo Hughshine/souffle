@@ -1,53 +1,95 @@
 # Architecture
 
-## Source references
-- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
-- [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
-- [src/include/souffle/problog/ForwardCompilation.h](src/include/souffle/problog/ForwardCompilation.h)
-- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+This artifact evaluates probabilistic Datalog programs under incremental
+updates. The evaluator supplies a `.dl` program, a fact directory, and a stream
+of online updates. The compiler produces an online binary. That binary computes
+the baseline, applies incremental turns, and writes output tuple probabilities.
 
+The artifact-facing comparison is `full-hard` versus incremental modes
+(`inc-naive`, `inc-regional`, and staged mixed modes). All compared runs should
+produce the same tuple keys and probabilities.
 
-## Overview
-This fork extends upstream Souffle with a probabilistic pipeline and online incremental
-execution. Online compilation is the default; there is no interpreter path.
+The two implementation contributions are:
 
-For project-level ownership and module boundaries, use:
-- `docs/project/MODULES.md`
-- `docs/project/FORK_DELTA.md`
-- `docs/project/MAINTENANCE.md`
+1. Incremental derivation maintenance for mixed insert/delete turns.
+2. Incremental forward compilation with naive and regional update paths.
 
-## High-Level Flow
-1. Parse Datalog into AST, lower to RAM, then apply the online translator.
-2. Synthesize C++ for compiled programs and link against the precompiled runtime.
-3. Full-mode probabilistic runs build a derivation graph, optionally rewrite it, and
-   then perform forward compilation + weighted model counting.
-4. Incremental runs use DRed-like delta relations with a turn-based CLI.
+## 0. Compile
 
-## Key Components
-- `src/souffle.cpp` and `src/MainDriver.cpp`: CLI entry point and driver glue.
-- `src/ast2ram/online/`: online translation for `_inc` strata and delta relations.
-- `src/include/souffle/problog/`: derivation graph, pipeline, rewrite, and
-  probabilistic evaluation.
-- `src/include/souffle/cli/Cli.h`: interactive/batch CLI for online incremental runs.
-- `src/synthesiser/Synthesiser.cpp`: emits generated C++ for compiled programs.
+`souffle` first compiles the input `.dl` program through the normal AST and RAM
+pipeline, then emits an online binary with incremental relation metadata and CLI
+controls.
 
-## Data and Artifacts
-- Input facts: `-F <dir>` with `<rel>.facts` and optional `<rel>.prob`.
-- Output probabilities:
-  - Full runs write `facts.prob` to the output directory.
-  - Incremental CLI runs write `fact-iter<N>-full.prob` and
-    `fact-iter<N>-inc-{naive|regional}.prob`.
-- Debug dumps: `--dumpjson`, `--dumpdot`, `--dumpstat` (written to output dir).
-- Logs: `--logfile <name>` writes JSON reports into the output dir.
+Key sources:
 
-## Dependencies and Constraints
-- CUDD is required for the BDD backend; SDD is optional for `-k sdd`.
-- Runtime and testing constraints are documented in `docs/USAGE.md` and
-  `docs/TESTING.md`.
+- [../src/MainDriver.cpp](../src/MainDriver.cpp)
+- [../src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp)
+- [../src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h)
 
-## Further Reading
-See `docs/INDEX.md` for the complete doc map, including rewrite and evaluation notes.
+## 1. Baseline Turn
 
-## Related commits
-- `UNCOMMITTED` — docs(project): link architecture overview to project-level module and maintenance docs
-- `aaa18c137` — docs(repo): add core docs
+The generated binary reads `<relation>.facts` and optional `<relation>.prob`
+files, runs the compiled semi-naive evaluator, records rule applications, and
+builds the baseline derivation graph. This gives the persistent state consumed
+by later turns.
+
+Key sources:
+
+- [../src/synthesiser/Synthesiser.cpp](../src/synthesiser/Synthesiser.cpp)
+- [../src/problog/Pipeline.cpp](../src/problog/Pipeline.cpp)
+- [../src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h)
+
+## 2. Commit a Delta Turn
+
+Each `commit` applies queued insertions and deletions. The runtime updates the
+derivation graph view, performs delete/rederive where needed, and maintains the
+`@post_delete_*` snapshot family required for exact mixed-update semantics in
+non-recursive upper strata.
+
+Key sources:
+
+- [../src/include/souffle/cli/Cli.h](../src/include/souffle/cli/Cli.h)
+- [../src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h)
+- [../src/ast2ram/online/UnitTranslator.cpp](../src/ast2ram/online/UnitTranslator.cpp)
+
+## 3. Incremental Forward Compilation
+
+After the graph delta is ready, the runtime solves probabilities in one of two
+incremental forward-compilation modes:
+
+- `inc-naive`: rebuild on the delta-reachable scope.
+- `inc-regional`: reuse unaffected outside-of-region formulas and rebuild only
+  the selected regional subgraph.
+
+`full-hard` remains the exact oracle and resets the formula state each turn.
+`full-soft` keeps the formula manager but still recomputes from full semantics.
+
+Key sources:
+
+- [../src/include/souffle/problog/ForwardCompilation.h](../src/include/souffle/problog/ForwardCompilation.h)
+- [../src/include/souffle/problog/RegionalIncremental.h](../src/include/souffle/problog/RegionalIncremental.h)
+
+## 4. Multi-Turn Regional State Machine
+
+Regional reuse is not always safe to compose across turns. The runtime
+classifies the persistent forward-compilation state as normalized versus
+regionalized. When a requested regional consumer would read unsafe incoming
+state, only the FC side falls back to `inc-naive`; semantic mode is preserved.
+
+This is the maintained multi-turn regional guard used by the artifact branch.
+
+Key sources:
+
+- [../src/include/souffle/CompiledOptions.h](../src/include/souffle/CompiledOptions.h)
+- [../src/include/souffle/cli/Cli.h](../src/include/souffle/cli/Cli.h)
+
+## 5. Output and Logs
+
+The runtime writes output tuple probabilities to `facts.prob` and per-turn
+snapshots such as `fact-iter2-inc-regional.prob`. JSON logs and graph statistics
+are controlled by `--logfile` and dump/profile flags.
+
+Key sources:
+
+- [../src/include/souffle/problog/DerivationGraph.h](../src/include/souffle/problog/DerivationGraph.h)
+- [../src/problog/debug/Debugger.cpp](../src/problog/debug/Debugger.cpp)

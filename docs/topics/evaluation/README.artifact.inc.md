@@ -21,7 +21,8 @@ For full script details, see:
 
 - Python 3.9+
 - Souffle built with `--online` CLI support (use repo build commands).
-- problog-benchmark repo checked out on the `inc-artifact` branch.
+- This compiler tree checked out on the `inc-artifact-ae` branch.
+- The companion `problog-benchmark` repo checked out on the `CAV-INC` branch.
 
 Build Souffle from the repo root:
 ```bash

@@ -36,15 +36,69 @@ CASES_ROOT = Path(__file__).resolve().parent / "cases"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def is_benchmark_root(path: Path) -> bool:
+    return (
+        (path / "benchmarks" / "side_channel" / "cli" / "side_channel_full.py").exists()
+        and (path / "benchmarks" / "side_channel" / "cli" / "side_channel_inc.py").exists()
+        and (path / "taint_inc.py").exists()
+    )
+
+
+def iter_git_worktree_roots(repo_root: Path) -> List[Path]:
+    try:
+        proc = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=str(repo_root),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0:
+        return []
+
+    roots: List[Path] = []
+    for raw in proc.stdout.splitlines():
+        if raw.startswith("worktree "):
+            roots.append(Path(raw[len("worktree ") :]).expanduser())
+    return roots
+
+
 def resolve_benchmark_root() -> Path:
-    candidates = [
-        REPO_ROOT / "work" / "benchmarks" / "problog-benchmark",
-        REPO_ROOT / "problog-benchmark",
-    ]
+    env_root = os.environ.get("SOUFFLE_BENCHMARK_ROOT")
+    candidates: List[Path] = []
+    if env_root:
+        candidates.append(Path(env_root).expanduser())
+    candidates.extend(
+        [
+            REPO_ROOT / "work" / "benchmarks" / "problog-benchmark",
+            REPO_ROOT / "problog-benchmark",
+        ]
+    )
+    for worktree_root in iter_git_worktree_roots(REPO_ROOT):
+        candidates.extend(
+            [
+                worktree_root / "work" / "benchmarks" / "problog-benchmark",
+                worktree_root / "problog-benchmark",
+            ]
+        )
+
+    seen: set[str] = set()
     for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[0]
+        candidate = candidate.expanduser()
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if is_benchmark_root(candidate):
+            return candidate.resolve()
+
+    if env_root:
+        return Path(env_root).expanduser()
+    return REPO_ROOT / "work" / "benchmarks" / "problog-benchmark"
 
 
 BENCHMARK_ROOT = resolve_benchmark_root()

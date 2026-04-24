@@ -1,112 +1,77 @@
-# Souffle (Local Research Fork)
+# Incremental Probabilistic Souffle Artifact
 
-## Source references
-- [src/MainDriver.cpp](src/MainDriver.cpp)
-- [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
-- [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
+This branch contains the Souffle compiler and generated runtime used by the
+incremental probabilistic inference artifact. It compiles a Datalog program
+into an online binary. That binary computes a baseline from a fact directory,
+then applies incremental turns through the online CLI.
 
+The benchmark inputs and orchestration scripts live in the companion
+`problog-benchmark` artifact on branch `CAV-INC`.
 
-This repo extends upstream Souffle with a probabilistic pipeline and online
-incremental evaluation. It focuses on the online compiler path and adds
-DRed-like incremental updates, derivation-graph-based inference, and rewrite
-prototypes.
+## Artifact Workflow
 
-## Status
-- Active entry point for this fork; keep high-level and link to detailed docs.
+Build the compiler:
 
-## Audience
-- Researchers and engineers working on probabilistic Datalog evaluation.
-- Contributors modifying the online incremental compiler and rewrite pipeline.
-
-## Scope and Defaults
-- Online compilation is the default; `--online` is optional.
-- The legacy `--inc` backend is removed.
-- No interpreter path; `souffle file.dl` defaults to compile-only `-o <basename>`.
-- Rewrite runs only in full-mode runs; if `--rewrite` is enabled, the incremental CLI is disabled after the full run.
-- `--setmode full` maps to `full-hard`; `full-soft` is optional.
-
-## Quickstart
-
-### 1) Install dependencies (scripts used in CI)
-- Ubuntu: `sudo sh/setup/install_ubuntu_deps.sh`
-- macOS Intel: `sh/setup/install_macos_deps.sh`
-- macOS Apple Silicon: `sh/setup/install_macos_arm_deps.sh`
-
-### 2) Build
 ```bash
 JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
 cmake -S . -B build
 cmake --build build -j${JOBS}
 ```
 
-### 3) Run a minimal example
+Generate a benchmark binary:
+
 ```bash
-SOUFFLE_BIN=./build/src/souffle examples/running_example/run.sh
+./build/src/souffle -F <facts-dir> -D <output-dir> compute.souffle.dl -o compute
 ```
 
-### 4) Verify (style)
+Run an incremental session:
+
 ```bash
-sh/run_test_format.sh
+./compute -F <facts-dir> -D <output-dir> --setmode inc-naive
+insert 0.3::edge(1,2)
+delete edge(3,4)
+commit
+q
 ```
-See `docs/TESTING.md` for test status and alternative verification paths.
 
-## Configuration
-- Copy `.env.example` to your own environment file and export variables in your
-  shell. The repo does not auto-load `.env`.
-- `SOUFFLE_BIN`, `SOUFFLE_COMPILE_OPTS`, and `SOUFFLE_RUN_OPTS` are used by
-  example scripts.
+Or use the companion benchmark helper:
 
-## Local Workspaces
-- Large local-only assets now belong under `work/`:
-  - `work/benchmarks/` for benchmark repos and run workspaces
-  - `work/archive/` for bulky archived batches
-  - `work/build/` for auxiliary build trees
-  - `work/experiments/` for large experiment workspaces
-  - `work/deps-src/` for dependency source caches
-- The `work/` tree is the canonical local-heavy-workspace surface; top-level
-  paths such as `problog-benchmark/`, `archive/`, and large `experiments/*`
-  remain only for compatibility or because the underlying payload already lives
-  there.
-- Top-level compatibility paths may remain as symlinks so frozen docs and older
-  commands continue to resolve.
-- The canonical source tree stays at the repo root; `work/` is for convenience,
-  not long-term source of truth.
+```bash
+sh/run_artifact_inc.sh
+```
+
+## Inputs and Outputs
+
+Input facts live in `<facts-dir>` as `<relation>.facts`. Optional
+`<relation>.prob` files align line-for-line with the facts. Missing probability
+files mean probability `1.0`.
+
+The generated binary writes output tuple probabilities to `facts.prob` in
+`<output-dir>`. Incremental runs also emit per-turn probability snapshots and
+JSON timing logs whose base name comes from `--logfile`.
+
+## Expected Comparisons
+
+Artifact comparisons use `full-hard` as the oracle and compare it against
+incremental modes:
+
+- `inc-naive`
+- `inc-regional`
+- staged mixed modes such as `sem=full fc=inc-regional`
+
+The compared outputs must have the same tuple keys. Probability values are
+checked with a small absolute tolerance.
 
 ## Documentation
-- `CONTRIBUTING.md`: contributor workflow and review checklist.
-- `AGENTS.md`: Codex constraints and verification expectations.
-- `docs/ARCHITECTURE.md`: high-level system design.
-- `docs/project/README.md`: project-level module map, fork delta, and maintenance invariants.
-- `docs/project/DOC_SYSTEM.md`: documentation architecture and placement rules.
-- `docs/research/README.md`: active research map, experiment protocol, and
-  curated current findings.
-- `docs/research/README.bootstrap.md`: Codex/agent startup pack for new
-  sessions.
-- `docs/project/PROBLOG_EXTENSION_STACK.md`: detailed ProbLog extension implementation from driver/parser through runtime pipeline.
-- `docs/TESTING.md`: verification strategy and CI command sources.
-- `docs/RUNBOOK.md`: run/rollback/troubleshooting guide.
-- `docs/SECURITY.md`: data handling and dependency hygiene.
-- `docs/USAGE.md`: program syntax, CLI, and runtime options.
-- `docs/process/README.git.md`: commit hygiene and message conventions.
-- `docs/INDEX.md`: index of research notes and evaluation docs.
-- `docs/topics/README.md`: map of current topic docs (pipeline/rewrite/backends/profiling/eval).
-- `docs/design/README.md`: design proposals not fully implemented.
-- `docs/historical/README.md`: archived historical notes.
-- `work/README.md`: local-heavy-workspace layout and policy.
 
-## FAQ / Common Issues
-- Need regression tests: use `ctest --test-dir build -L regression`; see
-  `docs/TESTING.md`.
-- Need rewrite or incremental details: start at `docs/INDEX.md`.
-- Need current trusted experiment conclusions or provenance rules: start at
-  `docs/research/README.md`.
-- Need to bootstrap a new Codex session quickly: start at
-  `docs/research/README.bootstrap.md`.
-- Commit hygiene: see `docs/process/README.git.md` for what to include and exclude.
-
-## Related commits
-- `UNCOMMITTED` — docs(codex): add bootstrap entry point for new agent sessions
-- `UNCOMMITTED` — docs(system): add research entry points and fix testing guidance in README
-- `UNCOMMITTED` — docs(project): add detailed ProbLog extension stack guide and link it from README
-- `UNCOMMITTED` — docs(repo): add project-level docs and move commit hygiene guide under docs/process
-- `812ea4081` — docs(repo): refine README narratives
+- [docs/USAGE.md](docs/USAGE.md): incremental compiler/runtime interface.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): incremental pipeline map.
+- [docs/TESTING.md](docs/TESTING.md): build and regression checks.
+- [docs/topics/testing/README.regression.md](docs/topics/testing/README.regression.md):
+  maintained incremental regression suite.
+- [docs/topics/evaluation/README.artifact.inc.md](docs/topics/evaluation/README.artifact.inc.md):
+  artifact runner and side-channel workflow.
+- [docs/topics/pipeline/README.dred.md](docs/topics/pipeline/README.dred.md):
+  delete/rederive mechanics.
+- [docs/topics/pipeline/README.inc.region.md](docs/topics/pipeline/README.inc.region.md):
+  regional incremental compilation path.
