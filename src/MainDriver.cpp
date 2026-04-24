@@ -202,6 +202,10 @@ void compileToBinary(
     }
 
     argv.push_back("--with-cudd");
+    argv.push_back("--cudd-include-dir");
+    argv.push_back(souffle::CUDD_INCLUDE_DIR);
+    argv.push_back("--cudd-library");
+    argv.push_back(souffle::CUDD_LIBRARY);
 
     argv.push_back("-o");
     argv.push_back(binary.string());
@@ -393,16 +397,25 @@ public:
 class MCPPPreprocInput : public PreprocInput {
 public:
     MCPPPreprocInput(const std::filesystem::path& mainSource, MainConfig& conf)
-            : PreprocInput(mainSource, conf, "mcpp", "-e utf8 -W0") {}
+            : PreprocInput(mainSource, conf, command(), "-e utf8 -W0") {}
 
     virtual ~MCPPPreprocInput() {}
 
     static bool available() {
-        return PreprocInput::available("mcpp");
+        return PreprocInput::available(command());
     }
 
     bool reducedConsecutiveNonLeadingWhitespaces() const override {
         return true;
+    }
+
+private:
+    static std::string command() {
+        const std::string configured = souffle::MCPP_EXECUTABLE;
+        if (!configured.empty() && souffle::isExecutable(configured)) {
+            return configured;
+        }
+        return "mcpp";
     }
 };
 
@@ -490,7 +503,9 @@ Own<ast::transform::PipelineTransformer> astTransformationPipeline(Global& glb) 
 Own<ast2ram::UnitTranslator> getUnitTranslator(Global& glb) {
     auto translationStrategy = mk<ast2ram::TranslationStrategy, ast2ram::online::TranslationStrategy>();
     auto unitTranslator = Own<ast2ram::UnitTranslator>(translationStrategy->createUnitTranslator());
-    std::cout << "unitTranslator created, " << translationStrategy->getName() << std::endl;
+    if (glb.config().has("verbose")) {
+        std::cerr << "unitTranslator created, " << translationStrategy->getName() << std::endl;
+    }
     return unitTranslator;
 }
 

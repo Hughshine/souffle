@@ -4,7 +4,7 @@
 
 - [../README.md:1](../README.md#L1): branch scope.
 - [topics/evaluation/README.artifact.inc.md:1](topics/evaluation/README.artifact.inc.md#L1): benchmark workflow.
-- [../.gitignore:1](../.gitignore#L1): ignored local artifacts.
+- [../.gitignore:2](../.gitignore#L2): ignored local artifacts.
 
 ## Scope
 

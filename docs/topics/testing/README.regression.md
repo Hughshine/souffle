@@ -5,10 +5,10 @@
 - [../../../tests/regression/CMakeLists.txt:22](../../../tests/regression/CMakeLists.txt#L22): registered regression cases.
 - [../../../tests/regression/CMakeLists.txt:33](../../../tests/regression/CMakeLists.txt#L33): `check-regression` target.
 - [../../../tests/regression/run_regression_case.py:153](../../../tests/regression/run_regression_case.py#L153): compile helper.
-- [../../../tests/regression/run_regression_case.py:351](../../../tests/regression/run_regression_case.py#L351): deterministic mixed-update case.
-- [../../../tests/regression/run_regression_case.py:415](../../../tests/regression/run_regression_case.py#L415): regional multi-turn state-machine case.
-- [../../../tests/regression/run_regression_case.py:625](../../../tests/regression/run_regression_case.py#L625): canonical CLI surface case.
-- [../../../tests/regression/run_regression_case.py:828](../../../tests/regression/run_regression_case.py#L828): case dispatch table.
+- [../../../tests/regression/run_regression_case.py:357](../../../tests/regression/run_regression_case.py#L357): deterministic mixed-update case.
+- [../../../tests/regression/run_regression_case.py:421](../../../tests/regression/run_regression_case.py#L421): regional multi-turn state-machine case.
+- [../../../tests/regression/run_regression_case.py:631](../../../tests/regression/run_regression_case.py#L631): canonical CLI surface case.
+- [../../../tests/regression/run_regression_case.py:901](../../../tests/regression/run_regression_case.py#L901): case dispatch table.
 
 ## Case Groups
 

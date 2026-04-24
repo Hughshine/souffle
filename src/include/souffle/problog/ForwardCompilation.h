@@ -537,7 +537,6 @@ void buildFormulasIncCyclewise(
     double deleteOverdeleteMs = 0.0;
     double deleteVarOrderMs = 0.0;
     double deleteVarCollectMs = 0.0;
-    double deleteVarPostprocessMs = 0.0;
     double deleteVarDumpMs = 0.0;
     double deleteTotalMs = 0.0;
     double rederiveLoopMsProfile = 0.0;
@@ -1894,7 +1893,6 @@ void buildFormulasIncCyclewise(
                   << std::endl;
         std::cout << "[fc-profile] stage=FORWARD_COMPILATION_INC phase=delete_varorder ms=" << deleteVarOrderMs
                   << " collect_ms=" << deleteVarCollectMs
-                  << " postprocess_ms=" << deleteVarPostprocessMs
                   << " dump_ms=" << deleteVarDumpMs
                   << " deleted_vars=" << deletedVarsIndexCount
                   << std::endl;

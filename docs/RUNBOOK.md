@@ -2,8 +2,8 @@
 
 ## Source References
 
-- [../README.md:26](../README.md#L26): build command.
-- [../src/MainDriver.cpp:623](../src/MainDriver.cpp#L623): compiler-facing incremental options.
+- [../README.md:31](../README.md#L31): build command.
+- [../src/MainDriver.cpp:636](../src/MainDriver.cpp#L636): compiler-facing incremental options.
 - [../src/synthesiser/Synthesiser.cpp:673](../src/synthesiser/Synthesiser.cpp#L673): generated runtime entry.
 - [../src/include/souffle/CompiledOptions.h:709](../src/include/souffle/CompiledOptions.h#L709): runtime flags.
 - [topics/evaluation/README.artifact.inc.md:1](topics/evaluation/README.artifact.inc.md#L1): benchmark workflow.

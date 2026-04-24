@@ -254,6 +254,12 @@ def assert_glob_nonempty(base_dir: Path, pattern: str, *, label: str) -> None:
         raise CaseFailure(f"{label}: expected files matching {base_dir / pattern}")
 
 
+def assert_glob_empty(base_dir: Path, pattern: str, *, label: str) -> None:
+    matches = sorted(base_dir.glob(pattern))
+    if matches:
+        raise CaseFailure(f"{label}: unexpected files matching {base_dir / pattern}: {matches}")
+
+
 def load_single_json_match(base_dir: Path, pattern: str, *, label: str) -> object:
     matches = sorted(base_dir.glob(pattern))
     if len(matches) != 1:
@@ -715,6 +721,73 @@ def case_canonical_online_cli_surface(souffle_bin: Path, work_root: Path) -> Non
     assert_path_exists(
         quiet_regional_output_dir / "fact-iter1-inc-regional.prob",
         label="canonical online cli quiet regional artifact",
+    )
+    assert_glob_empty(
+        quiet_regional_output_dir,
+        "initial-input-relations-iter*.txt",
+        label="canonical online cli default output omits initial input relation dumps",
+    )
+    assert_path_missing(
+        quiet_regional_output_dir / "det-relations.txt",
+        label="canonical online cli default output omits det-relations.txt",
+    )
+    assert_path_missing(
+        quiet_regional_output_dir / "det-scc.txt",
+        label="canonical online cli default output omits det-scc.txt",
+    )
+
+    help_output_dir = case_dir / "out_canonical_cli_help"
+    help_proc = run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=help_output_dir,
+        script_text="help\nq\n",
+        timeout=240,
+    )
+    if any(line.strip().startswith("dump") for line in help_proc.stdout.splitlines()):
+        raise CaseFailure(f"canonical online cli help exposes removed dump command\nstdout:\n{help_proc.stdout}")
+
+    removed_dump_output_dir = case_dir / "out_canonical_cli_removed_dump"
+    removed_dump_proc = run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=removed_dump_output_dir,
+        script_text="dump\nq\n",
+        timeout=240,
+    )
+    assert_stdout_contains(
+        removed_dump_proc.stdout,
+        "Unknown command: dump",
+        label="canonical online cli rejects removed dump command",
+    )
+
+    startup_only_dump_output_dir = case_dir / "out_canonical_cli_startup_only_dump"
+    startup_only_dump_proc = run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=startup_only_dump_output_dir,
+        script_text="show config\nunset dump json-before-graph\nshow config\nq\n",
+        extra_args=["--dump=json-before-graph"],
+        timeout=240,
+    )
+    assert_path_exists(
+        startup_only_dump_output_dir / "derivation-before-graph.json",
+        label="canonical online cli startup json-before-graph artifact",
+    )
+    assert_stdout_contains(
+        startup_only_dump_proc.stdout,
+        "mode=inc-regional dumps=json,json-before-graph profile-stages=inc,wmc",
+        label="canonical online cli shows startup-only json-before-graph",
+    )
+    assert_stdout_contains(
+        startup_only_dump_proc.stdout,
+        "dump json-before-graph is only evaluated during startup graph construction",
+        label="canonical online cli rejects mutable json-before-graph unset",
+    )
+    assert_stdout_contains(
+        startup_only_dump_proc.stdout,
+        "mode=inc-regional dumps=json,json-before-graph profile-stages=inc,wmc",
+        label="canonical online cli preserves startup-only dump config after unset rejection",
     )
 
     arity_output_dir = case_dir / "out_canonical_cli_arity"

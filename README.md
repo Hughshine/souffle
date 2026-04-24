@@ -11,15 +11,20 @@ companion repository for side-channel case generation and result collection.
 
 ## Source References
 
-- [src/MainDriver.cpp:623](src/MainDriver.cpp#L623): compiler mode/output options.
-- [src/MainDriver.cpp:691](src/MainDriver.cpp#L691): compiler default canonicalization.
+- [src/MainDriver.cpp:636](src/MainDriver.cpp#L636): compiler mode/output options.
+- [src/MainDriver.cpp:719](src/MainDriver.cpp#L719): compiler default canonicalization.
 - [src/synthesiser/Synthesiser.cpp:673](src/synthesiser/Synthesiser.cpp#L673): generated runtime enters the online pipeline.
 - [src/include/souffle/CompiledOptions.h:187](src/include/souffle/CompiledOptions.h#L187): supported mode syntax.
 - [src/include/souffle/CompiledOptions.h:709](src/include/souffle/CompiledOptions.h#L709): generated runtime option parser.
-- [src/include/souffle/cli/Cli.h:680](src/include/souffle/cli/Cli.h#L680): interactive update commands.
+- [src/include/souffle/cli/Cli.h:679](src/include/souffle/cli/Cli.h#L679): interactive update commands.
 - [tests/regression/CMakeLists.txt:22](tests/regression/CMakeLists.txt#L22): maintained regression cases.
 
 ## Build
+
+The build requires the system C++ toolchain, CMake, Flex/Bison, Python 3,
+Readline headers/libraries, and CUDD. CMake now fails during configure if
+Readline or CUDD is missing; set `CUDD_ROOT`, `CUDD_INCLUDE_DIR`, or
+`CUDD_LIBRARY` for nonstandard CUDD installs.
 
 ```bash
 JOBS=$(nproc || sysctl -n hw.ncpu || echo 2)
@@ -81,4 +86,5 @@ cmake --build build --target check-regression
 - [docs/USAGE.md](docs/USAGE.md): compiler/runtime interface.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): control-flow map.
 - [docs/TESTING.md](docs/TESTING.md): regression checks.
+- [docs/SECURITY.md](docs/SECURITY.md): dependency and artifact hygiene.
 - [docs/topics/evaluation/README.artifact.inc.md](docs/topics/evaluation/README.artifact.inc.md): AE benchmark workflow.

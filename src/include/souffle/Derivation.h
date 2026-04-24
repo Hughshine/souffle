@@ -100,9 +100,6 @@ struct hash<UntypedTuple> {
 };
 }
 
-extern UntypedTuple testUntypedTuple1;
-extern UntypedTuple testUntypedTuple2;
-
 struct RuleApplication {
     souffle::RamDomain ruleId{};
     std::vector<souffle::RamDomain> varValuesPure;
@@ -131,17 +128,6 @@ struct hash<RuleApplication> {
 
 /** Fact is trivially true; use the naiveRuleApplication for such cases when needed */
 extern RuleApplication naiveRuleApplication;
-extern std::vector<souffle::RamDomain> testVarValues;
-extern RuleApplication testRuleApplication1;
-extern RuleApplication testRuleApplication2;
-extern RuleApplication testRuleApplication3;
-extern RuleApplication testRuleApplication4;
-
-extern std::unordered_set<RuleApplication> testRuleApplicationSet1;
-extern std::unordered_set<RuleApplication> testRuleApplicationSet2;
-
-// testDerivationInfo
-extern std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> testUntypedTuple2RuleApplications;
 extern bool dredProfileEnabled;
 extern bool incProfileEnabled;
 extern bool fcProfileEnabled;
@@ -262,7 +248,6 @@ public:
 
     static constexpr std::size_t kInvalidDredScc = static_cast<std::size_t>(-1);
 
-    static std::set<souffle::RamDomain> testRules;
     static std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2RuleApplications;
     static std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2DeltaInsertRuleApplications;
     static std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> untypedTuple2DeltaDeleteRuleApplications;
@@ -323,7 +308,6 @@ private:
 // relation string -> int mapping, for optimization, reuse string
 extern std::unordered_set<UntypedTuple> inputFactSet;
 bool isInputFact(UntypedTuple tuple);
-void dumpInputFacts(std::ostream& os = std::cout);
 
 extern std::unordered_map<UntypedTuple, double> fact_prob;
 extern std::unordered_map<std::string, bool> relationHasProbFact;
@@ -335,6 +319,5 @@ inline bool isDetRelation(const std::string& rel) {
 }
 
 extern std::map<std::string, std::set<UntypedTuple>> initialInputRelations;
-void dumpInitialInputRelations(std::string filename = "");
 
 #endif //DERIVATION_H

@@ -7,11 +7,11 @@ the selected region plus boundary calibration work.
 ## Source References
 
 - [../../../src/include/souffle/CompiledOptions.h:187](../../../src/include/souffle/CompiledOptions.h#L187): public mode syntax.
-- [../../../src/include/souffle/cli/Executor.h:407](../../../src/include/souffle/cli/Executor.h#L407): runtime dispatch to `inc-regional`.
+- [../../../src/include/souffle/cli/Executor.h:318](../../../src/include/souffle/cli/Executor.h#L318): runtime dispatch to `inc-regional`.
 - [../../../src/include/souffle/problog/ForwardCompilation.h:1967](../../../src/include/souffle/problog/ForwardCompilation.h#L1967): regional FC entry.
 - [../../../src/include/souffle/problog/ForwardCompilation.h:2476](../../../src/include/souffle/problog/ForwardCompilation.h#L2476): regional orchestrator call.
 - [../../../src/include/souffle/problog/RegionalIncremental.h:1201](../../../src/include/souffle/problog/RegionalIncremental.h#L1201): regional FC class.
-- [../../../src/include/souffle/problog/RegionalIncremental.h:1535](../../../src/include/souffle/problog/RegionalIncremental.h#L1535): delta-reach dependency graph diagnostics.
+- [../../../src/include/souffle/problog/RegionalIncremental.h:1537](../../../src/include/souffle/problog/RegionalIncremental.h#L1537): delta-reach dependency graph diagnostics.
 - [../../../src/include/souffle/problog/formula/CuddManager.h:568](../../../src/include/souffle/problog/formula/CuddManager.h#L568): CUDD adaptive reordering initialization.
 
 ## Control Flow
@@ -36,9 +36,10 @@ semantic mode of the turn remains the requested one.
 
 ## Reordering
 
-CUDD adaptive reordering is an implementation default. There is no public
-reordering flag. Incremental turns create variables only for delta inserts when
-possible, but adaptive reordering remains enabled through the CUDD manager.
+CUDD reordering is an implementation default. There is no public reordering
+flag. Incremental turns create variables only for delta inserts when possible.
+The CUDD manager applies automatic thresholded reordering and disables autodyn
+above the largest node-count threshold.
 
 ## Diagnostics
 
@@ -50,6 +51,9 @@ extra AE material:
   --dump=dot,json,stat --profile-stage=inc,fc,wmc,inc-regional
 ```
 
-`dot` and `json` expose the pruned graph, `stat` prints graph counters, `fc`
-prints formula construction timing, `wmc` prints weighted-model-counting timing,
-and `inc-regional` prints regional analysis and calibration diagnostics.
+`dot` and `json` expose the pruned graph. `stat` is a broad diagnostic dump for
+graph counters, `graph-*.json`, SEM/DRed summaries, and regional scope console
+diagnostics. `fc` prints formula construction timing, `wmc` prints
+weighted-model-counting timing, and `inc-regional` prints regional analysis and
+calibration diagnostics. If `stat` is enabled before startup graph construction,
+the runtime also writes deterministic-relation files.

@@ -240,7 +240,11 @@ target_sources(compiled PRIVATE
   problog/debug/Debugger.cpp
 )
 
-target_include_directories(compiled PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_include_directories(compiled PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  "${CUDD_INCLUDE_DIR}"
+  "${READLINE_INCLUDE_DIR}"
+)
 
 # Set C++ standard to C++17
 target_compile_features(libsouffle PUBLIC cxx_std_17)
@@ -407,7 +411,20 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   endif ()
 endif()
 
-list(APPEND SOUFFLE_COMPILED_LIBS -lreadline)
+list(APPEND SOUFFLE_COMPILED_LIBS "${READLINE_LIBRARY}")
+if (TERMCAP_LIBRARY)
+  list(APPEND SOUFFLE_COMPILED_LIBS "${TERMCAP_LIBRARY}")
+endif()
+get_filename_component(READLINE_LIBRARY_DIR "${READLINE_LIBRARY}" DIRECTORY)
+if (READLINE_LIBRARY_DIR)
+  list(APPEND SOUFFLE_COMPILED_RPATHS "${READLINE_LIBRARY_DIR}")
+endif()
+if (TERMCAP_LIBRARY)
+  get_filename_component(TERMCAP_LIBRARY_DIR "${TERMCAP_LIBRARY}" DIRECTORY)
+  if (TERMCAP_LIBRARY_DIR)
+    list(APPEND SOUFFLE_COMPILED_RPATHS "${TERMCAP_LIBRARY_DIR}")
+  endif()
+endif()
 
 list(INSERT SOUFFLE_COMPILED_LIBS 0 "$<TARGET_FILE:compiled>")
 
@@ -488,7 +505,9 @@ JSON_DATA_TEXT = \"\"\"{
   \"rpath_fmt\": \"${RPATH_FMT}\",
   \"path_delimiter\": \"${OS_PATH_DELIMITER}\",
   \"exe_extension\": \"${EXE_EXTENSION}\",
-  \"source_include_dir\": \"${CMAKE_CURRENT_SOURCE_DIR}/include\"
+  \"source_include_dir\": \"${CMAKE_CURRENT_SOURCE_DIR}/include\",
+  \"cudd_include_dir\": \"${CUDD_INCLUDE_DIR}\",
+  \"cudd_library\": \"${CUDD_LIBRARY}\"
 }\"\"\"
 ${TEMPLATE}
 ")

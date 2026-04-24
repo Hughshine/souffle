@@ -868,7 +868,6 @@ static void runBddPipeline(
     }
 
     debugger.endTurn();
-    dumpInitialInputRelations(opt.getOutputFileDir() + "/initial-input-relations-iter0.txt");
 
     if (enableOnlineCli) {
         IncrementalCLI<BddNodeRef> cli(

@@ -5,7 +5,6 @@
 #include <cassert>
 #include <chrono>
 #include <ctime>
-#include <fstream>
 #include <iostream>
 #include <map>
 #include <set>
@@ -143,9 +142,6 @@ UntypedTuple UntypedTuple::fromSouffleTuple(const souffle::tuple& tuple) {
     return result;
 }
 
-UntypedTuple testUntypedTuple1{"T", {0, -1, -2, -42}};
-UntypedTuple testUntypedTuple2{"S", {0, 1, 2, 42}};
-
 bool RuleApplication::operator==(const RuleApplication& other) const {
     return ruleId == other.ruleId && varValuesPure == other.varValuesPure;
 }
@@ -204,37 +200,6 @@ bool RuleApplication::operator<(const RuleApplication& other) const {
 }
 
 RuleApplication naiveRuleApplication{0, {}};
-std::vector<souffle::RamDomain> testVarValues = {1, 2};
-RuleApplication testRuleApplication1{1, testVarValues};
-RuleApplication testRuleApplication2{2, testVarValues};
-RuleApplication testRuleApplication3{3, testVarValues};
-RuleApplication testRuleApplication4{114514, testVarValues};
-
-std::unordered_set<RuleApplication> testRuleApplicationSet1{
-        testRuleApplication1,
-        testRuleApplication2,
-        testRuleApplication3,
-        testRuleApplication4,
-};
-
-std::unordered_set<RuleApplication> testRuleApplicationSet2{
-        testRuleApplication4,
-        testRuleApplication3,
-        testRuleApplication2,
-        testRuleApplication1,
-};
-
-std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> testUntypedTuple2RuleApplications{
-        {testUntypedTuple1, &testRuleApplicationSet1},
-        {testUntypedTuple2, &testRuleApplicationSet2},
-};
-
-std::set<souffle::RamDomain> DerivationManager::testRules = {
-        0,
-        1,
-        2,
-        42,
-};
 
 std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>
         DerivationManager::untypedTuple2RuleApplications = {};
@@ -625,36 +590,9 @@ bool isInputFact(UntypedTuple tuple) {
     return inputFactSet.count(tuple) != 0;
 }
 
-void dumpInputFacts(std::ostream& os) {
-    for (auto& tuple : inputFactSet) {
-        os << UntypedTuple::toString(tuple) << '\n';
-    }
-}
-
 std::unordered_map<UntypedTuple, double> fact_prob;
 std::unordered_map<std::string, bool> relationHasProbFact;
 bool detOptEnabled = true;
 std::unordered_map<std::string, bool> relationIsDet;
 
 std::map<std::string, std::set<UntypedTuple>> initialInputRelations;
-
-void dumpInitialInputRelations(std::string filename) {
-    std::ostream* os;
-    std::ofstream ofs;
-    if (!filename.empty()) {
-        ofs.open(filename);
-        os = &ofs;
-    } else {
-        os = &std::cout;
-    }
-    for (const auto& [rel, tuples] : initialInputRelations) {
-        if (tuples.empty()) continue;
-        *os << "Relation: " << rel << '\n';
-        for (const auto& tuple : tuples) {
-            *os << "  " << tuple.toString() << '\n';
-        }
-    }
-    if (ofs.is_open()) {
-        ofs.close();
-    }
-}

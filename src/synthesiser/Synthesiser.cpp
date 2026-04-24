@@ -834,7 +834,6 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                             out << "inputFactSet.insert(untypedTuple);\n";
                             out << "initialInputRelations[\"" << getBaseRelationName(io.getRelation()) <<"\"].insert(untypedTuple);\n";
                         out << "}" << std::endl;
-                        // out << "dumpInputFacts();\n";
                     }
                 } else {
                     const std::string& isInsert = io.get("inc-insert");
@@ -2348,34 +2347,10 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
             out << "Tuple<RamDomain," << arity << "> tuple{{" << join(guardedInsert.getValues(), ",", rec)
                 << "}};\n";
 
-            auto tempRelName = rel->getName();
             // insert tuple
             out << relName << "->"
                 << "insert(tuple," << ctxName << ");\n";
 
-            // insert tuple and record derivation
-            // case 1: insert to delta, (new) to old
-            if (guardedInsert.getClauseStr() == "UNKNOWN CLAUSE") {
-                out << relName << "->"
-                    << "insert(tuple," << ctxName << ");\n";
-            } else {
-                // case 2: insert to new/original rel, record derivation
-                if (tempRelName.size() >= 4 && tempRelName.substr(0, 4) == "@new"
-                    && !(tempRelName.size() >= 10 && tempRelName.substr(0, 10) == "@new_derv_")) {
-                    tempRelName.erase(tempRelName.begin(), tempRelName.begin() + 5);  // there is an extra '_'
-                }
-                // retrieve the tuple first
-                out << "auto untypedTuple = UntypedTuple::fromTypedTuple(\"" << tempRelName << "\",tuple);\n";
-                out << "auto*& ruleSet = DerivationManager::untypedTuple2Rules[untypedTuple];\n";
-                out << "if (ruleSet == nullptr) {\n";
-                out << relName << "->"
-                    << "insert(tuple," << ctxName << ");\n";  // only insert tuple to rel when it wasn't recorded
-                out << "ruleSet = new std::unordered_set<RuleApplication>();\n";
-                out << "}\n";
-                // record derivation info about realTuple
-                out << "RuleApplication ruleApplication{" << guardedInsert.getClauseID() << ", testVarValues};\n";
-                out << "ruleSet->insert(ruleApplication);\n";
-            }
             // end of conseq body.
             out << "}\n";
 
@@ -4751,6 +4726,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "if (opt.isVerboseEnabled()) std::cout << \"[det-analysis] analyze took \" << analyzeMs << \" ms\" << std::endl;\n";
     hook << "if (detStage) detStage->logMessage(Level::INFO, \"analyze_ms=\" + std::to_string(analyzeMs));\n";
     hook << "\n";
+    hook << "if (opt.isDumpStatEnabled()) {\n";
     hook << "auto dumpStart = std::chrono::steady_clock::now();\n";
     hook << "std::string detPath = souffle::problog::makeOutputPath(opt, \"det-relations.txt\");\n";
     hook << "std::ofstream detOut(detPath);\n";
@@ -4781,6 +4757,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "auto dumpMs = detNowMs(dumpStart);\n";
     hook << "if (opt.isVerboseEnabled()) std::cout << \"[det-analysis] dump took \" << dumpMs << \" ms\" << std::endl;\n";
     hook << "if (detStage) detStage->logMessage(Level::INFO, \"dump_ms=\" + std::to_string(dumpMs));\n";
+    hook << "}\n";
     hook << "}\n";
     hook << "debugger.endStage();\n";
     hook << "}\n";

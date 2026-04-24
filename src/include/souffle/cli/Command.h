@@ -17,7 +17,6 @@ enum class CommandKind {
     UNSET,
     SHOW,
     COMMIT,
-    DUMP,
     EXIT,
     UNKNOWN,
 };
@@ -75,9 +74,6 @@ inline CommandKind classifyCommand(const std::string& cmd) {
     }
     if (cmd == "commit") {
         return CommandKind::COMMIT;
-    }
-    if (cmd == "dump") {
-        return CommandKind::DUMP;
     }
     if (cmd == "exit" || cmd == "quit" || cmd == "q") {
         return CommandKind::EXIT;

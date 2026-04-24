@@ -2,13 +2,13 @@
 
 ## Source References
 
-- [../src/MainDriver.cpp:623](../src/MainDriver.cpp#L623): compiler options.
-- [../src/MainDriver.cpp:691](../src/MainDriver.cpp#L691): runtime-default canonicalization.
+- [../src/MainDriver.cpp:636](../src/MainDriver.cpp#L636): compiler options.
+- [../src/MainDriver.cpp:719](../src/MainDriver.cpp#L719): runtime-default canonicalization.
 - [../src/synthesiser/Synthesiser.cpp:673](../src/synthesiser/Synthesiser.cpp#L673): generated online pipeline call.
-- [../src/synthesiser/Synthesiser.cpp:4558](../src/synthesiser/Synthesiser.cpp#L4558): generated runtime defaults.
+- [../src/synthesiser/Synthesiser.cpp:4533](../src/synthesiser/Synthesiser.cpp#L4533): generated runtime defaults.
 - [../src/include/souffle/CompiledOptions.h:187](../src/include/souffle/CompiledOptions.h#L187): mode and output syntax.
 - [../src/include/souffle/CompiledOptions.h:709](../src/include/souffle/CompiledOptions.h#L709): generated runtime parser.
-- [../src/include/souffle/cli/Cli.h:680](../src/include/souffle/cli/Cli.h#L680): online CLI commands.
+- [../src/include/souffle/cli/Cli.h:679](../src/include/souffle/cli/Cli.h#L679): online CLI commands.
 
 ## Input Format
 
@@ -38,7 +38,7 @@ AE-facing compiler options:
 - `-D, --output-dir <DIR>`: default output directory.
 - `-o, --dl-program <FILE>`: generated executable.
 - `--setmode=<MODE>`: default runtime mode, one of `inc-naive`, `inc-regional`, `full`.
-- `--dump=<json|json-before-graph|json-before-prune|dot|stat>`: bake default graph dumps.
+- `--dump=<json|json-before-graph|json-before-prune|dot|stat>`: bake default graph/stat dumps.
 - `--profile-stage=<dred|inc|fc|wmc|inc-delete|inc-regional|dep-graph>`: bake default profiling stages.
 - `--log-file=<FILE>`: default debugger log filename.
 - `-v, --verbose`: bake informational runtime diagnostics on by default.
@@ -53,7 +53,7 @@ AE-facing generated runtime options:
 - `-F, --facts, --input-dir <DIR>`: fact directory.
 - `-D, --output, --output-dir <DIR>`: output directory.
 - `-m, --setmode=<MODE>`: turn mode, one of `inc-naive`, `inc-regional`, `full`.
-- `--dump=<json|json-before-graph|json-before-prune|dot|stat>`: default-off graph dumps.
+- `--dump=<json|json-before-graph|json-before-prune|dot|stat>`: default-off graph/stat dumps.
 - `--profile-stage=<dred|inc|fc|wmc|inc-delete|inc-regional|dep-graph>`: default-off profiling output.
 - `--logfile=<FILE>` or `--log-file=<FILE>`: debugger log filename.
 - `-v, --verbose`: print informational graph, CUDD, and pipeline diagnostics.
@@ -72,7 +72,7 @@ Commands:
 - `delete Rel(v1, v2, ...)`
 - `commit`
 - `setmode inc-naive|inc-regional|full`
-- `set dump <kind>` and `unset dump <kind>`
+- `set dump json|json-before-prune|dot|stat` and matching `unset dump ...`
 - `set profile-stage <stage>` and `unset profile-stage <stage>`
 - `show config`
 - `list`
@@ -100,6 +100,9 @@ The default run writes `facts.prob` and per-turn snapshots such as
 ```
 
 `dot` writes derivation graph DOT files, `json` writes post-prune graph JSON,
-`json-before-graph` writes rule-application JSON before graph materialization,
-`json-before-prune` writes the graph before pruning, and `stat` writes graph
-statistics.
+`json-before-graph` writes the startup rule-application JSON before baseline
+graph materialization, `json-before-prune` writes per-turn graphs before pruning,
+and `stat` is a broad diagnostic dump: graph counters, `graph-*.json`, SEM/DRed
+summaries, and regional scope console diagnostics for `inc-regional`. When
+enabled before startup graph construction, `stat` also writes
+deterministic-relation analysis files.

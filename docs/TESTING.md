@@ -3,7 +3,7 @@
 ## Source References
 
 - [../CMakeLists.txt:93](../CMakeLists.txt#L93): CMake testing option.
-- [../CMakeLists.txt:267](../CMakeLists.txt#L267): regression subdirectory wiring.
+- [../CMakeLists.txt:302](../CMakeLists.txt#L302): regression subdirectory wiring.
 - [../tests/regression/CMakeLists.txt:22](../tests/regression/CMakeLists.txt#L22): maintained case registration.
 - [../tests/regression/CMakeLists.txt:33](../tests/regression/CMakeLists.txt#L33): `check-regression` target.
 - [../tests/regression/run_regression_case.py:153](../tests/regression/run_regression_case.py#L153): maintained compile invocation.

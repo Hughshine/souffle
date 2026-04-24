@@ -7,9 +7,9 @@ repository on branch `CAV-INC`.
 ## Source References
 
 - [../../../README.md:1](../../../README.md#L1): branch scope.
-- [../../../src/MainDriver.cpp:623](../../../src/MainDriver.cpp#L623): AE compiler parameters.
+- [../../../src/MainDriver.cpp:636](../../../src/MainDriver.cpp#L636): AE compiler parameters.
 - [../../../src/include/souffle/CompiledOptions.h:187](../../../src/include/souffle/CompiledOptions.h#L187): runtime mode syntax.
-- [../../../src/include/souffle/cli/Cli.h:680](../../../src/include/souffle/cli/Cli.h#L680): update commands.
+- [../../../src/include/souffle/cli/Cli.h:679](../../../src/include/souffle/cli/Cli.h#L679): update commands.
 - [../../../tests/regression/run_regression_case.py:153](../../../tests/regression/run_regression_case.py#L153): maintained compile invocation.
 
 ## Scope

@@ -182,7 +182,44 @@ find_package(BISON "3.2" REQUIRED)
 # --------------------------------------------------
 # mcpp
 # --------------------------------------------------
-find_program(MCPP mcpp)
+find_program(MCPP_EXECUTABLE mcpp)
+if (NOT MCPP_EXECUTABLE)
+    set(MCPP_EXECUTABLE "")
+endif()
+
+# --------------------------------------------------
+# Readline
+# --------------------------------------------------
+find_path(READLINE_INCLUDE_DIR
+    NAMES readline/readline.h
+)
+find_library(READLINE_LIBRARY
+    NAMES readline
+)
+if (NOT READLINE_INCLUDE_DIR OR NOT READLINE_LIBRARY)
+    message(FATAL_ERROR "Readline is required. Install libreadline-dev or set READLINE_INCLUDE_DIR and READLINE_LIBRARY.")
+endif()
+find_library(TERMCAP_LIBRARY
+    NAMES tinfo ncurses curses termcap
+)
+
+# --------------------------------------------------
+# CUDD
+# --------------------------------------------------
+set(CUDD_ROOT "/usr/local" CACHE PATH "CUDD installation prefix")
+find_path(CUDD_INCLUDE_DIR
+    NAMES cudd.h
+    HINTS "${CUDD_ROOT}"
+    PATH_SUFFIXES include
+)
+find_library(CUDD_LIBRARY
+    NAMES cudd
+    HINTS "${CUDD_ROOT}"
+    PATH_SUFFIXES lib lib64
+)
+if (NOT CUDD_INCLUDE_DIR OR NOT CUDD_LIBRARY)
+    message(FATAL_ERROR "CUDD is required. Install CUDD or set CUDD_ROOT, CUDD_INCLUDE_DIR, and CUDD_LIBRARY.")
+endif()
 
 # --------------------------------------------------
 # pthreads

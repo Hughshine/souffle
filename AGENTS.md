@@ -6,7 +6,7 @@ Repo-local constraints for Codex sessions on the incremental AE branch.
 
 - [README.md:1](README.md#L1): evaluator-facing branch scope.
 - [CMakeLists.txt:93](CMakeLists.txt#L93): CMake testing option.
-- [CMakeLists.txt:267](CMakeLists.txt#L267): regression subdirectory wiring.
+- [CMakeLists.txt:302](CMakeLists.txt#L302): regression subdirectory wiring.
 - [tests/regression/CMakeLists.txt:33](tests/regression/CMakeLists.txt#L33): `check-regression` target.
 - [docs/INDEX.md:1](docs/INDEX.md#L1): documentation reading order.
 

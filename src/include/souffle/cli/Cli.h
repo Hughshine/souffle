@@ -687,8 +687,8 @@ private:
                   << "show config\n"
                   << "       Show current online mode and mutable runtime toggles\n"
                   << "setmode <inc-naive|inc-regional|full>\n"
-                  << "set dump <json|json-before-graph|json-before-prune|dot|stat>\n"
-                  << "unset dump <json|json-before-graph|json-before-prune|dot|stat>\n"
+                  << "set dump <json|json-before-prune|dot|stat>\n"
+                  << "unset dump <json|json-before-prune|dot|stat>\n"
                   << "set profile-stage <dred|inc|fc|wmc|inc-delete|inc-regional|dep-graph>\n"
                   << "unset profile-stage <...>\n"
                   << "commit Apply queued changes and run incremental computation\n"
@@ -793,9 +793,15 @@ private:
             const std::string& key, const std::vector<std::string>& args, bool enabled) {
         if (key == "dump") {
             const std::string value = args.size() > 1 ? args[1] : std::string();
+            const std::string normalized = souffle::normalizeFlagToken(value);
+            if (normalized == "json-before-graph") {
+                std::cout << "dump json-before-graph is only evaluated during startup graph construction"
+                          << std::endl;
+                return true;
+            }
             if (value.empty() || !opt.setDumpKindToken(value, enabled)) {
                 std::cout << "Usage: " << (enabled ? "set" : "unset") << " dump "
-                          << souffle::dumpKindsOptionSyntax() << std::endl;
+                          << "[ json | json-before-prune | dot | stat ]" << std::endl;
                 return true;
             }
             syncRuntimeTogglesFromOptions();
@@ -837,16 +843,6 @@ private:
         }
         if (!setMutableConfigOption(key, command.args, false)) {
             std::cout << "Unknown option: " << key << std::endl;
-        }
-    }
-
-    void handleDumpCommand() const {
-        assert(this->program != nullptr);
-        for (auto rel : this->program->getAllRelations()) {
-            std::cout << rel->getName() << std::endl;
-            for (auto ele : *rel) {
-                std::cout << ele.toString() << std::endl;
-            }
         }
     }
 

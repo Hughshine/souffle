@@ -653,7 +653,6 @@ public:
     BddNodeRef makeCondition(const BddNodeRef& f,
         const std::vector<int>& trueIndexes, const std::vector<int>& falseIndexes) override;
     bool isSame(const BddNodeRef& a, const BddNodeRef& b) override;
-    void postprocessUselessVariables(const std::set<int>& condVars);
     BddNodeRef getTrue() override {
         return BddNodeRef(manager, Cudd_ReadOne(manager.get()));
     }
@@ -1216,48 +1215,6 @@ inline BddNodeRef WeightedBDDManager::makeCondition(const BddNodeRef& f,
         cube = makeAnd(cube, makeNot(x));
     }
     return BddNodeRef(manager, Cudd_bddRestrict(manager.get(), f.get(), cube.get()));
-}
-
-inline void WeightedBDDManager::postprocessUselessVariables(const std::set<int>& condVars) {
-    DdManager* dd = manager.get();
-    int n = Cudd_ReadSize(dd);  // Current BDD variable count
-    assert(n > 0);
-    // Get current variable order (variable index per level).
-    std::vector<int> currentOrder(n);
-    for (int level = 0; level < n; ++level) {
-        int var = Cudd_ReadInvPerm(dd, level);
-        // Check bounds/validity.
-        assert(var >= 0 && var < n);
-        currentOrder[level] = var;
-    }
-
-    // Construct a new order: move condVars to the front, keep others' relative order.
-    std::vector<int> newOrder;
-    newOrder.reserve(n);
-
-    // Add front variables in their current order.
-    for (int var : currentOrder) {
-        if (condVars.count(var)) {
-            assert(var >= 0 && var < n);
-            newOrder.push_back(var);
-        }
-    }
-    // Then add the remaining variables.
-    for (int var : currentOrder) {
-        if (!condVars.count(var)) {
-            assert(var >= 0 && var < n);
-            newOrder.push_back(var);
-        }
-    }
-
-    // Final length must equal n.
-    assert(static_cast<int>(newOrder.size()) == n);
-
-    // Call CUDD to reorder variables.
-    int result = Cudd_ShuffleHeap(dd, newOrder.data());
-    if (result != 1) {
-        throw std::runtime_error("Cudd_ShuffleHeap failed to reorder variables");
-    }
 }
 
 bool WeightedBDDManager::isSame(const BddNodeRef& a, const BddNodeRef& b) {

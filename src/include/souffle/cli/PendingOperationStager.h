@@ -1,12 +1,9 @@
 #ifndef SOUFFLE_CLI_PENDING_OPERATION_STAGER_H
 #define SOUFFLE_CLI_PENDING_OPERATION_STAGER_H
 
-#include <cstdlib>
-#include <fstream>
 #include <iostream>
 #include <map>
 #include <set>
-#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -27,20 +24,6 @@ inline std::string getIncDeltaTupleDeleteRelationName(const std::string& name) {
 
 inline std::string getIncDeltaTupleInsertRelationName(const std::string& name) {
     return getConcreteRelationName(name, "$inc_delta_tuple_insert_");
-}
-
-inline std::size_t readProcStatusValueKb(const char* key) {
-    std::ifstream status("/proc/self/status");
-    std::string line;
-    while (std::getline(status, line)) {
-        if (line.rfind(key, 0) == 0) {
-            std::istringstream iss(line);
-            std::string label, value, unit;
-            iss >> label >> value >> unit;
-            return static_cast<std::size_t>(std::stoull(value));
-        }
-    }
-    return 0;
 }
 
 template <typename OperationT>
@@ -177,32 +160,8 @@ public:
     }
 
     void purgeAllRelations() {
-        const bool relPurgeProbe = std::getenv("SOUFFLE_REL_PURGE_PROBE") != nullptr;
         for (auto* rel : program->getAllRelations()) {
-            std::size_t tuplesBefore = 0;
-            std::size_t rssBefore = 0;
-            std::size_t hwmBefore = 0;
-            if (relPurgeProbe) {
-                tuplesBefore = rel->size();
-                rssBefore = readProcStatusValueKb("VmRSS:");
-                hwmBefore = readProcStatusValueKb("VmHWM:");
-            }
             rel->purge();
-            if (relPurgeProbe) {
-                const std::size_t rssAfter = readProcStatusValueKb("VmRSS:");
-                const std::size_t hwmAfter = readProcStatusValueKb("VmHWM:");
-                std::cout << "[rel-purge-probe] relation=" << rel->getName()
-                          << " tuples_before=" << tuplesBefore
-                          << " rss_before_kb=" << rssBefore
-                          << " rss_after_kb=" << rssAfter
-                          << " rss_delta_kb=" << static_cast<long long>(rssAfter) -
-                                         static_cast<long long>(rssBefore)
-                          << " hwm_before_kb=" << hwmBefore
-                          << " hwm_after_kb=" << hwmAfter
-                          << " hwm_delta_kb=" << static_cast<long long>(hwmAfter) -
-                                         static_cast<long long>(hwmBefore)
-                          << std::endl;
-            }
         }
     }
 

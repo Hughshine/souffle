@@ -23,13 +23,16 @@ if not JSON_DATA_TEXT:
       "rpath_fmt": "-Wl,-rpath,{}",
       "path_delimiter": ":",
       "exe_extension": "",
-      "source_include_dir": ""
+      "source_include_dir": "",
+      "cudd_include_dir": "/usr/local/include",
+      "cudd_library": "/usr/local/lib/libcudd.a"
     }"""
 
 import argparse
 import json
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 
@@ -53,6 +56,8 @@ PATH_DELIMITER = conf['path_delimiter']
 RPATHS = conf['rpaths'].split(PATH_DELIMITER)
 exeext = conf['exe_extension']
 SOURCE_INCLUDE_DIR = conf['source_include_dir']
+DEFAULT_CUDD_INCLUDE_DIR = conf.get('cudd_include_dir') or ""
+DEFAULT_CUDD_LIBRARY = conf.get('cudd_library') or ""
 
 workdir = os.getcwd()
 scriptdir = pathlib.Path(os.path.dirname(os.path.abspath(__file__)))
@@ -64,7 +69,9 @@ parser.add_argument('-g', action='store_true', dest='debug', help="Debug build t
 parser.add_argument('-v', action='store_true', dest='verbose', help="Verbose output")
 parser.add_argument('-I', action='append', default=[], metavar='INCDIR', dest='inc_dirs', type=lambda p: pathlib.Path(p).absolute(), help="Additional include directories")
 parser.add_argument('--with-cudd', action='store_true', dest='with_cudd', help="Link with CUDD library")
-parser.add_argument('--cudd-dir', metavar='CUDDDIR', dest='cudd_dir', type=lambda p: pathlib.Path(p).absolute(), default='/usr/local', help="CUDD installation directory (default: /usr/local)")
+parser.add_argument('--cudd-dir', metavar='CUDDDIR', dest='cudd_dir', type=lambda p: pathlib.Path(p).absolute(), default=None, help="CUDD installation directory")
+parser.add_argument('--cudd-include-dir', metavar='DIR', dest='cudd_include_dir', type=lambda p: pathlib.Path(p).absolute(), default=pathlib.Path(DEFAULT_CUDD_INCLUDE_DIR) if DEFAULT_CUDD_INCLUDE_DIR else None, help="CUDD include directory")
+parser.add_argument('--cudd-library', metavar='LIB', dest='cudd_library', type=lambda p: pathlib.Path(p).absolute(), default=pathlib.Path(DEFAULT_CUDD_LIBRARY) if DEFAULT_CUDD_LIBRARY else None, help="CUDD library path")
 parser.add_argument('source', nargs='+', metavar='SOURCE', type=lambda p: pathlib.Path(p).absolute(), help="C++ source files")
 parser.add_argument('-o', metavar='BINARY', dest='output', type=lambda p: pathlib.Path(p).absolute(), help="Binary file name")
 
@@ -123,21 +130,22 @@ additional_link_options = ""
 
 # Now add each include directory to the additional includes
 for inc_dir in args.inc_dirs:
-    additional_includes.append(f"-I{inc_dir}")
+    additional_includes.append(f"-I{shlex.quote(str(inc_dir))}")
 
 # If souffle_include_dir exists, add it to the additional includes
 if souffle_include_dir:
-    additional_includes.append(f"-I{souffle_include_dir}")
+    additional_includes.append(f"-I{shlex.quote(str(souffle_include_dir))}")
 
 # If with_cudd flag is set, add CUDD library and includes
 if args.with_cudd:
-    cudd_dir = args.cudd_dir
-    additional_includes.append(f"-I{cudd_dir}/include")
-    additional_lib_dirs.append(cudd_dir / "lib")
-    # Add CUDD static library to link options
-    additional_link_options += f" {cudd_dir}/lib/libcudd.a -lm"
-    # Add CUDD to rpath if not already there
-    cudd_lib_path = str(cudd_dir / "lib")
+    cudd_dir = args.cudd_dir or pathlib.Path("/usr/local")
+    cudd_include_dir = args.cudd_include_dir or (cudd_dir / "include")
+    cudd_library = args.cudd_library or (cudd_dir / "lib" / "libcudd.a")
+    cudd_lib_dir = cudd_library.parent
+    additional_includes.append(f"-I{shlex.quote(str(cudd_include_dir))}")
+    additional_lib_dirs.append(cudd_lib_dir)
+    additional_link_options += f" {shlex.quote(str(cudd_library))} -lm"
+    cudd_lib_path = str(cudd_lib_dir)
     if cudd_lib_path not in RPATHS:
         RPATHS.append(cudd_lib_path)
 
@@ -157,14 +165,14 @@ if args.debug:
 else:
     cmd.append(conf['release_cxx_flags'])
 
-cmd.append(OUTNAME_FMT.format(exepath))
+cmd.append(OUTNAME_FMT.format(shlex.quote(str(exepath))))
 for f in args.source:
-    cmd.append(str(f))
+    cmd.append(shlex.quote(str(f)))
 
 cmd.append(conf['link_options'])
 cmd.append(additional_link_options)  # Add our additional link options
-cmd.extend(list(map(lambda rpath: RPATH_FMT.format(rpath), RPATHS)))
-cmd.extend(list(map(lambda libdir: LIBDIR_FMT.format(libdir), args.lib_dirs + additional_lib_dirs)))
+cmd.extend(list(map(lambda rpath: RPATH_FMT.format(shlex.quote(str(rpath))), RPATHS)))
+cmd.extend(list(map(lambda libdir: LIBDIR_FMT.format(shlex.quote(str(libdir))), args.lib_dirs + additional_lib_dirs)))
 cmd.extend(list(map(lambda libname: LIBNAME_FMT.format(libname), args.lib_names + additional_libs)))
 
 cmd = " ".join(cmd)
