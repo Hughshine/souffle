@@ -298,6 +298,11 @@ public:
     static void resetDredStats();
     static void dumpDredStats(std::ostream& out, const std::string& label);
     static void dumpDredSccStats(std::ostream& out, const std::string& label);
+    static std::uint64_t countRuleApplications(
+            const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo);
+    static std::uint64_t countRuleApplicationTuples(
+            const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo);
+    static void dumpRuleApplicationSummary(std::ostream& out, const std::string& label);
 
     static std::size_t getDredCurrentScc();
     static void setDredCurrentScc(std::size_t sccId);
@@ -314,6 +319,8 @@ public:
     static void recordDetDeltaInsert(const UntypedTuple& tuple);
     static const std::unordered_set<UntypedTuple>& getDetDeltaDeleteTuples();
     static const std::unordered_set<UntypedTuple>& getDetDeltaInsertTuples();
+    static void freeRuleApplicationMap(
+            std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo);
 
     static std::uint64_t nowNanos() {
         return static_cast<std::uint64_t>(

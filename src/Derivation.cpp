@@ -294,6 +294,15 @@ const std::unordered_set<UntypedTuple>& DerivationManager::getDetDeltaInsertTupl
     return detDeltaInsertTuples;
 }
 
+void DerivationManager::freeRuleApplicationMap(
+        std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo) {
+    for (auto& [_, ruleSet] : derivationInfo) {
+        delete ruleSet;
+        ruleSet = nullptr;
+    }
+    derivationInfo.clear();
+}
+
 void DerivationManager::DredStats::dump(std::ostream& out, const std::string& label) const {
     out << "[seminaive-dred] " << label << " del"
         << " delta_tuples=" << del_delta_tuples
@@ -405,6 +414,48 @@ void DerivationManager::dumpDredSccStats(std::ostream& out, const std::string& l
             << " rederive_time_loop_update_ns=" << stats.red_time_loop_update_ns
             << "\n";
     }
+}
+
+std::uint64_t DerivationManager::countRuleApplications(
+        const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo) {
+    std::uint64_t total = 0;
+    for (const auto& [tuple, ruleApplicationSet] : derivationInfo) {
+        (void)tuple;
+        if (ruleApplicationSet != nullptr) {
+            total += static_cast<std::uint64_t>(ruleApplicationSet->size());
+        }
+    }
+    return total;
+}
+
+std::uint64_t DerivationManager::countRuleApplicationTuples(
+        const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo) {
+    std::uint64_t total = 0;
+    for (const auto& [tuple, ruleApplicationSet] : derivationInfo) {
+        (void)tuple;
+        if (ruleApplicationSet != nullptr && !ruleApplicationSet->empty()) {
+            total++;
+        }
+    }
+    return total;
+}
+
+void DerivationManager::dumpRuleApplicationSummary(std::ostream& out, const std::string& label) {
+    if (!semStatsEnabled) {
+        return;
+    }
+    out << "[seminaive-ruleapps] " << label
+        << " complete_tuples=" << countRuleApplicationTuples(untypedTuple2RuleApplications)
+        << " complete_ruleapps=" << countRuleApplications(untypedTuple2RuleApplications)
+        << " delta_insert_tuples=" << countRuleApplicationTuples(untypedTuple2DeltaInsertRuleApplications)
+        << " delta_insert_ruleapps=" << countRuleApplications(untypedTuple2DeltaInsertRuleApplications)
+        << " delta_delete_tuples=" << countRuleApplicationTuples(untypedTuple2DeltaDeleteRuleApplications)
+        << " delta_delete_ruleapps=" << countRuleApplications(untypedTuple2DeltaDeleteRuleApplications)
+        << " delta_delta_insert_tuples=" << countRuleApplicationTuples(untypedTuple2DeltaDeltaInsertRuleApplications)
+        << " delta_delta_insert_ruleapps=" << countRuleApplications(untypedTuple2DeltaDeltaInsertRuleApplications)
+        << " delta_delta_delete_tuples=" << countRuleApplicationTuples(untypedTuple2DeltaDeltaDeleteRuleApplications)
+        << " delta_delta_delete_ruleapps=" << countRuleApplications(untypedTuple2DeltaDeltaDeleteRuleApplications)
+        << "\n";
 }
 
 std::size_t DerivationManager::getDredCurrentScc() {

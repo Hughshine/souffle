@@ -1515,6 +1515,10 @@ void buildFormulasInc(
     auto& deltaDeletedNodes = view.getDeltaDeleteNodes();
 
     if (deltaInsertedEdges.empty() && deltaDeletedEdges.empty()) {
+        debugger.addInfo("fc_deleted_random_vars", "0");
+        debugger.addInfo("fc_inserted_random_vars", "0");
+        debugger.addInfo("fc_inserted_fact_random_vars", "0");
+        debugger.addInfo("fc_inserted_edge_random_vars", "0");
         stage->logMessage(Level::INFO, "No changes to apply, skipping incremental update\n");
         return;
     }
@@ -1836,6 +1840,7 @@ void buildFormulasIncCyclewise(
     std::size_t nonDetOnlyNodesCount = 0;
     std::size_t nonDetOnlyEdgesCount = 0;
     std::size_t deletedVarsIndexCount = 0;
+    std::size_t insertedVarsIndexCount = 0;
     std::size_t insertFactVars = 0;
     std::size_t insertEdgeVars = 0;
     std::size_t insertFactTrueCount = 0;
@@ -2848,6 +2853,7 @@ void buildFormulasIncCyclewise(
         debugger.logMessage(Level::INFO, "Processing inserted edges");
         // initialized formulas for newly inserted nodes and edges
         auto initNodesStart = Clock::now();
+        std::set<int> insertedVarsIndex;
         for (auto node : deltaInsertedNodes) {
             if (node->isFact) {
                 const double prob = node->getProbability();
@@ -2862,6 +2868,7 @@ void buildFormulasIncCyclewise(
                     ++insertFactTrueCount;
                 } else {
                     int idx = formulaManager.getVarIndex(*node);
+                    insertedVarsIndex.insert(idx);
                     if (fcProfile) {
                         auto t = Clock::now();
                         nodeFormulas[node] = formulaManager.createVar(idx, *node);
@@ -2910,6 +2917,7 @@ void buildFormulasIncCyclewise(
             }
             if (!edge->isDeterministic()) {
                 int idx = formulaManager.getVarIndex(*edge);
+                insertedVarsIndex.insert(idx);
                 if (fcProfile) {
                     auto t = Clock::now();
                     formulaManager.createVar(idx, *edge);
@@ -2949,6 +2957,7 @@ void buildFormulasIncCyclewise(
         if (incProfile || fcProfile) {
             insertInitEdgesMs = toMs(initEdgesStart, Clock::now());
         }
+        insertedVarsIndexCount = insertedVarsIndex.size();
         inDegree = depGraph.inDegrees;
         std::fill(scheduled.begin(), scheduled.end(), false);
 
@@ -3244,6 +3253,10 @@ void buildFormulasIncCyclewise(
     for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
         debugger.addInfo(key, value);
     }
+    debugger.addInfo("fc_deleted_random_vars", std::to_string(deletedVarsIndexCount));
+    debugger.addInfo("fc_inserted_random_vars", std::to_string(insertedVarsIndexCount));
+    debugger.addInfo("fc_inserted_fact_random_vars", std::to_string(insertFactVars));
+    debugger.addInfo("fc_inserted_edge_random_vars", std::to_string(insertEdgeVars));
     debugger.addInfo("changed_node_count", std::to_string(changedNodes.size()));
     if (fcProfile) {
         debugger.addInfo("del_cond_delta_live_nodes", std::to_string(deleteCondChangedNodes));
@@ -3625,6 +3638,16 @@ void buildFormulasIncRegionalCyclewise(
         return std::chrono::duration<double, std::milli>(t1 - t0).count();
     };
     double deleteOverdeleteMs = 0.0;
+    std::size_t deletedVarsIndexCount = 0;
+    std::size_t insertedVarsIndexCount = 0;
+    std::size_t insertedFactVars = 0;
+    std::size_t insertedEdgeVars = 0;
+    auto addIncRandomVarInfo = [&]() {
+        debugger.addInfo("fc_deleted_random_vars", std::to_string(deletedVarsIndexCount));
+        debugger.addInfo("fc_inserted_random_vars", std::to_string(insertedVarsIndexCount));
+        debugger.addInfo("fc_inserted_fact_random_vars", std::to_string(insertedFactVars));
+        debugger.addInfo("fc_inserted_edge_random_vars", std::to_string(insertedEdgeVars));
+    };
     const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
     const auto& deltaDeletedEdges = view.getDeltaDeleteEdges();
     const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
@@ -3643,6 +3666,7 @@ void buildFormulasIncRegionalCyclewise(
         for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
             debugger.addInfo(key, value);
         }
+        addIncRandomVarInfo();
         debugger.logMessage(Level::INFO, "[inc-regional] pipeline finished; usedFallback=false");
         return;
     }
@@ -3952,6 +3976,7 @@ void buildFormulasIncRegionalCyclewise(
             auto index = formulaManager.getVarIndex(*edge);
             deletedVarsIndex.insert(index);
         }
+        deletedVarsIndexCount = deletedVarsIndex.size();
         debugger.logMessage(Level::INFO, "Deletion deletedVarsIndex size: " +
             std::to_string(deletedVarsIndex.size()));
         formulaManager.dumpProfilingStatistics();
@@ -4154,15 +4179,47 @@ void buildFormulasIncRegionalCyclewise(
 
     if (deltaInsertedEdges.empty() && deltaInsertedNodes.empty()) {
         debugger.logMessage(Level::INFO, "[inc-regional] No inserted edges/nodes, skipping insertion");
+        debugger.addInfo("inc_regional_analyze_ms", "0");
+        debugger.addInfo("inc_regional_analyze_region_nodes", "0");
+        debugger.addInfo("inc_regional_analyze_region_edges", "0");
+        debugger.addInfo("inc_regional_analyze_dr_nodes", "0");
+        debugger.addInfo("inc_regional_analyze_dr_edges", "0");
+        debugger.addInfo("inc_regional_analyze_region_dr_ratio", "0");
+        debugger.addInfo("inc_regional_region_nodes", "0");
+        debugger.addInfo("inc_regional_dr_nodes", "0");
+        debugger.addInfo("inc_regional_dr_edges", "0");
+        debugger.addInfo("inc_regional_region_dr_ratio", "0");
+        debugger.addInfo("inc_regional_boundary_nodes", "0");
+        debugger.addInfo("inc_regional_calibrated_nodes", "0");
+        debugger.addInfo("inc_regional_used_fallback", "0");
         formulaManager.dumpProfilingStatistics();
         for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
             debugger.addInfo(key, value);
         }
+        addIncRandomVarInfo();
         debugger.logMessage(Level::INFO, "[inc-regional] pipeline finished; usedFallback=false");
         return;
     }
 
     auto insertStart = std::chrono::steady_clock::now();
+    {
+        std::set<int> insertedVarsIndex;
+        for (auto node : deltaInsertedNodes) {
+            if (!node || !node->isFact || node->getProbability() == 1.0) {
+                continue;
+            }
+            insertedVarsIndex.insert(formulaManager.getVarIndex(*node));
+            ++insertedFactVars;
+        }
+        for (auto edge : deltaInsertedEdges) {
+            if (!edge || edge->isDeterministic()) {
+                continue;
+            }
+            insertedVarsIndex.insert(formulaManager.getVarIndex(*edge));
+            ++insertedEdgeVars;
+        }
+        insertedVarsIndexCount = insertedVarsIndex.size();
+    }
 
     // preConfig is handled inside RegionalIncrementalForwardCompilation::applyUpdate
 
@@ -4214,30 +4271,33 @@ void buildFormulasIncRegionalCyclewise(
                     " beta=" + std::to_string(rec.beta));
         }
     }
+    const auto& stats = orchestrator.getStats();
+    debugger.addInfo("inc_regional_analyze_region_nodes", std::to_string(stats.analyzeRegionNodes));
+    debugger.addInfo("inc_regional_analyze_region_edges", std::to_string(stats.analyzeRegionEdges));
+    debugger.addInfo("inc_regional_analyze_dr_nodes", std::to_string(stats.analyzeDrNodes));
+    debugger.addInfo("inc_regional_analyze_dr_edges", std::to_string(stats.analyzeDrEdges));
+    const double analyzeRatio = stats.analyzeDrNodes == 0
+            ? 1.0
+            : static_cast<double>(stats.analyzeRegionNodes) / static_cast<double>(stats.analyzeDrNodes);
+    debugger.addInfo("inc_regional_analyze_region_dr_ratio", std::to_string(analyzeRatio));
+    debugger.addInfo("inc_regional_region_nodes", std::to_string(stats.regionNodeCount));
+    debugger.addInfo("inc_regional_dr_nodes", std::to_string(stats.drNodeCount));
+    debugger.addInfo("inc_regional_dr_edges", std::to_string(stats.drEdgeCount));
+    const double regionDrRatio = stats.drNodeCount == 0
+            ? 1.0
+            : static_cast<double>(stats.regionNodeCount) / static_cast<double>(stats.drNodeCount);
+    debugger.addInfo("inc_regional_region_dr_ratio", std::to_string(regionDrRatio));
+    debugger.addInfo("inc_regional_boundary_nodes", std::to_string(stats.boundaryNodeCount));
+    debugger.addInfo("inc_regional_calibrated_nodes", std::to_string(stats.calibratedCount));
+    debugger.addInfo("inc_regional_used_fallback", stats.usedFallback ? "1" : "0");
     if (incRegionalProfileEnabled) {
         auto debugStart = std::chrono::steady_clock::now();
-        const auto& stats = orchestrator.getStats();
         const auto& rt = timing.rebuildDetail;
         debugger.addInfo("inc_regional_scc_close_ms", std::to_string(timing.sccCloseMs));
         debugger.addInfo("inc_regional_plan_ms", std::to_string(timing.planMs));
         debugger.addInfo("inc_regional_rebuild_ms", std::to_string(timing.rebuildMs));
         debugger.addInfo("inc_regional_calibrate_ms", std::to_string(timing.calibrateMs));
         debugger.addInfo("inc_regional_total_ms", std::to_string(timing.totalMs));
-        debugger.addInfo("inc_regional_analyze_region_nodes", std::to_string(stats.analyzeRegionNodes));
-        debugger.addInfo("inc_regional_analyze_region_edges", std::to_string(stats.analyzeRegionEdges));
-        debugger.addInfo("inc_regional_analyze_dr_nodes", std::to_string(stats.analyzeDrNodes));
-        debugger.addInfo("inc_regional_analyze_dr_edges", std::to_string(stats.analyzeDrEdges));
-        double analyzeRatio = stats.analyzeDrNodes == 0 ? 1.0
-                                                        : static_cast<double>(stats.analyzeRegionNodes) /
-                                                                  static_cast<double>(stats.analyzeDrNodes);
-        debugger.addInfo("inc_regional_analyze_region_dr_ratio", std::to_string(analyzeRatio));
-        debugger.addInfo("inc_regional_region_nodes", std::to_string(stats.regionNodeCount));
-        debugger.addInfo("inc_regional_dr_nodes", std::to_string(stats.drNodeCount));
-        debugger.addInfo("inc_regional_dr_edges", std::to_string(stats.drEdgeCount));
-        double regionDrRatio = stats.drNodeCount == 0 ? 1.0
-                                                      : static_cast<double>(stats.regionNodeCount) /
-                                                                static_cast<double>(stats.drNodeCount);
-        debugger.addInfo("inc_regional_region_dr_ratio", std::to_string(regionDrRatio));
         debugger.addInfo("inc_regional_output_slice_expanded", stats.outputSliceExpanded ? "1" : "0");
         debugger.addInfo("inc_regional_output_slice_missing_outputs",
                 std::to_string(stats.outputSliceMissingOutputs));
@@ -4263,10 +4323,7 @@ void buildFormulasIncRegionalCyclewise(
                 std::to_string(stats.planExpandRegionEdges));
         debugger.addInfo("inc_regional_plan_expand_failed_boundaries",
                 std::to_string(stats.planExpandFailedBoundaries));
-        debugger.addInfo("inc_regional_boundary_nodes", std::to_string(stats.boundaryNodeCount));
-        debugger.addInfo("inc_regional_calibrated_nodes", std::to_string(stats.calibratedCount));
         debugger.addInfo("inc_regional_scc_expanded", stats.sccExpanded ? "1" : "0");
-        debugger.addInfo("inc_regional_used_fallback", stats.usedFallback ? "1" : "0");
         debugger.addInfo("inc_regional_rebuild_snapshot_ms", std::to_string(rt.snapshotMs));
         debugger.addInfo("inc_regional_rebuild_init_nodes_ms", std::to_string(rt.initNodesMs));
         debugger.addInfo("inc_regional_rebuild_init_edges_ms", std::to_string(rt.initEdgesMs));
@@ -4334,6 +4391,7 @@ void buildFormulasIncRegionalCyclewise(
             debugger.addInfo(key, value);
         }
     }
+    addIncRandomVarInfo();
     if (incRegionalProfileEnabled) {
         auto insertEnd = std::chrono::steady_clock::now();
         const auto insertMs = std::chrono::duration_cast<std::chrono::milliseconds>(insertEnd - insertStart).count();

@@ -795,7 +795,7 @@ static void runBddPipeline(
         SouffleProgram& program,
         RuleManager& ruleManager,
         QueryManager& queryManager,
-        IncrementalDerivationGraph& graph,
+        std::unique_ptr<IncrementalDerivationGraph>& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
         bool enableOnlineCli,
@@ -841,7 +841,7 @@ static void runBddPipeline(
             long long buildMs = 0;
             WeightedBDDManager::InitConfig initConfig;
             auto t2 = std::chrono::steady_clock::now();
-            auto resolvedEvs = applyEvidence(graph, evidences);
+            auto resolvedEvs = applyEvidence(*graph, evidences);
             auto t3 = std::chrono::steady_clock::now();
             auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
             long long evidenceBuildMs = 0;
@@ -1426,7 +1426,7 @@ static void runBddPipeline(
             debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
 
             auto t2 = std::chrono::steady_clock::now();
-            auto resolvedEvs = applyEvidence(graph, evidences);
+            auto resolvedEvs = applyEvidence(*graph, evidences);
             auto t3 = std::chrono::steady_clock::now();
 
             auto components = buildComponentSubgraphs(view);
@@ -1572,7 +1572,7 @@ static void runBddPipeline(
 
     if (enableOnlineCli) {
         IncrementalCLI<BddNodeRef> cli(
-                &program, &graph, &ruleManager, &queryManager, bddManager.get(), &nodeFormulas,
+                &program, graph.get(), &graph, &ruleManager, &queryManager, bddManager.get(), &nodeFormulas,
                 &edgeFormulas);
         cli.setCmdOptions(opt);
         cli.run();
@@ -1584,7 +1584,7 @@ static void runSddPipeline(
         SouffleProgram& program,
         RuleManager& ruleManager,
         QueryManager& queryManager,
-        IncrementalDerivationGraph& graph,
+        std::unique_ptr<IncrementalDerivationGraph>& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
         bool enableOnlineCli,
@@ -1627,7 +1627,7 @@ static void runSddPipeline(
             auto analyses = analyzeComponents(view, std::move(components));
 
             auto t2 = std::chrono::steady_clock::now();
-            auto resolvedEvs = applyEvidence(graph, evidences);
+            auto resolvedEvs = applyEvidence(*graph, evidences);
             auto t3 = std::chrono::steady_clock::now();
             auto evidencesByComponent = groupEvidencesByComponent(view, resolvedEvs);
 
@@ -1999,7 +1999,7 @@ static void runSddPipeline(
             debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
 
             auto t2 = std::chrono::steady_clock::now();
-            auto resolvedEvs = applyEvidence(graph, evidences);
+            auto resolvedEvs = applyEvidence(*graph, evidences);
             auto t3 = std::chrono::steady_clock::now();
 
             auto components = buildComponentSubgraphs(view);
@@ -2094,7 +2094,7 @@ static void runSddPipeline(
 
     if (enableOnlineCli) {
         IncrementalCLI<SddNodeRef> cli(
-                &program, &graph, &ruleManager, &queryManager, sddManager.get(), &nodeFormulas,
+                &program, graph.get(), &graph, &ruleManager, &queryManager, sddManager.get(), &nodeFormulas,
                 &edgeFormulas);
         cli.setCmdOptions(opt);
         cli.run();
@@ -2406,7 +2406,7 @@ static bool resolveOnlineCliAvailability(
 
 static void runKnowledgeRuntimeLane(const CmdOptions& opt, SouffleProgram& program,
         RuleManager& ruleManager, QueryManager& queryManager,
-        IncrementalDerivationGraph& graph, IncSubgraphView& view,
+        std::unique_ptr<IncrementalDerivationGraph>& graph, IncSubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences, bool allowOnlineCli,
         StageInfo* rewriteHybridStage) {
     switch (program.getKnowledge()) {
@@ -2503,7 +2503,7 @@ void runPipeline(
     const bool allowOnlineCli =
             resolveOnlineCliAvailability(opt, enableOnlineCli, rewriteLane.rewritePerformed);
     runKnowledgeRuntimeLane(
-            opt, program, ruleManager, queryManager, *graph, view, evidences, allowOnlineCli,
+            opt, program, ruleManager, queryManager, graph, view, evidences, allowOnlineCli,
             rewriteLane.hybridStage);
 }
 

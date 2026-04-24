@@ -34,8 +34,7 @@ TurnInfo* Debugger::startTurn(const std::string& mode) {
 void Debugger::endTurn() {
     std::lock_guard<std::mutex> lock(mtx_);
     if (!currentTurn_) return;
-//    currentTurn_->setMemEnd(getCurrentMemoryUsage());
-//    currentTurn_->setMemPeak(getPeakMemoryUsage());
+    currentTurn_->setMemPeak(getPeakMemoryUsage());
     currentTurn_->markEndTime();
     currentTurn_ = nullptr;
     if (runStatus_ == "running") {
@@ -59,8 +58,7 @@ StageInfo* Debugger::startStage(StageKind kind) {
 void Debugger::endStage() {
     std::lock_guard<std::mutex> lock(mtx_);
     if (!currentStage_ || !currentTurn_) return;
-//    currentStage_->setMemEnd(getCurrentMemoryUsage());
-//    currentStage_->setMemPeak(getPeakMemoryUsage());
+    currentStage_->setMemPeak(getPeakMemoryUsage());
     currentStage_->markEndTime();
     currentStage_ = nullptr;
     maybeAutoDumpLocked();

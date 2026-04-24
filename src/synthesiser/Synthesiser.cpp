@@ -2735,6 +2735,7 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleInsert];\n" << std::endl;
                 out << "if (untypedDeltaDervTupleRuleSet == nullptr) {" << std::endl;
                 out << "untypedDeltaDervTupleRuleSet = untypedDeltaDervTupleInsertRuleSet;\n" << std::endl;
+                out << "DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications[untypedDeltaDervTupleInsert] = nullptr;\n" << std::endl;
                 out << "if (DerivationManager::isSemStatsEnabled()) {\n";
                 out << "DerivationManager::dredStats.ins_complete_sets_attached++;\n";
                 out << "}\n";
@@ -2752,7 +2753,8 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "}" << std::endl;
                 out << "}" << std::endl;
                 // if (insertOnly) {
-                out << "DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications.clear();\n";
+                out << "DerivationManager::freeRuleApplicationMap(\n";
+                out << "        DerivationManager::untypedTuple2DeltaDeltaInsertRuleApplications);\n";
                 // }
                 out << "if (dredProfileEnabled) {\n";
                 out << "DerivationManager::addDredTime(DerivationManager::DredTimeBucket::InsDeltaUnion,\n";
@@ -2842,7 +2844,8 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "}\n";
                 out << "}" << std::endl;
                 out << "}" << std::endl;
-                out << "DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications.clear();\n";
+                out << "DerivationManager::freeRuleApplicationMap(\n";
+                out << "        DerivationManager::untypedTuple2DeltaDeltaDeleteRuleApplications);\n";
                 out << "if (dredProfileEnabled) {\n";
                 out << "DerivationManager::addDredTime(DerivationManager::DredTimeBucket::DelDeltaUnion,\n";
                 out << "        DerivationManager::elapsedNanos(__dred_delta_del_start));\n";
