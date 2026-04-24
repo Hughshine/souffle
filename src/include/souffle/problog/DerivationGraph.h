@@ -2053,6 +2053,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
     size_t totalInVecScan = 0;
     size_t totalOutVecScan = 0;
     size_t removedEdgeCount = 0;
+    size_t missingEdgeCount = 0;
     std::vector<EdgePtr> edgesToRemoveList;
     std::vector<std::string> edgeKeysToRemove;
     std::unordered_set<EdgePtr> edgesToRemoveSet;
@@ -2085,8 +2086,8 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
                 if (existingEdge == nullptr) {
                     std::cout << "Did not find the edge to delete: "
                               << createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure) << std::endl;
-//                continue;
-                    assert(false && "Did not find the edge to delete");
+                    missingEdgeCount++;
+                    continue;
                 }
 
                 // Mark the edge as a delta delete.
@@ -2263,6 +2264,7 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
               << "eraseKey=" << tEraseKeyMs << "ms, "
               << "outputDecision=" << tOutputDecisionMs << "ms, "
               << "removedEdges=" << removedEdgeCount
+              << ", missingEdges=" << missingEdgeCount
               << ", inVecScan=" << totalInVecScan
               << ", outVecScan=" << totalOutVecScan
               << std::endl;
