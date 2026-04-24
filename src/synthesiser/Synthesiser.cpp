@@ -2817,22 +2817,28 @@ void Synthesiser::emitCode(std::ostream& out, const Statement& stmt) {
                 out << "}\n";
                 out << "continue;\n";
                 out << "}\n";
-                out << "auto*& untypedDeltaDervTupleRuleSet = DerivationManager::untypedTuple2RuleApplications[untypedDeltaDervTupleDelete];\n" << std::endl;
+                out << "auto untypedDeltaDervTupleRuleSetIt = DerivationManager::untypedTuple2RuleApplications.find(untypedDeltaDervTupleDelete);\n" << std::endl;
+                out << "std::unordered_set<RuleApplication>* untypedDeltaDervTupleRuleSet = "
+                       "(untypedDeltaDervTupleRuleSetIt == DerivationManager::untypedTuple2RuleApplications.end()) "
+                       "? nullptr : untypedDeltaDervTupleRuleSetIt->second;\n" << std::endl;
                 out << "std::uint64_t __dred_ruleapp_erase_start = 0;\n";
                 out << "if (dredProfileEnabled) { __dred_ruleapp_erase_start = DerivationManager::nowNanos(); }\n";
+                out << "if (untypedDeltaDervTupleDeleteRuleSet != nullptr && untypedDeltaDervTupleRuleSet != nullptr) {\n";
                 out << "for(const auto& deletedRuleAppl: *untypedDeltaDervTupleDeleteRuleSet) {" << std::endl;
                 out << "untypedDeltaDervTupleRuleSet->erase(deletedRuleAppl);\n" << std::endl;
                 out << "}" << std::endl;
+                out << "}\n";
                 out << "if (dredProfileEnabled) {\n";
                 out << "DerivationManager::addDredTime(DerivationManager::DredTimeBucket::DelRuleappErase,\n";
                 out << "        DerivationManager::elapsedNanos(__dred_ruleapp_erase_start));\n";
                 out << "}\n";
-                out << "if (untypedDeltaDervTupleRuleSet->empty()) {" << std::endl;
+                out << "if (untypedDeltaDervTupleRuleSet == nullptr || untypedDeltaDervTupleRuleSet->empty()) {" << std::endl;
+                out << "if (untypedDeltaDervTupleRuleSet != nullptr) {\n";
                 out << "delete untypedDeltaDervTupleRuleSet;\n" << std::endl;
-                // out << "untypedDeltaDervTupleRuleSet = nullptr;\n" << std::endl;
-                out << "DerivationManager::untypedTuple2RuleApplications.erase(untypedDeltaDervTupleDelete);\n" << std::endl;
+                out << "DerivationManager::untypedTuple2RuleApplications.erase(untypedDeltaDervTupleRuleSetIt);\n" << std::endl;
                 out << "if (DerivationManager::isSemStatsEnabled()) {\n";
                 out << "DerivationManager::dredStats.del_complete_sets_freed++;\n";
+                out << "}\n";
                 out << "}\n";
                 out << "if(!isInputFact(untypedDeltaDervTupleDelete)) {\n";
                 out << synthesiser.getRelationName(synthesiser.lookup(deltaUnion.getDeltaTupleDeleteRel())) << "->insert(tupleDeltaDervDelete);\n";
