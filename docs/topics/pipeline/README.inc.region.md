@@ -6,13 +6,13 @@ the selected region plus boundary calibration work.
 
 ## Source References
 
-- [../../../src/include/souffle/CompiledOptions.h:191](../../../src/include/souffle/CompiledOptions.h#L191): public mode syntax.
-- [../../../src/include/souffle/cli/Executor.h:276](../../../src/include/souffle/cli/Executor.h#L276): runtime dispatch to `inc-regional`.
-- [../../../src/include/souffle/problog/ForwardCompilation.h:1960](../../../src/include/souffle/problog/ForwardCompilation.h#L1960): regional FC entry.
-- [../../../src/include/souffle/problog/ForwardCompilation.h:2467](../../../src/include/souffle/problog/ForwardCompilation.h#L2467): regional orchestrator call.
+- [../../../src/include/souffle/CompiledOptions.h:187](../../../src/include/souffle/CompiledOptions.h#L187): public mode syntax.
+- [../../../src/include/souffle/cli/Executor.h:407](../../../src/include/souffle/cli/Executor.h#L407): runtime dispatch to `inc-regional`.
+- [../../../src/include/souffle/problog/ForwardCompilation.h:1967](../../../src/include/souffle/problog/ForwardCompilation.h#L1967): regional FC entry.
+- [../../../src/include/souffle/problog/ForwardCompilation.h:2476](../../../src/include/souffle/problog/ForwardCompilation.h#L2476): regional orchestrator call.
 - [../../../src/include/souffle/problog/RegionalIncremental.h:1201](../../../src/include/souffle/problog/RegionalIncremental.h#L1201): regional FC class.
 - [../../../src/include/souffle/problog/RegionalIncremental.h:1535](../../../src/include/souffle/problog/RegionalIncremental.h#L1535): delta-reach dependency graph diagnostics.
-- [../../../src/include/souffle/problog/formula/CuddManager.h:565](../../../src/include/souffle/problog/formula/CuddManager.h#L565): CUDD adaptive reordering initialization.
+- [../../../src/include/souffle/problog/formula/CuddManager.h:568](../../../src/include/souffle/problog/formula/CuddManager.h#L568): CUDD adaptive reordering initialization.
 
 ## Control Flow
 

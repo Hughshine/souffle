@@ -14,9 +14,9 @@ companion repository for side-channel case generation and result collection.
 - [src/MainDriver.cpp:623](src/MainDriver.cpp#L623): compiler mode/output options.
 - [src/MainDriver.cpp:691](src/MainDriver.cpp#L691): compiler default canonicalization.
 - [src/synthesiser/Synthesiser.cpp:673](src/synthesiser/Synthesiser.cpp#L673): generated runtime enters the online pipeline.
-- [src/include/souffle/CompiledOptions.h:191](src/include/souffle/CompiledOptions.h#L191): supported mode syntax.
-- [src/include/souffle/CompiledOptions.h:700](src/include/souffle/CompiledOptions.h#L700): generated runtime option parser.
-- [src/include/souffle/cli/Cli.h:657](src/include/souffle/cli/Cli.h#L657): interactive update commands.
+- [src/include/souffle/CompiledOptions.h:187](src/include/souffle/CompiledOptions.h#L187): supported mode syntax.
+- [src/include/souffle/CompiledOptions.h:709](src/include/souffle/CompiledOptions.h#L709): generated runtime option parser.
+- [src/include/souffle/cli/Cli.h:680](src/include/souffle/cli/Cli.h#L680): interactive update commands.
 - [tests/regression/CMakeLists.txt:22](tests/regression/CMakeLists.txt#L22): maintained regression cases.
 
 ## Build

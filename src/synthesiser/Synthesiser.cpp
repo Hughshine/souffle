@@ -4563,6 +4563,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
          << (glb.config().has("dumpjson-before-prune") ? "true" : "false") << ");\n";
     hook << "opt.setDumpDotEnabled(" << (glb.config().has("dumpdot") ? "true" : "false") << ");\n";
     hook << "opt.setDumpStatEnabled(" << (glb.config().has("dumpstat") ? "true" : "false") << ");\n";
+    hook << "opt.setVerboseEnabled(" << (glb.config().has("verbose") ? "true" : "false") << ");\n";
     hook << "opt.setProfileStageToken(\"dred\", "
          << (glb.config().has("dred-profile") ? "true" : "false") << ");\n";
     hook << "opt.setProfileStageToken(\"inc\", "
@@ -4579,6 +4580,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
          << (glb.config().has("profile-dep-graph") ? "true" : "false") << ");\n";
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";
+    hook << "setFunctionTimerOutputEnabled(opt.isVerboseEnabled());\n";
     hook << "detOptEnabled = true;\n";
     hook << "dredProfileEnabled = opt.isDredProfileEnabled();\n";
     hook << "incProfileEnabled = opt.isIncProfileEnabled();\n";
@@ -4674,7 +4676,9 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << "{\n";
         hook << "std::string rel = \"" << rel << "\";\n";
         hook << "relationHasProbFact[rel] = false;\n";
+        hook << "if (opt.isVerboseEnabled()) {\n";
         hook << "std::cout << \"reading: \" << opt.getInputFileDir() << \"/\" << rel << \".facts and \" << opt.getInputFileDir() << \"/\" << rel << \".prob\" << std::endl;\n";
+        hook << "}\n";
         hook << "std::ifstream factFile(opt.getInputFileDir() + \"/\" + rel + \".facts\");";
         hook << "std::ifstream probFile(opt.getInputFileDir() + \"/\" + rel + \".prob\");\n";
         hook << "if (!factFile.is_open()) {\n";
@@ -4704,7 +4708,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
         hook << "}\n";
     }
     hook << "auto preMs = detNowMs(preStart);\n";
-    hook << "std::cout << \"[det-analysis] prepass took \" << preMs << \" ms\" << std::endl;\n";
+    hook << "if (opt.isVerboseEnabled()) std::cout << \"[det-analysis] prepass took \" << preMs << \" ms\" << std::endl;\n";
     hook << "if (detStage) detStage->logMessage(Level::INFO, \"prepass_ms=\" + std::to_string(preMs));\n";
     hook << "}\n";
     hook << "{\n";
@@ -4744,7 +4748,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "    relationIsDet[det_rel_names[i]] = relIsDet[i];\n";
     hook << "}\n";
     hook << "auto analyzeMs = detNowMs(analyzeStart);\n";
-    hook << "std::cout << \"[det-analysis] analyze took \" << analyzeMs << \" ms\" << std::endl;\n";
+    hook << "if (opt.isVerboseEnabled()) std::cout << \"[det-analysis] analyze took \" << analyzeMs << \" ms\" << std::endl;\n";
     hook << "if (detStage) detStage->logMessage(Level::INFO, \"analyze_ms=\" + std::to_string(analyzeMs));\n";
     hook << "\n";
     hook << "auto dumpStart = std::chrono::steady_clock::now();\n";
@@ -4775,7 +4779,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "    detSccOut << \"\\n\";\n";
     hook << "}\n";
     hook << "auto dumpMs = detNowMs(dumpStart);\n";
-    hook << "std::cout << \"[det-analysis] dump took \" << dumpMs << \" ms\" << std::endl;\n";
+    hook << "if (opt.isVerboseEnabled()) std::cout << \"[det-analysis] dump took \" << dumpMs << \" ms\" << std::endl;\n";
     hook << "if (detStage) detStage->logMessage(Level::INFO, \"dump_ms=\" + std::to_string(dumpMs));\n";
     hook << "}\n";
     hook << "debugger.endStage();\n";
@@ -4832,9 +4836,11 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
               << "};\n"
               << "std::string fileRel = toFileRel(ioRel);\n";
 
+        hook << "if (opt.isVerboseEnabled()) {\n";
         hook << "std::cout << \"reading: \" << opt.getInputFileDir() << \"/\" << fileRel"
              << " << \".facts and \" << opt.getInputFileDir() << \"/\" << fileRel"
              << " << \".prob\" << std::endl;\n";
+        hook << "}\n";
 
         hook << "std::ifstream factFile(opt.getInputFileDir() + \"/\" + fileRel + \".facts\");\n";
         hook << "std::ifstream probFile(opt.getInputFileDir() + \"/\" + fileRel + \".prob\");\n";
@@ -4888,7 +4894,9 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     hook << "debugger.setRunStatus(\"completed\");\n";
     hook << "debugger.dumpReportJsonToFile();\n";
+    hook << "if (opt.isVerboseEnabled()) {\n";
     hook << "std::cout << \"[pipeline] debugger log: \" << reportFileName << std::endl;\n";
+    hook << "}\n";
     hook << "souffle::SignalHandler::instance()->reset();\n";
     hook << "// debugger.printReport(std::cout);\n";
     // add online incremental&interactive computation

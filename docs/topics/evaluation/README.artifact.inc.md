@@ -8,9 +8,9 @@ repository on branch `CAV-INC`.
 
 - [../../../README.md:1](../../../README.md#L1): branch scope.
 - [../../../src/MainDriver.cpp:623](../../../src/MainDriver.cpp#L623): AE compiler parameters.
-- [../../../src/include/souffle/CompiledOptions.h:191](../../../src/include/souffle/CompiledOptions.h#L191): runtime mode syntax.
-- [../../../src/include/souffle/cli/Cli.h:657](../../../src/include/souffle/cli/Cli.h#L657): update commands.
-- [../../../tests/regression/run_regression_case.py:166](../../../tests/regression/run_regression_case.py#L166): maintained compile invocation.
+- [../../../src/include/souffle/CompiledOptions.h:187](../../../src/include/souffle/CompiledOptions.h#L187): runtime mode syntax.
+- [../../../src/include/souffle/cli/Cli.h:680](../../../src/include/souffle/cli/Cli.h#L680): update commands.
+- [../../../tests/regression/run_regression_case.py:153](../../../tests/regression/run_regression_case.py#L153): maintained compile invocation.
 
 ## Scope
 

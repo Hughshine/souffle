@@ -77,7 +77,9 @@ private:
     std::vector<Operation> pendingOperations;
 
     void logTurnMode(const std::string& modeLabel) const {
-        std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel << std::endl;
+        if (opt.isVerboseEnabled()) {
+            std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel << std::endl;
+        }
     }
 
     IncrementalModeSpec currentModeSpec() const {
@@ -145,9 +147,11 @@ private:
         if (!shouldFallbackRegionalConsumer(requested, effective)) {
             return;
         }
-        std::cout << "[cli] fc-state=" << souffle::fcStateClassLabel(fcStateClass)
-                  << " requested=" << souffle::modeSummaryLabel(requested)
-                  << " fallback=" << souffle::modeSummaryLabel(effective) << std::endl;
+        if (opt.isVerboseEnabled()) {
+            std::cout << "[cli] fc-state=" << souffle::fcStateClassLabel(fcStateClass)
+                      << " requested=" << souffle::modeSummaryLabel(requested)
+                      << " fallback=" << souffle::modeSummaryLabel(effective) << std::endl;
+        }
     }
 
     void updateFcStateAfterTurn(
@@ -260,7 +264,9 @@ private:
             << " insEdges=" << insEdges
             << " delNodes=" << delNodes
             << " delEdges=" << delEdges;
-        std::cout << oss.str() << std::endl;
+        if (opt.isVerboseEnabled()) {
+            std::cout << oss.str() << std::endl;
+        }
         debugger.logMessage(Level::INFO, oss.str());
     }
 
@@ -271,7 +277,9 @@ private:
         oss << "[inc-iter " << iteration << "] mode=" << modeLabel
             << " apply_delta_graph: totalNodes=" << totalNodes
             << " totalEdges=" << totalEdges;
-        std::cout << oss.str() << std::endl;
+        if (opt.isVerboseEnabled()) {
+            std::cout << oss.str() << std::endl;
+        }
         debugger.logMessage(Level::INFO, oss.str());
     }
 
@@ -302,7 +310,9 @@ private:
             << " insTuples=" << insTuples
             << " insRuleApps=" << insRuleApps
             << " insFacts=" << insFacts;
-        std::cout << oss.str() << std::endl;
+        if (opt.isVerboseEnabled()) {
+            std::cout << oss.str() << std::endl;
+        }
         debugger.logMessage(Level::INFO, oss.str());
     }
 
@@ -313,20 +323,22 @@ private:
         const size_t delEdges = view.getDeltaDeleteEdges().size();
         const size_t totalNodes = view.getNodes().size();
         const size_t totalEdges = view.getEdges().size();
-        std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel
-                  << " pruned_delta: insNodes=" << insNodes
-                  << " insEdges=" << insEdges
-                  << " delNodes=" << delNodes
-                  << " delEdges=" << delEdges
-                  << " totalNodes=" << totalNodes
-                  << " totalEdges=" << totalEdges
-                  << std::endl;
-        std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel
-                  << " pruned_delta_ratio: insNodes=" << formatRatio(insNodes, totalNodes)
-                  << " insEdges=" << formatRatio(insEdges, totalEdges)
-                  << " delNodes=" << formatRatio(delNodes, totalNodes)
-                  << " delEdges=" << formatRatio(delEdges, totalEdges)
-                  << std::endl;
+        if (opt.isVerboseEnabled()) {
+            std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel
+                      << " pruned_delta: insNodes=" << insNodes
+                      << " insEdges=" << insEdges
+                      << " delNodes=" << delNodes
+                      << " delEdges=" << delEdges
+                      << " totalNodes=" << totalNodes
+                      << " totalEdges=" << totalEdges
+                      << std::endl;
+            std::cout << "[inc-iter " << iteration << "] mode=" << modeLabel
+                      << " pruned_delta_ratio: insNodes=" << formatRatio(insNodes, totalNodes)
+                      << " insEdges=" << formatRatio(insEdges, totalEdges)
+                      << " delNodes=" << formatRatio(delNodes, totalNodes)
+                      << " delEdges=" << formatRatio(delEdges, totalEdges)
+                      << std::endl;
+        }
     }
 
     static std::unordered_map<UntypedTuple, NodePtr> buildNodeTupleIndex(
@@ -422,16 +434,18 @@ private:
         std::vector<NodePtr> outputNodes = newView.getOutputNodes();
         std::vector<NodePtr> evidenceNodes = newView.getEvidenceNodes();
 
-        std::cout << "[inc-full-diff] pruned-diff"
-                  << " insNodes=" << deltaInsertNodes.size()
-                  << " insEdges=" << deltaInsertEdges.size()
-                  << " delNodes=" << deltaDeleteNodes.size()
-                  << " delEdges=" << deltaDeleteEdges.size()
-                  << " oldNodes=" << oldNodeByTuple.size()
-                  << " oldEdges=" << oldEdgeByKey.size()
-                  << " newNodes=" << newNodeByTuple.size()
-                  << " newEdges=" << newEdgeByKey.size()
-                  << std::endl;
+        if (opt.isVerboseEnabled()) {
+            std::cout << "[inc-full-diff] pruned-diff"
+                      << " insNodes=" << deltaInsertNodes.size()
+                      << " insEdges=" << deltaInsertEdges.size()
+                      << " delNodes=" << deltaDeleteNodes.size()
+                      << " delEdges=" << deltaDeleteEdges.size()
+                      << " oldNodes=" << oldNodeByTuple.size()
+                      << " oldEdges=" << oldEdgeByKey.size()
+                      << " newNodes=" << newNodeByTuple.size()
+                      << " newEdges=" << newEdgeByKey.size()
+                      << std::endl;
+        }
 
         return IncSubgraphView(std::move(liveNodes), std::move(liveEdges), std::move(deltaInsertNodes),
                 std::move(deltaInsertEdges), std::move(deltaDeleteNodes), std::move(deltaDeleteEdges),
@@ -500,14 +514,16 @@ private:
         probResult.swap(remappedProbResult);
         precomputedProbResult.swap(remappedPrecomputed);
 
-        std::cout << "[inc-full-diff] remap"
-                  << " nodeFormulas=" << reusedNodeFormulas
-                  << " edgeFormulas=" << reusedEdgeFormulas
-                  << " probNodes=" << reusedProbNodes
-                  << " precomputedNodes=" << reusedPrecomputedNodes
-                  << " nodeVarRebind=" << reboundNodeIndices
-                  << " edgeVarRebind=" << reboundEdgeIndices
-                  << std::endl;
+        if (opt.isVerboseEnabled()) {
+            std::cout << "[inc-full-diff] remap"
+                      << " nodeFormulas=" << reusedNodeFormulas
+                      << " edgeFormulas=" << reusedEdgeFormulas
+                      << " probNodes=" << reusedProbNodes
+                      << " precomputedNodes=" << reusedPrecomputedNodes
+                      << " nodeVarRebind=" << reboundNodeIndices
+                      << " edgeVarRebind=" << reboundEdgeIndices
+                      << std::endl;
+        }
     }
 
     static std::vector<std::string> collectModeSpecs(const std::vector<std::string>& tokens) {
@@ -571,6 +587,8 @@ private:
         wmcProfileEnabled = opt.isWmcProfileEnabled();
         incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();
         depGraphProfileEnabled = opt.isDepGraphProfileEnabled();
+        DerivationGraphViewInterface::setVerboseEnabled(opt.isVerboseEnabled());
+        setFunctionTimerOutputEnabled(opt.isVerboseEnabled());
     }
 public:
     IncrementalCLI(souffle::SouffleProgram* prog = nullptr,
@@ -632,7 +650,7 @@ private:
     }
 
     OperationStager makeOperationStager() {
-        return OperationStager(program, initialInputRelations, fact_prob);
+        return OperationStager(program, initialInputRelations, fact_prob, opt.isVerboseEnabled());
     }
 
     std::vector<std::pair<NodePtr, bool>> resolveEvidenceNodes() const {
@@ -656,15 +674,6 @@ private:
             evidenceNode = ddManager->makeAnd(evidenceNode, lit);
         }
         return evidenceNode;
-    }
-
-    static void printCommandValues(const std::vector<std::string>& values) {
-        for (size_t i = 0; i < values.size(); i++) {
-            if (i > 0) {
-                std::cout << ", ";
-            }
-            std::cout << values[i];
-        }
     }
 
     void printHelp() const {
@@ -703,10 +712,6 @@ private:
         op.values = values;
         op.probability = probability;
         pendingOperations.push_back(op);
-
-        std::cout << "PARSED INSERT: Relation = " << relName << ", Values = [";
-        printCommandValues(values);
-        std::cout << "], Probability = " << std::setprecision(8) << probability << std::endl;
     }
 
     void handleDeleteCommand(const ParsedCommand& command) {
@@ -728,15 +733,10 @@ private:
         for (size_t i = 0; i < pendingOperations.size(); i++) {
             if (pendingOperations[i].type == Operation::INSERT &&
                     pendingOperations[i].relationName == relName) {
-                bool same = true;
-                for (size_t j = 0; j < pendingOperations[i].values.size(); j++) {
-                    if (pendingOperations[i].values[j] != values[j]) {
-                        same = false;
-                        break;
+                if (pendingOperations[i].values == values) {
+                    if (opt.isVerboseEnabled()) {
+                        std::cout << "Overlapped insertion and deletion removed." << std::endl;
                     }
-                }
-                if (same) {
-                    std::cout << "Overlapped insertion and deletion removed." << std::endl;
                     overlap = true;
                     pendingOperations.erase(pendingOperations.begin() + i);
                     break;
@@ -746,10 +746,6 @@ private:
         if (!overlap) {
             pendingOperations.push_back(op);
         }
-
-        std::cout << "PARSED DELETE: Relation = " << relName << ", Values = [";
-        printCommandValues(values);
-        std::cout << "]" << std::endl;
     }
 
     void handleListCommand() const {
@@ -1925,10 +1921,13 @@ public:
     }
 
     void run() {
-        std::cout << "Incremental Souffle CLI (Callback Version)" << std::endl;
-        std::cout << "Type 'help' for a list of available commands" << std::endl;
         IncrementalCLI::instance = this;
-        if (!isatty(STDIN_FILENO)) {
+        const bool interactive = isatty(STDIN_FILENO);
+        if (interactive || opt.isVerboseEnabled()) {
+            std::cout << "Incremental Souffle CLI (Callback Version)" << std::endl;
+            std::cout << "Type 'help' for a list of available commands" << std::endl;
+        }
+        if (!interactive) {
             runNonInteractiveShell();
             return;
         }

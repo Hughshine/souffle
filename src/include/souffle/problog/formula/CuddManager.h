@@ -410,6 +410,7 @@ public:
         using namespace std::chrono;
         auto toMs = [](auto d) { return duration<double, std::milli>(d).count(); };
         const bool fcProfile = fcProfileEnabled;
+        const bool verbose = DerivationGraphViewInterface::isVerboseEnabled();
         const auto totalStart = steady_clock::now();
         double cacheMs = 0.0;
         double factCreateMs = 0.0;
@@ -555,15 +556,19 @@ public:
         double edgeMs = toMs(steady_clock::now() - edgeStart);
         auto newCuddVarSize = Cudd_ReadSize(manager.get());
         size_t totalVarsAdded = factVars + edgeVars;
-        std::cout << "[CUDD] vars created: facts=" << factVars
-                  << " edges=" << edgeVars
-                  << " total=" << totalVarsAdded
-                  << " (facts " << factMs << " ms, edges " << edgeMs << " ms)"
-                  << std::endl;
+        if (verbose) {
+            std::cout << "[CUDD] vars created: facts=" << factVars
+                      << " edges=" << edgeVars
+                      << " total=" << totalVarsAdded
+                      << " (facts " << factMs << " ms, edges " << edgeMs << " ms)"
+                      << std::endl;
+        }
 
         if (!reorderConfigured_) {
             // Rely on CUDD adaptive dynamic reordering; skip heavy static heuristic ordering.
-            std::cout << "[CUDD] Enabling adaptive dynamic reordering (skip static ordering)" << std::endl;
+            if (verbose) {
+                std::cout << "[CUDD] Enabling adaptive dynamic reordering (skip static ordering)" << std::endl;
+            }
             if (profileTime) {
                 auto reorderStart = steady_clock::now();
                 adaptiveReorder(manager.get());
@@ -571,7 +576,9 @@ public:
             } else {
                 adaptiveReorder(manager.get());
             }
-            std::cout << "[CUDD] Adaptive reordering initialized" << std::endl;
+            if (verbose) {
+                std::cout << "[CUDD] Adaptive reordering initialized" << std::endl;
+            }
             reorderConfigured_ = true;
         }
         if (fcProfile) {

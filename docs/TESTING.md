@@ -6,7 +6,7 @@
 - [../CMakeLists.txt:267](../CMakeLists.txt#L267): regression subdirectory wiring.
 - [../tests/regression/CMakeLists.txt:22](../tests/regression/CMakeLists.txt#L22): maintained case registration.
 - [../tests/regression/CMakeLists.txt:33](../tests/regression/CMakeLists.txt#L33): `check-regression` target.
-- [../tests/regression/run_regression_case.py:166](../tests/regression/run_regression_case.py#L166): maintained compile invocation.
+- [../tests/regression/run_regression_case.py:153](../tests/regression/run_regression_case.py#L153): maintained compile invocation.
 - [topics/testing/README.regression.md:1](topics/testing/README.regression.md#L1): case-level scope.
 
 ## Commands

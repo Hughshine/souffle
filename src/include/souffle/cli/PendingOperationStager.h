@@ -51,8 +51,9 @@ public:
     PendingOperationStager(
             souffle::SouffleProgram* program,
             InputRelationMap& initialInputRelations,
-            std::unordered_map<UntypedTuple, double>& factProb)
-            : program(program), initialInputRelations(initialInputRelations), factProb(factProb) {}
+            std::unordered_map<UntypedTuple, double>& factProb,
+            bool verbose = false)
+            : program(program), initialInputRelations(initialInputRelations), factProb(factProb), verbose(verbose) {}
 
     bool stageInsert(OperationT& op) {
         auto* origRel = program->getRelation(op.relationName);
@@ -82,7 +83,9 @@ public:
             return false;
         }
 
-        std::cout << "Inserting tuple: " << origTuple.toString() << std::endl;
+        if (verbose) {
+            std::cout << "Inserting tuple: " << origTuple.toString() << std::endl;
+        }
         rel->insert(relTuple);
         currentInputs.insert(untypedTuple);
         factProb[untypedTuple] = op.probability;
@@ -225,6 +228,7 @@ private:
     souffle::SouffleProgram* program = nullptr;
     InputRelationMap& initialInputRelations;
     std::unordered_map<UntypedTuple, double>& factProb;
+    bool verbose = false;
 };
 
 }  // namespace souffle::cli

@@ -1265,6 +1265,8 @@ public:
         Debugger& debugger = Debugger::getInstance();
         const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
         const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
+        const bool verboseOutput = DerivationGraphViewInterface::isVerboseEnabled();
+        const bool emitRegionalDiagnostics = incRegionalProfileEnabled || verboseOutput;
         if (deltaInsertedEdges.empty() && deltaInsertedNodes.empty()) {
             formulaManager.dumpProfilingStatistics();
             for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
@@ -2241,10 +2243,12 @@ public:
             const size_t regionNodes = plan.regionNodes.size();
             const size_t drNodes = dr.nodes.size();
             const double ratio = drNodes == 0 ? 0.0 : double(regionNodes) / double(drNodes);
-            std::cout << "[inc-regional-final] region_nodes=" << regionNodes
-                      << " dr_nodes=" << drNodes
-                      << " ratio=" << ratio
-                      << "\n";
+            if (emitRegionalDiagnostics) {
+                std::cout << "[inc-regional-final] region_nodes=" << regionNodes
+                          << " dr_nodes=" << drNodes
+                          << " ratio=" << ratio
+                          << "\n";
+            }
         }
 
         auto t3 = nowMs();
@@ -2507,32 +2511,34 @@ public:
             addCalibInfoSize("target_cache_hits", ct.targetCacheHits);
             addCalibInfoSize("snapshot_cache_hits", ct.snapshotCacheHits);
             addCalibInfoSize("anchor_cache_hits", ct.anchorCacheHits);
-            std::cout << "[inc-regional-calibrate-profile]"
-                      << " total_ms=" << ct.totalMs
-                      << " target_wmc_ms=" << ct.targetWmcMs
-                      << " anchor_loop_ms=" << ct.anchorLoopMs
-                      << " anchor_wmc_ms=" << ct.anchorWmcMs
-                      << " anchor_overhead_ms=" << ct.anchorOverheadMs
-                      << " weight_set_ms=" << ct.weightSetMs
-                      << " snapshot_wmc_ms=" << ct.snapshotWmcMs
-                      << " alpha_wmc_ms=" << ct.alphaWmcMs
-                      << " beta_wmc_ms=" << ct.betaWmcMs
-                      << " overhead_ms=" << ct.overheadMs
-                      << " boundary_total=" << ct.boundaryTotal
-                      << " boundary_visited=" << ct.boundaryVisited
-                      << " boundary_skipped=" << ct.boundarySkipped
-                      << " candidates=" << ct.anchorCandidates
-                      << " tried=" << ct.anchorTried
-                      << " used=" << ct.anchorUsed
-                      << " invalid=" << ct.anchorInvalid
-                      << " missing_snapshot=" << ct.missingSnapshot
-                      << " degenerate=" << ct.degenerate
-                      << " calibrated=" << ct.calibrated
-                      << " failed=" << ct.failed
-                      << " target_cache_hits=" << ct.targetCacheHits
-                      << " snapshot_cache_hits=" << ct.snapshotCacheHits
-                      << " anchor_cache_hits=" << ct.anchorCacheHits
-                      << "\n";
+            if (emitRegionalDiagnostics) {
+                std::cout << "[inc-regional-calibrate-profile]"
+                          << " total_ms=" << ct.totalMs
+                          << " target_wmc_ms=" << ct.targetWmcMs
+                          << " anchor_loop_ms=" << ct.anchorLoopMs
+                          << " anchor_wmc_ms=" << ct.anchorWmcMs
+                          << " anchor_overhead_ms=" << ct.anchorOverheadMs
+                          << " weight_set_ms=" << ct.weightSetMs
+                          << " snapshot_wmc_ms=" << ct.snapshotWmcMs
+                          << " alpha_wmc_ms=" << ct.alphaWmcMs
+                          << " beta_wmc_ms=" << ct.betaWmcMs
+                          << " overhead_ms=" << ct.overheadMs
+                          << " boundary_total=" << ct.boundaryTotal
+                          << " boundary_visited=" << ct.boundaryVisited
+                          << " boundary_skipped=" << ct.boundarySkipped
+                          << " candidates=" << ct.anchorCandidates
+                          << " tried=" << ct.anchorTried
+                          << " used=" << ct.anchorUsed
+                          << " invalid=" << ct.anchorInvalid
+                          << " missing_snapshot=" << ct.missingSnapshot
+                          << " degenerate=" << ct.degenerate
+                          << " calibrated=" << ct.calibrated
+                          << " failed=" << ct.failed
+                          << " target_cache_hits=" << ct.targetCacheHits
+                          << " snapshot_cache_hits=" << ct.snapshotCacheHits
+                          << " anchor_cache_hits=" << ct.anchorCacheHits
+                          << "\n";
+            }
 
             if (calibRes.failedNodes.empty()) {
                 break;
@@ -2674,47 +2680,51 @@ public:
                 + lastTiming_.fallbackSnapshotMs + lastTiming_.fallbackRestoreMs;
         lastTiming_.overheadMs = std::max(0.0, lastTiming_.totalMs - accountedMs);
 
-        std::cout << "[inc-regional] timing(ms): analyze=" << lastTiming_.analyzeMs
-                  << " sccClose=" << lastTiming_.sccCloseMs
-                  << " plan=" << lastTiming_.planMs
-                  << " rebuild=" << lastTiming_.rebuildMs
-                  << " rebuild_total=" << lastTiming_.rebuildTotalMs
-                  << " calibrate=" << lastTiming_.calibrateMs
-                  << " calibrate_total=" << lastTiming_.calibrateTotalMs
-                  << " fallback_snapshot=" << lastTiming_.fallbackSnapshotMs
-                  << " fallback_restore=" << lastTiming_.fallbackRestoreMs
-                  << " overhead=" << lastTiming_.overheadMs
-                  << " total=" << lastTiming_.totalMs
-                  << " fallback=" << lastTiming_.fallbackMs
-                  << " total_with_fallback=" << lastTiming_.totalWithFallbackMs
-                  << "\n";
+        if (emitRegionalDiagnostics) {
+            std::cout << "[inc-regional] timing(ms): analyze=" << lastTiming_.analyzeMs
+                      << " sccClose=" << lastTiming_.sccCloseMs
+                      << " plan=" << lastTiming_.planMs
+                      << " rebuild=" << lastTiming_.rebuildMs
+                      << " rebuild_total=" << lastTiming_.rebuildTotalMs
+                      << " calibrate=" << lastTiming_.calibrateMs
+                      << " calibrate_total=" << lastTiming_.calibrateTotalMs
+                      << " fallback_snapshot=" << lastTiming_.fallbackSnapshotMs
+                      << " fallback_restore=" << lastTiming_.fallbackRestoreMs
+                      << " overhead=" << lastTiming_.overheadMs
+                      << " total=" << lastTiming_.totalMs
+                      << " fallback=" << lastTiming_.fallbackMs
+                      << " total_with_fallback=" << lastTiming_.totalWithFallbackMs
+                      << "\n";
+        }
         const double prepInsertMs = rt.regionCyclesMs + rt.indegreeMs;
         const double prepTotalMs = rt.preConfigMs + rt.initNodesMs + rt.initEdgesMs
                 + rt.regionCyclesMs + rt.indegreeMs;
-        std::cout << "[inc-regional-insert-profile]"
-                  << " dep_graph_ms=" << rt.depGraphMs
-                  << " dep_graph_scope=" << (depGraphScope ? depGraphScope : "unknown")
-                  << " reach_nodes=" << analysisStats.dr_nodes
-                  << " reach_edges=" << analysisStats.dr_edges
-                  << " rederive_ms=0"
-                  << " preconfig_ms=" << rt.preConfigMs
-                  << " init_nodes_ms=" << rt.initNodesMs
-                  << " init_edges_ms=" << rt.initEdgesMs
-                  << " prep_insert_ms=" << prepInsertMs
-                  << " prep_total_ms=" << prepTotalMs
-                  << " insert_ms=" << rt.rebuildLoopMs
-                  << " fc_ms=" << lastTiming_.rebuildMs
-                  << " total_ms=" << lastTiming_.totalMs
-                  << " rebuild_total_ms=" << rt.totalMs
-                  << " make_and_calls=" << rt.makeAndCalls
-                  << " make_and_ms=" << rt.makeAndMs
-                  << " make_or_calls=" << rt.makeOrCalls
-                  << " make_or_ms=" << rt.makeOrMs
-                  << " edge_requeued=" << rt.edgeRequeued
-                  << " input_literal_calls=" << rt.inputLiteralCalls
-                  << " input_literal_missing=" << rt.inputLiteralMissing
-                  << " input_literal_ms=" << rt.inputLiteralMs
-                  << "\n";
+        if (emitRegionalDiagnostics) {
+            std::cout << "[inc-regional-insert-profile]"
+                      << " dep_graph_ms=" << rt.depGraphMs
+                      << " dep_graph_scope=" << (depGraphScope ? depGraphScope : "unknown")
+                      << " reach_nodes=" << analysisStats.dr_nodes
+                      << " reach_edges=" << analysisStats.dr_edges
+                      << " rederive_ms=0"
+                      << " preconfig_ms=" << rt.preConfigMs
+                      << " init_nodes_ms=" << rt.initNodesMs
+                      << " init_edges_ms=" << rt.initEdgesMs
+                      << " prep_insert_ms=" << prepInsertMs
+                      << " prep_total_ms=" << prepTotalMs
+                      << " insert_ms=" << rt.rebuildLoopMs
+                      << " fc_ms=" << lastTiming_.rebuildMs
+                      << " total_ms=" << lastTiming_.totalMs
+                      << " rebuild_total_ms=" << rt.totalMs
+                      << " make_and_calls=" << rt.makeAndCalls
+                      << " make_and_ms=" << rt.makeAndMs
+                      << " make_or_calls=" << rt.makeOrCalls
+                      << " make_or_ms=" << rt.makeOrMs
+                      << " edge_requeued=" << rt.edgeRequeued
+                      << " input_literal_calls=" << rt.inputLiteralCalls
+                      << " input_literal_missing=" << rt.inputLiteralMissing
+                      << " input_literal_ms=" << rt.inputLiteralMs
+                      << "\n";
+        }
     }
 
     const Stats& getStats() const { return stats_; }

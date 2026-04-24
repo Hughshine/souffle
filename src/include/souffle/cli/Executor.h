@@ -58,7 +58,6 @@ public:
                 cli.handleDumpCommand();
                 return true;
             case CommandKind::EXIT:
-                std::cout << "PARSED EXIT: Exiting CLI" << std::endl;
                 return false;
             case CommandKind::UNKNOWN:
                 std::cout << "Unknown command: " << command.verb << std::endl;
@@ -147,8 +146,6 @@ private:
     }
 
     void handleCommitCommand() {
-        std::cout << "PARSED COMMIT: Would apply " << cli.pendingOperations.size()
-                  << " pending changes and run incremental computation" << std::endl;
         commit();
     }
 

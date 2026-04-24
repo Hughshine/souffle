@@ -7,7 +7,6 @@
 
 #include "souffle/RamTypes.h"
 #include "souffle/SouffleInterface.h"
-#include "souffle/utility/json11.h"
 
 #include <chrono>
 #include <cstdint>
@@ -25,6 +24,8 @@ class Debugger;
 
 std::string generateFilename(const std::string& prefix = "log", const std::string& suffix = ".txt");
 std::string basenameFromPath(const std::string& path);
+void setFunctionTimerOutputEnabled(bool enabled);
+bool isFunctionTimerOutputEnabled();
 
 class FunctionTimer {
 private:
@@ -59,7 +60,6 @@ struct UntypedTuple {
     std::vector<souffle::RamDomain> fields;
     static std::string toString(const UntypedTuple& tuple);
     std::string toString() const;
-    json11::Json toJson() const;
     static std::string toStringFields(const std::vector<souffle::RamDomain>& fields);
     bool operator<(const UntypedTuple& other) const;
     bool operator==(const UntypedTuple& other) const;
@@ -113,7 +113,6 @@ struct RuleApplication {
     static std::string toStringVarValues(const std::map<std::string, souffle::RamDomain>& varValues);
     static std::string toStringVarValuesPure(const std::vector<souffle::RamDomain>& values);
     bool operator<(const RuleApplication& other) const;
-    json11::Json toJson() const;
 };
 
 // hash specialization
@@ -275,19 +274,6 @@ public:
 
     static bool ruleAppExistsInCompleteSet(
             const UntypedTuple& untypedTuple, const RuleApplication& ruleAppl);
-    static std::string ruleApplications2Str(const std::unordered_set<RuleApplication>* ruleApplications);
-    static json11::Json ruleApp2Json(const RuleApplication& ruleApp);
-    static json11::Json derivationInfo2Json(
-            const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo);
-    static std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> derivationInfoFromJson(
-            const json11::Json& infoJson);
-    static void derivationInfo2JsonFile(
-            const std::string& originalFileName, const std::string& suffix,
-            const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& derivationInfo,
-            const std::string& outputDir = "");
-    static std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*> derivationInfoFromJsonFile(
-            const std::string& originalFileName, const std::string& suffix, const std::string& inputDir = "");
-    static void dumpDerivationInfo(const std::string& filename, const std::string& outputDir);
 
     static void setSemStatsEnabled(bool enabled);
     static bool isSemStatsEnabled();

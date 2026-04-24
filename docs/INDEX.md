@@ -18,8 +18,8 @@ artifact.
 
 - [../src/MainDriver.cpp:623](../src/MainDriver.cpp#L623): compiler-facing incremental options.
 - [../src/synthesiser/Synthesiser.cpp:673](../src/synthesiser/Synthesiser.cpp#L673): generated pipeline call.
-- [../src/problog/Pipeline.cpp:914](../src/problog/Pipeline.cpp#L914): baseline graph and runtime pipeline.
-- [../src/include/souffle/cli/Executor.h:233](../src/include/souffle/cli/Executor.h#L233): incremental commit path.
-- [../src/include/souffle/problog/ForwardCompilation.h:512](../src/include/souffle/problog/ForwardCompilation.h#L512): naive incremental forward compilation.
-- [../src/include/souffle/problog/ForwardCompilation.h:1960](../src/include/souffle/problog/ForwardCompilation.h#L1960): regional forward compilation.
+- [../src/problog/Pipeline.cpp:924](../src/problog/Pipeline.cpp#L924): baseline graph and runtime pipeline.
+- [../src/include/souffle/cli/Executor.h:311](../src/include/souffle/cli/Executor.h#L311): incremental commit path.
+- [../src/include/souffle/problog/ForwardCompilation.h:517](../src/include/souffle/problog/ForwardCompilation.h#L517): naive incremental forward compilation.
+- [../src/include/souffle/problog/ForwardCompilation.h:1967](../src/include/souffle/problog/ForwardCompilation.h#L1967): regional forward compilation.
 - [../tests/regression/CMakeLists.txt:22](../tests/regression/CMakeLists.txt#L22): regression suite.

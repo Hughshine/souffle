@@ -349,7 +349,9 @@ static void dumpRuleAppsBeforeGraphJson(
     }
     out << "]}";
     out.close();
-    std::cout << "[pipeline] wrote pre-graph ruleapp JSON to " << outputPath << std::endl;
+    if (DerivationGraphViewInterface::isVerboseEnabled()) {
+        std::cout << "[pipeline] wrote pre-graph ruleapp JSON to " << outputPath << std::endl;
+    }
 }
 
 static std::size_t estimateBddVarCount(const SubgraphView& view) {
@@ -710,9 +712,11 @@ static void runBddPipeline(
             buildFormulasCyclewise(view, *bddManager, nodeFormulas, edgeFormulas, seedTrueNodes, nullptr,
                     heartbeatCallback);
             auto t1 = std::chrono::steady_clock::now();
-            std::cout << "[pipeline] BDD formula build took "
-                      << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
-                      << " ms\n";
+            if (opt.isVerboseEnabled()) {
+                std::cout << "[pipeline] BDD formula build took "
+                          << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
+                          << " ms\n";
+            }
             debugger.endStage();
 
             debugger.startStage(StageKind::WEIGHTED_MODEL_COUNTING_FULL);
@@ -821,13 +825,15 @@ static void runBddPipeline(
                 probResult.emplace(node, prob);
             }
 
-            std::cout << "[pipeline] evidence resolve/tag took "
-                      << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
-                      << " ms\n";
-            std::cout << "[pipeline] component evidence build took " << evidenceBuildMs << " ms\n";
-            std::cout << "[pipeline] component evidence WMC took " << evidenceWmcMs << " ms\n";
-            std::cout << "[pipeline] per-node conditional WMC took "
-                      << perNodeWmcMs << " ms\n";
+            if (opt.isVerboseEnabled()) {
+                std::cout << "[pipeline] evidence resolve/tag took "
+                          << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
+                          << " ms\n";
+                std::cout << "[pipeline] component evidence build took " << evidenceBuildMs << " ms\n";
+                std::cout << "[pipeline] component evidence WMC took " << evidenceWmcMs << " ms\n";
+                std::cout << "[pipeline] per-node conditional WMC took "
+                          << perNodeWmcMs << " ms\n";
+            }
             if (wmcProfile) {
                 std::cout << "[wmc-profile] stage=FULL"
                           << " mode=full"
@@ -854,7 +860,9 @@ static void runBddPipeline(
             auto tDumpMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                    std::chrono::steady_clock::now() - tDumpStart)
                                    .count();
-            std::cout << "[pipeline] probability dump took " << tDumpMs << " ms\n";
+            if (opt.isVerboseEnabled()) {
+                std::cout << "[pipeline] probability dump took " << tDumpMs << " ms\n";
+            }
             debugger.endStage();
         }
     }
@@ -893,6 +901,8 @@ static void configureRuntimeFromOptions(const CmdOptions& opt) {
     DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
     DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());
     DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());
+    DerivationGraphViewInterface::setVerboseEnabled(opt.isVerboseEnabled());
+    setFunctionTimerOutputEnabled(opt.isVerboseEnabled());
     DerivationGraphViewInterface::setDumpOutputDir(opt.getOutputFileDir());
 }
 
@@ -950,13 +960,15 @@ void runPipeline(
             : 0.0;
     debugger.addInfo("ruleapp_avg_per_head", std::to_string(avgRuleAppsPerHead));
     debugger.addInfo("ruleapp_avg_bindings", std::to_string(avgBindingsPerRuleApp));
-    std::cout << "[pipeline] recorded ruleapps: heads=" << ruleAppInventory.headTuples
-              << " null_sets=" << ruleAppInventory.nullRuleSets
-              << " total=" << ruleAppInventory.totalRuleApps
-              << " unique_rules=" << ruleAppInventory.uniqueRuleIds
-              << " avg_per_head=" << avgRuleAppsPerHead
-              << " avg_bindings=" << avgBindingsPerRuleApp
-              << " max_per_head=" << ruleAppInventory.maxRuleAppsPerHead << std::endl;
+    if (opt.isVerboseEnabled()) {
+        std::cout << "[pipeline] recorded ruleapps: heads=" << ruleAppInventory.headTuples
+                  << " null_sets=" << ruleAppInventory.nullRuleSets
+                  << " total=" << ruleAppInventory.totalRuleApps
+                  << " unique_rules=" << ruleAppInventory.uniqueRuleIds
+                  << " avg_per_head=" << avgRuleAppsPerHead
+                  << " avg_bindings=" << avgBindingsPerRuleApp
+                  << " max_per_head=" << ruleAppInventory.maxRuleAppsPerHead << std::endl;
+    }
     if (opt.isDumpJsonBeforeGraphEnabled()) {
         const auto tDump0 = std::chrono::steady_clock::now();
         dumpRuleAppsBeforeGraphJson(opt, ruleManager, factProb);
@@ -970,9 +982,11 @@ void runPipeline(
     auto t1 = std::chrono::steady_clock::now();
     const GraphSummary createdSummary = summarizeGraphLight(*graph);
     addGraphSummaryInfo(debugger, "graph_", createdSummary);
-    std::cout << "[pipeline] create graph took "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
-              << " ms\n";
+    if (opt.isVerboseEnabled()) {
+        std::cout << "[pipeline] create graph took "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
+                  << " ms\n";
+    }
     debugger.endStage();
 
     if (opt.isDumpDotEnabled()) {
@@ -996,9 +1010,11 @@ void runPipeline(
     debugger.addInfo("removed_edges", std::to_string(
             beforePrune.edges > afterPrune.edges ? beforePrune.edges - afterPrune.edges : 0));
     auto t3 = std::chrono::steady_clock::now();
-    std::cout << "[pipeline] pruning took "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
-              << " ms\n";
+    if (opt.isVerboseEnabled()) {
+        std::cout << "[pipeline] pruning took "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
+                  << " ms\n";
+    }
     debugger.endStage();
 
     if (opt.isDumpDotEnabled()) {
@@ -1007,7 +1023,9 @@ void runPipeline(
     if (opt.isDumpJsonEnabled()) {
         view.dumpJson(makeOutputPath(opt, "derivation.json"));
     }
-    std::cout << "[pipeline] selected runtime lane=" << fullRuntimeLaneLabel() << std::endl;
+    if (opt.isVerboseEnabled()) {
+        std::cout << "[pipeline] selected runtime lane=" << fullRuntimeLaneLabel() << std::endl;
+    }
 
     runKnowledgeRuntimeLane(
             opt, program, ruleManager, queryManager, graph, view, evidences, enableOnlineCli);

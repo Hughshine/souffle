@@ -442,6 +442,7 @@ def case_deterministic_inc_regional_multiturn_state_machine(souffle_bin: Path, w
         output_dir=out_regional_rrr,
         mode="inc-regional",
         turns=turns,
+        extra_args=["--verbose"],
         timeout=300,
     )
     assert_prob_close(
@@ -664,9 +665,164 @@ def case_canonical_online_cli_surface(souffle_bin: Path, work_root: Path) -> Non
         "mode=full dumps=json,stat profile-stages=fc,wmc",
         label="canonical online cli updated config",
     )
+    assert_stdout_not_contains(proc.stdout, "PARSED ", label="canonical online cli hides parser trace")
+    assert_stdout_not_contains(proc.stdout, "[Debug]", label="canonical online cli hides graph debug trace")
+    assert_stdout_not_contains(proc.stdout, "[CUDD]", label="canonical online cli hides CUDD trace")
+    assert_stdout_not_contains(proc.stdout, "[pipeline]", label="canonical online cli hides pipeline trace")
+    assert_stdout_not_contains(proc.stdout, "reading:", label="canonical online cli hides input trace")
+    assert_stdout_not_contains(proc.stdout, "[det-analysis]", label="canonical online cli hides det trace")
+    assert_stdout_not_contains(proc.stdout, "[inc-iter", label="canonical online cli hides turn trace")
+    assert_stdout_not_contains(proc.stdout, "[applyDelta", label="canonical online cli hides graph delta trace")
+    assert_stdout_not_contains(proc.stdout, " took ", label="canonical online cli hides timer trace")
+    assert_stdout_not_contains(proc.stdout, "Inserting tuple:", label="canonical online cli hides staging trace")
+    assert_stdout_not_contains(
+        proc.stdout,
+        "Incremental Souffle CLI (Callback Version)",
+        label="canonical online cli hides non-interactive banner",
+    )
     assert_path_exists(output_dir / "fact-iter1-full.prob", label="canonical online cli full artifact")
     assert_glob_nonempty(output_dir, "derivation-full-after-prune1-*.json", label="canonical online cli json dump")
     assert_glob_nonempty(output_dir, "graph-*.json", label="canonical online cli graph stats")
+
+    quiet_regional_output_dir = case_dir / "out_canonical_cli_quiet_regional"
+    quiet_regional_proc = run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=quiet_regional_output_dir,
+        script_text="insert edge(10,20)\ncommit\nq\n",
+        timeout=240,
+    )
+    for noisy in [
+        "reading:",
+        "[det-analysis]",
+        "[inc-iter",
+        "[applyDelta",
+        "[prune-inc",
+        "[buildFormulasCyclewise]",
+        "[inc-analyze]",
+        "[inc-regional",
+        "[least-parents]",
+        "[Info] Attached evidence",
+        " took ",
+        "Inserting tuple:",
+        "Incremental Souffle CLI (Callback Version)",
+    ]:
+        assert_stdout_not_contains(
+            quiet_regional_proc.stdout,
+            noisy,
+            label=f"canonical online cli quiet regional hides {noisy}",
+        )
+    assert_path_exists(
+        quiet_regional_output_dir / "fact-iter1-inc-regional.prob",
+        label="canonical online cli quiet regional artifact",
+    )
+
+    arity_output_dir = case_dir / "out_canonical_cli_arity"
+    arity_proc = run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=arity_output_dir,
+        script_text="insert edge(10,20)\ndelete edge(10)\nlist\nq\n",
+        timeout=240,
+    )
+    assert_stdout_not_contains(
+        arity_proc.stdout,
+        "Overlapped insertion and deletion removed.",
+        label="canonical online cli ignores mismatched-arity overlap",
+    )
+    assert_stdout_contains(
+        arity_proc.stdout,
+        "1. insert 1::edge(10, 20)",
+        label="canonical online cli keeps mismatched insert pending",
+    )
+    assert_stdout_contains(
+        arity_proc.stdout,
+        "2. delete edge(10)",
+        label="canonical online cli keeps mismatched delete pending",
+    )
+
+    arity_reverse_output_dir = case_dir / "out_canonical_cli_arity_reverse"
+    arity_reverse_proc = run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=arity_reverse_output_dir,
+        script_text="insert edge(10)\ndelete edge(10,20)\nlist\nq\n",
+        timeout=240,
+    )
+    assert_stdout_not_contains(
+        arity_reverse_proc.stdout,
+        "Overlapped insertion and deletion removed.",
+        label="canonical online cli ignores reverse mismatched-arity overlap",
+    )
+    assert_stdout_contains(
+        arity_reverse_proc.stdout,
+        "1. insert 1::edge(10)",
+        label="canonical online cli keeps reverse mismatched insert pending",
+    )
+    assert_stdout_contains(
+        arity_reverse_proc.stdout,
+        "2. delete edge(10, 20)",
+        label="canonical online cli keeps reverse mismatched delete pending",
+    )
+
+    overlap_output_dir = case_dir / "out_canonical_cli_overlap"
+    overlap_proc = run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=overlap_output_dir,
+        script_text="insert edge(10,20)\ndelete edge(10,20)\nlist\nq\n",
+        timeout=240,
+    )
+    assert_stdout_not_contains(
+        overlap_proc.stdout,
+        "Overlapped insertion and deletion removed.",
+        label="canonical online cli hides overlap trace by default",
+    )
+    assert_stdout_contains(
+        overlap_proc.stdout,
+        "No pending operations.",
+        label="canonical online cli exact overlap clears pending operations",
+    )
+
+    verbose_output_dir = case_dir / "out_canonical_cli_verbose"
+    verbose_proc = run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=verbose_output_dir,
+        script_text="insert edge(10,20)\ndelete edge(10,20)\nlist\nq\n",
+        extra_args=["--verbose"],
+        timeout=240,
+    )
+    assert_stdout_contains(
+        verbose_proc.stdout,
+        "[pipeline] recorded ruleapps:",
+        label="canonical online cli verbose pipeline trace",
+    )
+    assert_stdout_contains(
+        verbose_proc.stdout,
+        "Overlapped insertion and deletion removed.",
+        label="canonical online cli verbose overlap trace",
+    )
+    assert_stdout_contains(
+        verbose_proc.stdout,
+        "No pending operations.",
+        label="canonical online cli verbose exact overlap clears pending operations",
+    )
+
+    verbose_regional_output_dir = case_dir / "out_canonical_cli_verbose_regional"
+    verbose_regional_proc = run_cli_script(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=verbose_regional_output_dir,
+        script_text="insert edge(10,20)\ncommit\nq\n",
+        extra_args=["--verbose"],
+        timeout=240,
+    )
+    assert_stdout_contains(
+        verbose_regional_proc.stdout,
+        "[inc-analyze] timing(ms):",
+        label="canonical online cli verbose regional analysis trace",
+    )
 
 
 CASES = {

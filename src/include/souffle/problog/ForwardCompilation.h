@@ -298,15 +298,18 @@ void buildFormulasCyclewiseInternal(
                         allAvailable = false;
                         auto& sc = stallCount[edge];
                         sc++;
-                        if (loggedFirstStall.insert(edge).second || sc == 100 || sc == 1000) {
+                        if (DerivationGraphViewInterface::isVerboseEnabled() &&
+                                (loggedFirstStall.insert(edge).second || sc == 100 || sc == 1000)) {
                             std::cout << "[buildFormulasCyclewise] stall edge " << edge->toString()
                                       << " missing input formula for node " << input->toString()
                                       << " (stall #" << sc << ")" << std::endl;
                         }
                         if (sc > kMaxStall) {
-                            std::cout << "[buildFormulasCyclewise] giving up on edge " << edge->toString()
-                                      << " after " << sc << " stalls; setting formula to False to continue."
-                                      << std::endl;
+                            if (DerivationGraphViewInterface::isVerboseEnabled()) {
+                                std::cout << "[buildFormulasCyclewise] giving up on edge " << edge->toString()
+                                          << " after " << sc << " stalls; setting formula to False to continue."
+                                          << std::endl;
+                            }
                             edgeFormulas[edge] = formulaManager.getFalse();
                             allAvailable = true;  // allow propagation of False to break the cycle
                         }
@@ -419,13 +422,15 @@ void buildFormulasCyclewiseInternal(
     debugger.logMessage(Level::INFO, "Total rounds: " + std::to_string(round));
     debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration) + " ms");
     double overallMs = toMs(Clock::now() - overallStart);
-    std::cout << "[buildFormulasCyclewise] timings(ms): total=" << overallMs
-              << " preConfig=" << preConfigMs
-              << " depGraph=" << depMs
-              << " baseInit=" << baseInitMs
-              << " cycles=" << cycleMs
-              << " rounds=" << round
-              << std::endl;
+    if (DerivationGraphViewInterface::isVerboseEnabled()) {
+        std::cout << "[buildFormulasCyclewise] timings(ms): total=" << overallMs
+                  << " preConfig=" << preConfigMs
+                  << " depGraph=" << depMs
+                  << " baseInit=" << baseInitMs
+                  << " cycles=" << cycleMs
+                  << " rounds=" << round
+                  << std::endl;
+    }
     if (fcProfile) {
         std::cout << "[fc-profile] stage=FORWARD_COMPILATION_FULL total_ms=" << overallMs
                   << " preConfig_ms=" << preConfigMs
@@ -1446,7 +1451,9 @@ void buildFormulasIncCyclewise(
         size_t insertion_impacted_node_count = 0;
 
         // === Insertion phase ===
-        std::cout << "Processing inserted edges" << std::endl;
+        if (DerivationGraphViewInterface::isVerboseEnabled()) {
+            std::cout << "Processing inserted edges" << std::endl;
+        }
         debugger.logMessage(Level::INFO, "Processing inserted edges");
         // initialized formulas for newly inserted nodes and edges
         auto initNodesStart = Clock::now();

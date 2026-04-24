@@ -2,13 +2,13 @@
 
 ## Source References
 
-- [../src/MainDriver.cpp:619](../src/MainDriver.cpp#L619): compiler options.
+- [../src/MainDriver.cpp:623](../src/MainDriver.cpp#L623): compiler options.
 - [../src/MainDriver.cpp:691](../src/MainDriver.cpp#L691): runtime-default canonicalization.
 - [../src/synthesiser/Synthesiser.cpp:673](../src/synthesiser/Synthesiser.cpp#L673): generated online pipeline call.
-- [../src/synthesiser/Synthesiser.cpp:4550](../src/synthesiser/Synthesiser.cpp#L4550): generated runtime defaults.
-- [../src/include/souffle/CompiledOptions.h:191](../src/include/souffle/CompiledOptions.h#L191): mode and output syntax.
-- [../src/include/souffle/CompiledOptions.h:700](../src/include/souffle/CompiledOptions.h#L700): generated runtime parser.
-- [../src/include/souffle/cli/Cli.h:657](../src/include/souffle/cli/Cli.h#L657): online CLI commands.
+- [../src/synthesiser/Synthesiser.cpp:4558](../src/synthesiser/Synthesiser.cpp#L4558): generated runtime defaults.
+- [../src/include/souffle/CompiledOptions.h:187](../src/include/souffle/CompiledOptions.h#L187): mode and output syntax.
+- [../src/include/souffle/CompiledOptions.h:709](../src/include/souffle/CompiledOptions.h#L709): generated runtime parser.
+- [../src/include/souffle/cli/Cli.h:680](../src/include/souffle/cli/Cli.h#L680): online CLI commands.
 
 ## Input Format
 
@@ -41,6 +41,7 @@ AE-facing compiler options:
 - `--dump=<json|json-before-graph|json-before-prune|dot|stat>`: bake default graph dumps.
 - `--profile-stage=<dred|inc|fc|wmc|inc-delete|inc-regional|dep-graph>`: bake default profiling stages.
 - `--log-file=<FILE>`: default debugger log filename.
+- `-v, --verbose`: bake informational runtime diagnostics on by default.
 
 Inherited Souffle options such as `--jobs`, `--include-dir`, `--profile`,
 `--show`, and warning controls remain available but are not incremental knobs.
@@ -55,6 +56,7 @@ AE-facing generated runtime options:
 - `--dump=<json|json-before-graph|json-before-prune|dot|stat>`: default-off graph dumps.
 - `--profile-stage=<dred|inc|fc|wmc|inc-delete|inc-regional|dep-graph>`: default-off profiling output.
 - `--logfile=<FILE>` or `--log-file=<FILE>`: debugger log filename.
+- `-v, --verbose`: print informational graph, CUDD, and pipeline diagnostics.
 - `-p, --profile=<FILE>`: profile output, only for binaries compiled with profiling enabled.
 - `-j, --jobs=<N>`: runtime thread count when OpenMP is available.
 

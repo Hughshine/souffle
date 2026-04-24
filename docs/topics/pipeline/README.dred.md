@@ -8,12 +8,12 @@ runtime and is not a separate evaluator mode.
 
 - [../../../src/ast2ram/online/UnitTranslator.cpp:1095](../../../src/ast2ram/online/UnitTranslator.cpp#L1095): generated rederive clause versions.
 - [../../../src/ast2ram/online/UnitTranslator.cpp:1480](../../../src/ast2ram/online/UnitTranslator.cpp#L1480): rederive loop tracing.
-- [../../../src/ast2ram/online/UnitTranslator.cpp:1614](../../../src/ast2ram/online/UnitTranslator.cpp#L1614): prefill from overdelete tuples.
+- [../../../src/ast2ram/online/UnitTranslator.cpp:1533](../../../src/ast2ram/online/UnitTranslator.cpp#L1533): prefill from overdelete tuples.
 - [../../../src/ast2ram/online/UnitTranslator.cpp:1650](../../../src/ast2ram/online/UnitTranslator.cpp#L1650): generated delete/insert phase structure.
-- [../../../src/include/souffle/cli/Executor.h:233](../../../src/include/souffle/cli/Executor.h#L233): runtime graph delta application.
-- [../../../src/include/souffle/problog/DerivationGraph.h:1793](../../../src/include/souffle/problog/DerivationGraph.h#L1793): graph `applyDelta` entry.
-- [../../../src/include/souffle/problog/DerivationGraph.h:2245](../../../src/include/souffle/problog/DerivationGraph.h#L2245): delete-phase profiling output.
-- [../../../src/include/souffle/problog/DerivationGraph.h:2280](../../../src/include/souffle/problog/DerivationGraph.h#L2280): prune statistics.
+- [../../../src/include/souffle/cli/Executor.h:311](../../../src/include/souffle/cli/Executor.h#L311): runtime graph delta application.
+- [../../../src/include/souffle/problog/DerivationGraph.h:1804](../../../src/include/souffle/problog/DerivationGraph.h#L1804): graph `applyDelta` entry.
+- [../../../src/include/souffle/problog/DerivationGraph.h:2264](../../../src/include/souffle/problog/DerivationGraph.h#L2264): delete-phase profiling output.
+- [../../../src/include/souffle/problog/DerivationGraph.h:2326](../../../src/include/souffle/problog/DerivationGraph.h#L2326): prune statistics.
 
 ## Role In The Pipeline
 

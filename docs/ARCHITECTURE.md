@@ -13,13 +13,13 @@ matching tuple keys and probabilities on the same delta stream.
 
 - [../src/MainDriver.cpp:623](../src/MainDriver.cpp#L623): compiler-facing incremental options.
 - [../src/synthesiser/Synthesiser.cpp:673](../src/synthesiser/Synthesiser.cpp#L673): generated runtime pipeline entry.
-- [../src/synthesiser/Synthesiser.cpp:4550](../src/synthesiser/Synthesiser.cpp#L4550): baked runtime defaults.
-- [../src/problog/Pipeline.cpp:914](../src/problog/Pipeline.cpp#L914): baseline pipeline and online CLI handoff.
-- [../src/include/souffle/cli/Cli.h:657](../src/include/souffle/cli/Cli.h#L657): interactive command surface.
-- [../src/include/souffle/cli/Executor.h:233](../src/include/souffle/cli/Executor.h#L233): incremental commit graph update.
-- [../src/include/souffle/problog/ForwardCompilation.h:512](../src/include/souffle/problog/ForwardCompilation.h#L512): naive incremental forward compilation.
-- [../src/include/souffle/problog/ForwardCompilation.h:1960](../src/include/souffle/problog/ForwardCompilation.h#L1960): regional incremental forward compilation.
-- [../src/include/souffle/problog/formula/CuddManager.h:565](../src/include/souffle/problog/formula/CuddManager.h#L565): CUDD adaptive reordering.
+- [../src/synthesiser/Synthesiser.cpp:4558](../src/synthesiser/Synthesiser.cpp#L4558): baked runtime defaults.
+- [../src/problog/Pipeline.cpp:924](../src/problog/Pipeline.cpp#L924): baseline pipeline and online CLI handoff.
+- [../src/include/souffle/cli/Cli.h:680](../src/include/souffle/cli/Cli.h#L680): interactive command surface.
+- [../src/include/souffle/cli/Executor.h:311](../src/include/souffle/cli/Executor.h#L311): incremental commit graph update.
+- [../src/include/souffle/problog/ForwardCompilation.h:517](../src/include/souffle/problog/ForwardCompilation.h#L517): naive incremental forward compilation.
+- [../src/include/souffle/problog/ForwardCompilation.h:1967](../src/include/souffle/problog/ForwardCompilation.h#L1967): regional incremental forward compilation.
+- [../src/include/souffle/problog/formula/CuddManager.h:568](../src/include/souffle/problog/formula/CuddManager.h#L568): CUDD adaptive reordering.
 
 ## 1. Compile
 

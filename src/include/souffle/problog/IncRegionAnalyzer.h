@@ -127,10 +127,13 @@ public:
         auto toMs = [](auto dur) { return std::chrono::duration<double, std::milli>(dur).count(); };
         auto t0 = now();
 
-        const bool wantFullScopeOutput = DerivationGraphViewInterface::isDumpStatsEnabled()
+        const bool verboseOutput = DerivationGraphViewInterface::isVerboseEnabled();
+        const bool dumpStatsOutput = DerivationGraphViewInterface::isDumpStatsEnabled();
+        const bool emitAnalysisConsole = incRegionalProfileEnabled || verboseOutput || dumpStatsOutput;
+        const bool wantFullScopeOutput = dumpStatsOutput
                                         || !json_out_path.empty()
                                         || !csv_out_path.empty();
-        const bool wantVerboseConsole = DerivationGraphViewInterface::isDumpStatsEnabled();
+        const bool wantVerboseConsole = verboseOutput || dumpStatsOutput;
 
         // Reset caches per analysis run.
         resetDerivedCaches_();
@@ -281,58 +284,61 @@ public:
             }
             return oss.str();
         };
-        std::cout << "[inc-analyze] timing(ms): "
-                  << " reach=" << toMs(t1 - t0)
-                  << " prepare=" << toMs(t2 - t1)
-                  << " initRegion=" << toMs(t3 - t2)
-                  << " classify=" << toMs(t4 - t3)
-                  << " expand=" << toMs(t5 - t4)
-                  << " upstreamClose=" << upstream_ms
-                  << " reclassify=" << reclass_ms
-                  << " reexpand=" << reexpand_ms
-                  << " deltaReach=" << toMs(t8 - t7)
-                  << " intersect=" << toMs(t9 - t8)
-                  << " mergeable=" << toMs(t10 - t9)
-                  << " deltaNodes=" << last_delta_nodes_.size()
-                  << " regionNodes=" << stats.region_nodes
-                  << " drNodes=" << stats.dr_nodes
-                  << " regionEdges=" << stats.region_edges
-                  << " drEdges=" << stats.dr_edges
-                  << " totalNodes=" << total_nodes
-                  << " totalEdges=" << total_edges
-                  << " drEdgeRatio=" << dr_edge_ratio
-                  << " lpSources=" << lp_set_.size()
-                  << " scopeSources=" << node_scope_.size()
-                  << " scopeNodesTotal=" << last_scope_nodes_total_
-                  << " scopeNodesExtra=" << last_scope_nodes_extra_
-                  << " scopeEdgesTotal=" << last_scope_edges_total_
-                  << " scopeEdgesExtra=" << last_scope_edges_extra_
-                  << " initNodes=" << initial_nodes
-                  << " initEdges=" << initial_edges
-                  << " initBoundary=" << initial_boundary
-                  << " afterExpandNodes=" << after_expand_nodes
-                  << " afterExpandEdges=" << after_expand_edges
-                  << " afterExpandBoundary=" << after_expand_boundary
-                  << " afterUpstreamNodes=" << after_upstream_nodes
-                  << " afterUpstreamEdges=" << after_upstream_edges
-                  << " afterUpstreamBoundary=" << after_upstream_boundary
-                  << " afterReexpandNodes=" << after_reexpand_nodes
-                  << " afterReexpandEdges=" << after_reexpand_edges
-                  << " afterReexpandBoundary=" << after_reexpand_boundary
-                  << " headsIndexed=" << head_scope_index_ready_.size()
-                  << " total=" << toMs(t10 - t0);
-        if (wantExpandIters && !expand_iters_ms.empty()) {
-            std::cout << " expand_iters_ms=" << joinMs(expand_iters_ms);
+        if (emitAnalysisConsole) {
+            std::cout << "[inc-analyze] timing(ms): "
+                      << " reach=" << toMs(t1 - t0)
+                      << " prepare=" << toMs(t2 - t1)
+                      << " initRegion=" << toMs(t3 - t2)
+                      << " classify=" << toMs(t4 - t3)
+                      << " expand=" << toMs(t5 - t4)
+                      << " upstreamClose=" << upstream_ms
+                      << " reclassify=" << reclass_ms
+                      << " reexpand=" << reexpand_ms
+                      << " deltaReach=" << toMs(t8 - t7)
+                      << " intersect=" << toMs(t9 - t8)
+                      << " mergeable=" << toMs(t10 - t9)
+                      << " deltaNodes=" << last_delta_nodes_.size()
+                      << " regionNodes=" << stats.region_nodes
+                      << " drNodes=" << stats.dr_nodes
+                      << " regionEdges=" << stats.region_edges
+                      << " drEdges=" << stats.dr_edges
+                      << " totalNodes=" << total_nodes
+                      << " totalEdges=" << total_edges
+                      << " drEdgeRatio=" << dr_edge_ratio
+                      << " lpSources=" << lp_set_.size()
+                      << " scopeSources=" << node_scope_.size()
+                      << " scopeNodesTotal=" << last_scope_nodes_total_
+                      << " scopeNodesExtra=" << last_scope_nodes_extra_
+                      << " scopeEdgesTotal=" << last_scope_edges_total_
+                      << " scopeEdgesExtra=" << last_scope_edges_extra_
+                      << " initNodes=" << initial_nodes
+                      << " initEdges=" << initial_edges
+                      << " initBoundary=" << initial_boundary
+                      << " afterExpandNodes=" << after_expand_nodes
+                      << " afterExpandEdges=" << after_expand_edges
+                      << " afterExpandBoundary=" << after_expand_boundary
+                      << " afterUpstreamNodes=" << after_upstream_nodes
+                      << " afterUpstreamEdges=" << after_upstream_edges
+                      << " afterUpstreamBoundary=" << after_upstream_boundary
+                      << " afterReexpandNodes=" << after_reexpand_nodes
+                      << " afterReexpandEdges=" << after_reexpand_edges
+                      << " afterReexpandBoundary=" << after_reexpand_boundary
+                      << " headsIndexed=" << head_scope_index_ready_.size()
+                      << " total=" << toMs(t10 - t0);
+            if (wantExpandIters && !expand_iters_ms.empty()) {
+                std::cout << " expand_iters_ms=" << joinMs(expand_iters_ms);
+            }
+            if (wantExpandIters && !reexpand_iters_ms.empty()) {
+                std::cout << " reexpand_iters_ms=" << joinMs(reexpand_iters_ms);
+            }
+            std::cout << "\n";
         }
-        if (wantExpandIters && !reexpand_iters_ms.empty()) {
-            std::cout << " reexpand_iters_ms=" << joinMs(reexpand_iters_ms);
-        }
-        std::cout
-                  << "\n";
         emitRelationHistogram("delta_insert_nodes", last_delta_nodes_);
         emitRelationHistogram("delta_reachable_nodes", dr.nodes);
         emitRelationHistogram("region_nodes", region.nodes);
-        emitConsole_(stats, region, wantVerboseConsole);
+        if (emitAnalysisConsole) {
+            emitConsole_(stats, region, wantVerboseConsole);
+        }
         if (!json_out_path.empty()) emitJSON_(stats, region, json_out_path);
         if (!csv_out_path.empty())  emitCSV_(stats, region, csv_out_path);
         if (DerivationGraphViewInterface::isDumpDotEnabled() || incRegionalProfileEnabled) {
@@ -674,22 +680,25 @@ private:
             lp_set_[source] = std::move(least);
         }
         double t_total = toMs(Clock::now() - t_total_start);
-        std::cout << "[least-parents] timing(ms): prepare=" << t_prepare
-                  << " scc=" << t_scc
-                  << " sccReach=" << t_scc_reach /*kept for compatibility*/
-                  << " reachNodes=" << t_scc_nodes
-                  << " reachable=" << t_reachable
-                  << " branch=" << t_branch
-                  << " dominators=" << t_dominators
-                  << " select=" << t_select
-                  << " total=" << t_total
-                  << " sources=" << sources_total
-                  << " used=" << sources_used
-                  << " skipped=" << sources_skipped
-                  << " branches=" << branch_edges
-                  << " branchNodes=" << branch_nodes
-                  << " reachNodes=" << reachable_nodes
-                  << "\n";
+        if (incRegionalProfileEnabled || DerivationGraphViewInterface::isVerboseEnabled() ||
+                DerivationGraphViewInterface::isDumpStatsEnabled()) {
+            std::cout << "[least-parents] timing(ms): prepare=" << t_prepare
+                      << " scc=" << t_scc
+                      << " sccReach=" << t_scc_reach /*kept for compatibility*/
+                      << " reachNodes=" << t_scc_nodes
+                      << " reachable=" << t_reachable
+                      << " branch=" << t_branch
+                      << " dominators=" << t_dominators
+                      << " select=" << t_select
+                      << " total=" << t_total
+                      << " sources=" << sources_total
+                      << " used=" << sources_used
+                      << " skipped=" << sources_skipped
+                      << " branches=" << branch_edges
+                      << " branchNodes=" << branch_nodes
+                      << " reachNodes=" << reachable_nodes
+                      << "\n";
+        }
     }
 
     void computeScopes_() {

@@ -7,8 +7,8 @@
 - [../../../tests/regression/run_regression_case.py:153](../../../tests/regression/run_regression_case.py#L153): compile helper.
 - [../../../tests/regression/run_regression_case.py:351](../../../tests/regression/run_regression_case.py#L351): deterministic mixed-update case.
 - [../../../tests/regression/run_regression_case.py:415](../../../tests/regression/run_regression_case.py#L415): regional multi-turn state-machine case.
-- [../../../tests/regression/run_regression_case.py:624](../../../tests/regression/run_regression_case.py#L624): canonical CLI surface case.
-- [../../../tests/regression/run_regression_case.py:672](../../../tests/regression/run_regression_case.py#L672): case dispatch table.
+- [../../../tests/regression/run_regression_case.py:625](../../../tests/regression/run_regression_case.py#L625): canonical CLI surface case.
+- [../../../tests/regression/run_regression_case.py:828](../../../tests/regression/run_regression_case.py#L828): case dispatch table.
 
 ## Case Groups
 

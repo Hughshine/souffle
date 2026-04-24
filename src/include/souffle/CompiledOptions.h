@@ -465,6 +465,7 @@ protected:
     bool wmc_profile = false;  // enable weighted model counting profiling
     bool inc_regional_profile = false;  // enable inc-regional profiling/diagnostics
     bool dep_graph_profile = false;  // enable dependency-graph profiling
+    bool verbose = false;  // enable informational runtime output
 public:
     // all argument constructor
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
@@ -477,7 +478,8 @@ public:
             bool incDeleteProfile = false,
             bool wmcProfile = false,
             bool incRegionalProfile = false,
-            bool depGraphProfile = false)
+            bool depGraphProfile = false,
+            bool verboseOutput = false)
             : src(s), input_dir(id), output_dir(od), profiling(pe), profile_name(pfn), num_jobs(nj), log_file_name(lfn)
     , dump_json(dumpjson), dump_json_before_graph(dumpjsonBeforeGraph),
       dump_json_before_prune(dumpjsonBeforePrune),
@@ -486,7 +488,8 @@ public:
       inc_delete_profile(incDeleteProfile),
       wmc_profile(wmcProfile),
       inc_regional_profile(incRegionalProfile),
-      dep_graph_profile(depGraphProfile) {
+      dep_graph_profile(depGraphProfile),
+      verbose(verboseOutput) {
         setIncrementalMode(mode);
     }
 
@@ -625,6 +628,12 @@ public:
     bool isDepGraphProfileEnabled() const {
         return dep_graph_profile;
     }
+    bool isVerboseEnabled() const {
+        return verbose;
+    }
+    void setVerboseEnabled(bool enabled) {
+        verbose = enabled;
+    }
     bool setProfileStageToken(const std::string& token, bool enabled) {
         std::string stage;
         if (!parseProfileStageToken(token, stage)) {
@@ -705,13 +714,14 @@ public:
                 {"setmode", true, nullptr, 'm'},
                 {"dump", true, nullptr, 1032},
                 {"profile-stage", true, nullptr, 1033},
+                {"verbose", false, nullptr, 'v'},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
         // check whether all options are fine
         bool ok = true;
         int c; /* command-line arguments processing */
-        while ((c = getopt_long(argc, argv, "D:F:hp:j:m:", longOptions, nullptr)) != EOF) {
+        while ((c = getopt_long(argc, argv, "D:F:hp:j:m:v", longOptions, nullptr)) != EOF) {
             switch (c) {
                 /* Fact directories */
                 case 'F':
@@ -807,6 +817,9 @@ public:
                     }
                     break;
                 }
+                case 'v':
+                    verbose = true;
+                    break;
                 default: printHelpPage(exec_name); return false;
             }
         }
@@ -848,6 +861,7 @@ private:
                   << dumpKindsOptionSyntax() << "\n";
         std::cerr << "    --profile-stage=<LIST>       -- Canonical profile selector "
                   << profileStageOptionSyntax() << "\n";
+        std::cerr << "    -v, --verbose                -- Print informational runtime diagnostics\n";
         std::cerr << "             --logfile=<FILE>    -- Runtime log filename\n";
         std::cerr << "             --log-file=<FILE>   -- Canonical alias for --logfile\n";
 #ifdef _OPENMP

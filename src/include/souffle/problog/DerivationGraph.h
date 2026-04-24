@@ -407,6 +407,8 @@ public:
     static bool isDumpJsonEnabled() { return dumpJsonEnabled; }
     static void setDumpStatsEnabled(bool enabled) { dumpStatsEnabled = enabled; }
     static bool isDumpStatsEnabled() { return dumpStatsEnabled; }
+    static void setVerboseEnabled(bool enabled) { verboseEnabled = enabled; }
+    static bool isVerboseEnabled() { return verboseEnabled; }
     static void setDumpOutputDir(const std::string& dir) { dumpOutputDir = dir; }
     static const std::string& getDumpOutputDir() { return dumpOutputDir; }
     static std::string qualifyDumpPath(const std::string& filename) {
@@ -449,6 +451,7 @@ protected:
     static inline bool dumpDotEnabled = false;
     static inline bool dumpJsonEnabled = false;
     static inline bool dumpStatsEnabled = false;
+    static inline bool verboseEnabled = false;
     static inline std::string dumpOutputDir = "";
 };
 
@@ -1161,9 +1164,11 @@ public:
             NodePtr node = findNode(tuple);
             if (node) {
                 node ->setEvidence(value);
-                std::cout << "[Info] Attached evidence (" << tuple.toString() << ","
-                                      << (value ? "true" : "false")
-                                      << ") to node " << node->toString() << std::endl;
+                if (DerivationGraphViewInterface::isVerboseEnabled()) {
+                    std::cout << "[Info] Attached evidence (" << tuple.toString() << ","
+                                          << (value ? "true" : "false")
+                                          << ") to node " << node->toString() << std::endl;
+                }
             } else {
                 std::cerr << "Evidence (" << tuple.toString() << ","
                                       << (value ? "true" : "false")
@@ -1367,7 +1372,9 @@ public:
     const std::unordered_set<EdgePtr>& getEdges() const { return edges; }
 
     static DerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {})  {
-        std::cout << "[Debug] Enter DerivationGraph::createFrom()" << std::endl;
+        if (DerivationGraphViewInterface::isVerboseEnabled()) {
+            std::cout << "[Debug] Enter DerivationGraph::createFrom()" << std::endl;
+        }
         FunctionTimer timer(" creating derivation graph ");
         if (DerivationGraphViewInterface::isDumpStatsEnabled()) {
             resetEdgeLookupTiming();
@@ -1396,7 +1403,9 @@ public:
                 }
             }
         }
-        std::cout << "[Debug] Current nodes in graph:" << std::endl;
+        if (DerivationGraphViewInterface::isVerboseEnabled()) {
+            std::cout << "[Debug] Current nodes in graph:" << std::endl;
+        }
         {
             FunctionTimer scopeTimer("create graph: attach evidence");
             graph->attachEvidence(evidences);
@@ -1424,8 +1433,10 @@ public:
                       << " insert_s=" << t.insert_total_s
                       << std::endl;
         }
-        for (const auto& node : graph->getNodes()) {
-            std::cout << "  " << node->getTuple().toString() << std::endl;
+        if (DerivationGraphViewInterface::isVerboseEnabled()) {
+            for (const auto& node : graph->getNodes()) {
+                std::cout << "  " << node->getTuple().toString() << std::endl;
+            }
         }
 
         return graph;
@@ -1809,13 +1820,15 @@ public:
             }
             return total;
         };
-        std::cout << "[applyDelta] delTuples=" << deltaDeleteRuleApps.size()
-                  << " delRuleApps=" << countRuleApps(deltaDeleteRuleApps)
-                  << " delFacts=" << deletedFacts.size()
-                  << " insTuples=" << deltaInsertRuleApps.size()
-                  << " insRuleApps=" << countRuleApps(deltaInsertRuleApps)
-                  << " insFacts=" << fact_prob.size()
-                  << std::endl;
+        if (DerivationGraphViewInterface::isVerboseEnabled()) {
+            std::cout << "[applyDelta] delTuples=" << deltaDeleteRuleApps.size()
+                      << " delRuleApps=" << countRuleApps(deltaDeleteRuleApps)
+                      << " delFacts=" << deletedFacts.size()
+                      << " insTuples=" << deltaInsertRuleApps.size()
+                      << " insRuleApps=" << countRuleApps(deltaInsertRuleApps)
+                      << " insFacts=" << fact_prob.size()
+                      << std::endl;
+        }
         double clearMs = 0.0;
         double deletesMs = 0.0;
         double insertsMs = 0.0;
@@ -1982,7 +1995,7 @@ void IncrementalDerivationGraph::applyDeltaInserts(
                 // Check whether the edge for this rule application already exists.
                 const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
                 EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, rule->getVars());
-                if (existingEdge != nullptr) {
+                if (existingEdge != nullptr && DerivationGraphViewInterface::isVerboseEnabled()) {
                     std::cout << existingEdge->toString() << std::endl;
                 }
                 assert(existingEdge == nullptr && "Delta insert edge already exists in the graph");
@@ -2084,8 +2097,10 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
                 EdgePtr existingEdge = findHyperedgeFromRuleApp(ruleApp, vars);
                 tFindEdgeMs += elapsedMs(tFindStart);
                 if (existingEdge == nullptr) {
-                    std::cout << "Did not find the edge to delete: "
-                              << createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure) << std::endl;
+                    if (DerivationGraphViewInterface::isVerboseEnabled()) {
+                        std::cout << "Did not find the edge to delete: "
+                                  << createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure) << std::endl;
+                    }
                     missingEdgeCount++;
                     continue;
                 }
@@ -2208,7 +2223,9 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
 
             } else {
                 // It's possible that the deleted fact has been removed from the graph; but it has to be with deleted derivations
-                std::cout << "deleted fact not found: " << tuple.toString() << std::endl;
+                if (DerivationGraphViewInterface::isVerboseEnabled()) {
+                    std::cout << "deleted fact not found: " << tuple.toString() << std::endl;
+                }
             }
         }
         if (incProfile) {
@@ -2257,17 +2274,19 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
                   << " outVecScan=" << totalOutVecScan
                   << std::endl;
     }
-    std::cout << "[applyDeltaDeletes] detailed: "
-              << "findEdge=" << tFindEdgeMs << "ms, "
-              << "eraseVec=" << tEraseVecMs << "ms, "
-              << "eraseEdgeSet=" << tEraseEdgeSetMs << "ms, "
-              << "eraseKey=" << tEraseKeyMs << "ms, "
-              << "outputDecision=" << tOutputDecisionMs << "ms, "
-              << "removedEdges=" << removedEdgeCount
-              << ", missingEdges=" << missingEdgeCount
-              << ", inVecScan=" << totalInVecScan
-              << ", outVecScan=" << totalOutVecScan
-              << std::endl;
+    if (DerivationGraphViewInterface::isVerboseEnabled()) {
+        std::cout << "[applyDeltaDeletes] detailed: "
+                  << "findEdge=" << tFindEdgeMs << "ms, "
+                  << "eraseVec=" << tEraseVecMs << "ms, "
+                  << "eraseEdgeSet=" << tEraseEdgeSetMs << "ms, "
+                  << "eraseKey=" << tEraseKeyMs << "ms, "
+                  << "outputDecision=" << tOutputDecisionMs << "ms, "
+                  << "removedEdges=" << removedEdgeCount
+                  << ", missingEdges=" << missingEdgeCount
+                  << ", inVecScan=" << totalInVecScan
+                  << ", outVecScan=" << totalOutVecScan
+                  << std::endl;
+    }
 }
 
 IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Relation*>& outputRelations) {
@@ -2296,9 +2315,12 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
     double impactMs = 0.0;
     double buildViewMs = 0.0;
     double dumpViewMs = 0.0;
-    std::cout << "[prune-inc] delta-delete counts (start): nodes=" << deltaDeleteNodes.size()
-              << " edges=" << deltaDeleteEdges.size() << std::endl;
-    {
+    const bool verbose = DerivationGraphViewInterface::isVerboseEnabled();
+    if (verbose) {
+        std::cout << "[prune-inc] delta-delete counts (start): nodes=" << deltaDeleteNodes.size()
+                  << " edges=" << deltaDeleteEdges.size() << std::endl;
+    }
+    if (DerivationGraphViewInterface::isDumpStatsEnabled()) {
         auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: dumpStatisticsInc");
         dumpStatisticsInc(std::cout);
@@ -2343,9 +2365,11 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         FunctionTimer scopeTimer("prune-inc: evidence + backward BFS");
         for (const auto& node : evidenceNodes) {
             if (reachableNodes.insert(node).second) {
-                std::cout << "Found evidence node: " << node->toString()
-                          << " with value " << (node->getEvidenceValue() ? "true" : "false")
-                          << std::endl;
+                if (verbose) {
+                    std::cout << "Found evidence node: " << node->toString()
+                              << " with value " << (node->getEvidenceValue() ? "true" : "false")
+                              << std::endl;
+                }
                 workQueue.push(node);
             }
         }
@@ -2404,8 +2428,10 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
             markMs = toMs(t0);
         }
     }
-    std::cout << "[prune-inc] delta-delete counts (post-mark-pruned): nodes=" << deltaDeleteNodes.size()
-              << " edges=" << deltaDeleteEdges.size() << std::endl;
+    if (verbose) {
+        std::cout << "[prune-inc] delta-delete counts (post-mark-pruned): nodes=" << deltaDeleteNodes.size()
+                  << " edges=" << deltaDeleteEdges.size() << std::endl;
+    }
 
     // Filter nodes and edges.
     std::set<NodePtr> newDeltaDeletedNodes;
@@ -2427,8 +2453,10 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
             filterMs = toMs(t0);
         }
     }
-    std::cout << "[prune-inc] delta-delete counts (filtered): nodes=" << newDeltaDeletedNodes.size()
-              << " edges=" << newDeltaDeletedEdges.size() << std::endl;
+    if (verbose) {
+        std::cout << "[prune-inc] delta-delete counts (filtered): nodes=" << newDeltaDeletedNodes.size()
+                  << " edges=" << newDeltaDeletedEdges.size() << std::endl;
+    }
     std::vector<NodePtr> deletedOutputNodes;
     deletedOutputNodes.reserve(newDeltaDeletedNodes.size());
     for (const auto& node : newDeltaDeletedNodes) {
@@ -2467,8 +2495,10 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         }
     }
 
-    std::cout << "[prune-inc] delta-delete counts (canonicalised): nodes=" << newDeltaDeletedNodes.size()
-              << " edges=" << newDeltaDeletedEdges.size() << std::endl;
+    if (verbose) {
+        std::cout << "[prune-inc] delta-delete counts (canonicalised): nodes=" << newDeltaDeletedNodes.size()
+                  << " edges=" << newDeltaDeletedEdges.size() << std::endl;
+    }
 
     std::unordered_set<NodePtr> newInsertedReachableNodes;
     std::unordered_set<EdgePtr> newInsertedReachableEdges;
@@ -2492,13 +2522,15 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         double insImpactMs = 0.0, delImpactMs = 0.0;
         size_t insImpactNodes = 0, insImpactEdges = 0, insSources = 0;
         size_t delImpactNodes = 0, delImpactEdges = 0, delSources = 0;
-        std::cout << "[prune-inc impact] insSources=" << insSources
-                  << " insNodes=" << insImpactNodes << " insEdges=" << insImpactEdges
-                  << " insTimeMs=" << insImpactMs
-                  << " delSources=" << delSources
-                  << " delNodes=" << delImpactNodes << " delEdges=" << delImpactEdges
-                  << " delTimeMs=" << delImpactMs
-                  << std::endl;
+        if (verbose) {
+            std::cout << "[prune-inc impact] insSources=" << insSources
+                      << " insNodes=" << insImpactNodes << " insEdges=" << insImpactEdges
+                      << " insTimeMs=" << insImpactMs
+                      << " delSources=" << delSources
+                      << " delNodes=" << delImpactNodes << " delEdges=" << delImpactEdges
+                      << " delTimeMs=" << delImpactMs
+                      << std::endl;
+        }
         if (incProfile) {
             impactMs = toMs(t0);
         }
@@ -2534,7 +2566,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         }
         return built;
     }();
-    {
+    if (DerivationGraphViewInterface::isDumpStatsEnabled()) {
         auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune-inc: dumpStatisticsInc(view)");
         view.dumpStatisticsInc(std::cout);
@@ -2542,8 +2574,10 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
             dumpViewMs = toMs(t0);
         }
     }
-    std::cout << "[prune-inc] delta-delete counts (view): nodes=" << view.getDeltaDeleteNodes().size()
-              << " edges=" << view.getDeltaDeleteEdges().size() << std::endl;
+    if (verbose) {
+        std::cout << "[prune-inc] delta-delete counts (view): nodes=" << view.getDeltaDeleteNodes().size()
+                  << " edges=" << view.getDeltaDeleteEdges().size() << std::endl;
+    }
     if (incProfile) {
         const double totalMs = toMs(totalStart);
         std::cout << "[inc-profile] stage=PRUNING_INC prune_ms=" << totalMs
@@ -2656,19 +2690,23 @@ void IncrementalDerivationGraphViewInterface::dumpDotInc(const std::string& file
         }
     }
 
-    std::cout << "Dumping " << getNodes().size() << " nodes, "
-              << getEdges().size() << " edges, "
-              << getDeltaInsertNodes().size() << " inserted nodes, "
-              << getDeltaInsertEdges().size() << " inserted edges, "
-              << getDeltaDeleteNodes().size() << " deleted nodes, "
-              << getDeltaDeleteEdges().size() << " deleted edges." << std::endl;
+    if (DerivationGraphViewInterface::isVerboseEnabled()) {
+        std::cout << "Dumping " << getNodes().size() << " nodes, "
+                  << getEdges().size() << " edges, "
+                  << getDeltaInsertNodes().size() << " inserted nodes, "
+                  << getDeltaInsertEdges().size() << " inserted edges, "
+                  << getDeltaDeleteNodes().size() << " deleted nodes, "
+                  << getDeltaDeleteEdges().size() << " deleted edges." << std::endl;
+    }
 
     // Inserted nodes - green fill
     out << "\n  // Inserted nodes\n";
     out << "  node [shape=box, style=filled, fillcolor=lightgreen];\n";
 
     for (const auto& node : getDeltaInsertNodes()) {
-        std::cout << "DumpDotInc Inserting node: " << node->getTuple().toString() << std::endl;
+        if (DerivationGraphViewInterface::isVerboseEnabled()) {
+            std::cout << "DumpDotInc Inserting node: " << node->getTuple().toString() << std::endl;
+        }
         out << "  node" << node->getId() << " [label=\""
             << node->getTuple().toString();
 
@@ -2873,12 +2911,14 @@ void dumpProbabilities(
     for (const auto& [tupleStr, prob] : tupleProbabilities) {
         outputFile << tupleStr << " : " << prob << std::endl;
     }
-    std::cout << "[pipeline] dumpProbabilities nodes=" << sortedNodes.size()
-              << " outputs=" << tupleProbabilities.size()
-              << " prob_nodes=" << nodeProbabilities.size()
-              << " precomputed_nodes=" << precomputedProbResult.size()
-              << " precomputed_tuple_nodes=" << precomputedTupleProbResult.size()
-              << std::endl;
+    if (DerivationGraphViewInterface::isVerboseEnabled()) {
+        std::cout << "[pipeline] dumpProbabilities nodes=" << sortedNodes.size()
+                  << " outputs=" << tupleProbabilities.size()
+                  << " prob_nodes=" << nodeProbabilities.size()
+                  << " precomputed_nodes=" << precomputedProbResult.size()
+                  << " precomputed_tuple_nodes=" << precomputedTupleProbResult.size()
+                  << std::endl;
+    }
 
 }
 
