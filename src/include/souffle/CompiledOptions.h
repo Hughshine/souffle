@@ -66,8 +66,7 @@ enum class FcStateClass {
 
 enum class FullEvaluator {
     EXACT,
-    SCBF,
-    APPROX
+    SCBF
 };
 
 enum class RewriteEngine {
@@ -92,11 +91,6 @@ enum class DetMode {
     AUTO,
     OFF,
     FORCE
-};
-
-enum class ApproxBackend {
-    NONE,
-    AMC
 };
 
 struct IncrementalModeSpec {
@@ -257,15 +251,11 @@ inline const char* fcModeOptionSyntax() {
 }
 
 inline const char* fullEvaluatorOptionSyntax() {
-    return "[ exact | scbf | approx ]";
+    return "[ exact | scbf ]";
 }
 
 inline const char* ddBackendOptionSyntax() {
     return "[ bdd | sdd ]";
-}
-
-inline const char* approxBackendOptionSyntax() {
-    return "[ none | amc ]";
 }
 
 inline const char* rewriteEngineOptionSyntax() {
@@ -507,13 +497,6 @@ inline bool parseFullEvaluatorToken(const std::string& token, FullEvaluator& eva
         }
         return true;
     }
-    if (value == "approx") {
-        evaluator = FullEvaluator::APPROX;
-        if (canonicalToken) {
-            *canonicalToken = "approx";
-        }
-        return true;
-    }
     return false;
 }
 
@@ -625,26 +608,6 @@ inline bool parseDetModeToken(const std::string& token, DetMode& mode,
     return false;
 }
 
-inline bool parseApproxBackendToken(const std::string& token, ApproxBackend& backend,
-        std::string* canonicalToken = nullptr) {
-    const std::string value = normalizeFlagToken(token);
-    if (value == "none") {
-        backend = ApproxBackend::NONE;
-        if (canonicalToken) {
-            *canonicalToken = "none";
-        }
-        return true;
-    }
-    if (value == "amc") {
-        backend = ApproxBackend::AMC;
-        if (canonicalToken) {
-            *canonicalToken = "amc";
-        }
-        return true;
-    }
-    return false;
-}
-
 inline bool parseDdBackendToken(const std::string& token, std::string& backend,
         std::string* canonicalToken = nullptr) {
     const std::string value = normalizeFlagToken(token);
@@ -664,8 +627,6 @@ inline const char* fullEvaluatorLabel(FullEvaluator evaluator) {
             return "exact";
         case FullEvaluator::SCBF:
             return "scbf";
-        case FullEvaluator::APPROX:
-            return "approx";
     }
     return "exact";
 }
@@ -716,16 +677,6 @@ inline const char* detModeLabel(DetMode mode) {
             return "force";
     }
     return "auto";
-}
-
-inline const char* approxBackendLabel(ApproxBackend backend) {
-    switch (backend) {
-        case ApproxBackend::NONE:
-            return "none";
-        case ApproxBackend::AMC:
-            return "amc";
-    }
-    return "none";
 }
 
 inline bool parseDumpKindToken(const std::string& token, std::string& kind,
@@ -938,7 +889,6 @@ protected:
     RewriteSplitMode rewrite_split_mode = RewriteSplitMode::NAIVE;
     RewriteDetectMode rewrite_detect_mode = RewriteDetectMode::DIRTY_FRONTIER;
     DetMode det_mode = DetMode::AUTO;
-    ApproxBackend approx_backend = ApproxBackend::NONE;
 public:
     // all argument constructor
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
@@ -1148,17 +1098,6 @@ public:
         setDetMode(mode);
         return true;
     }
-    void setApproxBackend(ApproxBackend backend) {
-        approx_backend = backend;
-    }
-    bool setApproxBackendToken(const std::string& token) {
-        ApproxBackend backend = approx_backend;
-        if (!parseApproxBackendToken(token, backend)) {
-            return false;
-        }
-        setApproxBackend(backend);
-        return true;
-    }
     FullEvaluator getFullEvaluator() const {
         return full_evaluator;
     }
@@ -1173,9 +1112,6 @@ public:
     }
     DetMode getDetMode() const {
         return det_mode;
-    }
-    ApproxBackend getApproxBackend() const {
-        return approx_backend;
     }
     /**
      * is profiling switched on
@@ -1415,7 +1351,6 @@ public:
                 {"setmode", true, nullptr, 'm'},
                 {"sem-mode", true, nullptr, 1022}, {"fc-mode", true, nullptr, 1023},
                 {"full-evaluator", true, nullptr, 1024},
-                {"approx-backend", true, nullptr, 1025},
                 {"merge-bi-imp", false, nullptr, 'e'}, {"no-merge-bi-imp", false, nullptr, 1026},
                 {"prune-extra", false, nullptr, 1004}, {"no-prune-extra", false, nullptr, 1027},
                 {"fold-const", false, nullptr, 'C'}, {"no-fold-const", false, nullptr, 1028},
@@ -1574,12 +1509,6 @@ public:
                 case 1024:
                     if (!setFullEvaluatorToken(optarg)) {
                         std::cerr << "Invalid full evaluator [--full-evaluator]: " << optarg << "\n";
-                        ok = false;
-                    }
-                    break;
-                case 1025:
-                    if (!setApproxBackendToken(optarg)) {
-                        std::cerr << "Invalid approx backend [--approx-backend]: " << optarg << "\n";
                         ok = false;
                     }
                     break;
@@ -1749,11 +1678,6 @@ public:
             }
         }
 
-        if (full_evaluator == FullEvaluator::APPROX || approx_backend != ApproxBackend::NONE) {
-            std::cerr << "Approximate full evaluators/backends are not supported by compiled runtimes yet\n";
-            ok = false;
-        }
-
         // update member fields
         input_dir = fact_dir;
         output_dir = out_dir;
@@ -1791,7 +1715,6 @@ private:
             det_mode = DetMode::OFF;
         }
         full_evaluator = enable_scbf ? FullEvaluator::SCBF : FullEvaluator::EXACT;
-        approx_backend = ApproxBackend::NONE;
     }
 
     void syncLegacyFieldsFromCanonicalState() {
@@ -1865,8 +1788,6 @@ private:
                   << fcModeOptionSyntax() << "\n";
         std::cerr << "             --full-evaluator=<MODE> -- Full evaluator "
                   << fullEvaluatorOptionSyntax() << "\n";
-        std::cerr << "             --approx-backend=<MODE> -- Approx backend "
-                  << approxBackendOptionSyntax() << " (reserved; runtime rejects for now)\n";
         std::cerr << "    -e, --merge-bi-imp           -- Enable merging mutually implying deterministic nodes during pruning\n";
         std::cerr << "             --no-merge-bi-imp   -- Disable merge-bi-imp even if compiled default enabled\n";
         std::cerr << "    --prune-extra                -- Enable outputless-component pruning in prune\n";

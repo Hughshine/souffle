@@ -352,55 +352,9 @@ target_link_libraries(souffle libsouffle)
 add_dependencies(souffle compiled)
 install(TARGETS souffle DESTINATION bin)
 
-# --------------------------------------------------
-# Standalone derivation graph probability query tool
-# --------------------------------------------------
 find_library(CUDD_LIBRARY NAMES cudd)
 find_library(SDD_LIBRARY NAMES sdd)
 find_library(SDDXX_LIBRARY NAMES sdd++)
-find_package(approxmc CONFIG QUIET)
-set(SOUFFLE_HAS_APPROXMC_DIRECT OFF)
-if (approxmc_FOUND)
-  find_package(cryptominisat5 CONFIG QUIET)
-  find_package(sbva CONFIG QUIET)
-  find_package(arjun CONFIG QUIET)
-  if (TARGET approxmc AND TARGET cryptominisat5 AND TARGET sbva AND TARGET arjun)
-    set(SOUFFLE_HAS_APPROXMC_DIRECT ON)
-  else ()
-    message(STATUS "Building souffle-problog-graph-query without direct ApproxMC library: approxmc dependency targets not found")
-  endif ()
-endif ()
-
-if (CUDD_LIBRARY)
-  set(SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS ${CUDD_LIBRARY} m)
-
-  add_executable(souffle-problog-graph-query
-                 problog_graph_query.cpp
-                 problog/approx/WeightedConversion.cpp)
-  if (SOUFFLE_HAS_APPROXMC_DIRECT)
-    target_compile_definitions(souffle-problog-graph-query PRIVATE SOUFFLE_STANDALONE_HAS_APPROXMC_LIB=1)
-    if (APPROXMC_INCLUDE_DIRS)
-      target_include_directories(souffle-problog-graph-query PRIVATE ${APPROXMC_INCLUDE_DIRS})
-    endif ()
-    list(APPEND SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS approxmc arjun cryptominisat5 sbva)
-  elseif (NOT approxmc_FOUND)
-    message(STATUS "Building souffle-problog-graph-query without direct ApproxMC library: approxmc package not found")
-  endif ()
-  if (SDD_LIBRARY)
-    target_compile_definitions(souffle-problog-graph-query PRIVATE SOUFFLE_STANDALONE_HAS_SDD=1)
-    list(APPEND SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS ${SDD_LIBRARY})
-    if (SDDXX_LIBRARY)
-      list(APPEND SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS ${SDDXX_LIBRARY})
-    endif ()
-  else ()
-    message(STATUS "Building souffle-problog-graph-query without SDD backend: SDD library not found")
-  endif ()
-  target_link_libraries(souffle-problog-graph-query PRIVATE libsouffle compiled ${SOUFFLE_PROBLOG_GRAPH_QUERY_LIBS})
-  add_dependencies(souffle-problog-graph-query compiled)
-  install(TARGETS souffle-problog-graph-query DESTINATION bin)
-else ()
-  message(WARNING "Skipping souffle-problog-graph-query: CUDD library not found")
-endif ()
 
 set(SOUFFLE_PROBLOG_PIPELINE_LIBS ${CUDD_LIBRARY} m readline)
 if (SDD_LIBRARY)
@@ -409,16 +363,6 @@ endif ()
 if (SDDXX_LIBRARY)
   list(APPEND SOUFFLE_PROBLOG_PIPELINE_LIBS ${SDDXX_LIBRARY})
 endif ()
-
-# --------------------------------------------------
-# Standalone derivation-graph -> weighted-AMC demo
-# --------------------------------------------------
-add_executable(souffle-amc-pipeline-demo
-               ../experiments/approxmc_demo/dg_wamc_pipeline_demo.cpp
-               problog/approx/WeightedConversion.cpp)
-target_link_libraries(souffle-amc-pipeline-demo PRIVATE libsouffle compiled)
-add_dependencies(souffle-amc-pipeline-demo compiled)
-install(TARGETS souffle-amc-pipeline-demo DESTINATION bin)
 
 # --------------------------------------------------
 # Standalone SCBF IR smoke test (independent from runtime pipeline)
@@ -536,21 +480,6 @@ add_executable(souffle-implicit-split-json-benchmark
 target_link_libraries(souffle-implicit-split-json-benchmark PRIVATE libsouffle compiled ${SOUFFLE_PROBLOG_PIPELINE_LIBS})
 add_dependencies(souffle-implicit-split-json-benchmark compiled)
 install(TARGETS souffle-implicit-split-json-benchmark DESTINATION bin)
-
-# --------------------------------------------------
-# Standalone BDD+WMC vs AMC benchmark on synthetic derivation graph
-# --------------------------------------------------
-if (CUDD_LIBRARY)
-  add_executable(souffle-bdd-vs-amc-benchmark
-                 ../experiments/approxmc_demo/bdd_vs_amc_benchmark.cpp
-                 problog/approx/WeightedConversion.cpp)
-  target_link_libraries(souffle-bdd-vs-amc-benchmark PRIVATE libsouffle compiled ${CUDD_LIBRARY} m)
-  add_dependencies(souffle-bdd-vs-amc-benchmark compiled)
-  install(TARGETS souffle-bdd-vs-amc-benchmark DESTINATION bin)
-else ()
-  message(WARNING "Skipping souffle-bdd-vs-amc-benchmark: CUDD library not found")
-endif ()
-
 
 if (EMSCRIPTEN)
 target_link_libraries(souffle -sMODULARIZE=1

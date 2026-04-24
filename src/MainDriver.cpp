@@ -692,8 +692,6 @@ std::vector<MainOption> getMainOptions() {
           "Canonical full evaluator for generated runtime defaults."},
       {"dd-backend", nextOptChar++, ddBackendOptionSyntax(), "", false,
           "Canonical DD backend for generated runtime defaults."},
-      {"approx-backend", nextOptChar++, approxBackendOptionSyntax(), "", false,
-          "Canonical approximate backend for generated runtime defaults."},
       {"rewrite-engine", nextOptChar++, rewriteEngineOptionSyntax(), "", false,
           "Canonical rewrite engine for generated runtime defaults."},
       {"rewrite-split", nextOptChar++, rewriteSplitOptionSyntax(), "", false,
@@ -876,27 +874,9 @@ void canonicalizeForkRuntimeDefaults(MainConfig& config) {
         if (!parseFullEvaluatorToken(config.get("full-evaluator"), evaluator)) {
             throw std::runtime_error("--full-evaluator expects " + std::string(fullEvaluatorOptionSyntax()));
         }
-        if (evaluator == FullEvaluator::APPROX) {
-            throw std::runtime_error(
-                    "--full-evaluator=approx is not supported for generated runtimes yet");
-        }
     }
     config.set("full-evaluator", fullEvaluatorLabel(evaluator));
     setConfigBool(config, "scbf", evaluator == FullEvaluator::SCBF);
-
-    if (isExplicitlySet(config, "approx-backend")) {
-        ApproxBackend backend = ApproxBackend::NONE;
-        if (!parseApproxBackendToken(config.get("approx-backend"), backend)) {
-            throw std::runtime_error("--approx-backend expects " + std::string(approxBackendOptionSyntax()));
-        }
-        if (backend != ApproxBackend::NONE) {
-            throw std::runtime_error(
-                    "--approx-backend is not supported for generated runtimes yet");
-        }
-        config.set("approx-backend", approxBackendLabel(backend));
-    } else {
-        config.set("approx-backend", approxBackendLabel(ApproxBackend::NONE));
-    }
 
     std::string ddBackend = "bdd";
     if (isExplicitlySet(config, "dd-backend")) {

@@ -3,7 +3,6 @@
 ## Source references
 - [src/MainDriver.cpp](src/MainDriver.cpp)
 - [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
-- [src/problog_graph_query.cpp](src/problog_graph_query.cpp)
 - [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
 - [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
 - [src/include/souffle/problog/DerivationGraph.h](src/include/souffle/problog/DerivationGraph.h)
@@ -15,7 +14,6 @@
 - [docs/topics/pipeline/README.inc.region.md](docs/topics/pipeline/README.inc.region.md)
 - [docs/topics/backends/README.cudd.md](docs/topics/backends/README.cudd.md)
 - [docs/topics/backends/README.sdd.md](docs/topics/backends/README.sdd.md)
-- [docs/design/README.approx.pipeline.md](docs/design/README.approx.pipeline.md)
 - [docs/design/README.scbf.pipeline.md](docs/design/README.scbf.pipeline.md)
 - [docs/TESTING.md](docs/TESTING.md)
 - [docs/topics/testing/README.regression.md](docs/topics/testing/README.regression.md)
@@ -41,7 +39,6 @@ should include, why it should exist, and how it should be validated.
 - Full-only rewrite and split machinery, including implicit rewrite variants.
 - Experimental SCBF runtime lane.
 - Incremental online runtime and CLI mode matrix.
-- Offline graph-query and approximate counting tooling.
 - Source naming and source-tree organization.
 - Documentation naming and documentation-system cleanup.
 - Validation surfaces: smoke, regression, benchmark, and provenance checks.
@@ -65,8 +62,6 @@ should include, why it should exist, and how it should be validated.
     does not also continue into online incremental CLI in that same execution
 - Experimental evaluators:
   - `--scbf` is an experimental runtime branch inside the full pipeline
-  - Approx/AMC support currently exists as offline graph-query tooling, not as
-    the main runtime backend
 - Incremental runtime:
   - online DRed-style path is the maintained incremental base
   - supported staged modes include `inc-naive`, `inc-regional`, `full-hard`,
@@ -98,10 +93,9 @@ should include, why it should exist, and how it should be validated.
    policy must be isolated behind a clearer rewrite interface. Their full-only
    constraints must remain explicit and testable.
 5. Experimental evaluator boundaries.
-   SCBF should remain an opt-in experimental evaluator. Approx/AMC should remain
-   an offline toolchain until it is mature enough to become a runtime backend.
-   Refactor scope includes separating these lanes so experiments stop distorting
-   the main exact runtime structure.
+   SCBF should remain an opt-in experimental evaluator. Refactor scope includes
+   keeping that lane separate so experiments stop distorting the main exact
+   runtime structure.
 6. Incremental execution and CLI layering.
    Parsing, command queueing, mode selection, delta materialization, graph
    mutation, formula update, WMC, and output dumping must stop living in one
@@ -129,8 +123,8 @@ should include, why it should exist, and how it should be validated.
 ## Goals
 - Preserve existing supported semantics while lowering coupling.
 - Make the exact full and incremental runtime the primary stable product line.
-- Keep experimental SCBF and offline Approx/AMC lanes available without letting
-  them define the main runtime structure.
+- Keep experimental SCBF available without letting it define the main runtime
+  structure.
 - Make pipeline stages, mode policy, and output policy explicit.
 - Make source layout and naming reflect capability boundaries instead of
   historical accumulation.
@@ -139,7 +133,7 @@ should include, why it should exist, and how it should be validated.
 
 ## Non-Goals
 - No algorithmic replacement just because code is being moved.
-- No immediate rewrite of `inc-regional`, SCBF, or Approx/AMC semantics.
+- No immediate rewrite of `inc-regional` or SCBF semantics.
 - No benchmark recalibration or claim refresh unless results are rerun under the
   existing research protocol.
 - No big-bang directory move in the first phase.
@@ -172,10 +166,6 @@ The runtime should eventually read as a small number of explicit layers.
   - staged incremental/full commit execution independent of interactive I/O
 - `CliShell`
   - command parsing and user interaction only
-- `OfflineQueryTooling`
-  - derivation JSON query slicing, symbolic formula extraction, weighted-to-
-    unweighted conversion, and Approx/AMC integration
-
 These names are working names, not a requirement to ship those exact class or
 file names.
 
@@ -187,8 +177,6 @@ The refactor should include a physical organization plan for code and docs.
     `rewrite`, `fc`, `incremental`, and `runtime`
   - standalone tools moved out of runtime implementation directories
   - smoke and benchmark mains separated from reusable library code
-  - approximate reusable helpers moved out of `experiments/` once they become
-    shared implementation rather than one-off probes
 - Source naming direction:
   - file names should communicate whether a unit is runtime library code, a
     standalone tool, a benchmark entrypoint, or an experiment
@@ -262,8 +250,8 @@ The work should be executed in phases, with each phase independently shippable.
 - Separate exact full engines, exact incremental engines, and experimental
   evaluators behind clearer interfaces.
 - Keep BDD and SDD exact behavior as the correctness baseline.
-- Keep SCBF experimental and keep Approx/AMC offline until integration is
-  justified by correctness and operational maturity.
+- Keep SCBF experimental until integration is justified by correctness and
+  operational maturity.
 
 ### Phase 7: Source-Tree and Entry-Point Reorganization
 - Move standalone tools, smoke binaries, and benchmark mains out of runtime
@@ -291,8 +279,8 @@ improve together.
   `full-hard` and preserve current output naming contracts.
 - Evidence remains guarded to full-only mode unless a separate feature change
   explicitly expands support.
-- SCBF and Approx/AMC remain correctly labeled as experimental or offline until
-  a later project decision changes that status.
+- SCBF remains correctly labeled as experimental until a later project decision
+  changes that status.
 
 ### Verification Acceptance
 - Build succeeds with the repo-supported commands in [docs/TESTING.md](docs/TESTING.md):
@@ -328,9 +316,6 @@ improve together.
 - Rewrite and split machinery now matter operationally.
   They are not just experiments anymore, so their lifecycle and constraints need
   to be explicit in both code and docs.
-- Approx/AMC is still an active direction.
-  If the main runtime stays structurally tangled, adding an approximate backend
-  later will become harder and riskier than it needs to be.
 - Hidden state and oversized control surfaces make correctness work fragile.
   This is especially risky for incremental semantics, output naming, and mixed
   full/inc evaluation modes.

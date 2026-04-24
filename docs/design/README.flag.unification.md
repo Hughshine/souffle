@@ -5,18 +5,17 @@
 - [src/include/souffle/CompiledOptions.h](src/include/souffle/CompiledOptions.h)
 - [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
 - [src/problog/Pipeline.cpp](src/problog/Pipeline.cpp)
-- [src/problog_graph_query.cpp](src/problog_graph_query.cpp)
 - [docs/USAGE.md](docs/USAGE.md)
 - [docs/topics/runtime/README.flag.md](docs/topics/runtime/README.flag.md)
 - [docs/design/README.refactor.scope.md](docs/design/README.refactor.scope.md)
 
 This file is a design proposal for a single canonical flag model that covers the
 fork's compiler defaults, compiled runtime flags, interactive online CLI mode
-selection, and standalone offline graph-query tooling.
+selection.
 
 ## Status
 - Canonical flag parsing and shared mode/output helpers are now implemented
-  across the compiler, compiled runtime, online CLI, and graph-query tooling.
+  across the compiler, compiled runtime, and online CLI.
 - Current authoritative user-facing behavior remains [docs/USAGE.md](docs/USAGE.md)
   and [docs/topics/runtime/README.flag.md](docs/topics/runtime/README.flag.md).
 - This document still serves as the design rationale and longer-term cleanup map
@@ -29,19 +28,16 @@ selection, and standalone offline graph-query tooling.
   - `souffle` compiler defaults
   - generated `./compute` runtime flags
   - interactive online CLI configuration
-  - standalone graph-query / approx tooling
 
 ## Non-Goals
 - Do not redesign all upstream Souffle flags.
 - Do not change current runtime behavior in this design.
 - Do not move or rename `research/` or `docs/research/`.
-- Do not force approximate backends into the main runtime before they are ready.
 
 ## Problem
 The current flag surface has four overlapping problems:
 - Same concept uses different names on different surfaces.
-  - example: `--knowledge`, `-k`, backend-specific code branches, and standalone
-    `--backend amc`
+  - example: `--knowledge`, `-k`, and backend-specific code branches
 - One flag sometimes encodes multiple dimensions.
   - example: `--setmode` mixes semantic mode and FC strategy
 - Related features are split across unrelated booleans.
@@ -59,7 +55,7 @@ The canonical model is organized into seven families.
 
 ### 1. Surface
 - `surface`
-  - values: `compiled-runtime`, `online-cli`, `graph-query`
+  - values: `compiled-runtime`, `online-cli`
 
 ### 2. Execution
 - `sem-mode`
@@ -67,11 +63,9 @@ The canonical model is organized into seven families.
 - `fc-mode`
   - values: `full-hard`, `full-soft`, `inc-naive`, `inc-regional`, `elastic`
 - `full-evaluator`
-  - values: `exact`, `scbf`, `approx`
+  - values: `exact`, `scbf`
 - `dd-backend`
   - values: `bdd`, `sdd`
-- `approx-backend`
-  - values: `none`, `amc`
 
 ### 3. Rewrite
 - `rewrite-engine`
@@ -127,9 +121,8 @@ These are the proposed preferred spellings.
 ### Execution
 - `--sem-mode=<full|inc>`
 - `--fc-mode=<full-hard|full-soft|inc-naive|inc-regional|elastic>`
-- `--full-evaluator=<exact|scbf|approx>`
+- `--full-evaluator=<exact|scbf>`
 - `--dd-backend=<bdd|sdd>`
-- `--approx-backend=<none|amc>`
 
 ### Rewrite
 - `--rewrite-engine=<off|legacy|implicit|implicit-iter>`
@@ -187,8 +180,6 @@ Runtime should accept:
 
 Runtime validation rules:
 - `--full-evaluator=scbf` requires `--dd-backend=<bdd|sdd>`
-- `--full-evaluator=approx` is invalid for the compiled runtime until an
-  approximate runtime path exists
 - `--rewrite-engine=off` ignores `--rewrite-split` and `--rewrite-detect`
 - `--rewrite-engine=implicit|implicit-iter` implies rewrite is enabled
 - `--det-mode=force` rejects combinations that require a derivation graph
@@ -214,20 +205,6 @@ Compatibility commands kept:
 - `setmode <legacy-mode>`
 - `set dumpjson|dumpdot|dumpstat`
 - `unset dumpjson|dumpdot|dumpstat`
-
-### D. Offline Graph Query / Approx Tooling
-The standalone graph-query tool should use the same execution vocabulary where
-possible, but keep its own required query-specific flags.
-
-Preferred graph-query flags:
-- `--full-evaluator=approx`
-- `--approx-backend=amc`
-- `--rewrite-engine=<off|legacy|implicit|implicit-iter>`
-- `--rewrite-split=<off|naive|complete>`
-- `--dd-backend=<bdd|sdd>` when exact query replay is used
-
-Rule:
-- `approx-backend` is only meaningful when `full-evaluator=approx`
 
 ## Compatibility Map
 Legacy flags should remain accepted as aliases until a dedicated cleanup phase.
@@ -262,11 +239,10 @@ Legacy flags should remain accepted as aliases until a dedicated cleanup phase.
 | `--profile-inc-regional` | `--profile-stage=inc-regional` |
 | `--profile-inc-regional-heavy` | `--profile-stage=inc-regional-heavy` |
 | `--profile-dep-graph` | `--profile-stage=dep-graph` |
-| graph-query `--backend amc` | `--full-evaluator=approx --approx-backend=amc` |
 
 ## Naming Rules
 - Use `backend` only for solver/data-structure choices.
-  - `dd-backend`, `approx-backend`
+  - `dd-backend`
 - Use `engine` for algorithm families.
   - `rewrite-engine`
 - Use `mode` for semantic / execution state.
@@ -280,14 +256,8 @@ Legacy flags should remain accepted as aliases until a dedicated cleanup phase.
 The new surface should reject invalid combinations early and consistently.
 
 Examples:
-- `--full-evaluator=approx --sem-mode=inc`
-  - reject: approx is not an online incremental evaluator
 - `--rewrite-engine=off --rewrite-split=complete`
   - reject or warn: split has no meaning without rewrite
-- `--full-evaluator=scbf --approx-backend=amc`
-  - reject: SCBF and AMC are different evaluator families
-- `--dd-backend=sdd --full-evaluator=approx`
-  - warn or ignore: DD backend is irrelevant for pure approx mode
 
 ## Help Text Policy
 Help output should be grouped by family, not by historical growth order:
@@ -314,16 +284,16 @@ Each family should show:
 
 ## Acceptance
 - One canonical name per concept.
-- Compiler, runtime, CLI, and graph-query all map into the same config schema.
+- Compiler, runtime, and CLI all map into the same config schema.
 - Help text and docs agree on defaults and valid values.
 - Existing benchmark scripts and regression tests keep working via compatibility aliases.
 - No semantic behavior changes are required for Phase 1 of the redesign.
 
 ## Why This Refactor Is Worth Doing
-- It makes full exact, rewrite, implicit rewrite, SCBF, approx, and incremental
+- It makes full exact, rewrite, implicit rewrite, SCBF, and incremental
   execution modes describable in one language.
 - It removes current naming drift between `MainDriver`, `CompiledOptions`,
-  `Pipeline`, and standalone tools.
+  and `Pipeline`.
 - It gives the refactor a stable public surface before deeper runtime surgery.
 
 ## Related commits

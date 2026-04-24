@@ -9,7 +9,6 @@ Design proposals and optimization ideas that are not fully implemented.
 - Eqrel/lazy/refactor proposals.
 - Refactor scope, staging, and acceptance planning.
 - Formalization and ordering design notes.
-- Approximate probabilistic pipeline design (`derivation graph -> query formula -> AMC/WAMC`).
 
 ## Status
 - Treat these files as design references, not normative runtime behavior.
@@ -21,7 +20,6 @@ Design proposals and optimization ideas that are not fully implemented.
 - [docs/design/README.flag.unification.md](docs/design/README.flag.unification.md)
 - [docs/design/README.rewrite.opt.md](docs/design/README.rewrite.opt.md)
 - [docs/design/README.refactor.scope.md](docs/design/README.refactor.scope.md)
-- [docs/design/README.approx.pipeline.md](docs/design/README.approx.pipeline.md)
 - [docs/design/README.scbf.pipeline.md](docs/design/README.scbf.pipeline.md)
 - [docs/design/README.scbf.ir.md](docs/design/README.scbf.ir.md)
 - [docs/design/README.scbf.evaluator.md](docs/design/README.scbf.evaluator.md)

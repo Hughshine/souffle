@@ -78,10 +78,8 @@ listed below; use `-h` for the authoritative values.
     `inc-naive` at execution time
 - `--sem-mode <full|inc>` / `--fc-mode <full-hard|full-soft|inc-naive|inc-regional|elastic>`:
   canonical mode selectors; staged combinations are valid at runtime
-- `--full-evaluator <exact|scbf|approx>`: canonical full evaluator selector
+- `--full-evaluator <exact|scbf>`: canonical full evaluator selector
   - `scbf` is supported
-  - `approx` is parsed but currently rejected by compiled runtimes
-- `--approx-backend <none|amc>`: reserved canonical approx selector; compiled runtimes currently reject non-`none`
 - `-e, --merge-bi-imp`: always enabled in full-only binaries (`--full-only` at
   compile time); it is forced off in online/incremental binaries.
 - `--no-merge-bi-imp`: disable merge-bi-imp even if the binary default enables it
@@ -137,7 +135,7 @@ Commands:
 
 Notes:
 - Startup-only settings such as `rewrite-engine`, `rewrite-split`, `rewrite-detect`,
-  `full-evaluator`, `dd-backend`, `approx-backend`, and `det-mode` are not hot-swappable
+  `full-evaluator`, `dd-backend`, and `det-mode` are not hot-swappable
   in the online CLI.
 
 Example (interactive):

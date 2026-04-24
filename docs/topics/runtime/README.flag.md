@@ -15,10 +15,9 @@
 
 ## Canonical Flag Surface
 The fork now exposes one preferred vocabulary across compiler defaults, compiled
-runtime flags, the online CLI, and standalone graph-query tooling:
+runtime flags, and the online CLI:
 
-- Execution: `--sem-mode`, `--fc-mode`, `--full-evaluator`, `--dd-backend`,
-  `--approx-backend`
+- Execution: `--sem-mode`, `--fc-mode`, `--full-evaluator`, `--dd-backend`
 - Rewrite: `--rewrite-engine`, `--rewrite-split`, `--rewrite-detect`
 - Determinism/simplification: `--det-mode`, `--merge-bi-imp`,
   `--no-merge-bi-imp`, `--prune-extra`, `--no-prune-extra`, `--fold-const`,
@@ -80,8 +79,7 @@ aliases are:
 - `-x`, `--full-only`: generate full-only code (disable incremental CLI paths).
 - `--setmode <MODE>`: default runtime mode (`inc-naive`, `inc-regional`, `full`, `elastic`).
 - `--sem-mode <full|inc>` / `--fc-mode <...>`: canonical generated-runtime defaults.
-- `--full-evaluator <exact|scbf|approx>`: canonical full evaluator default
-  (`approx` is rejected for generated runtimes).
+- `--full-evaluator <exact|scbf>`: canonical full evaluator default.
 - `--dd-backend <bdd|sdd>`: canonical DD backend default.
 - `--rewrite-engine`, `--rewrite-split`, `--rewrite-detect`: canonical rewrite defaults.
 - `--det-mode <auto|off|force>`: canonical determinism default.
@@ -131,10 +129,7 @@ aliases are:
 - `-d`, `--derv-only[=<true|false>]`: derivation graph only.
 - `--derivation-only[=<true|false>]`: canonical alias for `--derv-only`.
 - `--sem-mode <full|inc>` / `--fc-mode <...>`: canonical mode selectors.
-- `--full-evaluator <exact|scbf|approx>`: canonical evaluator selector
-  (`approx` is currently rejected in compiled runtimes).
-- `--approx-backend <none|amc>`: reserved canonical approx selector; compiled
-  runtimes reject non-`none`.
+- `--full-evaluator <exact|scbf>`: canonical evaluator selector.
 
 ### Semantics / graph transforms
 - `-e`, `--merge-bi-imp`: merge mutually implying deterministic nodes (full-only safe).

@@ -310,7 +310,6 @@ void GroundSynthesiser::generateCode(GenDb& db, const std::string& id) {
          << (glb.config().has("profile-inc-regional-heavy") ? "true" : "false") << ");\n";
     hook << "opt.setProfileStageToken(\"dep-graph\", "
          << (glb.config().has("profile-dep-graph") ? "true" : "false") << ");\n";
-    hook << "opt.setApproxBackendToken(\"" << glb.config().get("approx-backend", "none") << "\");\n";
     hook << "opt.setIncRegionalTraceTuples(R\"("
          << glb.config().get("inc-regional-trace-tuples", "")
          << ")\");\n";

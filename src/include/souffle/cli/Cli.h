@@ -948,8 +948,7 @@ private:
             return true;
         }
         if (key == "rewrite-engine" || key == "rewrite-split" || key == "rewrite-detect" ||
-                key == "full-evaluator" || key == "dd-backend" || key == "approx-backend" ||
-                key == "det-mode") {
+                key == "full-evaluator" || key == "dd-backend" || key == "det-mode") {
             std::cout << key << " is fixed at startup and cannot be changed in the online CLI" << std::endl;
             return true;
         }
