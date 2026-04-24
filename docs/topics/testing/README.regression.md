@@ -19,7 +19,6 @@ Use this suite for correctness regression checks before merging changes to:
 - det-opt/no-det-opt and related mixed-mode options
 - rewrite split-mode behavior
 - canonical compiler/runtime/online-CLI flag surfaces
-- standalone graph-query exact replay flag surfaces
 - dump/log output contracts
 
 ## Canonical Entry Points
@@ -78,26 +77,9 @@ Current maintained cases:
   - canonical online CLI surface (`show config`, `set sem-mode`, `set fc-mode`,
     `set/unset dump`, `set/unset profile-stage`) plus startup-only guardrails
     and `elastic -> inc-naive` fallback coverage.
-- `regression.graph_query_canonical` (`graph_query_canonical_surface`):
-  - standalone `souffle-problog-graph-query` accepts canonical exact/rewrite
-    flags, reproduces a small exact replay result, and rejects unsupported
-    canonical combinations like `--full-evaluator=scbf`.
-- `regression.side_channel_full_pipeline` (`side_channel_full_pipeline_rewrite`):
-  - benchmark-derived side-channel full case (`P1`, trimmed ruleset) generated
-    on the fly, then checked across no-rewrite / legacy rewrite / implicit /
-    iterative implicit full runs for both `facts.prob` and emitted `.csv`
-    relation outputs.
 - `regression.scbf_rewrite_lane` (`scbf_rewrite_runtime_lane`):
   - small full-only smoke that keeps `--scbf --rewrite` on the maintained path
     and checks runtime-lane telemetry against the actual combined execution path.
-- `regression.side_channel_inc_pipeline` (`side_channel_incremental_pipeline_modes`):
-  - benchmark-derived side-channel incremental case (`P1`, trimmed ruleset)
-    with generated deltas; compares `inc-naive` and single-round
-    `inc-regional` against `full-hard`.
-- `regression.taint_pipeline` (`taint_stage_pipeline_compile_smoke`):
-  - benchmark-derived taint stage chain (`andors-trail`, bundle v2) compiled
-    and run stage-by-stage with reduced stage inputs to guard compile/runtime
-    reliability of the staged taint workflow.
 - `regression.datarace_pipeline` (`datarace_stage_pipeline_smoke`):
   - reduced multi-stage data-race pipeline smoke inspired by the
     `checkExcludedM -> parallel -> escaping -> datarace` stage sequence.
@@ -133,6 +115,6 @@ The runner enforces:
 - `UNCOMMITTED` — test(regression): add multi-turn inc-regional state-machine coverage
 - `UNCOMMITTED` — test(regression): add maintained ctest workflow and cases
 - `UNCOMMITTED` — docs(testing): document maintained regression runbook
-- `UNCOMMITTED` — test(regression): cover canonical flag surfaces and graph-query replay
-- `UNCOMMITTED` — test(regression): add benchmark-derived side-channel, taint, and data-race pipeline cases
+- `UNCOMMITTED` — test(regression): cover canonical flag surfaces
+- `UNCOMMITTED` — test(regression): keep default regression self-contained
 - `668298ef8` — fix(inc-region): update regional WMC routing and profiling

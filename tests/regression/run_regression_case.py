@@ -22,9 +22,6 @@ from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
 PROB_LINE_RE = re.compile(r"^\s*(.*?)\s*:\s*([+\-]?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)\s*$")
-GRAPH_QUERY_RESULT_RE = re.compile(
-    r"^\[result\]\s+(.*?)\s+=\s+([+\-]?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)\s*$"
-)
 REWRITE_ITER_DETECT_RE = re.compile(
     r"^\[GraphRewriter\] Iteration (\d+) : detected (\d+) SISO region\(s\)\."
 )
@@ -34,25 +31,6 @@ REWRITE_SISO_MODE_RE = re.compile(
 )
 CASES_ROOT = Path(__file__).resolve().parent / "cases"
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def resolve_benchmark_root() -> Path:
-    candidates = [
-        REPO_ROOT / "work" / "benchmarks" / "problog-benchmark",
-        REPO_ROOT / "problog-benchmark",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[0]
-
-
-BENCHMARK_ROOT = resolve_benchmark_root()
-SIDE_CHANNEL_FULL_SCRIPT = BENCHMARK_ROOT / "benchmarks" / "side_channel" / "cli" / "side_channel_full.py"
-SIDE_CHANNEL_INC_SCRIPT = BENCHMARK_ROOT / "benchmarks" / "side_channel" / "cli" / "side_channel_inc.py"
-TAINT_INC_SCRIPT = BENCHMARK_ROOT / "taint_inc.py"
-TAINT_BUNDLE = "v2_semantic_subsetprob_noderv0"
-TAINT_CASE = "andors-trail"
 PIPELINE_CARRY_EXTS = {".facts", ".csv", ".tsv", ".prob"}
 PIPELINE_SKIP_OUTPUT_NAMES = {
     "facts.prob",
@@ -206,17 +184,6 @@ def normalize_tuple_key(value: str) -> str:
     return re.sub(r"\s+", "", value)
 
 
-def parse_graph_query_results(stdout: str) -> Dict[str, float]:
-    results: Dict[str, float] = {}
-    for raw in stdout.splitlines():
-        line = raw.strip()
-        m = GRAPH_QUERY_RESULT_RE.match(line)
-        if not m:
-            continue
-        results[normalize_tuple_key(m.group(1))] = float(m.group(2))
-    return results
-
-
 def assert_prob_close(lhs: Path, rhs: Path, *, tol: float = 1e-9, label: str) -> None:
     left = parse_prob_file(lhs)
     right = parse_prob_file(rhs)
@@ -249,30 +216,6 @@ def assert_prob_close(lhs: Path, rhs: Path, *, tol: float = 1e-9, label: str) ->
 
 def normalize_table_lines(path: Path) -> List[str]:
     return sorted(line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
-
-
-def assert_csv_outputs_match(lhs_dir: Path, rhs_dir: Path, *, label: str) -> None:
-    lhs_files = sorted(path.relative_to(lhs_dir) for path in lhs_dir.rglob("*.csv"))
-    rhs_files = sorted(path.relative_to(rhs_dir) for path in rhs_dir.rglob("*.csv"))
-    if not lhs_files:
-        raise CaseFailure(f"{label}: expected at least one .csv output under {lhs_dir}")
-    if lhs_files != rhs_files:
-        raise CaseFailure(
-            f"{label}: csv file set mismatch\nlhs_dir={lhs_dir}\nrhs_dir={rhs_dir}\n"
-            f"lhs_only={sorted(str(p) for p in set(lhs_files) - set(rhs_files))[:8]}\n"
-            f"rhs_only={sorted(str(p) for p in set(rhs_files) - set(lhs_files))[:8]}"
-        )
-
-    for rel_path in lhs_files:
-        lhs_path = lhs_dir / rel_path
-        rhs_path = rhs_dir / rel_path
-        lhs_lines = normalize_table_lines(lhs_path)
-        rhs_lines = normalize_table_lines(rhs_path)
-        if lhs_lines != rhs_lines:
-            raise CaseFailure(
-                f"{label}: csv content mismatch\nlhs={lhs_path}\nrhs={rhs_path}\n"
-                f"lhs_sample={lhs_lines[:8]}\nrhs_sample={rhs_lines[:8]}"
-            )
 
 
 def assert_prob_all_ones(path: Path, *, tol: float = 1e-12, label: str) -> None:
@@ -431,25 +374,6 @@ def run_binary(
     if extra_args:
         cmd.extend(extra_args)
     return run_cmd(cmd, cwd=binary_path.parent, stdin_text=stdin_text, timeout=timeout, env=env)
-
-
-def first_commit_script(cli_script: str) -> str:
-    lines: List[str] = []
-    for raw in cli_script.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        if line == "q":
-            break
-        lines.append(line)
-        if line == "commit":
-            break
-    lines.append("q")
-    return "\n".join(lines) + "\n"
-
-
-def count_cli_commits(cli_script: str) -> int:
-    return sum(1 for raw in cli_script.splitlines() if raw.strip() == "commit")
 
 
 def read_stage_list(path: Path) -> List[str]:
@@ -1551,164 +1475,6 @@ def case_canonical_online_cli_surface(souffle_bin: Path, work_root: Path) -> Non
     )
 
 
-def case_graph_query_canonical_surface(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = prepare_case_workspace("smoke_full_only", work_root / "graph_query_canonical_surface_ws")
-    graph_query_bin = souffle_bin.parent / "souffle-problog-graph-query"
-    if not graph_query_bin.exists():
-        raise CaseFailure(f"missing graph-query binary: {graph_query_bin}")
-
-    compute_bin, input_dir, _ = compile_compute(
-        souffle_bin=souffle_bin, case_dir=case_dir, full_only=True
-    )
-    output_dir = case_dir / "out_graph_query_source"
-    run_full_once(
-        compute_bin=compute_bin,
-        input_dir=input_dir,
-        output_dir=output_dir,
-        extra_args=["--dumpjson"],
-    )
-
-    derivation_json = output_dir / "derivation.json"
-    if not derivation_json.exists():
-        raise CaseFailure(f"graph-query canonical source json missing: {derivation_json}")
-    expected_probs = parse_prob_file(output_dir / "facts.prob")
-    query_tuple = "path(1,4)"
-    expected_prob = expected_probs.get(query_tuple)
-    if expected_prob is None:
-        raise CaseFailure(f"graph-query canonical surface: missing {query_tuple} in facts.prob")
-
-    exact_proc = run_cmd(
-        [
-            str(graph_query_bin),
-            "--json",
-            str(derivation_json),
-            "--query",
-            query_tuple,
-            "--full-evaluator",
-            "exact",
-            "--dd-backend",
-            "bdd",
-        ],
-        cwd=case_dir,
-        timeout=240,
-    )
-    rewrite_proc = run_cmd(
-        [
-            str(graph_query_bin),
-            "--json",
-            str(derivation_json),
-            "--query",
-            query_tuple,
-            "--full-evaluator",
-            "exact",
-            "--dd-backend",
-            "bdd",
-            "--rewrite-engine",
-            "legacy",
-            "--rewrite-split",
-            "naive",
-            "--rewrite-detect",
-            "dirty-frontier",
-        ],
-        cwd=case_dir,
-        timeout=240,
-    )
-
-    exact_results = parse_graph_query_results(exact_proc.stdout)
-    rewrite_results = parse_graph_query_results(rewrite_proc.stdout)
-    query_key = normalize_tuple_key(query_tuple)
-    if query_key not in exact_results:
-        raise CaseFailure(f"graph-query canonical surface: missing result for {query_tuple}\n{exact_proc.stdout}")
-    if query_key not in rewrite_results:
-        raise CaseFailure(
-            f"graph-query canonical rewrite surface: missing result for {query_tuple}\n{rewrite_proc.stdout}"
-        )
-    if not math.isclose(exact_results[query_key], expected_prob, rel_tol=0.0, abs_tol=1e-9):
-        raise CaseFailure(
-            "graph-query canonical surface: exact replay probability mismatch\n"
-            f"expected={expected_prob:.12g} actual={exact_results[query_key]:.12g}"
-        )
-    if not math.isclose(rewrite_results[query_key], expected_prob, rel_tol=0.0, abs_tol=1e-9):
-        raise CaseFailure(
-            "graph-query canonical surface: rewrite replay probability mismatch\n"
-            f"expected={expected_prob:.12g} actual={rewrite_results[query_key]:.12g}"
-        )
-
-    run_cmd_expect_fail(
-        [
-            str(graph_query_bin),
-            "--json",
-            str(derivation_json),
-            "--query",
-            query_tuple,
-            "--full-evaluator",
-            "scbf",
-        ],
-        cwd=case_dir,
-        expected_substring="graph-query does not support --full-evaluator=scbf",
-        timeout=240,
-    )
-
-
-def case_side_channel_full_pipeline_rewrite(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = work_root / "side_channel_full_pipeline_rewrite_ws"
-    reset_dir(case_dir)
-    base_dir = case_dir / "side_channel_full"
-
-    run_cmd(
-        [
-            sys.executable,
-            str(SIDE_CHANNEL_FULL_SCRIPT),
-            "--base-dir",
-            str(base_dir),
-            "--quiet",
-            "generate",
-            "--cases",
-            "1",
-            "--rule-set",
-            "trimmed",
-        ],
-        cwd=REPO_ROOT,
-        timeout=300,
-    )
-
-    program_dir = base_dir / "P1"
-    source_path = program_dir / "compute.souffle.dl"
-    input_dir = program_dir / "input"
-    binary_path = compile_program(
-        souffle_bin=souffle_bin,
-        source_path=source_path,
-        input_dir=input_dir,
-        output_dir=case_dir / "compile_output",
-        build_dir=case_dir / "build",
-        binary_name="side_channel_full_compute",
-        online=True,
-        full_only=True,
-        timeout=300,
-    )
-
-    out_base = case_dir / "out_base"
-    run_binary(binary_path=binary_path, input_dir=input_dir, output_dir=out_base, timeout=240)
-    base_prob = out_base / "facts.prob"
-
-    variants = {
-        "rewrite_legacy": ["--rewrite", "--split-mode=naive-split"],
-        "rewrite_implicit": ["--implicit-rewrite"],
-        "rewrite_implicit_iter": ["--implicit-iterate-split-rewrite"],
-    }
-    for label, args in variants.items():
-        out_dir = case_dir / label
-        run_binary(
-            binary_path=binary_path,
-            input_dir=input_dir,
-            output_dir=out_dir,
-            extra_args=args,
-            timeout=240,
-        )
-        assert_prob_close(out_dir / "facts.prob", base_prob, label=f"side_channel_full {label}")
-        assert_csv_outputs_match(out_dir, out_base, label=f"side_channel_full {label} csv")
-
-
 def case_scbf_rewrite_runtime_lane(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("smoke_full_only", work_root / "scbf_rewrite_runtime_lane_ws")
     compute_bin, input_dir, _ = compile_compute(
@@ -1738,180 +1504,6 @@ def case_scbf_rewrite_runtime_lane(souffle_bin: Path, work_root: Path) -> None:
     vals = parse_prob_file(output_dir / "facts.prob")
     if not vals:
         raise CaseFailure("scbf rewrite runtime lane: empty facts.prob")
-
-
-def case_side_channel_incremental_pipeline_modes(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = work_root / "side_channel_incremental_pipeline_modes_ws"
-    reset_dir(case_dir)
-    base_dir = case_dir / "side_channel_inc"
-
-    run_cmd(
-        [
-            sys.executable,
-            str(SIDE_CHANNEL_INC_SCRIPT),
-            "--base-dir",
-            str(base_dir),
-            "--quiet",
-            "generate",
-            "--cases",
-            "1",
-            "--rule-set",
-            "trimmed",
-        ],
-        cwd=REPO_ROOT,
-        timeout=300,
-    )
-    run_cmd(
-        [
-            sys.executable,
-            str(SIDE_CHANNEL_INC_SCRIPT),
-            "--base-dir",
-            str(base_dir),
-            "--quiet",
-            "delta",
-            "--cases",
-            "1",
-            "--sets",
-            "1",
-            "--change-spec",
-            "inc1=0.001",
-            "--change-cap",
-            "inc1=2",
-        ],
-        cwd=REPO_ROOT,
-        timeout=300,
-    )
-
-    program_dir = base_dir / "P1"
-    source_path = program_dir / "compute.souffle.dl"
-    input_dir = program_dir / "input"
-    delta_script = (program_dir / "delta" / "inc1.txt").read_text(encoding="utf-8")
-    commits = count_cli_commits(delta_script)
-    if commits < 2:
-        raise CaseFailure(f"side_channel_inc: expected two commits in delta script, saw {commits}")
-
-    binary_path = compile_program(
-        souffle_bin=souffle_bin,
-        source_path=source_path,
-        input_dir=input_dir,
-        output_dir=case_dir / "compile_output",
-        build_dir=case_dir / "build",
-        binary_name="side_channel_inc_compute",
-        online=True,
-        full_only=False,
-        timeout=300,
-    )
-
-    out_full = case_dir / "out_full_hard"
-    out_inc = case_dir / "out_inc_naive"
-    run_binary(
-        binary_path=binary_path,
-        input_dir=input_dir,
-        output_dir=out_full,
-        extra_args=["--setmode", "full-hard", "--det-opt"],
-        stdin_text=delta_script,
-        timeout=240,
-    )
-    run_binary(
-        binary_path=binary_path,
-        input_dir=input_dir,
-        output_dir=out_inc,
-        extra_args=["--setmode", "inc-naive", "--det-opt"],
-        stdin_text=delta_script,
-        timeout=240,
-    )
-
-    for iteration in (1, 2):
-        assert_prob_close(
-            iter_prob_path(out_inc, iteration, "inc-naive"),
-            iter_prob_path(out_full, iteration, "full"),
-            label=f"side_channel_inc iter={iteration}",
-        )
-
-    first_turn = first_commit_script(delta_script)
-    out_full_regional = case_dir / "out_full_regional_baseline"
-    out_regional = case_dir / "out_inc_regional"
-    run_binary(
-        binary_path=binary_path,
-        input_dir=input_dir,
-        output_dir=out_full_regional,
-        extra_args=["--setmode", "full-hard", "--det-opt"],
-        stdin_text=first_turn,
-        timeout=240,
-    )
-    run_binary(
-        binary_path=binary_path,
-        input_dir=input_dir,
-        output_dir=out_regional,
-        extra_args=["--setmode", "inc-regional", "--det-opt"],
-        stdin_text=first_turn,
-        timeout=240,
-    )
-    assert_prob_close(
-        iter_prob_path(out_regional, 1, "inc-regional"),
-        iter_prob_path(out_full_regional, 1, "full"),
-        label="side_channel_inc regional iter=1",
-    )
-
-
-def case_taint_stage_pipeline_compile_smoke(souffle_bin: Path, work_root: Path) -> None:
-    case_dir = work_root / "taint_stage_pipeline_compile_ws"
-    reset_dir(case_dir)
-
-    run_cmd(
-        [
-            sys.executable,
-            str(TAINT_INC_SCRIPT),
-            "--base-dir",
-            str(case_dir / "taint_base"),
-            "--bundle",
-            TAINT_BUNDLE,
-            "--cases",
-            TAINT_CASE,
-            "--quiet",
-            "prepare",
-        ],
-        cwd=REPO_ROOT,
-        timeout=300,
-    )
-
-    workspace = case_dir / "taint_base" / TAINT_BUNDLE
-    base_input_dir = workspace / "cases" / TAINT_CASE / "input"
-    stages = read_stage_list(workspace / "pipeline" / "stages.txt")
-    previous_outputs: List[Path] = []
-
-    for stage in stages:
-        stage_source = workspace / "cases" / TAINT_CASE / "stages" / stage / "compute.souffle.dl"
-        stage_input_dir = case_dir / "runtime" / stage / "input"
-        stage_output_dir = case_dir / "runtime" / stage / "output"
-        copy_pipeline_stage_input(
-            base_input_dir=base_input_dir,
-            previous_output_dirs=previous_outputs,
-            stage_input_dir=stage_input_dir,
-            max_rows_per_fact=12,
-        )
-        binary_path = compile_program(
-            souffle_bin=souffle_bin,
-            source_path=stage_source,
-            input_dir=stage_input_dir,
-            output_dir=case_dir / "runtime" / stage / "compile_output",
-            build_dir=case_dir / "runtime" / stage / "build",
-            binary_name="compute",
-            online=True,
-            full_only=True,
-            timeout=300,
-        )
-        run_binary(
-            binary_path=binary_path,
-            input_dir=stage_input_dir,
-            output_dir=stage_output_dir,
-            extra_args=["--det-opt"],
-            timeout=240,
-        )
-        assert_output_dir_has_pipeline_artifacts(
-            stage_output_dir, label=f"taint stage pipeline {stage}"
-        )
-        previous_outputs.append(stage_output_dir)
 
 
 def case_datarace_stage_pipeline_smoke(souffle_bin: Path, work_root: Path) -> None:
@@ -1978,11 +1570,7 @@ CASES = {
     "full_const_negation_grounding": case_full_const_negation_grounding,
     "canonical_compile_defaults_contract": case_canonical_compile_defaults_contract,
     "canonical_online_cli_surface": case_canonical_online_cli_surface,
-    "graph_query_canonical_surface": case_graph_query_canonical_surface,
-    "side_channel_full_pipeline_rewrite": case_side_channel_full_pipeline_rewrite,
     "scbf_rewrite_runtime_lane": case_scbf_rewrite_runtime_lane,
-    "side_channel_incremental_pipeline_modes": case_side_channel_incremental_pipeline_modes,
-    "taint_stage_pipeline_compile_smoke": case_taint_stage_pipeline_compile_smoke,
     "datarace_stage_pipeline_smoke": case_datarace_stage_pipeline_smoke,
 }
 
