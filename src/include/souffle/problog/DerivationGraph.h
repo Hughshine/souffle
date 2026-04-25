@@ -1857,7 +1857,7 @@ protected:
     size_t nextNodeId;
     size_t nextEdgeId;
     const RuleManager* ruleManager;
-    static inline bool mergeBiImpEnabled = true;
+    static inline bool mergeBiImpEnabled = false;
     static inline bool pruneExtraEnabled = false;
     bool biImpMerged = false;
     // map original node id to its current representative after merges

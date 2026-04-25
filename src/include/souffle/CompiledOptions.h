@@ -82,7 +82,7 @@ protected:
     * internal knowledge representation selector; the AE CLI uses the BDD default.
     */
     std::string knowledge_representation;
-    bool merge_bi_imp = true;  // enable merging mutually implying deterministic nodes
+    bool merge_bi_imp = false;  // opt-in merge of mutually implying deterministic nodes
     bool prune_extra = false;  // enable extra prune pass (outputless components)
     bool enable_rewrite = false;  // enable smart rewrite dispatch
     bool force_graph_rewrite = false;  // select explicit graph rewrite
@@ -103,7 +103,7 @@ public:
     // all argument constructor
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
             std::string lfn = "log.txt", bool donly = false,
-            bool merge_bi = true, bool rewrite = false,
+            bool merge_bi = false, bool rewrite = false,
             bool explicitRewrite = false, bool implicitRewrite = false, bool detopt = false,
             bool dumpjson = false, bool dumpdot = false, bool dumpstat = false,
             bool fcProfile = false,
