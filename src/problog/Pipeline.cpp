@@ -1990,6 +1990,7 @@ void runPipeline(
     auto t2 = std::chrono::steady_clock::now();
     auto prunedView = graph->prune(program.getOutputRelations());
     auto view = buildWorkingViewLocal(prunedView.getNodes(), prunedView.getEdges());
+    addGraphSummaryInfo(debugger, "after_prune_", summarizeGraphLight(view));
     auto t3 = std::chrono::steady_clock::now();
     std::cout << "[pipeline] pruning took "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
@@ -2223,6 +2224,7 @@ void runPipeline(
         } else {
             runGraphRewrite();
         }
+        const GraphSummary rewriteFinalSummary = summarizeGraphLight(view);
         auto rewriteMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now() - rewriteStart)
                                  .count();
@@ -2251,6 +2253,16 @@ void runPipeline(
             debugger.addInfo("rewrite_reason", rewriteDecision.reason);
             debugger.addInfo("rewrite_split_policy", rewriteDecision.splitPolicy);
             debugger.addInfo("rewrite_ms", std::to_string(rewriteMs));
+            addGraphSummaryInfo(debugger, "rewrite_final_", rewriteFinalSummary);
+            debugger.addInfo("rewrite_nodes_removed", std::to_string(rewriteStats.numNodesRemoved));
+            debugger.addInfo("rewrite_edges_removed", std::to_string(rewriteStats.numEdgesRemoved));
+            debugger.addInfo("rewrite_edges_added", std::to_string(rewriteStats.numEdgesAdded));
+            debugger.addInfo("rewrite_random_vars_before", std::to_string(rewriteStats.randomVarsBefore));
+            debugger.addInfo("rewrite_random_vars_after", std::to_string(rewriteStats.randomVarsAfter));
+            debugger.addInfo("rewrite_random_vars_delta", std::to_string(randomVarsDelta));
+            debugger.addInfo("rewrite_random_vars_removed", std::to_string(rewriteStats.totalRandomVars));
+            debugger.addInfo("rewrite_precomputed_nodes", std::to_string(precomputedProbResult.size()));
+            debugger.addInfo("rewrite_precomputed_tuples", std::to_string(precomputedTupleProbResult.size()));
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_impl=" + rewriteDecision.impl);
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_reason=" + rewriteDecision.reason);
             rewriteHybridStage->logMessage(Level::INFO, "rewrite_split_policy=" + rewriteDecision.splitPolicy);
