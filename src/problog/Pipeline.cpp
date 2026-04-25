@@ -571,8 +571,7 @@ static void runBddPipeline(
         DerivationGraph& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        StageInfo* rewriteHybridStage,
-        bool autoDisableSingleRandFast) {
+        StageInfo* rewriteHybridStage) {
     Debugger& debugger = Debugger::getInstance();
 
     std::map<NodePtr, BddNodeRef> nodeFormulas;
@@ -603,7 +602,7 @@ static void runBddPipeline(
                 hybridStage->logMessage(Level::INFO, "rand_vars=" + std::to_string(varEstimate));
             }
 
-            const bool enableFast = opt.isSingleRandFastEnabled() && !autoDisableSingleRandFast;
+            const bool enableFast = opt.isSingleRandFastEnabled();
             auto componentsBuildStart = std::chrono::steady_clock::now();
             auto components = buildComponentSubgraphs(view);
             auto componentsBuildMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1388,8 +1387,7 @@ static void runSddPipeline(
         DerivationGraph& graph,
         SubgraphView& view,
         const std::vector<std::pair<UntypedTuple, bool>>& evidences,
-        StageInfo* rewriteHybridStage,
-        bool autoDisableSingleRandFast) {
+        StageInfo* rewriteHybridStage) {
     Debugger& debugger = Debugger::getInstance();
 
     std::map<NodePtr, SddNodeRef> nodeFormulas;
@@ -1420,7 +1418,7 @@ static void runSddPipeline(
                 hybridStage->logMessage(Level::INFO, "rand_vars=" + std::to_string(varEstimate));
             }
 
-            const bool enableFast = opt.isSingleRandFastEnabled() && !autoDisableSingleRandFast;
+            const bool enableFast = opt.isSingleRandFastEnabled();
             auto componentsBuildStart = std::chrono::steady_clock::now();
             auto components = buildComponentSubgraphs(view);
             auto componentsBuildMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -2352,24 +2350,11 @@ void runPipeline(
         std::cout << "[pipeline] derivation-only mode; skip rewrite" << std::endl;
     }
 
-    const bool autoDisableSingleRandFast =
-            haveRewriteDecision && !rewriteDecision.useImplicit && opt.isSingleRandFastEnabled();
-    if (autoDisableSingleRandFast) {
-        std::cout << "[pipeline] rewrite dispatch disables single-rand component fast path"
-                  << " for deterministic no-split rewrite" << std::endl;
-        debugger.addInfo("single_rand_fast_auto_disabled", "true");
-        if (rewriteHybridStage) {
-            rewriteHybridStage->logMessage(Level::INFO, "single_rand_fast_auto_disabled=true");
-        }
-    }
-
     if (program.getKnowledge() == souffle::Knowledge::BDD) {
-        runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage,
-                autoDisableSingleRandFast);
+        runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage);
     } else if (program.getKnowledge() == souffle::Knowledge::SDD) {
 #ifdef SOUFFLE_HAVE_SDD
-        runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage,
-                autoDisableSingleRandFast);
+        runSddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage);
 #else
         throw std::runtime_error("SDD backend is not enabled in this build");
 #endif

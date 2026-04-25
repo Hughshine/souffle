@@ -1,9 +1,9 @@
 # Probabilistic Souffle Artifact
 
 This branch contains the Souffle compiler and runtime used by the exact
-probabilistic inference artifact. It turns a Datalog program plus fact
-probabilities into a generated benchmark binary. That binary computes output
-tuple probabilities.
+probabilistic inference artifact. It compiles a probabilistic Datalog program,
+including probabilistic input facts and probabilistic rules, into a benchmark
+binary. That binary computes output tuple probabilities.
 
 The benchmark inputs and runner scripts are kept in the companion
 `problog-benchmark` artifact.
