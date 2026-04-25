@@ -255,7 +255,6 @@ private:
         }
         IncSubgraphView view = [&] {
             FunctionTimer timer("PRUNING_INC: prune");
-            cli.graph->setBuildInsertImpacts(useRegional);
             return cli.graph->prune(cli.program->getOutputRelations());
         }();
         if (cli.opt.isDumpDotEnabled()) {

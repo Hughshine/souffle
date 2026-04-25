@@ -214,8 +214,12 @@ public:
         const size_t after_reexpand_edges = region.edges.size();
         const size_t after_reexpand_boundary = B.out_induced.size() + B.scope_induced.size() + B.residual.size();
 
-        // Final safeguard: region must be a subset of delta-reachable
-        auto dr = deltaReachable_(delta_input_facts);
+        // Final safeguard: region must be a subset of delta-reachable. Reuse the
+        // reachability filter computed at the start of this analysis run; the
+        // view and delta sets are immutable within analyze().
+        Region dr;
+        dr.nodes = reach_filter_.nodes;
+        dr.edges = reach_filter_.edges;
         auto t8 = now();
         intersectWithDeltaReachable_(region, dr);
         auto t9 = now();

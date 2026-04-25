@@ -1889,14 +1889,6 @@ public:
         }
     }
 
-    void setBuildInsertImpacts(bool enable) {
-        buildInsertImpacts_ = enable;
-    }
-
-    bool getBuildInsertImpacts() const {
-        return buildInsertImpacts_;
-    }
-
     // Sets tracking incremental changes to nodes and edges
     std::set<NodePtr> deltaInsertNodes;
     std::set<EdgePtr> deltaInsertEdges;
@@ -1910,7 +1902,6 @@ public:
     std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> insertedFactImpactedEdges;
     std::unordered_set<NodePtr> deltaInsertReachableNodes;
     std::unordered_set<EdgePtr> deltaInsertReachableEdges;
-    bool buildInsertImpacts_ = true;
 
     const std::set<NodePtr>& getDeltaInsertNodes() const {
         return deltaInsertNodes;
