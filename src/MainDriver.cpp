@@ -1113,9 +1113,14 @@ int main(Global& glb, const char* souffle_executable) {
                     srcFiles.push_back(fs::path(sourceFilename));
                 }
                 {
-                    // Emit TranslationContext clause-number mapping alongside generated sources.
-                    std::string clauseMapFilename = baseFilename + "-clauses.txt";
-                    std::ofstream os{clauseMapFilename};
+                    // Emit TranslationContext clause-number mapping with runtime outputs when -D is set.
+                    fs::path clauseMapPath = baseFilename + "-clauses.txt";
+                    if (isExplicitlySet(glb.config(), "output-dir") &&
+                            !glb.config().has("output-dir", "-")) {
+                        clauseMapPath = fs::path(glb.config().get("output-dir")) /
+                                        (simpleName(baseFilename) + "-clauses.txt");
+                    }
+                    std::ofstream os{clauseMapPath};
                     unitTranslator->context->dumpClauseNums(os);
                     os.close();
                 }

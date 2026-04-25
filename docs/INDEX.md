@@ -15,6 +15,12 @@ artifact.
 10. [RUNBOOK.md](RUNBOOK.md): compact local run guide.
 11. [../AGENTS.md](../AGENTS.md): agent constraints.
 
+## Examples
+
+- [../examples/cycle_repair_path/README.md](../examples/cycle_repair_path/README.md): small
+  interactive path program for observing recursive delete/rederive cycle repair
+  with `--dump=dot`.
+
 ## Source Entry Points
 
 - [../src/MainDriver.cpp:636](../src/MainDriver.cpp#L636): compiler-facing incremental options.

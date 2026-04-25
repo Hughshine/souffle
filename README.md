@@ -52,6 +52,9 @@ q
 
 Use `full` on the same delta stream as the exact recomputation oracle.
 
+For a small interactive cycle-repair example, see
+[examples/cycle_repair_path/README.md](examples/cycle_repair_path/README.md).
+
 ## Optional Outputs
 
 Extra graph/profiling outputs are off by default. Enable them explicitly when

@@ -1,0 +1,2 @@
+1 compute.dl [10:1-10:24] path(x,x) :-  source(x).
+2 compute.dl [11:1-11:35] path(x,z) :-  path(x,y),  edge(y,z).
