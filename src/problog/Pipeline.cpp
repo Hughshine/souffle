@@ -1984,6 +1984,13 @@ void runPipeline(
               << " ms\n";
     debugger.endStage();
 
+    const std::size_t beforePruneNodes = graph->getNodes().size();
+    const std::size_t beforePruneEdges = graph->getEdges().size();
+    std::cout << "[pipeline] before_prune_nodes=" << beforePruneNodes
+              << ", before_prune_edges=" << beforePruneEdges << "\n";
+    debugger.addInfo("before_prune_nodes", std::to_string(beforePruneNodes));
+    debugger.addInfo("before_prune_edges", std::to_string(beforePruneEdges));
+
     if (opt.isDumpDotEnabled()) {
         graph->dumpDot(makeOutputPath(opt, "before_prune.dot"));
     }
@@ -1993,9 +2000,14 @@ void runPipeline(
     auto prunedView = graph->prune(program.getOutputRelations());
     auto view = buildWorkingViewLocal(prunedView.getNodes(), prunedView.getEdges());
     auto t3 = std::chrono::steady_clock::now();
+    const std::size_t afterPruneNodes = view.getNodes().size();
+    const std::size_t afterPruneEdges = view.getEdges().size();
     std::cout << "[pipeline] pruning took "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
-              << " ms\n";
+              << " ms; after_prune_nodes=" << afterPruneNodes
+              << ", after_prune_edges=" << afterPruneEdges << "\n";
+    debugger.addInfo("after_prune_nodes", std::to_string(afterPruneNodes));
+    debugger.addInfo("after_prune_edges", std::to_string(afterPruneEdges));
     debugger.endStage();
 
     if (opt.isDumpDotEnabled()) {
@@ -2161,6 +2173,20 @@ void runPipeline(
                 const auto& implicitGraphStats = implicitResult.stats.graphRewriteStats;
                 debugger.addInfo("rewrite_impl", rewriteDecision.impl);
                 rewriteHybridStage->logMessage(Level::INFO, "rewrite_impl=" + rewriteDecision.impl);
+                const std::size_t implicitAfterRewriteNodes = view.getNodes().size();
+                const std::size_t implicitAfterRewriteEdges = view.getEdges().size();
+                debugger.addInfo("after_prune_nodes", std::to_string(afterPruneNodes));
+                debugger.addInfo("after_prune_edges", std::to_string(afterPruneEdges));
+                debugger.addInfo("after_rewrite_nodes", std::to_string(implicitAfterRewriteNodes));
+                debugger.addInfo("after_rewrite_edges", std::to_string(implicitAfterRewriteEdges));
+                rewriteHybridStage->logMessage(Level::INFO,
+                        "after_prune_nodes=" + std::to_string(afterPruneNodes));
+                rewriteHybridStage->logMessage(Level::INFO,
+                        "after_prune_edges=" + std::to_string(afterPruneEdges));
+                rewriteHybridStage->logMessage(Level::INFO,
+                        "after_rewrite_nodes=" + std::to_string(implicitAfterRewriteNodes));
+                rewriteHybridStage->logMessage(Level::INFO,
+                        "after_rewrite_edges=" + std::to_string(implicitAfterRewriteEdges));
                 addImplicitInfo("implicit_total_ms", implicitResult.stats.totalMs);
                 addImplicitInfo("implicit_overlay_prep_ms", implicitResult.stats.overlayPrepMs);
                 addImplicitInfo("implicit_overlay_split_ms", implicitResult.stats.overlaySplitMs);
@@ -2234,12 +2260,16 @@ void runPipeline(
                                          ? 0.0
                                          : static_cast<double>(rewriteStats.randomVarsAfter) /
                                                    static_cast<double>(rewriteStats.randomVarsBefore);
+        const std::size_t afterRewriteNodes = view.getNodes().size();
+        const std::size_t afterRewriteEdges = view.getEdges().size();
         std::cout << "[pipeline] rewrite took " << rewriteMs << " ms; iterations="
                   << rewriteStats.numIterations << ", regions=" << rewriteStats.numRegionsRewritten
                   << ", detectedRegions=" << rewriteStats.numRegionsDetected
                   << ", nodesRemoved=" << rewriteStats.numNodesRemoved
                   << ", edgesRemoved=" << rewriteStats.numEdgesRemoved
                   << ", edgesAdded=" << rewriteStats.numEdgesAdded
+                  << ", afterRewriteNodes=" << afterRewriteNodes
+                  << ", afterRewriteEdges=" << afterRewriteEdges
                   << ", randomVarsBefore=" << rewriteStats.randomVarsBefore
                   << ", randomVarsAfter=" << rewriteStats.randomVarsAfter
                   << ", randomVarsDelta=" << randomVarsDelta
@@ -2249,6 +2279,13 @@ void runPipeline(
                   << ", cleanupMs=" << rewriteStats.totalCleanupMs
                   << ", simpleFactRegions=" << rewriteStats.simpleFactRegions << std::endl;
         if (rewriteHybridStage) {
+            debugger.addInfo("after_rewrite_nodes", std::to_string(afterRewriteNodes));
+            debugger.addInfo("after_rewrite_edges", std::to_string(afterRewriteEdges));
+            rewriteHybridStage->logMessage(Level::INFO,
+                    "after_rewrite_nodes=" + std::to_string(afterRewriteNodes));
+            rewriteHybridStage->logMessage(Level::INFO,
+                    "after_rewrite_edges=" + std::to_string(afterRewriteEdges));
+
             debugger.addInfo("rewrite_impl", rewriteDecision.impl);
             debugger.addInfo("rewrite_reason", rewriteDecision.reason);
             debugger.addInfo("rewrite_split_policy", rewriteDecision.splitPolicy);
