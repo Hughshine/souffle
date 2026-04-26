@@ -557,6 +557,91 @@ def case_inc_regional_shared_delta_join_vs_full(souffle_bin: Path, work_root: Pa
     assert_glob_empty(out_regional, "region-*.txt", label="shared-delta join region text dump")
 
 
+def case_inc_regional_independent_overlap_skip_vs_full(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("inc_regional_independent_overlap_skip_vs_full", work_root)
+    compute_bin, input_dir = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    turns = [["insert 0.40::d1(0)", "insert 0.30::d2(0)"]]
+
+    out_regional = case_dir / "out_inc_regional"
+    out_full = case_dir / "out_full"
+    proc = run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=out_regional,
+        mode="inc-regional",
+        turns=turns,
+        extra_args=["--profile-stage=inc-regional", "--dump=dot"],
+    )
+    run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=out_full,
+        mode="full",
+        turns=turns,
+    )
+
+    assert_prob_close(
+        iter_prob_path(out_regional, 1, "inc-regional"),
+        iter_prob_path(out_full, 1, "full"),
+        label="inc_regional_independent_overlap_skip iter=1",
+    )
+    probs = parse_prob_file(iter_prob_path(out_regional, 1, "inc-regional"))
+    if not math.isclose(probs.get("o5(0)", -1.0), 0.76, rel_tol=0.0, abs_tol=1e-9):
+        raise CaseFailure(f"inc_regional_independent_overlap_skip: expected o5(0)=0.76, got {probs}")
+    if not math.isclose(probs.get("o6(0)", -1.0), 0.65, rel_tol=0.0, abs_tol=1e-9):
+        raise CaseFailure(f"inc_regional_independent_overlap_skip: expected o6(0)=0.65, got {probs}")
+    assert_stdout_contains(
+        proc.stdout,
+        "overlap closure skip reason=independent_anchors boundary_nodes=2",
+        label="independent overlap skip profile",
+    )
+    assert_stdout_not_contains(
+        proc.stdout,
+        "overlap closure reason=preplan",
+        label="independent overlap skip profile",
+    )
+    assert_path_exists(
+        out_regional / "inc-region-1.dot",
+        label="independent overlap skip region dot",
+    )
+    assert_dot_body_contains(
+        out_regional / "inc-region-1.dot",
+        '"o3(0)" [shape=ellipse, penwidth=2, color="#ff7f0e"]',
+        label="independent overlap skip left boundary",
+    )
+    assert_dot_body_contains(
+        out_regional / "inc-region-1.dot",
+        '"o4(0)" [shape=ellipse, penwidth=2, color="#ff7f0e"]',
+        label="independent overlap skip right boundary",
+    )
+    assert_dot_body_contains(
+        out_regional / "inc-region-1.dot",
+        '"o5(0)" [shape=ellipse, penwidth=1, color="black"]',
+        label="independent overlap skip left downstream output",
+    )
+    assert_dot_body_contains(
+        out_regional / "inc-region-1.dot",
+        '"o6(0)" [shape=ellipse, penwidth=1, color="black"]',
+        label="independent overlap skip right downstream output",
+    )
+    assert_dot_colored_bridge(
+        out_regional / "inc-region-1.dot",
+        "i1(0)",
+        "o3(0)",
+        "red",
+        label="independent overlap skip left mergeable anchor path",
+    )
+    assert_dot_colored_bridge(
+        out_regional / "inc-region-1.dot",
+        "i2(0)",
+        "o4(0)",
+        "red",
+        label="independent overlap skip right mergeable anchor path",
+    )
+    assert_glob_empty(out_regional, "inc-region-step-*.dot", label="independent overlap skip intermediate region dot")
+    assert_glob_empty(out_regional, "region-*.txt", label="independent overlap skip region text dump")
+
+
 def case_deterministic_inc_regional_multiturn_state_machine(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("deterministic_inc_regional_multiturn_state_machine", work_root)
     compute_bin, input_dir = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
@@ -1044,6 +1129,7 @@ CASES = {
     "deterministic_inc_regional_single_round_vs_full": case_deterministic_inc_regional_single_round_vs_full,
     "inc_regional_calibration_single_interface": case_inc_regional_calibration_single_interface,
     "inc_regional_shared_delta_join_vs_full": case_inc_regional_shared_delta_join_vs_full,
+    "inc_regional_independent_overlap_skip_vs_full": case_inc_regional_independent_overlap_skip_vs_full,
     "deterministic_inc_regional_multiturn_state_machine": case_deterministic_inc_regional_multiturn_state_machine,
     "deterministic_inc_regional_multiturn_degenerate": case_deterministic_inc_regional_multiturn_degenerate,
     "deterministic_recursive_derivation_guard_vs_full": case_deterministic_recursive_derivation_guard_vs_full,
