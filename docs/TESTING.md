@@ -27,6 +27,8 @@ incremental modes against `full` on small programs covering:
 - DRed delete/rederive behavior.
 - deterministic-relation analysis under mixed updates.
 - `inc-regional` correctness and multi-turn fallback.
+- boundary calibration profile details for `inc-regional` single-interface updates.
+- shared-delta join closure for `inc-regional` regional analysis.
 - recursive derivation guards.
 - negated absent tuple grounding.
 - `@post_delete_*` timestamp views for non-recursive mixed updates.

@@ -260,6 +260,34 @@ def assert_glob_empty(base_dir: Path, pattern: str, *, label: str) -> None:
         raise CaseFailure(f"{label}: unexpected files matching {base_dir / pattern}: {matches}")
 
 
+def assert_dot_body_contains(path: Path, needle: str, *, label: str) -> None:
+    if not path.exists():
+        raise CaseFailure(f"{label}: missing expected path {path}")
+    body = path.read_text(encoding="utf-8").split("subgraph cluster_legend", 1)[0]
+    if needle not in body:
+        raise CaseFailure(f"{label}: missing DOT body substring\nexpected={needle}\npath={path}\nbody:\n{body}")
+
+
+def assert_dot_colored_bridge(path: Path, source: str, target: str, color: str, *, label: str) -> None:
+    if not path.exists():
+        raise CaseFailure(f"{label}: missing expected path {path}")
+    body = path.read_text(encoding="utf-8").split("subgraph cluster_legend", 1)[0]
+    source_re = re.compile(
+        rf'"{re.escape(source)}"\s*->\s*"(edge_node_[^"]+)"\s*\[color="{re.escape(color)}"'
+    )
+    edge_nodes = [match.group(1) for match in source_re.finditer(body)]
+    for edge_node in edge_nodes:
+        target_re = re.compile(
+            rf'"{re.escape(edge_node)}"\s*->\s*"{re.escape(target)}"\s*\[color="{re.escape(color)}"'
+        )
+        if target_re.search(body):
+            return
+    raise CaseFailure(
+        f"{label}: missing colored DOT bridge {source} -> * -> {target} color={color}\n"
+        f"path={path}\nbody:\n{body}"
+    )
+
+
 def load_single_json_match(base_dir: Path, pattern: str, *, label: str) -> object:
     matches = sorted(base_dir.glob(pattern))
     if len(matches) != 1:
@@ -416,6 +444,117 @@ def case_deterministic_inc_regional_single_round_vs_full(souffle_bin: Path, work
             iter_prob_path(out_full, iteration, "full"),
             label=f"deterministic_inc_regional iter={iteration}",
         )
+
+
+def case_inc_regional_calibration_single_interface(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("inc_regional_calibration_single_interface", work_root)
+    compute_bin, input_dir = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    turns = [["insert 0.40::d2(0)"]]
+
+    out_regional = case_dir / "out_inc_regional"
+    out_full = case_dir / "out_full"
+    proc = run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=out_regional,
+        mode="inc-regional",
+        turns=turns,
+        extra_args=["--profile-stage=inc-regional", "--dump=dot"],
+    )
+    run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=out_full,
+        mode="full",
+        turns=turns,
+    )
+
+    assert_prob_close(
+        iter_prob_path(out_regional, 1, "inc-regional"),
+        iter_prob_path(out_full, 1, "full"),
+        label="inc_regional_calibration_single_interface iter=1",
+    )
+    probs = parse_prob_file(iter_prob_path(out_regional, 1, "inc-regional"))
+    if not math.isclose(probs.get("o5(0)", -1.0), 0.42, rel_tol=0.0, abs_tol=1e-9):
+        raise CaseFailure(f"inc_regional_calibration_single_interface: expected o5(0)=0.42, got {probs}")
+    for needle in (
+        "[inc-regional-calibration]",
+        "head=o2(0)",
+        "anchor=node:i2(0)",
+        "old_weight=0.5",
+        "calibrated_weight=0.7",
+        "target_prob=0.7",
+    ):
+        assert_stdout_contains(proc.stdout, needle, label="calibration profile detail")
+    assert_path_exists(
+        out_regional / "inc-region-1.dot",
+        label="calibration region dot",
+    )
+    assert_dot_body_contains(
+        out_regional / "inc-region-1.dot",
+        '"i2(0)" [shape=box, penwidth=2, color="#f2c744"]',
+        label="calibration mergeable node anchor",
+    )
+    assert_dot_colored_bridge(
+        out_regional / "inc-region-1.dot",
+        "i2(0)",
+        "o2(0)",
+        "red",
+        label="calibration mergeable anchor path",
+    )
+    assert_glob_empty(out_regional, "inc-region-step-*.dot", label="calibration intermediate region dot")
+    assert_glob_empty(out_regional, "region-*.txt", label="calibration region text dump")
+
+
+def case_inc_regional_shared_delta_join_vs_full(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("inc_regional_shared_delta_join_vs_full", work_root)
+    compute_bin, input_dir = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    turns = [["insert 0.40::dshared(0)"]]
+
+    out_regional = case_dir / "out_inc_regional"
+    out_full = case_dir / "out_full"
+    proc = run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=out_regional,
+        mode="inc-regional",
+        turns=turns,
+        extra_args=["--profile-stage=inc-regional", "--dump=dot"],
+    )
+    run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=out_full,
+        mode="full",
+        turns=turns,
+    )
+
+    assert_prob_close(
+        iter_prob_path(out_regional, 1, "inc-regional"),
+        iter_prob_path(out_full, 1, "full"),
+        label="inc_regional_shared_delta_join iter=1",
+    )
+    probs = parse_prob_file(iter_prob_path(out_regional, 1, "inc-regional"))
+    if not math.isclose(probs.get("o5(0)", -1.0), 0.58, rel_tol=0.0, abs_tol=1e-9):
+        raise CaseFailure(f"inc_regional_shared_delta_join: expected o5(0)=0.58, got {probs}")
+    assert_stdout_contains(proc.stdout, "overlap closure reason=preplan", label="shared-delta join overlap profile")
+    assert_stdout_contains(proc.stdout, "overlap_closure_dependent=1", label="shared-delta join overlap profile")
+    assert_path_exists(
+        out_regional / "inc-region-1.dot",
+        label="shared-delta join region dot",
+    )
+    assert_dot_body_contains(
+        out_regional / "inc-region-1.dot",
+        '"o4(0)" [shape=ellipse, penwidth=2, color="#1f77b4"]',
+        label="shared-delta join final region includes o4",
+    )
+    assert_dot_body_contains(
+        out_regional / "inc-region-1.dot",
+        '"o5(0)" [shape=ellipse, penwidth=2, color="#1f77b4"]',
+        label="shared-delta join final region includes o5",
+    )
+    assert_glob_empty(out_regional, "inc-region-step-*.dot", label="shared-delta join intermediate region dot")
+    assert_glob_empty(out_regional, "region-*.txt", label="shared-delta join region text dump")
 
 
 def case_deterministic_inc_regional_multiturn_state_machine(souffle_bin: Path, work_root: Path) -> None:
@@ -903,6 +1042,8 @@ CASES = {
     "dred_hub_rederive_naive_vs_full": case_dred_hub_rederive_naive_vs_full,
     "deterministic_inc_naive_combo_vs_full": case_deterministic_inc_naive_combo_vs_full,
     "deterministic_inc_regional_single_round_vs_full": case_deterministic_inc_regional_single_round_vs_full,
+    "inc_regional_calibration_single_interface": case_inc_regional_calibration_single_interface,
+    "inc_regional_shared_delta_join_vs_full": case_inc_regional_shared_delta_join_vs_full,
     "deterministic_inc_regional_multiturn_state_machine": case_deterministic_inc_regional_multiturn_state_machine,
     "deterministic_inc_regional_multiturn_degenerate": case_deterministic_inc_regional_multiturn_degenerate,
     "deterministic_recursive_derivation_guard_vs_full": case_deterministic_recursive_derivation_guard_vs_full,

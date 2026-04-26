@@ -15,6 +15,8 @@
 - `regression.dred_mix` and `regression.dred_hub`: DRed delete/rederive behavior against `full`.
 - `regression.deterministic_combo`: deterministic-relation analysis across mixed insert/delete turns.
 - `regression.deterministic_regional`: single-turn `inc-regional` against `full`.
+- `regression.inc_regional_calibration`: single-interface regional update with boundary calibration.
+- `regression.inc_regional_shared_delta_join`: shared-delta join closure for regional analysis.
 - `regression.deterministic_regional_multiturn`: regional state-machine fallback and re-entry.
 - `regression.deterministic_regional_degenerate`: regional turns that should remain regional.
 - `regression.deterministic_derivation_guard`: recursive delete/rederive guard.

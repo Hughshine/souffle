@@ -11,9 +11,11 @@
 #include <cmath>
 #include <chrono>
 #include <cassert>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include "souffle/problog/DerivationGraph.h"
 #include "souffle/problog/IncRegionAnalyzer.h"
@@ -1158,6 +1160,23 @@ public:
                 res.weightOverrides[varIdx] = {pStar, 1 - pStar};
                 usedAnchorVars[varIdx] = v;
                 calibrated = true;
+                if (incRegionalProfileEnabled) {
+                    std::ostringstream oss;
+                    oss << std::setprecision(12)
+                        << "[inc-regional-calibration]"
+                        << " head=" << incra::node_id(v)
+                        << " anchor=" << anchorLabel
+                        << " var=" << varIdx
+                        << " old_node_prob=" << oldVal
+                        << " target_prob=" << target
+                        << " p_when_false=" << alpha
+                        << " p_when_true=" << beta
+                        << " old_weight=" << oldW.posWeight
+                        << " calibrated_weight=" << pStar
+                        << " calibrated_neg_weight=" << (1.0 - pStar)
+                        << "\n";
+                    std::cout << oss.str();
+                }
                 logDecision("accept", pStarOutOfRange ? "pstar_out_of_range" : "ok");
                 break;
             }
@@ -1203,7 +1222,7 @@ public:
     struct Options {
         bool enableFallbackToClassicInsertion = true;
         bool enableNearFullExpansion = false;
-        bool enableOverlapExpansion = false;
+        bool enableOverlapExpansion = true;
         double eps = 1e-12;
     };
     struct Stats {
@@ -1313,200 +1332,8 @@ public:
         stats_.analyzeDrEdges = analysisStats.dr_edges;
         auto t1 = nowMs();
 
-        incra::Region regionSnapshot = analysis.region;
-        auto dumpRegionDelta = [&](const char* stage, const incra::Region& before, const incra::Region& after) {
-            if (!DerivationGraphViewInterface::isDumpDotEnabled()) {
-                return;
-            }
-            static size_t regionDumpCounter = 0;
-            std::string filename = "inc-region-step-" + std::to_string(++regionDumpCounter);
-            if (stage && stage[0]) {
-                filename += "-" + std::string(stage);
-            }
-            filename += ".dot";
-            std::ofstream out(DerivationGraphViewInterface::qualifyDumpPath(filename));
-            if (!out) {
-                return;
-            }
-            std::unordered_set<NodePtr> deltaNodes = delta_input_set;
-            for (const auto& n : view.getDeltaDeleteNodes()) {
-                if (n) {
-                    deltaNodes.insert(n);
-                }
-            }
-            for (const auto& e : view.getDeltaDeleteEdges()) {
-                if (!e) continue;
-                NodePtr outNode = view.getOutput(e);
-                if (outNode) {
-                    deltaNodes.insert(outNode);
-                }
-            }
-            std::unordered_set<EdgePtr> deltaEdges;
-            deltaEdges.reserve(view.getDeltaInsertEdges().size() + view.getDeltaDeleteEdges().size());
-            for (const auto& e : view.getDeltaInsertEdges()) {
-                if (e) deltaEdges.insert(e);
-            }
-            for (const auto& e : view.getDeltaDeleteEdges()) {
-                if (e) deltaEdges.insert(e);
-            }
-            const auto& dr = analyzer.lastDeltaReachable();
-            const auto vizBoundaries = analyzer.recomputeBoundaries(after);
-            std::unordered_set<NodePtr> boundaryNodes;
-            boundaryNodes.reserve(vizBoundaries.out_induced.size() +
-                                  vizBoundaries.scope_induced.size() +
-                                  vizBoundaries.residual.size());
-            auto addBoundaryNodes = [&](const std::set<NodePtr>& src) {
-                for (const auto& n : src) {
-                    if (n) {
-                        boundaryNodes.insert(n);
-                    }
-                }
-            };
-            addBoundaryNodes(vizBoundaries.out_induced);
-            addBoundaryNodes(vizBoundaries.scope_induced);
-            addBoundaryNodes(vizBoundaries.residual);
-            auto vizAnchors = analyzer.recomputeAnchors(after, vizBoundaries);
-            std::unordered_set<NodePtr> anchorNodes;
-            std::unordered_set<EdgePtr> anchorEdges;
-            for (const auto& entry : vizAnchors) {
-                for (const auto& cand : entry.second) {
-                    if (cand.kind == incra::IncRegionAnalysis::AnchorKind::Node) {
-                        if (cand.node) {
-                            anchorNodes.insert(cand.node);
-                        }
-                    } else {
-                        if (cand.edge) {
-                            anchorEdges.insert(cand.edge);
-                        }
-                    }
-                }
-            }
-            std::unordered_set<NodePtr> newNodes;
-            newNodes.reserve(after.nodes.size());
-            for (const auto& n : after.nodes) {
-                if (!before.nodes.count(n)) {
-                    newNodes.insert(n);
-                }
-            }
-            std::unordered_set<EdgePtr> newEdges;
-            newEdges.reserve(after.edges.size());
-            for (const auto& e : after.edges) {
-                if (!before.edges.count(e)) {
-                    newEdges.insert(e);
-                }
-            }
-            std::unordered_set<NodePtr> emitNodes = dr.nodes;
-            emitNodes.insert(after.nodes.begin(), after.nodes.end());
-            emitNodes.insert(boundaryNodes.begin(), boundaryNodes.end());
-            emitNodes.insert(anchorNodes.begin(), anchorNodes.end());
-            emitNodes.insert(lastOverlapMultiNodes_.begin(), lastOverlapMultiNodes_.end());
-            std::unordered_set<EdgePtr> emitEdges = dr.edges;
-            emitEdges.insert(after.edges.begin(), after.edges.end());
-            emitEdges.insert(anchorEdges.begin(), anchorEdges.end());
-            for (const auto& e : emitEdges) {
-                if (!e) continue;
-                NodePtr head = view.getOutput(e);
-                if (head) emitNodes.insert(head);
-                for (const auto& in : view.getInputs(e)) {
-                    if (in) emitNodes.insert(in);
-                }
-            }
-            out << "digraph G {\n";
-            out << "  rankdir=LR;\n";
-            for (const auto& n : emitNodes) {
-                if (!n) continue;
-                const bool inRegion = after.nodes.count(n) > 0;
-                const bool isNew = newNodes.count(n) > 0;
-                const bool isDelta = deltaNodes.count(n) > 0;
-                const bool isBoundary = boundaryNodes.count(n) > 0;
-                const bool isAnchor = anchorNodes.count(n) > 0;
-                const bool isMulti = lastOverlapMultiNodes_.count(n) > 0;
-                const bool inDr = dr.nodes.count(n) > 0;
-                std::string color = inDr ? "#cfcfcf" : "#7f7f7f";
-                if (inRegion) {
-                    color = "#1f77b4";
-                }
-                if (isNew) {
-                    color = "#d62728";
-                }
-                if (isDelta) {
-                    color = "#2ca02c";
-                }
-                if (isAnchor) {
-                    color = "#f2c744";
-                }
-                std::string pen = (inRegion || isNew) ? "2" : "1";
-                int peripheries = isBoundary ? 2 : 1;
-                if (isMulti) {
-                    peripheries = std::max(peripheries, 3);
-                }
-                std::string style;
-                if (isAnchor) {
-                    style = "dashed";
-                }
-                if (isMulti) {
-                    if (!style.empty()) style += ",";
-                    style += "bold";
-                }
-                std::string shape = n->isFact ? "box" : "ellipse";
-                out << "  \"" << incra::node_id(n) << "\""
-                    << " [shape=" << shape << ", penwidth=" << pen << ", peripheries=" << peripheries
-                    << ", color=\"" << color << "\"";
-                if (!style.empty()) {
-                    out << ", style=\"" << style << "\"";
-                }
-                out << "];\n";
-            }
-            for (const auto& e : emitEdges) {
-                if (!e) continue;
-                NodePtr head = view.getOutput(e);
-                auto ins = view.getInputs(e);
-                std::ostringstream edgeNodeName;
-                edgeNodeName << "edge_node_" << reinterpret_cast<uintptr_t>(e.get());
-                const bool inRegion = after.edges.count(e) > 0;
-                const bool isNew = newEdges.count(e) > 0;
-                const bool isDelta = deltaEdges.count(e) > 0;
-                const bool isAnchor = anchorEdges.count(e) > 0;
-                const bool inDr = dr.edges.count(e) > 0;
-                std::string color = inDr ? "#cfcfcf" : "#7f7f7f";
-                if (inRegion) {
-                    color = "#1f77b4";
-                }
-                if (isNew) {
-                    color = "#d62728";
-                }
-                if (isDelta) {
-                    color = "#2ca02c";
-                }
-                if (isAnchor) {
-                    color = "#f2c744";
-                }
-                const char* edgeShape = isAnchor ? "diamond" : "point";
-                const char* edgeStyle = isAnchor ? "filled,dashed" : "filled";
-                const double edgeSize = isAnchor ? 0.3 : 0.2;
-                out << "  \"" << edgeNodeName.str() << "\""
-                    << " [shape=" << edgeShape << ", width=" << edgeSize << ", height=" << edgeSize
-                    << ", label=\"\", style=\"" << edgeStyle << "\", color=\"" << color
-                    << "\", fillcolor=\"" << color << "\", penwidth=2";
-                if (isAnchor) {
-                    out << ", peripheries=2";
-                }
-                out << "];\n";
-                for (const auto& t : ins) {
-                    if (!t) continue;
-                    out << "  \"" << incra::node_id(t) << "\" -> \"" << edgeNodeName.str() << "\""
-                        << " [color=\"" << color << "\", penwidth=2, style=solid];\n";
-                }
-                if (head) {
-                    out << "  \"" << edgeNodeName.str() << "\" -> \"" << incra::node_id(head) << "\""
-                        << " [color=\"" << color << "\", penwidth=2, style=solid];\n";
-                }
-            }
-            out << "}\n";
-        };
         auto recordRegionChange = [&](const char* stage) {
-            dumpRegionDelta(stage, regionSnapshot, analysis.region);
-            regionSnapshot = analysis.region;
+            (void)stage;
         };
         recordRegionChange("initial");
 
@@ -1957,13 +1784,11 @@ public:
             for (const auto& n : multiNodes) {
                 bool any = false;
                 std::vector<NodePtr> boundaryReach;
-                if (boundarySet.count(n)) {
-                    if (expandOverlapBoundary(n, boundaryReach)) {
-                        any = true;
-                    }
-                    for (const auto& source : boundaryReach) {
-                        addScopeForSource(source, any);
-                    }
+                if (expandOverlapBoundary(n, boundaryReach)) {
+                    any = true;
+                }
+                for (const auto& source : boundaryReach) {
+                    addScopeForSource(source, any);
                 }
                 addScopeForSource(n, any);
                 if (any) {
@@ -2576,6 +2401,13 @@ public:
         lastOverrides_ = calibRes.weightOverrides;
         lastPlanRegionNodes_ = plan.regionNodes;
         lastPlanBoundaryNodes_ = plan.boundaryNodes;
+        if (DerivationGraphViewInterface::isDumpDotEnabled()) {
+            static std::atomic<size_t> regionCounter{0};
+            const size_t idx = ++regionCounter;
+            const std::string filename = "inc-region-" + std::to_string(idx) + ".dot";
+            analyzer.toDotForAnalysis(
+                    DerivationGraphViewInterface::qualifyDumpPath(filename), analysis);
+        }
         stats_.regionNodeCount = plan.regionNodes.size();
         stats_.boundaryNodeCount = plan.boundaryNodes.size();
         incRegionalTurnSummary.valid = true;

@@ -24,7 +24,6 @@
 #include <vector>
 #include <climits>
 #include <chrono>
-#include <atomic>
 
 #include "souffle/problog/DerivationGraph.h"
 
@@ -345,24 +344,11 @@ public:
         }
         if (!json_out_path.empty()) emitJSON_(stats, region, json_out_path);
         if (!csv_out_path.empty())  emitCSV_(stats, region, csv_out_path);
-        if (DerivationGraphViewInterface::isDumpDotEnabled() || incRegionalProfileEnabled) {
-            static std::atomic<size_t> regionCounter{0};
-            const size_t idx = ++regionCounter;
-            const std::string filename = "inc-region-" + std::to_string(idx) + ".dot";
-            if (DerivationGraphViewInterface::isDumpDotEnabled()) {
-                toDot(DerivationGraphViewInterface::qualifyDumpPath(filename));
-            }
-            if (incRegionalProfileEnabled) {
-                const std::string regionTxt = "region-" + std::to_string(idx) + ".txt";
-                emitText_(stats, region, B, DerivationGraphViewInterface::qualifyDumpPath(regionTxt));
-            }
-        }
-
         return stats;
     }
 
-    // toDot with visual marks: region nodes (double border), boundary nodes (dashed, orange),
-    // mergeable incoming edges to boundary heads (red), delta items (green).
+    // toDot with visual marks: region nodes (double border), boundary nodes (orange),
+    // mergeable node anchors (yellow), mergeable anchor paths (red), delta items (green).
     bool toDot(const std::string& path, bool mark_merge = true) {
         if (!have_last_) return false;
         std::ofstream out(path);
@@ -382,6 +368,37 @@ public:
             return isIn_<EdgePtr>(e, view_.getDeltaInsertEdges())
                 || isIn_<EdgePtr>(e, view_.getDeltaDeleteEdges());
         };
+        std::unordered_set<NodePtr> anchorNodes;
+        std::unordered_set<EdgePtr> anchorEdges;
+        std::unordered_set<EdgePtr> anchorBridgeEdges;
+        auto edgeHasInput = [&](const EdgePtr& e, const NodePtr& n) {
+            if (!e || !n) return false;
+            for (const auto& in : view_.getInputs(e)) {
+                if (in == n) return true;
+            }
+            return false;
+        };
+        auto addBridgeEdgesToHead = [&](const NodePtr& head, const NodePtr& source) {
+            if (!head || !source) return;
+            for (const auto& e : view_.getIncomingEdges(head)) {
+                if (e && e->isDeterministic() && edgeHasInput(e, source)) {
+                    anchorBridgeEdges.insert(e);
+                }
+            }
+        };
+        for (const auto& [head, anchors] : last_analysis_.mergeableAnchorsByHead) {
+            for (const auto& anchor : anchors) {
+                if (anchor.kind == IncRegionAnalysis::AnchorKind::Node) {
+                    if (anchor.node) {
+                        anchorNodes.insert(anchor.node);
+                        addBridgeEdgesToHead(head, anchor.node);
+                    }
+                } else if (anchor.edge) {
+                    anchorEdges.insert(anchor.edge);
+                    addBridgeEdgesToHead(head, view_.getOutput(anchor.edge));
+                }
+            }
+        }
 
         // Nodes
         for (auto& n : view_.getValidNodes()) {
@@ -389,6 +406,10 @@ public:
             std::string shape = n->isFact ? "box" : "ellipse";
             std::string pen   = inRegion(n) ? "2"  : "1";
             std::string color = inRegion(n) ? "#1f77b4" : "black"; // region nodes: blue border
+            if (anchorNodes.count(n)) {
+                color = "#f2c744"; // yellow for mergeable node anchors
+                pen = "2";
+            }
             if (isOutB(n) || isScopeB(n) || isResB(n)) {
                 color = "#ff7f0e"; // orange for boundary nodes
                 pen   = "2";
@@ -407,15 +428,16 @@ public:
             auto head  = view_.getOutput(e);
             auto ins   = view_.getInputs(e);
             bool inRegEdge = last_region_.edges.count(e) > 0;
-            bool onBHead   = isOutB(head) || isScopeB(head) || isResB(head);
             bool delta     = isDeltaE(e);
-            bool canMerge  = mark_merge && edgeMergeable_(e);
+            bool directAnchor = anchorEdges.count(e) > 0;
+            bool bridgeAnchor = anchorBridgeEdges.count(e) > 0;
+            bool canMerge  = mark_merge && (directAnchor || bridgeAnchor);
             std::ostringstream edgeNodeName;
-            edgeNodeName << "edge_node_" << reinterpret_cast<uintptr_t>(e.get());
+            edgeNodeName << "edge_node_" << e->getId();
             std::string color = "black";
             std::string pen   = "1";
             if (inRegEdge) { color = "#1f77b4"; pen = "2"; }          // in-region edges: blue
-            if (onBHead && canMerge) { color = "red"; pen = "2"; }    // mergeable into boundary: red
+            if (canMerge) { color = "red"; pen = "2"; }               // mergeable anchor path: red
             if (delta) { color = "#2ca02c"; pen = "2"; }              // delta edges: green
             out << "  " << quote_(edgeNodeName.str())
                 << " [shape=point, width=0.2, height=0.2, label=\"\", style=filled, color=\"" << color
@@ -431,6 +453,14 @@ public:
         emitLegend_(out, mark_merge);
         out << "}\n";
         return true;
+    }
+
+    bool toDotForAnalysis(const std::string& path, const IncRegionAnalysis& analysis, bool mark_merge = true) {
+        if (!have_last_) return false;
+        last_region_ = analysis.region;
+        last_boundaries_ = analysis.boundaries;
+        last_analysis_ = analysis;
+        return toDot(path, mark_merge);
     }
 
     // Accessors for last run
@@ -1994,6 +2024,7 @@ private:
         out << "    legend_region [shape=ellipse, penwidth=2, color=\"#1f77b4\", label=\"Region member\"];\n";
         out << "    legend_boundary [shape=ellipse, penwidth=2, color=\"#ff7f0e\", label=\"Boundary head\"];\n";
         out << "    legend_delta_node [shape=ellipse, penwidth=2, color=\"#2ca02c\", label=\"Delta node\"];\n";
+        out << "    legend_anchor_node [shape=box, penwidth=2, color=\"#f2c744\", label=\"Mergeable node anchor\"];\n";
         out << "    legend_src_region [shape=box, label=\"Sample fact\"];\n";
         out << "    legend_dst_region [shape=ellipse, label=\"Sample head\"];\n";
         out << "    legend_hyper_region [shape=point, width=0.2, height=0.2, label=\"\", style=filled, color=\"#1f77b4\", fillcolor=\"#1f77b4\"];\n";
@@ -2008,7 +2039,7 @@ private:
             out << "    legend_src_merge [shape=box, label=\"Sample fact\"];\n";
             out << "    legend_dst_merge [shape=ellipse, label=\"Sample head\"];\n";
             out << "    legend_hyper_merge [shape=point, width=0.2, height=0.2, label=\"\", style=filled, color=\"red\", fillcolor=\"red\"];\n";
-            out << "    legend_src_merge -> legend_hyper_merge [color=\"red\", penwidth=2, label=\"mergeable hyperedge\"];\n";
+            out << "    legend_src_merge -> legend_hyper_merge [color=\"red\", penwidth=2, label=\"mergeable anchor path\"];\n";
             out << "    legend_hyper_merge -> legend_dst_merge [color=\"red\", penwidth=2];\n";
         }
         out << "  }\n";

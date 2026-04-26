@@ -197,13 +197,12 @@ The after-prune DOT shows the restored edge and path facts as inserted again.
 ## 8. Regional DOT Files
 
 Because the reference run uses `inc-regional`, `example_output/` also contains
-regional diagnostic DOT files:
+final regional diagnostic DOT files:
 
-- [example_output/inc-region-step-1-initial.dot](example_output/inc-region-step-1-initial.dot)
 - [example_output/inc-region-1.dot](example_output/inc-region-1.dot)
-- [example_output/inc-region-step-2-initial.dot](example_output/inc-region-step-2-initial.dot)
 - [example_output/inc-region-2.dot](example_output/inc-region-2.dot)
 
 These are useful for seeing the incremental recompilation region. The main
 cycle-repair behavior is easiest to inspect in the `derivation-inc-*.dot` files
-listed above.
+listed above. Souffle does not emit intermediate `inc-region-step-*.dot` files
+by default.
