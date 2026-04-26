@@ -74,3 +74,30 @@ them; they add I/O and instrumentation overhead.
 The benchmark driver should produce per-turn probability files, per-run logs,
 per-cell summaries, and a collected `results-souffle-inc.tsv`. A mismatch
 against `full` is a correctness failure, not a timing datapoint.
+
+## Performance TODOs
+
+- High priority: review and improve the `full_inc_*` split-mode pipeline.
+  The mode is meant to pay the same full semantic-evaluation cost as `full`
+  while replacing full forward compilation and WMC with incremental FC/WMC.
+  Current `P13`-`P20`, `inc5_3`, sample 3, run 1 data already gives a useful
+  `NoDer = full / full_inc_regional` geometric mean near `6.47x`, but the
+  implementation still pays visible overhead from `oldPrunedView` pruning and
+  post-prune graph diff/remap. Review `buildPostPruneDiffView`,
+  `remapStateForPostPruneDiff`, formula/DD variable rebinding, and regional FC
+  delete/insert paths against the theoretical workload before changing code.
+  Prioritize fixes that preserve the split-mode stage contract and can be
+  validated with per-case stage sums, `full_inc_old_prune_ms`, and
+  `full_inc_diff_remap_ms`.
+- Secondary priority: review the already-fixed `inc_full` split-mode pipeline
+  for remaining overhead. `inc_full` now drops incremental delta metadata before
+  full FC, which aligns CUDD preconfiguration with `full`. Any further changes
+  should be conservative: first compare full vs inc-derived graph identity,
+  node/edge ordering, SCC order, variable-index assignment, FC setup, and WMC
+  cache behavior; only remove overhead that is clearly not part of the intended
+  `incremental SEM + full FC/WMC` workload.
+
+## Related Commits
+
+- `da8a30c52` — fix(problog): align split-mode full FC timing
+- `668298ef8` — fix(inc-region): update regional WMC routing and profiling
