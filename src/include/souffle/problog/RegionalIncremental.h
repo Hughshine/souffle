@@ -1918,6 +1918,89 @@ public:
             return plan;
         };
 
+        auto hasIndependentAnchorCover = [&](const RegionalInsertPlan& candidatePlan) {
+            if (candidatePlan.boundaryNodes.empty()) {
+                return true;
+            }
+            if (!candidatePlan.mergeReady) {
+                return false;
+            }
+            std::unordered_map<int, NodePtr> anchorVarOwner;
+            for (const auto& boundary : candidatePlan.boundaryNodes) {
+                auto it = candidatePlan.anchorCandidates.find(boundary);
+                if (it == candidatePlan.anchorCandidates.end() || it->second.empty()) {
+                    return false;
+                }
+                bool hasVar = false;
+                for (const auto& anchor : it->second) {
+                    int varIdx = -1;
+                    bool ok = false;
+                    if (anchor.kind == incra::IncRegionAnalysis::AnchorKind::Node) {
+                        ok = anchor.node && anchor.node->isFact && anchor.node->getProbability() < 1.0 &&
+                                formulaManager.peekVarIndex(*anchor.node, varIdx);
+                    } else {
+                        ok = anchor.edge && !anchor.edge->isDeterministic() &&
+                                formulaManager.peekVarIndex(*anchor.edge, varIdx);
+                    }
+                    if (ok && varIdx >= 0) {
+                        hasVar = true;
+                        auto [ownerIt, inserted] = anchorVarOwner.emplace(varIdx, boundary);
+                        if (!inserted && ownerIt->second.get() != boundary.get()) {
+                            return false;
+                        }
+                    }
+                }
+                if (!hasVar) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        auto boundaryDownstreamConverges = [&](const RegionalInsertPlan& candidatePlan) {
+            if (candidatePlan.boundaryNodes.size() < 2) {
+                return false;
+            }
+            const auto& dr = analyzer.lastDeltaReachable();
+            auto inDrNode = [&](const NodePtr& n) {
+                return dr.nodes.empty() || dr.nodes.count(n);
+            };
+            auto inDrEdge = [&](const EdgePtr& e) {
+                return dr.edges.empty() || dr.edges.count(e);
+            };
+            std::unordered_map<NodePtr, NodePtr> owner;
+            for (const auto& boundary : candidatePlan.boundaryNodes) {
+                if (!boundary || !inDrNode(boundary)) {
+                    continue;
+                }
+                std::queue<NodePtr> q;
+                std::unordered_set<NodePtr> seenLocal;
+                q.push(boundary);
+                seenLocal.insert(boundary);
+                while (!q.empty()) {
+                    NodePtr cur = q.front();
+                    q.pop();
+                    auto [it, inserted] = owner.emplace(cur, boundary);
+                    if (!inserted && it->second.get() != boundary.get()) {
+                        return true;
+                    }
+                    for (const auto& e : view.getOutgoingEdges(cur)) {
+                        if (!inDrEdge(e)) {
+                            continue;
+                        }
+                        NodePtr out = view.getOutput(e);
+                        if (!out || !inDrNode(out)) {
+                            continue;
+                        }
+                        if (seenLocal.insert(out).second) {
+                            q.push(out);
+                        }
+                    }
+                }
+            }
+            return false;
+        };
+
         // === 3) Build plan (with degenerate filtering) ===
         RegionalInsertPlan plan;
         bool planBuilt = false;
@@ -1960,14 +2043,27 @@ public:
                 regionDirty = false;
             }
 
-            if (opt_.enableOverlapExpansion && closeDependentBoundaryOverlaps("preplan")) {
-                recordRegionChange("overlap_preplan");
-                regionDirty = true;
-                continue;
-            }
-
             plan = buildPlan();
             planBuilt = true;
+
+            if (opt_.enableOverlapExpansion) {
+                const bool independentAnchors = hasIndependentAnchorCover(plan);
+                const bool downstreamConverges = independentAnchors && boundaryDownstreamConverges(plan);
+                if ((!independentAnchors || downstreamConverges) &&
+                        closeDependentBoundaryOverlaps("preplan")) {
+                    recordRegionChange("overlap_preplan");
+                    regionDirty = true;
+                    planBuilt = false;
+                    continue;
+                }
+                if (independentAnchors && !downstreamConverges &&
+                        incRegionalProfileEnabled && !plan.boundaryNodes.empty()) {
+                    std::cout << "[inc-regional] overlap closure skip reason=independent_anchors"
+                              << " boundary_nodes=" << plan.boundaryNodes.size()
+                              << "\n";
+                }
+            }
+
             if (!opt_.enableFallbackToClassicInsertion || plan.mergeReady) {
                 break;
             }
