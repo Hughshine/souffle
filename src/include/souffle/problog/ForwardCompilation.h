@@ -2029,6 +2029,14 @@ void buildFormulasIncRegionalCyclewise(
         debugger.logMessage(Level::INFO, "[inc-regional] pipeline finished; usedFallback=false");
         return;
     }
+    if (deltaInsertedEdges.empty() && deltaInsertedNodes.empty()) {
+        debugger.logMessage(Level::INFO,
+                "[inc-regional] deletion-only delta; using shared inc-naive FC path");
+        buildFormulasIncCyclewise(view, formulaManager, nodeFormulas, edgeFormulas, changedNodes);
+        debugger.logMessage(Level::INFO,
+                "[inc-regional] deletion-only shared path finished; usedFallback=false");
+        return;
+    }
     const CycleDependencyGraph* regionalInsertDepGraph = nullptr;
 
     if (!deltaDeletedEdges.empty() || !deltaDeletedNodes.empty()) {
