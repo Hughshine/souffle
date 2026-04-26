@@ -90,6 +90,16 @@ inline std::vector<SupportToken> mergeSupportTokenLists(
     sortUniqueSupportTokens(merged);
     return merged;
 }
+
+enum class DeltaMetadataPolicy {
+    Retain,
+    Drop,
+};
+
+inline bool shouldRetainDeltaMetadata(DeltaMetadataPolicy policy) {
+    return policy == DeltaMetadataPolicy::Retain;
+}
+
 class Node {
 public:
     friend class DerivationGraph;
@@ -1715,8 +1725,10 @@ public:
     // Constructors
     IncrementalDerivationGraph() : DerivationGraph() {}
     IncrementalDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
-    IncSubgraphView prune(const std::vector<souffle::Relation*>& outputRelations);
-    IncSubgraphView prune(const std::vector<std::string>& outputRelations);
+    IncSubgraphView prune(const std::vector<souffle::Relation*>& outputRelations,
+            DeltaMetadataPolicy deltaPolicy = DeltaMetadataPolicy::Retain);
+    IncSubgraphView prune(const std::vector<std::string>& outputRelations,
+            DeltaMetadataPolicy deltaPolicy = DeltaMetadataPolicy::Retain);
     
     static IncrementalDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {}) {
         FunctionTimer timer(" creating derivation graph ");
@@ -1806,7 +1818,8 @@ public:
         const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& deltaDeleteRuleApps,
         const RuleManager& ruleManager,
         const std::unordered_map<UntypedTuple, double>& fact_prob = {},
-        const std::vector<UntypedTuple>& deletedFacts = {}
+        const std::vector<UntypedTuple>& deletedFacts = {},
+        DeltaMetadataPolicy deltaPolicy = DeltaMetadataPolicy::Retain
     ) {
         const bool incProfile = incProfileEnabled;
         using Clock = std::chrono::steady_clock;
@@ -1876,6 +1889,9 @@ public:
                 insertsMs = toMs(t0);
             }
         }
+        if (!shouldRetainDeltaMetadata(deltaPolicy)) {
+            clearDeltaMetadata();
+        }
         if (incProfile) {
             std::cout << "[inc-profile] stage=PRUNING_INC applyDelta_ms=" << (clearMs + deletesMs + insertsMs)
                       << " clear_ms=" << clearMs
@@ -1887,6 +1903,33 @@ public:
                       << " insFacts=" << fact_prob.size()
                       << std::endl;
         }
+    }
+
+    void setBuildInsertImpacts(bool enable) {
+        buildInsertImpacts_ = enable;
+    }
+
+    bool getBuildInsertImpacts() const {
+        return buildInsertImpacts_;
+    }
+
+    void clearDeltaMetadata() {
+        deltaInsertNodes.clear();
+        deltaInsertEdges.clear();
+        deltaDeleteNodes.clear();
+        deltaDeleteEdges.clear();
+        deltaInsertFactNodes.clear();
+        deletedFactImpactedNodes.clear();
+        deletedFactImpactedEdges.clear();
+        insertedFactImpactedNodes.clear();
+        insertedFactImpactedEdges.clear();
+        deltaInsertReachableNodes.clear();
+        deltaInsertReachableEdges.clear();
+        explicitDeletedFacts_.clear();
+        deletedFacts_.clear();
+        deletedDeterminsticFacts_.clear();
+        deletedNonDeterministicFacts_.clear();
+        clearViewCaches();
     }
 
     // Sets tracking incremental changes to nodes and edges
@@ -1902,6 +1945,7 @@ public:
     std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> insertedFactImpactedEdges;
     std::unordered_set<NodePtr> deltaInsertReachableNodes;
     std::unordered_set<EdgePtr> deltaInsertReachableEdges;
+    bool buildInsertImpacts_ = true;
 
     const std::set<NodePtr>& getDeltaInsertNodes() const {
         return deltaInsertNodes;
@@ -2280,17 +2324,23 @@ void IncrementalDerivationGraph::applyDeltaDeletes(
     }
 }
 
-IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Relation*>& outputRelations) {
+IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<souffle::Relation*>& outputRelations,
+        DeltaMetadataPolicy deltaPolicy) {
     std::vector<std::string> outputRelationNames;
     for (const auto* rel : outputRelations) {
         outputRelationNames.push_back(rel->getName());
     }
-    return prune(outputRelationNames);
+    return prune(outputRelationNames, deltaPolicy);
 }
 
 // pruning is not incremental for now
-IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>& outputRelations) {
+IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>& outputRelations,
+        DeltaMetadataPolicy deltaPolicy) {
     FunctionTimer totalTimer("prune-inc total");
+    const bool retainDeltaMetadata = shouldRetainDeltaMetadata(deltaPolicy);
+    if (!retainDeltaMetadata) {
+        clearDeltaMetadata();
+    }
     const bool incProfile = incProfileEnabled;
     using Clock = std::chrono::steady_clock;
     auto toMs = [](Clock::time_point start) {
@@ -2396,7 +2446,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
         FunctionTimer scopeTimer("prune-inc: mark live/pruned nodes+edges");
         for (const auto& node : nodes) {
             if (liveNodes.count(node)){
-                if (node->pruned) {
+                if (retainDeltaMetadata && node->pruned) {
                     deltaInsertNodes.insert(node);
                 }
                 node->pruned = false;  // reset pruned flag
@@ -2407,7 +2457,7 @@ IncSubgraphView IncrementalDerivationGraph::prune(const std::vector<std::string>
 
         for (const auto& edge : edges) {
             if (liveEdges.count(edge)) {
-                if (edge->pruned) {
+                if (retainDeltaMetadata && edge->pruned) {
                     deltaInsertEdges.insert(edge);
                 }
                 edge->pruned = false;  // reset pruned flag

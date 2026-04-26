@@ -222,6 +222,10 @@ private:
             }
         }
         DerivationGraphViewInterface::setDumpOutputDir(cli.opt.getOutputFileDir());
+        const DeltaMetadataPolicy deltaPolicy =
+                cli.isIncrementalFcMode() ? DeltaMetadataPolicy::Retain : DeltaMetadataPolicy::Drop;
+        debugger.addInfo("delta_metadata_policy",
+                shouldRetainDeltaMetadata(deltaPolicy) ? "retain" : "drop");
         debugger.startStage(StageKind::PRUNING_INC);
         if (cli.opt.isDumpStatEnabled()) {
             std::cout << "[prune-inc] pre-applyDelta statistics:\n";
@@ -234,7 +238,7 @@ private:
             cli.graph->applyDelta(
                     DerivationManager::untypedTuple2DeltaInsertRuleApplications,
                     DerivationManager::untypedTuple2DeltaDeleteRuleApplications,
-                    *cli.ruleManager, factProbInc, deletedFacts);
+                    *cli.ruleManager, factProbInc, deletedFacts, deltaPolicy);
         }
         DerivationManager::clearDetDeltaTuples();
         cli.logApplyDeltaOpsSummary(
@@ -255,7 +259,8 @@ private:
         }
         IncSubgraphView view = [&] {
             FunctionTimer timer("PRUNING_INC: prune");
-            return cli.graph->prune(cli.program->getOutputRelations());
+            cli.graph->setBuildInsertImpacts(useRegional);
+            return cli.graph->prune(cli.program->getOutputRelations(), deltaPolicy);
         }();
         if (cli.opt.isDumpDotEnabled()) {
             FunctionTimer timer("PRUNING_INC: dumpDot-after-prune");
@@ -324,7 +329,7 @@ private:
             cli.runIncrementalWmc(view, useRegional);
             cli.dumpCurrentTurnProbabilities();
         } else if (cli.isFullFcMode()) {
-            debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
+            const auto fcSetupStart = std::chrono::steady_clock::now();
             cli.nodeFormulas->clear();
             cli.edgeFormulas->clear();
             if (cli.modeSpec.fc == FcMode::FULL_HARD) {
@@ -332,6 +337,12 @@ private:
             } else {
                 cli.ddManager->reset();
             }
+            const auto fcSetupMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - fcSetupStart)
+                                           .count();
+            debugger.addInfo("fc_setup_ms", std::to_string(fcSetupMs));
+            debugger.addInfo("fc_setup_scope", "inc-sem-full-fc");
+            debugger.startStage(StageKind::FORWARD_COMPILATION_FULL);
             buildFormulasCyclewise(view, *cli.ddManager, *cli.nodeFormulas, *cli.edgeFormulas);
             debugger.endStage();
 
@@ -355,15 +366,22 @@ private:
         if (cli.graph) {
             evidenceList = cli.graph->getEvidences();
         }
+
+        cli.beginTurnTrace();
         if (useIncFc && cli.graph != nullptr) {
+            const auto oldPruneStart = std::chrono::steady_clock::now();
             oldPrunedView = std::make_unique<IncSubgraphView>(cli.graph->prune(cli.program->getOutputRelations()));
+            const auto oldPruneMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - oldPruneStart)
+                                            .count();
+            debugger.addInfo("full_inc_old_prune_ms", std::to_string(oldPruneMs));
         } else if (cli.graphOwner != nullptr && cli.graphOwner->get() != nullptr) {
             cli.graphOwner->reset();
             cli.graph = nullptr;
         }
 
-        cli.beginTurnTrace();
         if (cli.ddManager != nullptr && !useIncFc) {
+            const auto fcSetupStart = std::chrono::steady_clock::now();
             cli.nodeFormulas->clear();
             cli.edgeFormulas->clear();
             if (cli.modeSpec.fc == FcMode::FULL_HARD) {
@@ -371,6 +389,11 @@ private:
             } else {
                 cli.ddManager->reset();
             }
+            const auto fcSetupMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - fcSetupStart)
+                                           .count();
+            debugger.addInfo("fc_setup_ms", std::to_string(fcSetupMs));
+            debugger.addInfo("fc_setup_scope", "full-sem-full-fc");
         }
         cli.purgeAllRelations();
         cli.loadInitialInputRelations();
@@ -422,9 +445,14 @@ private:
             std::unordered_map<EdgePtr, EdgePtr> oldToNewEdges;
             {
                 FunctionTimer timer("PRUNING_FULL: post-prune-diff");
+                const auto diffStart = std::chrono::steady_clock::now();
                 diffView = std::make_unique<IncSubgraphView>(
                         cli.buildPostPruneDiffView(*oldPrunedView, view, oldToNewNodes, oldToNewEdges));
                 cli.remapStateForPostPruneDiff(oldToNewNodes, oldToNewEdges);
+                const auto diffMs = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - diffStart)
+                                            .count();
+                debugger.addInfo("full_inc_diff_remap_ms", std::to_string(diffMs));
             }
             cli.changedNodes.clear();
             debugger.startStage(StageKind::FORWARD_COMPILATION_INC);

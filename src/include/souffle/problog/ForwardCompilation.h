@@ -422,6 +422,20 @@ void buildFormulasCyclewiseInternal(
     debugger.logMessage(Level::INFO, "Total rounds: " + std::to_string(round));
     debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration) + " ms");
     double overallMs = toMs(Clock::now() - overallStart);
+    debugger.addInfo("fc_lite_mode", "full");
+    debugger.addInfo("fc_lite_total_ms", std::to_string(overallMs));
+    debugger.addInfo("fc_lite_preconfig_ms", std::to_string(preConfigMs));
+    debugger.addInfo("fc_lite_dep_graph_ms", std::to_string(depMs));
+    debugger.addInfo("fc_lite_base_init_ms", std::to_string(baseInitMs));
+    debugger.addInfo("fc_lite_cycles_ms", std::to_string(cycleMs));
+    debugger.addInfo("fc_lite_rounds", std::to_string(round));
+    debugger.addInfo("fc_lite_nodes", std::to_string(nodeCount));
+    debugger.addInfo("fc_lite_edges", std::to_string(edgeCount));
+    debugger.addInfo("fc_lite_fact_nodes", std::to_string(factNodes));
+    debugger.addInfo("fc_lite_det_edges", std::to_string(detEdges));
+    debugger.addInfo("fc_lite_nondet_edges", std::to_string(nonDetEdges));
+    debugger.addInfo("fc_lite_node_formulas", std::to_string(nodeFormulas.size()));
+    debugger.addInfo("fc_lite_edge_formulas", std::to_string(edgeFormulas.size()));
     if (DerivationGraphViewInterface::isVerboseEnabled()) {
         std::cout << "[buildFormulasCyclewise] timings(ms): total=" << overallMs
                   << " preConfig=" << preConfigMs
@@ -779,9 +793,7 @@ void buildFormulasIncCyclewise(
     }
     auto& depGraph = *depGraphPtr;  // Includes computeSCCs, computeDependencies, computeDepths
     depGraph.dumpDot("scc" + std::to_string(turn++) + ".dot");
-    if (incProfile) {
-        depGraphMs = toMs(depStart, Clock::now());
-    }
+    depGraphMs = toMs(depStart, Clock::now());
     auto end = high_resolution_clock::now();
     debugger.logMessage(Level::INFO, "Finished building dependency graph and preparation. Time: " +
         std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
@@ -1139,9 +1151,7 @@ void buildFormulasIncCyclewise(
 
 
 
-        if (incProfile || deleteProfile) {
-            deletePrepMs = toMs(deletePrepStart, Clock::now());
-        }
+        deletePrepMs = toMs(deletePrepStart, Clock::now());
         // Ensure inserted fact nodes are available during re-derivation.
         if (!deltaInsertFactNodes.empty()) {
             std::size_t preInitFacts = 0;
@@ -1360,9 +1370,7 @@ void buildFormulasIncCyclewise(
         }
     }
     end = high_resolution_clock::now();
-    if (incProfile) {
-        rederiveMs = static_cast<double>(duration_cast<milliseconds>(end - start).count());
-    }
+    rederiveMs = toMs(rederiveStart, Clock::now());
     if (deleteProfile) {
         rederiveLoopMsProfile = toMs(rederiveStart, Clock::now());
     }
@@ -1440,9 +1448,7 @@ void buildFormulasIncCyclewise(
         debugger.logMessage(Level::INFO,
                 "preConfig (cache clear + var scan/create + dyn-reorder setup) took " +
                         std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-        if (incProfile || fcProfile) {
-            insertPreConfigMs = toMs(insertPreConfigStart, Clock::now());
-        }
+        insertPreConfigMs = toMs(insertPreConfigStart, Clock::now());
         start = high_resolution_clock::now();
         std::vector<size_t> inDegree = depGraph.inDegrees;
         std::queue<size_t> ready;  // cycles with in-degree 0
@@ -1502,9 +1508,7 @@ void buildFormulasIncCyclewise(
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Initialize inserted node formulas. Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-        if (incProfile || fcProfile) {
-            insertInitNodesMs = toMs(initNodesStart, Clock::now());
-        }
+        insertInitNodesMs = toMs(initNodesStart, Clock::now());
 
         auto initEdgesStart = Clock::now();
         for (auto edge : deltaInsertedEdges) {
@@ -1552,9 +1556,7 @@ void buildFormulasIncCyclewise(
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Initialize inserted edge formulas and worklists. Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-        if (incProfile || fcProfile) {
-            insertInitEdgesMs = toMs(initEdgesStart, Clock::now());
-        }
+        insertInitEdgesMs = toMs(initEdgesStart, Clock::now());
         inDegree = depGraph.inDegrees;
         std::fill(scheduled.begin(), scheduled.end(), false);
 
@@ -1565,9 +1567,7 @@ void buildFormulasIncCyclewise(
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Preparation for insertion phase. Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-        if (incProfile) {
-            insertPrepMs = toMs(insertPrepStart, Clock::now());
-        }
+        insertPrepMs = toMs(insertPrepStart, Clock::now());
         auto insertLoopStart = Clock::now();
         std::unordered_map<EdgePtr, std::size_t> missingInputLogs;
         while (!ready.empty()) {
@@ -1803,9 +1803,7 @@ void buildFormulasIncCyclewise(
                 }
             }
         }
-        if (incProfile) {
-            insertLoopMs = toMs(insertLoopStart, Clock::now());
-        }
+        insertLoopMs = toMs(insertLoopStart, Clock::now());
         if (fcProfile) {
             insertLoopMsProfile = toMs(insertLoopStart, Clock::now());
         }
@@ -1821,6 +1819,25 @@ void buildFormulasIncCyclewise(
         debugger.addInfo(key, value);
     }
     debugger.addInfo("changed_node_count", std::to_string(changedNodes.size()));
+    const double fcLiteTotalMs = toMs(totalStart, Clock::now());
+    debugger.addInfo("fc_lite_mode", "inc");
+    debugger.addInfo("fc_lite_total_ms", std::to_string(fcLiteTotalMs));
+    debugger.addInfo("fc_lite_dep_graph_ms", std::to_string(depGraphMs));
+    debugger.addInfo("fc_lite_delete_prep_ms", std::to_string(deletePrepMs));
+    debugger.addInfo("fc_lite_rederive_ms", std::to_string(rederiveMs));
+    debugger.addInfo("fc_lite_insert_prep_ms", std::to_string(insertPrepMs));
+    debugger.addInfo("fc_lite_insert_preconfig_ms", std::to_string(insertPreConfigMs));
+    debugger.addInfo("fc_lite_insert_init_nodes_ms", std::to_string(insertInitNodesMs));
+    debugger.addInfo("fc_lite_insert_init_edges_ms", std::to_string(insertInitEdgesMs));
+    debugger.addInfo("fc_lite_insert_loop_ms", std::to_string(insertLoopMs));
+    debugger.addInfo("fc_lite_rounds", std::to_string(round));
+    debugger.addInfo("fc_lite_view_nodes", std::to_string(viewNodeCount));
+    debugger.addInfo("fc_lite_view_edges", std::to_string(viewEdgeCount));
+    debugger.addInfo("fc_lite_delta_insert_nodes", std::to_string(deltaInsertedNodes.size()));
+    debugger.addInfo("fc_lite_delta_insert_edges", std::to_string(deltaInsertedEdges.size()));
+    debugger.addInfo("fc_lite_delta_delete_nodes", std::to_string(deltaDeletedNodes.size()));
+    debugger.addInfo("fc_lite_delta_delete_edges", std::to_string(deltaDeletedEdges.size()));
+    debugger.addInfo("fc_lite_changed_nodes", std::to_string(changedNodes.size()));
     if (fcProfile) {
         debugger.addInfo("del_cond_delta_live_nodes", std::to_string(deleteCondChangedNodes));
         debugger.addInfo("del_cond_live_nodes", std::to_string(deleteCondLiveNodes));
@@ -1983,7 +2000,13 @@ void buildFormulasIncRegionalCyclewise(
     auto toMs = [](Clock::time_point t0, Clock::time_point t1) {
         return std::chrono::duration<double, std::milli>(t1 - t0).count();
     };
+    auto fcLiteStart = Clock::now();
+    double deleteDepGraphMs = 0.0;
+    double deleteConditionMs = 0.0;
     double deleteOverdeleteMs = 0.0;
+    double deleteVarOrderMs = 0.0;
+    double deleteRederiveMs = 0.0;
+    std::size_t deleteRederiveRounds = 0;
     const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
     const auto& deltaDeletedEdges = view.getDeltaDeleteEdges();
     const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
@@ -2010,8 +2033,10 @@ void buildFormulasIncRegionalCyclewise(
 
     if (!deltaDeletedEdges.empty() || !deltaDeletedNodes.empty()) {
         auto start = high_resolution_clock::now();
+        auto depGraphStart = Clock::now();
         auto& depGraph = view.getCycleDependencyGraph();  // includes SCC/dependencies/depths
         regionalInsertDepGraph = &depGraph;
+        deleteDepGraphMs = toMs(depGraphStart, Clock::now());
         auto end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Finished building dependency graph and preparation. Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
@@ -2205,6 +2230,7 @@ void buildFormulasIncRegionalCyclewise(
 
         if (!deletedNonDetVars.empty() && (!nonDetOnlyNodes.empty() || !nonDetOnlyEdges.empty())) {
             start = high_resolution_clock::now();
+            auto conditionStart = Clock::now();
             for (auto node : nonDetOnlyNodes) {
                 if (deltaDeletedNodes.count(node)) {
                     continue;
@@ -2239,6 +2265,7 @@ void buildFormulasIncRegionalCyclewise(
                 }
             }
             end = high_resolution_clock::now();
+            deleteConditionMs = toMs(conditionStart, Clock::now());
             debugger.logMessage(Level::INFO, "Finished conditioning on deleted non-deterministic facts (non-det only). Time: " +
                 std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
         }
@@ -2277,11 +2304,10 @@ void buildFormulasIncRegionalCyclewise(
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Finished over-deleting impacted formulas. Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-        if (fcProfile) {
-            deleteOverdeleteMs = toMs(overdeleteStart, Clock::now());
-        }
+        deleteOverdeleteMs = toMs(overdeleteStart, Clock::now());
 
         start = high_resolution_clock::now();
+        auto varOrderStart = Clock::now();
         std::set<int> deletedVarsIndex;
         for (auto node: deletedNonDeterminsticFacts) {
             auto index = formulaManager.getVarIndex(*node);
@@ -2296,6 +2322,7 @@ void buildFormulasIncRegionalCyclewise(
             std::to_string(deletedVarsIndex.size()));
         formulaManager.dumpProfilingStatistics();
         end = high_resolution_clock::now();
+        deleteVarOrderMs = toMs(varOrderStart, Clock::now());
         debugger.logMessage(Level::INFO, "Finished updating variable ordering after deletion (non-deterministic). Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
 
@@ -2326,6 +2353,7 @@ void buildFormulasIncRegionalCyclewise(
         }
 
         start = high_resolution_clock::now();
+        auto rederiveStart = Clock::now();
         std::queue<size_t> ready;
         std::vector<bool> scheduled(depGraph.nodeCycles.size(), false);
         std::vector<size_t> inDegree = depGraph.inDegrees;
@@ -2343,6 +2371,7 @@ void buildFormulasIncRegionalCyclewise(
                 EdgePtr edge = worklist.top().edge; worklist.pop();
                 cycleInWorklists[cid].erase(edge);
                 round++;
+                deleteRederiveRounds++;
                 FormulaNodeRef newEdge;
                 bool allAvailable = true;
                 {
@@ -2441,6 +2470,7 @@ void buildFormulasIncRegionalCyclewise(
             }
         }
         end = high_resolution_clock::now();
+        deleteRederiveMs = toMs(rederiveStart, Clock::now());
         debugger.logMessage(Level::INFO, "rederive time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
         if (reuseVarIndexEnabled) {
             for (const auto& node : view.getDeletedFacts()) {
@@ -2460,6 +2490,20 @@ void buildFormulasIncRegionalCyclewise(
         for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
             debugger.addInfo(key, value);
         }
+        const double fcLiteTotalMs = toMs(fcLiteStart, Clock::now());
+        debugger.addInfo("fc_lite_mode", "inc-regional-delete");
+        debugger.addInfo("fc_lite_total_ms", std::to_string(fcLiteTotalMs));
+        debugger.addInfo("fc_lite_delete_dep_graph_ms", std::to_string(deleteDepGraphMs));
+        debugger.addInfo("fc_lite_delete_condition_ms", std::to_string(deleteConditionMs));
+        debugger.addInfo("fc_lite_delete_overdelete_ms", std::to_string(deleteOverdeleteMs));
+        debugger.addInfo("fc_lite_delete_var_order_ms", std::to_string(deleteVarOrderMs));
+        debugger.addInfo("fc_lite_delete_rederive_ms", std::to_string(deleteRederiveMs));
+        debugger.addInfo("fc_lite_delete_rederive_rounds", std::to_string(deleteRederiveRounds));
+        debugger.addInfo("fc_lite_delta_insert_nodes", std::to_string(deltaInsertedNodes.size()));
+        debugger.addInfo("fc_lite_delta_insert_edges", std::to_string(deltaInsertedEdges.size()));
+        debugger.addInfo("fc_lite_delta_delete_nodes", std::to_string(deltaDeletedNodes.size()));
+        debugger.addInfo("fc_lite_delta_delete_edges", std::to_string(deltaDeletedEdges.size()));
+        debugger.addInfo("fc_lite_changed_nodes", std::to_string(changedNodes.size()));
         debugger.logMessage(Level::INFO, "[inc-regional] pipeline finished; usedFallback=false");
         return;
     }
@@ -2475,12 +2519,47 @@ void buildFormulasIncRegionalCyclewise(
         view, formulaManager, nodeFormulas, edgeFormulas, changedNodes, regionalInsertDepGraph);
     auto updateEnd = std::chrono::steady_clock::now();
     const auto& timing = orchestrator.getTiming();
+    const auto& liteStats = orchestrator.getStats();
+    const auto& liteRebuild = timing.rebuildDetail;
+    const double fcLiteTotalMs = toMs(fcLiteStart, Clock::now());
+    const double updateMs =
+            std::chrono::duration<double, std::milli>(updateEnd - updateStart).count();
     debugger.addInfo("inc_regional_analyze_ms", std::to_string(timing.analyzeMs));
     if (!timing.fallbackReason.empty()) {
         debugger.addInfo("inc_regional_fallback_reason", timing.fallbackReason);
     }
+    debugger.addInfo("fc_lite_mode", "inc-regional");
+    debugger.addInfo("fc_lite_total_ms", std::to_string(fcLiteTotalMs));
+    debugger.addInfo("fc_lite_apply_update_ms", std::to_string(updateMs));
+    debugger.addInfo("fc_lite_delete_dep_graph_ms", std::to_string(deleteDepGraphMs));
+    debugger.addInfo("fc_lite_delete_condition_ms", std::to_string(deleteConditionMs));
+    debugger.addInfo("fc_lite_delete_overdelete_ms", std::to_string(deleteOverdeleteMs));
+    debugger.addInfo("fc_lite_delete_var_order_ms", std::to_string(deleteVarOrderMs));
+    debugger.addInfo("fc_lite_delete_rederive_ms", std::to_string(deleteRederiveMs));
+    debugger.addInfo("fc_lite_delete_rederive_rounds", std::to_string(deleteRederiveRounds));
+    debugger.addInfo("fc_lite_analyze_ms", std::to_string(timing.analyzeMs));
+    debugger.addInfo("fc_lite_scc_close_ms", std::to_string(timing.sccCloseMs));
+    debugger.addInfo("fc_lite_plan_ms", std::to_string(timing.planMs));
+    debugger.addInfo("fc_lite_rebuild_ms", std::to_string(timing.rebuildMs));
+    debugger.addInfo("fc_lite_calibrate_ms", std::to_string(timing.calibrateMs));
+    debugger.addInfo("fc_lite_fallback_ms", std::to_string(timing.fallbackMs));
+    debugger.addInfo("fc_lite_rebuild_snapshot_ms", std::to_string(liteRebuild.snapshotMs));
+    debugger.addInfo("fc_lite_rebuild_init_nodes_ms", std::to_string(liteRebuild.initNodesMs));
+    debugger.addInfo("fc_lite_rebuild_init_edges_ms", std::to_string(liteRebuild.initEdgesMs));
+    debugger.addInfo("fc_lite_rebuild_dep_graph_ms", std::to_string(liteRebuild.depGraphMs));
+    debugger.addInfo("fc_lite_rebuild_region_cycles_ms", std::to_string(liteRebuild.regionCyclesMs));
+    debugger.addInfo("fc_lite_rebuild_indegree_ms", std::to_string(liteRebuild.indegreeMs));
+    debugger.addInfo("fc_lite_rebuild_loop_ms", std::to_string(liteRebuild.rebuildLoopMs));
+    debugger.addInfo("fc_lite_rebuild_total_ms", std::to_string(liteRebuild.totalMs));
+    debugger.addInfo("fc_lite_rebuild_reorder_ms", std::to_string(liteRebuild.reorderMs));
+    debugger.addInfo("fc_lite_region_nodes", std::to_string(liteStats.regionNodeCount));
+    debugger.addInfo("fc_lite_region_edges", std::to_string(liteStats.analyzeRegionEdges));
+    debugger.addInfo("fc_lite_dr_nodes", std::to_string(liteStats.drNodeCount));
+    debugger.addInfo("fc_lite_dr_edges", std::to_string(liteStats.drEdgeCount));
+    debugger.addInfo("fc_lite_boundary_nodes", std::to_string(liteStats.boundaryNodeCount));
+    debugger.addInfo("fc_lite_calibrated_nodes", std::to_string(liteStats.calibratedCount));
+    debugger.addInfo("fc_lite_used_fallback", liteStats.usedFallback ? "1" : "0");
     if (incRegionalProfileEnabled) {
-        const auto updateMs = std::chrono::duration_cast<std::chrono::milliseconds>(updateEnd - updateStart).count();
         debugger.addInfo("inc_regional_apply_update_ms", std::to_string(updateMs));
         const auto& calibrations = orchestrator.getCalibrations();
         const auto& regionNodes = orchestrator.getRegionNodes();
