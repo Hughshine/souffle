@@ -185,11 +185,11 @@ inline const char* wmcModeLabel(WmcMode wmcMode) {
 }
 
 inline const char* incrementalModeOptionSyntax() {
-    return "[ inc-naive | inc-regional | full ]";
+    return "[ inc-naive | inc-regional | full | sem=<inc|full>,fc=<full|inc-naive|inc-regional> ]";
 }
 
 inline const char* incrementalModeHelpText() {
-    return "inc-naive, inc-regional, full";
+    return "inc-naive, inc-regional, full, or split specs sem=<inc|full>,fc=<full|inc-naive|inc-regional>";
 }
 
 inline const char* dumpKindsOptionSyntax() {
@@ -299,7 +299,7 @@ inline const char* incrementalModeTokenLabel(const IncrementalModeSpec& mode) {
 }
 
 inline const char* incrementalSetModeUsageText() {
-    return "setmode <inc-naive|inc-regional|full>";
+    return "setmode <inc-naive|inc-regional|full|sem=<inc|full> fc=<full|inc-naive|inc-regional>>";
 }
 
 inline bool parseModeToken(const std::string& token, IncrementalModeSpec& mode,
@@ -330,6 +330,51 @@ inline bool parseModeToken(const std::string& token, IncrementalModeSpec& mode,
         return true;
     }
     return false;
+}
+
+inline bool parseSemModeToken(const std::string& token, SemMode& sem) {
+    const std::string value = normalizeFlagToken(token);
+    if (value == "inc" || value == "incremental") {
+        sem = SemMode::INC;
+        return true;
+    }
+    if (value == "full") {
+        sem = SemMode::FULL;
+        return true;
+    }
+    return false;
+}
+
+inline bool parseFcModeToken(const std::string& token, FcMode& fc) {
+    const std::string value = normalizeFlagToken(token);
+    if (value == "full" || value == "full-hard") {
+        fc = FcMode::FULL_HARD;
+        return true;
+    }
+    if (value == "inc" || value == "inc-naive" || value == "naive") {
+        fc = FcMode::INC_NAIVE;
+        return true;
+    }
+    if (value == "inc-regional" || value == "regional") {
+        fc = FcMode::INC_REGIONAL;
+        return true;
+    }
+    return false;
+}
+
+inline std::string canonicalIncrementalModeSpecToken(const IncrementalModeSpec& mode) {
+    if (mode.sem == SemMode::INC && mode.fc == FcMode::INC_NAIVE) {
+        return "inc-naive";
+    }
+    if (mode.sem == SemMode::INC && mode.fc == FcMode::INC_REGIONAL) {
+        return "inc-regional";
+    }
+    if (mode.sem == SemMode::FULL && mode.fc == FcMode::FULL_HARD) {
+        return "full";
+    }
+    std::ostringstream oss;
+    oss << "sem=" << semModeTokenLabel(mode.sem) << ",fc=" << fcModeTokenLabel(mode.fc);
+    return oss.str();
 }
 
 inline bool parseDumpKindToken(const std::string& token, std::string& kind,
@@ -388,7 +433,6 @@ inline void appendSplitModeSpecs(std::vector<std::string>& specs, const std::str
 inline bool parseIncrementalModeSpecs(const std::vector<std::string>& specs,
         const IncrementalModeSpec& current, IncrementalModeSpec& next, std::string* error = nullptr,
         std::string* canonicalToken = nullptr) {
-    static_cast<void>(current);
     if (specs.empty()) {
         if (error) {
             *error = "empty mode spec";
@@ -398,23 +442,84 @@ inline bool parseIncrementalModeSpecs(const std::vector<std::string>& specs,
 
     next = current;
     if (specs.size() == 1 && specs[0].find('=') == std::string::npos) {
-        std::string canonical;
-        if (!parseModeToken(specs[0], next, &canonical)) {
+        if (!parseModeToken(specs[0], next)) {
             if (error) {
                 *error = "Unknown mode: " + specs[0];
             }
             return false;
         }
         if (canonicalToken) {
-            *canonicalToken = canonical;
+            *canonicalToken = canonicalIncrementalModeSpecToken(next);
         }
         return true;
     }
 
-    if (error) {
-        *error = "setmode expects one mode: " + std::string(incrementalModeHelpText());
+    bool sawSem = false;
+    bool sawFc = false;
+    for (const auto& spec : specs) {
+        const std::size_t eq = spec.find('=');
+        if (eq == std::string::npos) {
+            if (error) {
+                *error = "Split mode item must use key=value: " + spec;
+            }
+            return false;
+        }
+        const std::string key = normalizeFlagToken(spec.substr(0, eq));
+        const std::string value = trimModeSpecToken(spec.substr(eq + 1));
+        if (value.empty()) {
+            if (error) {
+                *error = "Empty value in mode spec: " + spec;
+            }
+            return false;
+        }
+        if (key == "sem" || key == "semantic") {
+            if (sawSem) {
+                if (error) {
+                    *error = "Duplicate sem mode spec";
+                }
+                return false;
+            }
+            if (!parseSemModeToken(value, next.sem)) {
+                if (error) {
+                    *error = "Unknown sem mode: " + value;
+                }
+                return false;
+            }
+            sawSem = true;
+            continue;
+        }
+        if (key == "fc" || key == "bdd") {
+            if (sawFc) {
+                if (error) {
+                    *error = "Duplicate fc mode spec";
+                }
+                return false;
+            }
+            if (!parseFcModeToken(value, next.fc)) {
+                if (error) {
+                    *error = "Unknown fc mode: " + value;
+                }
+                return false;
+            }
+            sawFc = true;
+            continue;
+        }
+        if (error) {
+            *error = "Unknown mode spec key: " + key;
+        }
+        return false;
     }
-    return false;
+
+    if (!sawSem && !sawFc) {
+        if (error) {
+            *error = "setmode expects one mode or split specs: " + std::string(incrementalModeHelpText());
+        }
+        return false;
+    }
+    if (canonicalToken) {
+        *canonicalToken = canonicalIncrementalModeSpecToken(next);
+    }
+    return true;
 }
 
 /**
@@ -527,8 +632,10 @@ public:
     }
     bool setIncrementalMode(const std::string& token) {
         IncrementalModeSpec parsed = incModeSpec;
+        std::vector<std::string> specs;
+        appendSplitModeSpecs(specs, token);
         std::string canonical;
-        if (!parseModeToken(token, parsed, &canonical)) {
+        if (!parseIncrementalModeSpecs(specs, incModeSpec, parsed, nullptr, &canonical)) {
             return false;
         }
         setIncrementalModeSpec(parsed, canonical);

@@ -686,7 +686,7 @@ private:
                   << "list   List all pending operations\n"
                   << "show config\n"
                   << "       Show current online mode and mutable runtime toggles\n"
-                  << "setmode <inc-naive|inc-regional|full>\n"
+                  << souffle::incrementalSetModeUsageText() << "\n"
                   << "set dump <json|json-before-prune|dot|stat>\n"
                   << "unset dump <json|json-before-prune|dot|stat>\n"
                   << "set profile-stage <dred|inc|fc|wmc|inc-delete|inc-regional|dep-graph>\n"

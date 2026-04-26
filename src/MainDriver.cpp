@@ -712,7 +712,10 @@ void canonicalizeForkRuntimeDefaults(MainConfig& config) {
     }
     IncrementalModeSpec mode;
     std::string canonicalMode;
-    if (!parseModeToken(config.get("setmode"), mode, &canonicalMode)) {
+    std::vector<std::string> modeSpecs;
+    appendSplitModeSpecs(modeSpecs, config.get("setmode"));
+    if (!parseIncrementalModeSpecs(
+                modeSpecs, IncrementalModeSpec{}, mode, nullptr, &canonicalMode)) {
         throw std::runtime_error(
                 "--setmode expects one of: " + std::string(incrementalModeHelpText()));
     }
