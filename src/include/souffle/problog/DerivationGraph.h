@@ -1945,6 +1945,8 @@ public:
     std::unordered_map<NodePtr, std::unordered_set<EdgePtr>> insertedFactImpactedEdges;
     std::unordered_set<NodePtr> deltaInsertReachableNodes;
     std::unordered_set<EdgePtr> deltaInsertReachableEdges;
+    // TODO(inc-region): Compatibility hook only. Current prune code does not
+    // read this flag after regional reach filtering moved into IncRegionAnalyzer.
     bool buildInsertImpacts_ = true;
 
     const std::set<NodePtr>& getDeltaInsertNodes() const {
