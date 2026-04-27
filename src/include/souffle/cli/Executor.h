@@ -144,6 +144,11 @@ private:
     void handleIncrementalSemCommit() {
         const bool useRegional = cli.isRegionalFcMode();
         Debugger& debugger = Debugger::getInstance();
+        bool hasDelete = false;
+        bool hasInsert = false;
+        std::string phaseLabel = "mixed";
+        bool useRegionalCompute = false;
+        std::string computeModeLabel = "INC_NAIVE";
         {
             auto emitDredInfo = [&]() {
                 const auto& stats = DerivationManager::dredStats;
@@ -170,8 +175,6 @@ private:
                 debugger.addInfo("dred_ins_time_total_ns", std::to_string(stats.ins_time_total_ns));
                 debugger.addInfo("dred_red_time_total_ns", std::to_string(stats.red_time_total_ns));
             };
-            bool hasDelete = false;
-            bool hasInsert = false;
             for (const auto& op : cli.pendingOperations) {
                 if (!op.valid) {
                     continue;
@@ -182,12 +185,15 @@ private:
                     hasInsert = true;
                 }
             }
-            std::string phaseLabel = "mixed";
+            phaseLabel = "mixed";
             if (hasDelete && !hasInsert) {
                 phaseLabel = "delete";
             } else if (hasInsert && !hasDelete) {
                 phaseLabel = "insert";
             }
+            // Deletion-only regional turns should be identical to the classic incremental path.
+            useRegionalCompute = useRegional && hasInsert;
+            computeModeLabel = useRegionalCompute ? "INC_REGIONAL" : "INC_NAIVE";
             DerivationManager::resetDredStats();
             DerivationManager::clearDetDeltaTuples();
             cli.beginTurnTrace();
@@ -244,9 +250,9 @@ private:
         cli.logApplyDeltaOpsSummary(
                 DerivationManager::untypedTuple2DeltaInsertRuleApplications,
                 DerivationManager::untypedTuple2DeltaDeleteRuleApplications, factProbInc, deletedFacts,
-                useRegional ? "INC_REGIONAL" : "INC_NAIVE");
-        cli.logApplyDeltaSummary(*cli.graph, useRegional ? "INC_REGIONAL" : "INC_NAIVE");
-        cli.logApplyDeltaGraphSummary(*cli.graph, useRegional ? "INC_REGIONAL" : "INC_NAIVE");
+                computeModeLabel);
+        cli.logApplyDeltaSummary(*cli.graph, computeModeLabel);
+        cli.logApplyDeltaGraphSummary(*cli.graph, computeModeLabel);
         if (cli.opt.isDumpDotEnabled()) {
             FunctionTimer timer("PRUNING_INC: dumpDot-before-prune");
             cli.graph->dumpDotInc(
@@ -262,7 +268,7 @@ private:
             // TODO(inc-region): This hook is currently a no-op after the regional
             // reach-filter path moved into IncRegionAnalyzer. Remove it after the
             // split-mode pruning pipeline is re-audited.
-            cli.graph->setBuildInsertImpacts(useRegional);
+            cli.graph->setBuildInsertImpacts(useRegionalCompute);
             return cli.graph->prune(cli.program->getOutputRelations(), deltaPolicy);
         }();
         if (cli.opt.isDumpDotEnabled()) {
@@ -317,19 +323,22 @@ private:
             debugger.addInfo("fc_inserted_edge_random_vars", std::to_string(insertedEdgeVars));
         }
         debugger.endStage();
-        cli.logPrunedDeltaSummary(view, useRegional ? "INC_REGIONAL" : "INC_NAIVE");
+        cli.logPrunedDeltaSummary(view, computeModeLabel);
         cli.changedNodes.clear();
         if (cli.isIncrementalFcMode()) {
             debugger.startStage(StageKind::FORWARD_COMPILATION_INC);
-            if (useRegional) {
+            if (useRegionalCompute) {
                 buildFormulasIncRegionalCyclewise(
                         view, *cli.ddManager, *cli.nodeFormulas, *cli.edgeFormulas, cli.changedNodes);
             } else {
+                if (useRegional) {
+                    clearIncRegionalStateForClassicPath(*cli.ddManager);
+                }
                 buildFormulasIncCyclewise(
                         view, *cli.ddManager, *cli.nodeFormulas, *cli.edgeFormulas, cli.changedNodes);
             }
             debugger.endStage();
-            cli.runIncrementalWmc(view, useRegional);
+            cli.runIncrementalWmc(view, useRegionalCompute);
             cli.dumpCurrentTurnProbabilities();
         } else if (cli.isFullFcMode()) {
             const auto fcSetupStart = std::chrono::steady_clock::now();

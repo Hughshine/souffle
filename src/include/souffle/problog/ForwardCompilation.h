@@ -2093,14 +2093,7 @@ void buildFormulasIncCyclewise(
 
 
 template<typename FormulaNodeRef>
-void buildFormulasIncRegionalCyclewise(
-    IncrementalDerivationGraphViewInterface& view,
-    FormulaManager<FormulaNodeRef>& formulaManager,
-    std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
-    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
-    std::set<NodePtr>& changedNodes
-) {
-    debugger.logMessage(Level::INFO, "[inc-regional] start pipeline");
+void clearIncRegionalStateForClassicPath(FormulaManager<FormulaNodeRef>& formulaManager) {
     incRegionalTurnSummary.reset();
     if (incRegionalOutputProfile.active && !incRegionalOutputProfile.overrideWeights.empty()) {
         for (const auto& [varIdx, weights] : incRegionalOutputProfile.originalWeights) {
@@ -2108,6 +2101,26 @@ void buildFormulasIncRegionalCyclewise(
         }
     }
     incRegionalOutputProfile.reset();
+}
+
+
+template<typename FormulaNodeRef>
+void buildFormulasIncRegionalCyclewise(
+    IncrementalDerivationGraphViewInterface& view,
+    FormulaManager<FormulaNodeRef>& formulaManager,
+    std::map<NodePtr, FormulaNodeRef>& nodeFormulas,
+    std::map<EdgePtr, FormulaNodeRef>& edgeFormulas,
+    std::set<NodePtr>& changedNodes
+) {
+    const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
+    const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
+    if (deltaInsertedEdges.empty() && deltaInsertedNodes.empty()) {
+        clearIncRegionalStateForClassicPath(formulaManager);
+        buildFormulasIncCyclewise(view, formulaManager, nodeFormulas, edgeFormulas, changedNodes);
+        return;
+    }
+    debugger.logMessage(Level::INFO, "[inc-regional] start pipeline");
+    clearIncRegionalStateForClassicPath(formulaManager);
     using namespace std::chrono;
     const bool fcProfile = fcProfileEnabled;
     using Clock = std::chrono::steady_clock;
@@ -2121,9 +2134,7 @@ void buildFormulasIncRegionalCyclewise(
     double deleteVarOrderMs = 0.0;
     double deleteRederiveMs = 0.0;
     std::size_t deleteRederiveRounds = 0;
-    const auto& deltaInsertedEdges = view.getDeltaInsertEdges();
     const auto& deltaDeletedEdges = view.getDeltaDeleteEdges();
-    const auto& deltaInsertedNodes = view.getDeltaInsertNodes();
     const auto& deltaDeletedNodes = view.getDeltaDeleteNodes();
     const auto& deltaInsertFactNodes = view.getDeltaInsertFactNodes();
     debugger.logMessage(Level::INFO, "[inc-regional] delta counts: insNodes=" +
