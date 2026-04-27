@@ -200,6 +200,10 @@ inline const char* profileStageOptionSyntax() {
     return "[ dred | inc | fc | wmc | inc-delete | inc-regional | dep-graph ]";
 }
 
+inline const char* incReorderPolicyOptionSyntax() {
+    return "[ default | off | pressure | auto | explicit | both ]";
+}
+
 inline std::string trimModeSpecToken(const std::string& value);
 
 inline std::string joinOutputPath(const std::string& dir, const std::string& filename) {
@@ -405,6 +409,16 @@ inline bool parseProfileStageToken(const std::string& token, std::string& stage,
     return false;
 }
 
+inline bool parseIncReorderPolicyToken(const std::string& token, std::string& policy) {
+    const std::string value = normalizeFlagToken(token);
+    if (value == "default" || value == "off" || value == "pressure" || value == "auto" ||
+            value == "explicit" || value == "both") {
+        policy = value;
+        return true;
+    }
+    return false;
+}
+
 inline std::string trimModeSpecToken(const std::string& value) {
     const auto first = value.find_first_not_of(" \t\r\n");
     if (first == std::string::npos) {
@@ -571,6 +585,11 @@ protected:
     bool inc_regional_profile = false;  // enable inc-regional profiling/diagnostics
     bool dep_graph_profile = false;  // enable dependency-graph profiling
     bool verbose = false;  // enable informational runtime output
+    std::string inc_reorder_policy = "pressure";
+    std::size_t inc_reorder_auto_gap = 0;
+    std::size_t inc_reorder_work_threshold = 2500;
+    bool inc_reorder_count_dead = false;
+    bool inc_reorder_allow_large = false;
 public:
     // all argument constructor
     CmdOptions(const char* s, const char* id, const char* od, bool pe, const char* pfn, std::size_t nj,
@@ -741,6 +760,41 @@ public:
     void setVerboseEnabled(bool enabled) {
         verbose = enabled;
     }
+    const std::string& getIncReorderPolicy() const {
+        return inc_reorder_policy;
+    }
+    bool setIncReorderPolicy(const std::string& token) {
+        std::string parsed;
+        if (!parseIncReorderPolicyToken(token, parsed)) {
+            return false;
+        }
+        inc_reorder_policy = parsed;
+        return true;
+    }
+    std::size_t getIncReorderAutoGap() const {
+        return inc_reorder_auto_gap;
+    }
+    void setIncReorderAutoGap(std::size_t gap) {
+        inc_reorder_auto_gap = gap;
+    }
+    std::size_t getIncReorderWorkThreshold() const {
+        return inc_reorder_work_threshold;
+    }
+    void setIncReorderWorkThreshold(std::size_t threshold) {
+        inc_reorder_work_threshold = threshold;
+    }
+    bool isIncReorderCountDeadEnabled() const {
+        return inc_reorder_count_dead;
+    }
+    void setIncReorderCountDeadEnabled(bool enabled) {
+        inc_reorder_count_dead = enabled;
+    }
+    bool isIncReorderAllowLargeEnabled() const {
+        return inc_reorder_allow_large;
+    }
+    void setIncReorderAllowLargeEnabled(bool enabled) {
+        inc_reorder_allow_large = enabled;
+    }
     bool setProfileStageToken(const std::string& token, bool enabled) {
         std::string stage;
         if (!parseProfileStageToken(token, stage)) {
@@ -821,6 +875,11 @@ public:
                 {"setmode", true, nullptr, 'm'},
                 {"dump", true, nullptr, 1032},
                 {"profile-stage", true, nullptr, 1033},
+                {"inc-reorder-policy", true, nullptr, 1034},
+                {"inc-reorder-auto-gap", true, nullptr, 1035},
+                {"inc-reorder-work-threshold", true, nullptr, 1036},
+                {"inc-reorder-count-dead", false, nullptr, 1037},
+                {"inc-reorder-allow-large", false, nullptr, 1038},
                 {"verbose", false, nullptr, 'v'},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
@@ -924,6 +983,43 @@ public:
                     }
                     break;
                 }
+                case 1034:
+                    if (!setIncReorderPolicy(optarg)) {
+                        std::cerr << "Invalid inc reorder policy [--inc-reorder-policy]: "
+                                  << optarg << "\n";
+                        ok = false;
+                    }
+                    break;
+                case 1035: {
+                    char* end = nullptr;
+                    unsigned long long parsed = std::strtoull(optarg, &end, 10);
+                    if (!optarg[0] || (end && *end)) {
+                        std::cerr << "Invalid inc reorder auto gap [--inc-reorder-auto-gap]: "
+                                  << optarg << "\n";
+                        ok = false;
+                    } else {
+                        inc_reorder_auto_gap = static_cast<std::size_t>(parsed);
+                    }
+                    break;
+                }
+                case 1036: {
+                    char* end = nullptr;
+                    unsigned long long parsed = std::strtoull(optarg, &end, 10);
+                    if (!optarg[0] || (end && *end)) {
+                        std::cerr << "Invalid inc reorder work threshold [--inc-reorder-work-threshold]: "
+                                  << optarg << "\n";
+                        ok = false;
+                    } else {
+                        inc_reorder_work_threshold = static_cast<std::size_t>(parsed);
+                    }
+                    break;
+                }
+                case 1037:
+                    inc_reorder_count_dead = true;
+                    break;
+                case 1038:
+                    inc_reorder_allow_large = true;
+                    break;
                 case 'v':
                     verbose = true;
                     break;
@@ -968,6 +1064,13 @@ private:
                   << dumpKindsOptionSyntax() << "\n";
         std::cerr << "    --profile-stage=<LIST>       -- Canonical profile selector "
                   << profileStageOptionSyntax() << "\n";
+        std::cerr << "    --inc-reorder-policy=<POLICY> -- Incremental CUDD reordering policy "
+                  << incReorderPolicyOptionSyntax() << "\n";
+        std::cerr << "    --inc-reorder-auto-gap=<N>   -- Incremental CUDD next-reordering gap\n";
+        std::cerr << "    --inc-reorder-work-threshold=<N>\n";
+        std::cerr << "                                  -- Incremental BDD-pressure reorder threshold\n";
+        std::cerr << "    --inc-reorder-count-dead     -- Count dead CUDD nodes for auto trigger\n";
+        std::cerr << "    --inc-reorder-allow-large    -- Allow auto reorder on >=3M live-node managers\n";
         std::cerr << "    -v, --verbose                -- Print informational runtime diagnostics\n";
         std::cerr << "             --logfile=<FILE>    -- Runtime log filename\n";
         std::cerr << "             --log-file=<FILE>   -- Canonical alias for --logfile\n";

@@ -897,6 +897,11 @@ static void configureRuntimeFromOptions(const CmdOptions& opt) {
     wmcProfileEnabled = opt.isWmcProfileEnabled();
     incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();
     depGraphProfileEnabled = opt.isDepGraphProfileEnabled();
+    incReorderPolicy = opt.getIncReorderPolicy();
+    incReorderAutoGap = opt.getIncReorderAutoGap();
+    incReorderWorkThreshold = opt.getIncReorderWorkThreshold();
+    incReorderCountDead = opt.isIncReorderCountDeadEnabled();
+    incReorderAllowLarge = opt.isIncReorderAllowLargeEnabled();
     DerivationGraphViewInterface::setDumpDotEnabled(opt.isDumpDotEnabled());
     DerivationGraphViewInterface::setDumpJsonEnabled(opt.isDumpJsonEnabled());
     DerivationGraphViewInterface::setDumpStatsEnabled(opt.isDumpStatEnabled());

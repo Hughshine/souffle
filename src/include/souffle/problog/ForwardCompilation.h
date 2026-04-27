@@ -65,6 +65,122 @@ static inline bool stableEdgeOrder(const EdgePtr& lhs, const EdgePtr& rhs) {
     return lhs->toString() < rhs->toString();
 }
 
+static inline bool incReorderPolicyUsesAuto() {
+    return incReorderPolicy == "auto" || incReorderPolicy == "both";
+}
+
+static inline bool incReorderPolicyDisablesAuto() {
+    return incReorderPolicy == "pressure" || incReorderPolicy == "explicit" || incReorderPolicy == "off";
+}
+
+static inline bool incReorderPolicyUsesExplicit() {
+    return incReorderPolicy == "pressure" || incReorderPolicy == "explicit" || incReorderPolicy == "both";
+}
+
+static inline void addIncReorderStats(
+        Debugger& debugger, const std::string& prefix, const FormulaReorderStats& stats) {
+    debugger.addInfo(prefix + "_supported", stats.supported ? "1" : "0");
+    debugger.addInfo(prefix + "_attempted", stats.attempted ? "1" : "0");
+    debugger.addInfo(prefix + "_success", stats.success ? "1" : "0");
+    debugger.addInfo(prefix + "_triggered", stats.triggered ? "1" : "0");
+    debugger.addInfo(prefix + "_elapsed_ms", std::to_string(stats.elapsedMs));
+    debugger.addInfo(prefix + "_live_before", std::to_string(stats.liveBefore));
+    debugger.addInfo(prefix + "_live_after", std::to_string(stats.liveAfter));
+    debugger.addInfo(prefix + "_keys_before", std::to_string(stats.keysBefore));
+    debugger.addInfo(prefix + "_keys_after", std::to_string(stats.keysAfter));
+    debugger.addInfo(prefix + "_dead_before", std::to_string(stats.deadBefore));
+    debugger.addInfo(prefix + "_dead_after", std::to_string(stats.deadAfter));
+    debugger.addInfo(prefix + "_next_before", std::to_string(stats.nextBefore));
+    debugger.addInfo(prefix + "_next_after", std::to_string(stats.nextAfter));
+    debugger.addInfo(prefix + "_reorderings_before", std::to_string(stats.reorderingsBefore));
+    debugger.addInfo(prefix + "_reorderings_after", std::to_string(stats.reorderingsAfter));
+    debugger.addInfo(prefix + "_swaps_before", std::to_string(stats.swapsBefore));
+    debugger.addInfo(prefix + "_swaps_after", std::to_string(stats.swapsAfter));
+    debugger.addInfo(prefix + "_time_before_s", std::to_string(stats.reorderingTimeBeforeSec));
+    debugger.addInfo(prefix + "_time_after_s", std::to_string(stats.reorderingTimeAfterSec));
+    debugger.addInfo(prefix + "_autodyn_before", stats.autoEnabledBefore ? "1" : "0");
+    debugger.addInfo(prefix + "_autodyn_after", stats.autoEnabledAfter ? "1" : "0");
+    debugger.addInfo(prefix + "_dead_counted_before", stats.deadCountedBefore ? "1" : "0");
+    debugger.addInfo(prefix + "_dead_counted_after", stats.deadCountedAfter ? "1" : "0");
+    debugger.addInfo(prefix + "_method_before", std::to_string(stats.methodBefore));
+    debugger.addInfo(prefix + "_method_after", std::to_string(stats.methodAfter));
+}
+
+template <typename FormulaNodeRef>
+static inline void maybePrepareIncReorderPolicy(
+        FormulaManager<FormulaNodeRef>& formulaManager, std::size_t workScore) {
+    if (incReorderPolicyDisablesAuto()) {
+        Debugger& debugger = Debugger::getInstance();
+        debugger.addInfo("inc_reord_auto_policy", incReorderPolicy);
+        debugger.addInfo("inc_reord_auto_work_score", std::to_string(workScore));
+        auto stats = formulaManager.disableIncrementalAutoReorder();
+        addIncReorderStats(debugger, "inc_reord_auto_disable", stats);
+        return;
+    }
+    if (!incReorderPolicyUsesAuto()) {
+        return;
+    }
+    Debugger& debugger = Debugger::getInstance();
+    debugger.addInfo("inc_reord_auto_policy", incReorderPolicy);
+    debugger.addInfo("inc_reord_auto_work_score", std::to_string(workScore));
+    debugger.addInfo("inc_reord_auto_gap", std::to_string(incReorderAutoGap));
+    debugger.addInfo("inc_reord_auto_count_dead", incReorderCountDead ? "1" : "0");
+    debugger.addInfo("inc_reord_auto_allow_large", incReorderAllowLarge ? "1" : "0");
+    auto stats = formulaManager.configureIncrementalAutoReorder(
+            incReorderAutoGap, incReorderCountDead, incReorderAllowLarge);
+    addIncReorderStats(debugger, "inc_reord_auto", stats);
+}
+
+template <typename FormulaNodeRef>
+static inline void maybeRunExplicitIncReorder(
+        FormulaManager<FormulaNodeRef>& formulaManager, std::size_t workScore) {
+    if (!incReorderPolicyUsesExplicit()) {
+        return;
+    }
+    Debugger& debugger = Debugger::getInstance();
+    std::size_t effectiveWorkScore = workScore;
+    std::size_t accumulatedBefore = 0;
+    std::size_t accumulatedAfter = 0;
+    std::uintptr_t managerId = 0;
+    const bool accumulatePressure = incReorderPolicy == "pressure";
+    if (accumulatePressure) {
+        managerId = formulaManager.getReorderManagerId();
+        auto& accumulated = incReorderAccumulatedWorkScore[managerId];
+        accumulatedBefore = accumulated;
+        const std::size_t room = std::numeric_limits<std::size_t>::max() - accumulated;
+        accumulated += workScore > room ? room : workScore;
+        accumulatedAfter = accumulated;
+        effectiveWorkScore = accumulated;
+    }
+    debugger.addInfo("inc_reord_explicit_policy", incReorderPolicy);
+    debugger.addInfo("inc_reord_explicit_work_score", std::to_string(workScore));
+    debugger.addInfo("inc_reord_explicit_effective_work_score", std::to_string(effectiveWorkScore));
+    debugger.addInfo("inc_reord_explicit_accumulated_before", std::to_string(accumulatedBefore));
+    debugger.addInfo("inc_reord_explicit_accumulated_after", std::to_string(accumulatedAfter));
+    debugger.addInfo("inc_reord_explicit_threshold", std::to_string(incReorderWorkThreshold));
+    if (incReorderPolicy == "pressure" && incReorderWorkThreshold == 0) {
+        debugger.addInfo("inc_reord_explicit_skip_reason", "pressure_threshold_not_set");
+        FormulaReorderStats skipped;
+        skipped.supported = true;
+        skipped.success = true;
+        addIncReorderStats(debugger, "inc_reord_explicit", skipped);
+        return;
+    }
+    if (effectiveWorkScore < incReorderWorkThreshold) {
+        FormulaReorderStats skipped;
+        skipped.supported = true;
+        skipped.success = true;
+        addIncReorderStats(debugger, "inc_reord_explicit", skipped);
+        return;
+    }
+    auto stats = formulaManager.explicitIncrementalReorder();
+    addIncReorderStats(debugger, "inc_reord_explicit", stats);
+    if (accumulatePressure && stats.attempted) {
+        incReorderAccumulatedWorkScore[managerId] = 0;
+        debugger.addInfo("inc_reord_explicit_accumulated_reset", "1");
+    }
+}
+
 template <typename NodeRange>
 static inline std::vector<NodePtr> collectSortedNodes(const NodeRange& nodes) {
     std::vector<NodePtr> ordered(nodes.begin(), nodes.end());
@@ -775,6 +891,10 @@ void buildFormulasIncCyclewise(
         }
         return;
     }
+    const std::size_t rawDeltaWorkScore =
+            deltaInsertedNodes.size() + deltaInsertedEdges.size() +
+            deltaDeletedNodes.size() + deltaDeletedEdges.size();
+    maybePrepareIncReorderPolicy(formulaManager, rawDeltaWorkScore);
     auto start = high_resolution_clock::now();
     auto depStart = Clock::now();
     const bool insertOnly = deltaDeletedEdges.empty() && deltaDeletedNodes.empty();
@@ -1857,6 +1977,12 @@ void buildFormulasIncCyclewise(
     end = high_resolution_clock::now();
     debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
     debugger.logMessage(Level::INFO, "Iteration rounds: " + std::to_string(round));
+    const std::size_t explicitWorkScore =
+            changedNodes.size() + depGraphReachNodes + depGraphReachEdges +
+            rederiveStats.edge_processed + insertStats.edge_processed +
+            deltaInsertedNodes.size() + deltaInsertedEdges.size() +
+            deltaDeletedNodes.size() + deltaDeletedEdges.size();
+    maybeRunExplicitIncReorder(formulaManager, explicitWorkScore);
     formulaManager.dumpProfilingStatistics();
     for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
         debugger.addInfo(key, value);
@@ -2162,6 +2288,10 @@ void buildFormulasIncRegionalCyclewise(
                 "[inc-regional] deletion-only shared path finished; usedFallback=false");
         return;
     }
+    const std::size_t rawDeltaWorkScore =
+            deltaInsertedNodes.size() + deltaInsertedEdges.size() +
+            deltaDeletedNodes.size() + deltaDeletedEdges.size();
+    maybePrepareIncReorderPolicy(formulaManager, rawDeltaWorkScore);
     const CycleDependencyGraph* regionalInsertDepGraph = nullptr;
 
     if (!deltaDeletedEdges.empty() || !deltaDeletedNodes.empty()) {
@@ -2692,6 +2822,10 @@ void buildFormulasIncRegionalCyclewise(
     debugger.addInfo("fc_lite_boundary_nodes", std::to_string(liteStats.boundaryNodeCount));
     debugger.addInfo("fc_lite_calibrated_nodes", std::to_string(liteStats.calibratedCount));
     debugger.addInfo("fc_lite_used_fallback", liteStats.usedFallback ? "1" : "0");
+    const std::size_t explicitWorkScore =
+            liteStats.regionNodeCount + liteStats.analyzeRegionEdges +
+            deltaDeletedNodes.size() + deltaDeletedEdges.size();
+    maybeRunExplicitIncReorder(formulaManager, explicitWorkScore);
     if (incRegionalProfileEnabled) {
         debugger.addInfo("inc_regional_apply_update_ms", std::to_string(updateMs));
         const auto& calibrations = orchestrator.getCalibrations();

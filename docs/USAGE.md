@@ -55,14 +55,22 @@ AE-facing generated runtime options:
 - `-m, --setmode=<MODE>`: turn mode, one of `inc-naive`, `inc-regional`, `full`.
 - `--dump=<json|json-before-graph|json-before-prune|dot|stat>`: default-off graph/stat dumps.
 - `--profile-stage=<dred|inc|fc|wmc|inc-delete|inc-regional|dep-graph>`: default-off profiling output.
+- `--inc-reorder-policy=<default|off|pressure|auto|explicit|both>`: incremental
+  CUDD reordering policy. The AE default is `pressure`.
+- `--inc-reorder-work-threshold=<N>`: BDD-pressure threshold for `pressure`
+  reordering. The AE default is `2500`.
 - `--logfile=<FILE>` or `--log-file=<FILE>`: debugger log filename.
 - `-v, --verbose`: print informational graph, CUDD, and pipeline diagnostics.
 - `-p, --profile=<FILE>`: profile output, only for binaries compiled with profiling enabled.
 - `-j, --jobs=<N>`: runtime thread count when OpenMP is available.
 
-There are no public backend, determinism, variable-index reuse, or reordering
-switches in this AE branch. BDD, deterministic-relation analysis, variable index
-reuse, and CUDD adaptive reordering are fixed implementation defaults.
+There are no public backend, determinism, or variable-index reuse switches in
+this AE branch. BDD, deterministic-relation analysis, and variable-index reuse
+are fixed implementation defaults. Incremental BDD reordering uses the same
+pressure gate for `inc-naive` and `inc-regional`. The gate accumulates work
+score across online turns and resets after an explicit CUDD reorder;
+`--inc-reorder-policy=default` restores legacy CUDD adaptive reordering for
+comparison runs.
 
 ## Online CLI
 

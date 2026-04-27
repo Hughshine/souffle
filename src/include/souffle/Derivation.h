@@ -136,6 +136,12 @@ extern bool wmcProfileEnabled;
 extern bool incRegionalProfileEnabled;
 extern bool depGraphProfileEnabled;
 extern bool reuseVarIndexEnabled;
+extern std::string incReorderPolicy;
+extern std::size_t incReorderAutoGap;
+extern std::size_t incReorderWorkThreshold;
+extern bool incReorderCountDead;
+extern bool incReorderAllowLarge;
+extern std::map<std::uintptr_t, std::size_t> incReorderAccumulatedWorkScore;
 
 class DerivationManager {
 public:

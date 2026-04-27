@@ -1,9 +1,38 @@
 #ifndef FORMULAMANAGER_H
 #define FORMULAMANAGER_H
 #include <cassert>
+#include <cstddef>
 #include <cstring>
 #include "souffle/Derivation.h"
 #include "souffle/problog/DerivationGraph.h"
+
+struct FormulaReorderStats {
+    bool supported = false;
+    bool attempted = false;
+    bool triggered = false;
+    bool success = false;
+    bool autoEnabledBefore = false;
+    bool autoEnabledAfter = false;
+    bool deadCountedBefore = false;
+    bool deadCountedAfter = false;
+    int methodBefore = 0;
+    int methodAfter = 0;
+    std::size_t liveBefore = 0;
+    std::size_t liveAfter = 0;
+    std::size_t keysBefore = 0;
+    std::size_t keysAfter = 0;
+    std::size_t deadBefore = 0;
+    std::size_t deadAfter = 0;
+    std::size_t nextBefore = 0;
+    std::size_t nextAfter = 0;
+    std::size_t reorderingsBefore = 0;
+    std::size_t reorderingsAfter = 0;
+    std::size_t swapsBefore = 0;
+    std::size_t swapsAfter = 0;
+    double reorderingTimeBeforeSec = 0.0;
+    double reorderingTimeAfterSec = 0.0;
+    double elapsedMs = 0.0;
+};
 
 template<typename NodeRef>
 class FormulaManager {
@@ -58,6 +87,22 @@ public:
     }
     virtual std::size_t getTotalNodeCount() const {
         return getLiveNodeCount() + getDeadNodeCount();
+    }
+    virtual std::uintptr_t getReorderManagerId() const {
+        return 0;
+    }
+    virtual FormulaReorderStats configureIncrementalAutoReorder(
+            std::size_t gap, bool countDead, bool allowLarge) {
+        (void)gap;
+        (void)countDead;
+        (void)allowLarge;
+        return {};
+    }
+    virtual FormulaReorderStats disableIncrementalAutoReorder() {
+        return {};
+    }
+    virtual FormulaReorderStats explicitIncrementalReorder() {
+        return {};
     }
     virtual void tryGarbageCollection() {};
     virtual void reset() {};

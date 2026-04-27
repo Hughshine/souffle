@@ -587,6 +587,11 @@ private:
         wmcProfileEnabled = opt.isWmcProfileEnabled();
         incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();
         depGraphProfileEnabled = opt.isDepGraphProfileEnabled();
+        incReorderPolicy = opt.getIncReorderPolicy();
+        incReorderAutoGap = opt.getIncReorderAutoGap();
+        incReorderWorkThreshold = opt.getIncReorderWorkThreshold();
+        incReorderCountDead = opt.isIncReorderCountDeadEnabled();
+        incReorderAllowLarge = opt.isIncReorderAllowLargeEnabled();
         DerivationGraphViewInterface::setVerboseEnabled(opt.isVerboseEnabled());
         setFunctionTimerOutputEnabled(opt.isVerboseEnabled());
     }

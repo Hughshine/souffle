@@ -42,7 +42,11 @@ python3 benchmarks/side_channel/cli/side_channel_inc.py --help
 
 The compiler invocation should not pass removed algorithm switches. The
 generated runtime defaults to BDD, deterministic-relation analysis, CUDD
-variable-index reuse, and adaptive reordering.
+variable-index reuse, and incremental BDD-pressure reordering. The default
+incremental reordering gate is `--inc-reorder-policy=pressure` with
+`--inc-reorder-work-threshold=2500`; the same gate is applied to `inc-naive`
+and `inc-regional`. The work score accumulates across online turns and resets
+after an explicit CUDD reorder.
 
 ## Run Shape
 

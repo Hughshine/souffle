@@ -46,10 +46,14 @@ or non-deterministic edge anchor. For experiment bisects,
 
 ## Reordering
 
-CUDD reordering is an implementation default. There is no public reordering
-flag. Incremental turns create variables only for delta inserts when possible.
-The CUDD manager applies automatic thresholded reordering and disables autodyn
-above the largest node-count threshold.
+Full BDD construction uses CUDD's normal dynamic reordering path. Incremental
+turns use a BDD-pressure gate by default: `inc-naive` and `inc-regional` compute
+their own update work score, disable inc-turn auto reordering, accumulate the
+score across online turns, and run one explicit CUDD reorder only when the
+accumulated score reaches the shared threshold (`2500`). The accumulator resets
+after an explicit reorder. Incremental turns create variables only for delta
+inserts when possible. Use `--inc-reorder-policy=default` only for legacy
+adaptive-reorder comparison runs.
 
 ## Diagnostics
 

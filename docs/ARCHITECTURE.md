@@ -19,7 +19,7 @@ matching tuple keys and probabilities on the same delta stream.
 - [../src/include/souffle/cli/Executor.h:234](../src/include/souffle/cli/Executor.h#L234): incremental commit graph update.
 - [../src/include/souffle/problog/ForwardCompilation.h:517](../src/include/souffle/problog/ForwardCompilation.h#L517): naive incremental forward compilation.
 - [../src/include/souffle/problog/ForwardCompilation.h:1967](../src/include/souffle/problog/ForwardCompilation.h#L1967): regional incremental forward compilation.
-- [../src/include/souffle/problog/formula/CuddManager.h:568](../src/include/souffle/problog/formula/CuddManager.h#L568): CUDD adaptive reordering.
+- [../src/include/souffle/problog/formula/CuddManager.h:568](../src/include/souffle/problog/formula/CuddManager.h#L568): CUDD full-turn dynamic reordering and inc-turn pressure reordering.
 
 ## 1. Compile
 
@@ -27,8 +27,9 @@ The normal Souffle frontend parses and transforms the program. This branch
 selects the online AST-to-RAM translator and emits a binary wired to the
 probabilistic incremental pipeline.
 
-Compile-time AE parameters set runtime defaults only. They do not expose
-backend, determinism, variable-index reuse, or reordering switches.
+Compile-time AE parameters set runtime defaults only. Backend, determinism, and
+variable-index reuse are fixed. Incremental BDD reordering uses the default
+pressure gate, with options available only for controlled comparison runs.
 
 ## 2. Baseline
 

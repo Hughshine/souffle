@@ -225,6 +225,12 @@ bool wmcProfileEnabled = false;
 bool incRegionalProfileEnabled = false;
 bool depGraphProfileEnabled = false;
 bool reuseVarIndexEnabled = true;
+std::string incReorderPolicy = "pressure";
+std::size_t incReorderAutoGap = 0;
+std::size_t incReorderWorkThreshold = 2500;
+bool incReorderCountDead = false;
+bool incReorderAllowLarge = false;
+std::map<std::uintptr_t, std::size_t> incReorderAccumulatedWorkScore;
 
 void DerivationManager::clearDetDeltaTuples() {
     detDeltaDeleteTuples.clear();

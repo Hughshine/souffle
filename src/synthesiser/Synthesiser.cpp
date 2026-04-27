@@ -4553,6 +4553,21 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
          << (glb.config().has("profile-inc-regional") ? "true" : "false") << ");\n";
     hook << "opt.setProfileStageToken(\"dep-graph\", "
          << (glb.config().has("profile-dep-graph") ? "true" : "false") << ");\n";
+    if (glb.config().has("inc-reorder-policy")) {
+        hook << "opt.setIncReorderPolicy(R\"(" << glb.config().get("inc-reorder-policy") << ")\");\n";
+    }
+    if (glb.config().has("inc-reorder-auto-gap")) {
+        hook << "opt.setIncReorderAutoGap("
+             << glb.config().get("inc-reorder-auto-gap") << ");\n";
+    }
+    if (glb.config().has("inc-reorder-work-threshold")) {
+        hook << "opt.setIncReorderWorkThreshold("
+             << glb.config().get("inc-reorder-work-threshold") << ");\n";
+    }
+    hook << "opt.setIncReorderCountDeadEnabled("
+         << (glb.config().has("inc-reorder-count-dead") ? "true" : "false") << ");\n";
+    hook << "opt.setIncReorderAllowLargeEnabled("
+         << (glb.config().has("inc-reorder-allow-large") ? "true" : "false") << ");\n";
 
     hook << "if (!opt.parse(argc,argv)) return 1;\n";
     hook << "setFunctionTimerOutputEnabled(opt.isVerboseEnabled());\n";
@@ -4561,6 +4576,11 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     hook << "incProfileEnabled = opt.isIncProfileEnabled();\n";
     hook << "incRegionalProfileEnabled = opt.isIncRegionalProfileEnabled();\n";
     hook << "depGraphProfileEnabled = opt.isDepGraphProfileEnabled();\n";
+    hook << "incReorderPolicy = opt.getIncReorderPolicy();\n";
+    hook << "incReorderAutoGap = opt.getIncReorderAutoGap();\n";
+    hook << "incReorderWorkThreshold = opt.getIncReorderWorkThreshold();\n";
+    hook << "incReorderCountDead = opt.isIncReorderCountDeadEnabled();\n";
+    hook << "incReorderAllowLarge = opt.isIncReorderAllowLargeEnabled();\n";
 
     if (!db.getNS(false).empty()) {
         hook << db.getNS(false) << "::";

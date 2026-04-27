@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <unordered_set>
 #include <cstdint>
@@ -679,6 +680,14 @@ public:
         stats["live_nodes"] = std::to_string(live_nodes);
         stats["dead_nodes"] = std::to_string(dead_nodes);
         stats["total_nodes"] = std::to_string(live_nodes + dead_nodes);
+        stats["cudd_keys"] = std::to_string(Cudd_ReadKeys(manager.get()));
+        stats["cudd_next_reordering"] = std::to_string(Cudd_ReadNextReordering(manager.get()));
+        stats["cudd_reorderings"] = std::to_string(Cudd_ReadReorderings(manager.get()));
+        stats["cudd_swap_steps"] = std::to_string(Cudd_ReadSwapSteps(manager.get()));
+        stats["cudd_dead_counted"] = Cudd_DeadAreCounted(manager.get()) ? "1" : "0";
+        Cudd_ReorderingType method = CUDD_REORDER_NONE;
+        stats["cudd_autodyn_enabled"] = Cudd_ReorderingStatus(manager.get(), &method) ? "1" : "0";
+        stats["cudd_autodyn_method"] = std::to_string(static_cast<int>(method));
         stats["memory_usage_mb"] = std::to_string(Cudd_ReadMemoryInUse(manager.get()) / (1024.0 * 1024));
         stats["cache_hits"] = std::to_string(Cudd_ReadCacheHits(manager.get()));
         stats["cache_lookups"] = std::to_string(Cudd_ReadCacheLookUps(manager.get()));
@@ -700,12 +709,144 @@ public:
     std::size_t getTotalNodeCount() const override {
         return getLiveNodeCount() + getDeadNodeCount();
     }
+    std::uintptr_t getReorderManagerId() const override {
+        return reinterpret_cast<std::uintptr_t>(manager.get());
+    }
     double getReorderingTimeSeconds() const {
         return static_cast<double>(Cudd_ReadReorderingTime(manager.get())) / 1000.0;
+    }
+    FormulaReorderStats configureIncrementalAutoReorder(
+            std::size_t gap, bool countDead, bool allowLarge) override {
+        FormulaReorderStats stats = readReorderStats_();
+        stats.supported = true;
+        stats.attempted = gap > 0;
+        if (!stats.attempted) {
+            stats.success = true;
+            return stats;
+        }
+
+        const auto t0 = Clock::now();
+        if (countDead) {
+            Cudd_TurnOnCountDead(manager.get());
+        } else {
+            Cudd_TurnOffCountDead(manager.get());
+        }
+
+        Cudd_ReorderingType method = CUDD_REORDER_SAME;
+        int enabled = Cudd_ReorderingStatus(manager.get(), &method);
+        if (stats.liveBefore >= 3000000 && !allowLarge) {
+            adaptiveReorder(manager.get());
+        } else if (!enabled || (allowLarge && stats.liveBefore >= 3000000)) {
+            Cudd_AutodynEnable(manager.get(), CUDD_REORDER_WINDOW2);
+            currentReorderingType = CUDD_REORDER_WINDOW2;
+        } else if (!allowLarge) {
+            adaptiveReorder(manager.get());
+        }
+
+        const std::size_t currentTriggerCount =
+                countDead ? static_cast<std::size_t>(Cudd_ReadKeys(manager.get()))
+                          : static_cast<std::size_t>(Cudd_ReadKeys(manager.get()) - Cudd_ReadDead(manager.get()));
+        const std::size_t target = currentTriggerCount > std::numeric_limits<unsigned int>::max() - gap
+                                           ? std::numeric_limits<unsigned int>::max()
+                                           : currentTriggerCount + gap;
+        Cudd_SetNextReordering(manager.get(), static_cast<unsigned int>(target));
+
+        FormulaReorderStats after = readReorderStats_();
+        after.supported = true;
+        after.attempted = true;
+        after.success = true;
+        after.triggered = after.reorderingsAfter > stats.reorderingsBefore;
+        after.liveBefore = stats.liveBefore;
+        after.keysBefore = stats.keysBefore;
+        after.deadBefore = stats.deadBefore;
+        after.nextBefore = stats.nextBefore;
+        after.reorderingsBefore = stats.reorderingsBefore;
+        after.swapsBefore = stats.swapsBefore;
+        after.reorderingTimeBeforeSec = stats.reorderingTimeBeforeSec;
+        after.autoEnabledBefore = stats.autoEnabledBefore;
+        after.deadCountedBefore = stats.deadCountedBefore;
+        after.methodBefore = stats.methodBefore;
+        after.elapsedMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        return after;
+    }
+    FormulaReorderStats disableIncrementalAutoReorder() override {
+        FormulaReorderStats stats = readReorderStats_();
+        stats.supported = true;
+        stats.attempted = true;
+        const auto t0 = Clock::now();
+        Cudd_AutodynDisable(manager.get());
+        FormulaReorderStats after = readReorderStats_();
+        after.supported = true;
+        after.attempted = true;
+        after.success = true;
+        after.triggered = after.reorderingsAfter > stats.reorderingsBefore;
+        after.liveBefore = stats.liveBefore;
+        after.keysBefore = stats.keysBefore;
+        after.deadBefore = stats.deadBefore;
+        after.nextBefore = stats.nextBefore;
+        after.reorderingsBefore = stats.reorderingsBefore;
+        after.swapsBefore = stats.swapsBefore;
+        after.reorderingTimeBeforeSec = stats.reorderingTimeBeforeSec;
+        after.autoEnabledBefore = stats.autoEnabledBefore;
+        after.deadCountedBefore = stats.deadCountedBefore;
+        after.methodBefore = stats.methodBefore;
+        after.elapsedMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        return after;
+    }
+    FormulaReorderStats explicitIncrementalReorder() override {
+        FormulaReorderStats stats = readReorderStats_();
+        stats.supported = true;
+        stats.attempted = true;
+        const auto t0 = Clock::now();
+        int ok = Cudd_ReduceHeap(manager.get(), CUDD_REORDER_WINDOW2, 10);
+        FormulaReorderStats after = readReorderStats_();
+        after.supported = true;
+        after.attempted = true;
+        after.success = ok != 0;
+        after.triggered = after.reorderingsAfter > stats.reorderingsBefore;
+        after.liveBefore = stats.liveBefore;
+        after.keysBefore = stats.keysBefore;
+        after.deadBefore = stats.deadBefore;
+        after.nextBefore = stats.nextBefore;
+        after.reorderingsBefore = stats.reorderingsBefore;
+        after.swapsBefore = stats.swapsBefore;
+        after.reorderingTimeBeforeSec = stats.reorderingTimeBeforeSec;
+        after.autoEnabledBefore = stats.autoEnabledBefore;
+        after.deadCountedBefore = stats.deadCountedBefore;
+        after.methodBefore = stats.methodBefore;
+        after.elapsedMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        return after;
     }
 
 
 private:
+    FormulaReorderStats readReorderStats_() const {
+        FormulaReorderStats stats;
+        stats.supported = true;
+        Cudd_ReorderingType method = CUDD_REORDER_NONE;
+        stats.autoEnabledAfter = Cudd_ReorderingStatus(manager.get(), &method) != 0;
+        stats.methodAfter = static_cast<int>(method);
+        stats.deadCountedAfter = Cudd_DeadAreCounted(manager.get()) != 0;
+        stats.liveAfter = static_cast<std::size_t>(Cudd_ReadNodeCount(manager.get()));
+        stats.keysAfter = static_cast<std::size_t>(Cudd_ReadKeys(manager.get()));
+        stats.deadAfter = static_cast<std::size_t>(Cudd_ReadDead(manager.get()));
+        stats.nextAfter = static_cast<std::size_t>(Cudd_ReadNextReordering(manager.get()));
+        stats.reorderingsAfter = static_cast<std::size_t>(Cudd_ReadReorderings(manager.get()));
+        stats.swapsAfter = static_cast<std::size_t>(Cudd_ReadSwapSteps(manager.get()));
+        stats.reorderingTimeAfterSec =
+                static_cast<double>(Cudd_ReadReorderingTime(manager.get())) / 1000.0;
+        stats.autoEnabledBefore = stats.autoEnabledAfter;
+        stats.methodBefore = stats.methodAfter;
+        stats.deadCountedBefore = stats.deadCountedAfter;
+        stats.liveBefore = stats.liveAfter;
+        stats.keysBefore = stats.keysAfter;
+        stats.deadBefore = stats.deadAfter;
+        stats.nextBefore = stats.nextAfter;
+        stats.reorderingsBefore = stats.reorderingsAfter;
+        stats.swapsBefore = stats.swapsAfter;
+        stats.reorderingTimeBeforeSec = stats.reorderingTimeAfterSec;
+        return stats;
+    }
     BddNodeRef makeAndBalanced(const std::vector<BddNodeRef>& nodes, size_t begin, size_t end);
     BddNodeRef makeOrBalanced(const std::vector<BddNodeRef>& nodes, size_t begin, size_t end);
     BddNodeRef makeAndSequential(const std::vector<BddNodeRef>& nodes);
