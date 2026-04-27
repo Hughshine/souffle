@@ -1,10 +1,25 @@
 #include "souffle/problog/debug/Debugger.h"
 
 #include "souffle/utility/json11.h"
+#include <cstdlib>
+#include <cstring>
 #include <cstdio>
 
+namespace {
+bool readDebuggerAutoDumpEnabled() {
+    const char* value = std::getenv("SOUFFLE_DEBUGGER_AUTO_DUMP");
+    if (value == nullptr) {
+        return true;
+    }
+    return std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
+            std::strcmp(value, "FALSE") != 0 && std::strcmp(value, "off") != 0 &&
+            std::strcmp(value, "OFF") != 0;
+}
+}  // namespace
+
 Debugger::Debugger()
-        : turnCount_(0), currentTurn_(nullptr), currentStage_(nullptr), currentIteration_(nullptr) {}
+        : turnCount_(0), currentTurn_(nullptr), currentStage_(nullptr), currentIteration_(nullptr),
+          autoDumpEnabled_(readDebuggerAutoDumpEnabled()) {}
 
 TurnInfo* Debugger::startTurn(const std::string& mode) {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -248,6 +263,10 @@ std::string Debugger::getReportOutputFile() const {
     return reportOutputFile_;
 }
 
+bool Debugger::isAutoDumpEnabled() const {
+    return autoDumpEnabled_;
+}
+
 void Debugger::setRunStatus(const std::string& status) {
     std::lock_guard<std::mutex> lock(mtx_);
     runStatus_ = status;
@@ -270,7 +289,7 @@ void Debugger::dumpReportJsonToFile(const std::string& path) {
 }
 
 void Debugger::maybeAutoDumpLocked() {
-    if (reportOutputFile_.empty()) {
+    if (!autoDumpEnabled_ || reportOutputFile_.empty()) {
         return;
     }
     dumpReportJsonToFileLocked(reportOutputFile_);

@@ -552,6 +552,21 @@ void buildFormulasIncCyclewise(
     double deleteVarOrderMs = 0.0;
     double deleteVarCollectMs = 0.0;
     double deleteVarDumpMs = 0.0;
+    double deleteFactsCollectMs = 0.0;
+    double deleteWeightUpdateMs = 0.0;
+    double deleteEraseDeltaNodesMs = 0.0;
+    double deleteEraseDeltaEdgesMs = 0.0;
+    double deleteCleanInvalidNodesMs = 0.0;
+    double deleteCleanInvalidEdgesMs = 0.0;
+    double deleteBuildDeletedOutEdgesMs = 0.0;
+    double deleteImpactDetFactsMs = 0.0;
+    double deleteImpactDetDeltaMs = 0.0;
+    double deleteImpactNonDetFactsMs = 0.0;
+    double deleteImpactDeletedEdgeSeedMs = 0.0;
+    double deleteImpactDeletedEdgeClosureMs = 0.0;
+    double deleteNonDetVarListMs = 0.0;
+    double deleteImpactFinalizeMs = 0.0;
+    double deleteImpactHashMs = 0.0;
     double deleteTotalMs = 0.0;
     double rederiveLoopMsProfile = 0.0;
     double insertPreConfigMs = 0.0;
@@ -574,6 +589,12 @@ void buildFormulasIncCyclewise(
     std::size_t insertNonFactCount = 0;
     std::size_t insertDetEdges = 0;
     std::size_t insertNonDetEdges = 0;
+    std::size_t deleteRemovedDeltaNodeFormulas = 0;
+    std::size_t deleteRemovedDeltaEdgeFormulas = 0;
+    std::size_t deleteRemovedInvalidNodeFormulas = 0;
+    std::size_t deleteRemovedInvalidEdgeFormulas = 0;
+    std::size_t deleteWorklistEnqueueAttempts = 0;
+    std::size_t deleteWorklistEnqueueInserted = 0;
     std::size_t deleteCondChangedNodes = 0;
     std::size_t deleteOverdeleteChangedNodes = 0;
     std::size_t insertChangedNodes = 0;
@@ -829,47 +850,66 @@ void buildFormulasIncCyclewise(
     {
         // for each deleted node, apply its neg to all its reachable edges and nodes
         // however, since we still want the optimizations for deterministic facts, we sperate them
+        auto factsCollectStart = Clock::now();
         std::set<NodePtr> deletedFacts = view.getDeletedFacts();
         std::set<NodePtr> deletedDeterminsticFacts = view.getDeletedDeterminsticFacts();
         std::set<NodePtr> deletedNonDeterminsticFacts = view.getDeletedNonDeterministicFacts();
         deletedDetFactsCount = deletedDeterminsticFacts.size();
         deletedNonDetFactsCount = deletedNonDeterminsticFacts.size();
+        deleteFactsCollectMs = toMs(factsCollectStart, Clock::now());
+        auto weightUpdateStart = Clock::now();
         for (auto deletedFact: deletedFacts) {
             assertProbabilityInRange(0.0, "deleted fact weight");
             formulaManager.setVariableWeight(formulaManager.getVarIndex(*deletedFact), 0.0, 1.0);
         }
+        deleteWeightUpdateMs = toMs(weightUpdateStart, Clock::now());
+        auto eraseDeltaNodesStart = Clock::now();
         for (auto node : deltaDeletedNodes) {
-            nodeFormulas.erase(node);
+            deleteRemovedDeltaNodeFormulas += nodeFormulas.erase(node);
             changedNodes.insert(node);
         }
+        deleteEraseDeltaNodesMs = toMs(eraseDeltaNodesStart, Clock::now());
 
+        auto eraseDeltaEdgesStart = Clock::now();
         for (auto edge: deltaDeletedEdges) {
-            edgeFormulas.erase(edge);
+            deleteRemovedDeltaEdgeFormulas += edgeFormulas.erase(edge);
         }
+        deleteEraseDeltaEdgesMs = toMs(eraseDeltaEdgesStart, Clock::now());
 
+        auto cleanInvalidNodesStart = Clock::now();
         for (auto it = nodeFormulas.begin(); it != nodeFormulas.end(); ) {
             if (view.getValidNodes().find(it->first) == view.getValidNodes().end()) {
+                ++deleteRemovedInvalidNodeFormulas;
                 it = nodeFormulas.erase(it);  // remove invalid nodes
             } else {
                 ++it;  // move to the next element
             }
         }
+        deleteCleanInvalidNodesMs = toMs(cleanInvalidNodesStart, Clock::now());
 
+        auto cleanInvalidEdgesStart = Clock::now();
         for (auto it = edgeFormulas.begin(); it != edgeFormulas.end(); ) {
             if (view.getValidEdges().find(it->first) == view.getValidEdges().end()) {
+                ++deleteRemovedInvalidEdgeFormulas;
                 it = edgeFormulas.erase(it);  // remove invalid edges
             } else {
                 ++it;  // move to the next element
             }
         }
+        deleteCleanInvalidEdgesMs = toMs(cleanInvalidEdgesStart, Clock::now());
+        auto deletedOutEdgesStart = Clock::now();
         const auto deletedOutEdges = buildDeletedOutEdges(deltaDeletedEdges);
+        deleteBuildDeletedOutEdgesMs = toMs(deletedOutEdgesStart, Clock::now());
+        auto detFactsStart = Clock::now();
         if (!deletedDeterminsticFacts.empty()) {
             std::vector<NodePtr> detSources(deletedDeterminsticFacts.begin(),
                                             deletedDeterminsticFacts.end());
             collectImpactUnionWithDeletedEdges(view, detSources, deletedOutEdges, detImpactNodes, detImpactEdges);
         }
+        deleteImpactDetFactsMs = toMs(detFactsStart, Clock::now());
         // Deterministic derived deletions may not be explicit facts; include delta-deleted det nodes
         // that still participate in the current view (old view membership heuristic).
+        auto detDeltaStart = Clock::now();
         std::vector<NodePtr> detDeltaDeleteSources;
         detDeltaDeleteSources.reserve(deltaDeletedNodes.size());
         if (!deltaDeletedNodes.empty()) {
@@ -894,11 +934,15 @@ void buildFormulasIncCyclewise(
             collectImpactUnionWithDeletedEdges(view, detDeltaDeleteSources, deletedOutEdges,
                                                detImpactNodes, detImpactEdges);
         }
+        deleteImpactDetDeltaMs = toMs(detDeltaStart, Clock::now());
+        auto nonDetFactsStart = Clock::now();
         if (!deletedNonDeterminsticFacts.empty()) {
             std::vector<NodePtr> nonDetSources(deletedNonDeterminsticFacts.begin(),
                                                deletedNonDeterminsticFacts.end());
             collectImpactUnionWithDeletedEdges(view, nonDetSources, deletedOutEdges, nonDetImpactNodes, nonDetImpactEdges);
         }
+        deleteImpactNonDetFactsMs = toMs(nonDetFactsStart, Clock::now());
+        auto deletedEdgeSeedStart = Clock::now();
         for (auto edge : deltaDeletedEdges) {
             NodePtr out = view.getOutput(edge);
             if (!out || out->isFact) {
@@ -906,6 +950,8 @@ void buildFormulasIncCyclewise(
             }
             detImpactNodes.insert(out);
         }
+        deleteImpactDeletedEdgeSeedMs = toMs(deletedEdgeSeedStart, Clock::now());
+        auto deletedEdgeClosureStart = Clock::now();
         if (!deltaDeletedEdges.empty()) {
             std::vector<NodePtr> detEdgeOutputs;
             detEdgeOutputs.reserve(deltaDeletedEdges.size());
@@ -921,12 +967,16 @@ void buildFormulasIncCyclewise(
                                                    detImpactNodes, detImpactEdges);
             }
         }
-    if (!deletedNonDeterminsticFacts.empty()) {
-        deletedNonDetVars.reserve(deletedNonDeterminsticFacts.size());
-        for (auto node : deletedNonDeterminsticFacts) {
-            deletedNonDetVars.push_back(formulaManager.getVarIndex(*node));
+        deleteImpactDeletedEdgeClosureMs = toMs(deletedEdgeClosureStart, Clock::now());
+        auto nonDetVarListStart = Clock::now();
+        if (!deletedNonDeterminsticFacts.empty()) {
+            deletedNonDetVars.reserve(deletedNonDeterminsticFacts.size());
+            for (auto node : deletedNonDeterminsticFacts) {
+                deletedNonDetVars.push_back(formulaManager.getVarIndex(*node));
+            }
         }
-    }
+        deleteNonDetVarListMs = toMs(nonDetVarListStart, Clock::now());
+        auto impactFinalizeStart = Clock::now();
         detImpactNodesCount = detImpactNodes.size();
         detImpactEdgesCount = detImpactEdges.size();
         nonDetImpactNodesCount = nonDetImpactNodes.size();
@@ -944,60 +994,64 @@ void buildFormulasIncCyclewise(
                 nonDetOnlyEdges.insert(edge);
             }
         }
-    nonDetOnlyNodesCount = nonDetOnlyNodes.size();
-    nonDetOnlyEdgesCount = nonDetOnlyEdges.size();
+        nonDetOnlyNodesCount = nonDetOnlyNodes.size();
+        nonDetOnlyEdgesCount = nonDetOnlyEdges.size();
+        deleteImpactFinalizeMs = toMs(impactFinalizeStart, Clock::now());
 
-    if (incProfile) {
-        auto fnv1a = [](const std::string& s) {
-            std::uint64_t h = 1469598103934665603ULL;
-            for (unsigned char c : s) {
-                h ^= c;
-                h *= 1099511628211ULL;
-            }
-            return h;
-        };
-        auto hashNodeSet = [&](const std::unordered_set<NodePtr>& nodes) {
-            std::uint64_t h = 0;
-            for (const auto& n : nodes) {
-                if (!n) continue;
-                h ^= fnv1a(n->getTuple().toString());
-            }
-            return h;
-        };
-        auto hashEdgeSet = [&](const std::unordered_set<EdgePtr>& edges) {
-            std::uint64_t h = 0;
-            for (const auto& e : edges) {
-                if (!e) continue;
-                std::ostringstream oss;
-                auto ins = view.getInputs(e);
-                for (size_t i = 0; i < ins.size(); ++i) {
-                    if (i) oss << ",";
-                    oss << (ins[i] ? ins[i]->getTuple().toString() : "<null>");
+        auto impactHashStart = Clock::now();
+        if (incProfile) {
+            auto fnv1a = [](const std::string& s) {
+                std::uint64_t h = 1469598103934665603ULL;
+                for (unsigned char c : s) {
+                    h ^= c;
+                    h *= 1099511628211ULL;
                 }
-                NodePtr out = view.getOutput(e);
-                oss << "->" << (out ? out->getTuple().toString() : "<null>");
-                h ^= fnv1a(oss.str());
-            }
-            return h;
-        };
-        debugger.logMessage(Level::INFO,
-            "[inc-delete] detImpactNodes=" + std::to_string(detImpactNodes.size()) +
-            " hash=" + std::to_string(hashNodeSet(detImpactNodes)) +
-            " detImpactEdges=" + std::to_string(detImpactEdges.size()) +
-            " hash=" + std::to_string(hashEdgeSet(detImpactEdges)));
-        debugger.logMessage(Level::INFO,
-            "[inc-delete] nonDetImpactNodes=" + std::to_string(nonDetImpactNodes.size()) +
-            " hash=" + std::to_string(hashNodeSet(nonDetImpactNodes)) +
-            " nonDetImpactEdges=" + std::to_string(nonDetImpactEdges.size()) +
-            " hash=" + std::to_string(hashEdgeSet(nonDetImpactEdges)));
-        debugger.logMessage(Level::INFO,
-            "[inc-delete] nonDetOnlyNodes=" + std::to_string(nonDetOnlyNodes.size()) +
-            " hash=" + std::to_string(hashNodeSet(nonDetOnlyNodes)) +
-            " nonDetOnlyEdges=" + std::to_string(nonDetOnlyEdges.size()) +
-            " hash=" + std::to_string(hashEdgeSet(nonDetOnlyEdges)));
-    }
+                return h;
+            };
+            auto hashNodeSet = [&](const std::unordered_set<NodePtr>& nodes) {
+                std::uint64_t h = 0;
+                for (const auto& n : nodes) {
+                    if (!n) continue;
+                    h ^= fnv1a(n->getTuple().toString());
+                }
+                return h;
+            };
+            auto hashEdgeSet = [&](const std::unordered_set<EdgePtr>& edges) {
+                std::uint64_t h = 0;
+                for (const auto& e : edges) {
+                    if (!e) continue;
+                    std::ostringstream oss;
+                    auto ins = view.getInputs(e);
+                    for (size_t i = 0; i < ins.size(); ++i) {
+                        if (i) oss << ",";
+                        oss << (ins[i] ? ins[i]->getTuple().toString() : "<null>");
+                    }
+                    NodePtr out = view.getOutput(e);
+                    oss << "->" << (out ? out->getTuple().toString() : "<null>");
+                    h ^= fnv1a(oss.str());
+                }
+                return h;
+            };
+            debugger.logMessage(Level::INFO,
+                "[inc-delete] detImpactNodes=" + std::to_string(detImpactNodes.size()) +
+                " hash=" + std::to_string(hashNodeSet(detImpactNodes)) +
+                " detImpactEdges=" + std::to_string(detImpactEdges.size()) +
+                " hash=" + std::to_string(hashEdgeSet(detImpactEdges)));
+            debugger.logMessage(Level::INFO,
+                "[inc-delete] nonDetImpactNodes=" + std::to_string(nonDetImpactNodes.size()) +
+                " hash=" + std::to_string(hashNodeSet(nonDetImpactNodes)) +
+                " nonDetImpactEdges=" + std::to_string(nonDetImpactEdges.size()) +
+                " hash=" + std::to_string(hashEdgeSet(nonDetImpactEdges)));
+            debugger.logMessage(Level::INFO,
+                "[inc-delete] nonDetOnlyNodes=" + std::to_string(nonDetOnlyNodes.size()) +
+                " hash=" + std::to_string(hashNodeSet(nonDetOnlyNodes)) +
+                " nonDetOnlyEdges=" + std::to_string(nonDetOnlyEdges.size()) +
+                " hash=" + std::to_string(hashEdgeSet(nonDetOnlyEdges)));
+        }
+        deleteImpactHashMs = toMs(impactHashStart, Clock::now());
 
         auto enqueueEdge = [&](EdgePtr edge) {
+            ++deleteWorklistEnqueueAttempts;
             auto it = depGraph.edgeToCycleIndex.find(edge);
             if (it == depGraph.edgeToCycleIndex.end()) {
                 return;
@@ -1005,6 +1059,7 @@ void buildFormulasIncCyclewise(
             auto& worklist = cycleWorklists[it->second];
             auto& inWorklist = cycleInWorklists[it->second];
             if (inWorklist.insert(edge).second) {
+                ++deleteWorklistEnqueueInserted;
                 auto depthIt = depGraph.edgeDepthsGlobal.find(edge);
                 const int seqId = depthIt == depGraph.edgeDepthsGlobal.end()
                     ? 0
@@ -1062,9 +1117,7 @@ void buildFormulasIncCyclewise(
             end = high_resolution_clock::now();
             debugger.logMessage(Level::INFO, "Finished conditioning on deleted non-deterministic facts (non-det only). Time: " +
                 std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
-            if (deleteProfile) {
-                deleteCondMs = toMs(condStart, Clock::now());
-            }
+            deleteCondMs = toMs(condStart, Clock::now());
         }
         if (deleteProfile) {
             deleteCondLiveNodes = formulaManager.getLiveNodeCount();
@@ -1105,9 +1158,7 @@ void buildFormulasIncCyclewise(
                 enqueueEdge(edge);
             }
         }
-        if (deleteProfile) {
-            deleteOverdeleteMs = toMs(overdeleteStart, Clock::now());
-        }
+        deleteOverdeleteMs = toMs(overdeleteStart, Clock::now());
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Finished over-deleting impacted formulas. Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
@@ -1127,27 +1178,19 @@ void buildFormulasIncCyclewise(
             deletedVarsIndex.insert(index);
         }
         deletedVarsIndexCount = deletedVarsIndex.size();
-        if (deleteProfile) {
-            deleteVarCollectMs = toMs(delVarCollectStart, Clock::now());
-        }
+        deleteVarCollectMs = toMs(delVarCollectStart, Clock::now());
         debugger.logMessage(Level::INFO, "Deletion deletedVarsIndex size: " +
             std::to_string(deletedVarsIndex.size()));
 
-        if (deleteProfile) {
-            auto dumpStart = Clock::now();
-            formulaManager.dumpProfilingStatistics();
-            deleteVarDumpMs += toMs(dumpStart, Clock::now());
-        } else {
-            formulaManager.dumpProfilingStatistics();
-        }
+        auto dumpStart = Clock::now();
+        formulaManager.dumpProfilingStatistics();
+        deleteVarDumpMs += toMs(dumpStart, Clock::now());
 
         end = high_resolution_clock::now();
         debugger.logMessage(Level::INFO, "Finished updating variable ordering after deletion (non-deterministic). Time: " +
             std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
 
-        if (deleteProfile) {
-            deleteVarOrderMs = toMs(delVarOrderStart, Clock::now());
-        }
+        deleteVarOrderMs = toMs(delVarOrderStart, Clock::now());
 
 
 
@@ -1824,6 +1867,47 @@ void buildFormulasIncCyclewise(
     debugger.addInfo("fc_lite_total_ms", std::to_string(fcLiteTotalMs));
     debugger.addInfo("fc_lite_dep_graph_ms", std::to_string(depGraphMs));
     debugger.addInfo("fc_lite_delete_prep_ms", std::to_string(deletePrepMs));
+    debugger.addInfo("fc_lite_delete_facts_collect_ms", std::to_string(deleteFactsCollectMs));
+    debugger.addInfo("fc_lite_delete_weight_update_ms", std::to_string(deleteWeightUpdateMs));
+    debugger.addInfo("fc_lite_delete_erase_delta_nodes_ms", std::to_string(deleteEraseDeltaNodesMs));
+    debugger.addInfo("fc_lite_delete_erase_delta_edges_ms", std::to_string(deleteEraseDeltaEdgesMs));
+    debugger.addInfo("fc_lite_delete_clean_invalid_nodes_ms", std::to_string(deleteCleanInvalidNodesMs));
+    debugger.addInfo("fc_lite_delete_clean_invalid_edges_ms", std::to_string(deleteCleanInvalidEdgesMs));
+    debugger.addInfo("fc_lite_delete_build_deleted_out_edges_ms", std::to_string(deleteBuildDeletedOutEdgesMs));
+    debugger.addInfo("fc_lite_delete_impact_det_facts_ms", std::to_string(deleteImpactDetFactsMs));
+    debugger.addInfo("fc_lite_delete_impact_det_delta_ms", std::to_string(deleteImpactDetDeltaMs));
+    debugger.addInfo("fc_lite_delete_impact_nondet_facts_ms", std::to_string(deleteImpactNonDetFactsMs));
+    debugger.addInfo("fc_lite_delete_impact_deleted_edge_seed_ms", std::to_string(deleteImpactDeletedEdgeSeedMs));
+    debugger.addInfo("fc_lite_delete_impact_deleted_edge_closure_ms", std::to_string(deleteImpactDeletedEdgeClosureMs));
+    debugger.addInfo("fc_lite_delete_nondet_var_list_ms", std::to_string(deleteNonDetVarListMs));
+    debugger.addInfo("fc_lite_delete_impact_finalize_ms", std::to_string(deleteImpactFinalizeMs));
+    debugger.addInfo("fc_lite_delete_impact_hash_ms", std::to_string(deleteImpactHashMs));
+    debugger.addInfo("fc_lite_delete_condition_ms", std::to_string(deleteCondMs));
+    debugger.addInfo("fc_lite_delete_overdelete_ms", std::to_string(deleteOverdeleteMs));
+    debugger.addInfo("fc_lite_delete_var_order_ms", std::to_string(deleteVarOrderMs));
+    debugger.addInfo("fc_lite_delete_var_collect_ms", std::to_string(deleteVarCollectMs));
+    debugger.addInfo("fc_lite_delete_var_dump_ms", std::to_string(deleteVarDumpMs));
+    debugger.addInfo("fc_lite_delete_removed_delta_node_formulas",
+            std::to_string(deleteRemovedDeltaNodeFormulas));
+    debugger.addInfo("fc_lite_delete_removed_delta_edge_formulas",
+            std::to_string(deleteRemovedDeltaEdgeFormulas));
+    debugger.addInfo("fc_lite_delete_removed_invalid_node_formulas",
+            std::to_string(deleteRemovedInvalidNodeFormulas));
+    debugger.addInfo("fc_lite_delete_removed_invalid_edge_formulas",
+            std::to_string(deleteRemovedInvalidEdgeFormulas));
+    debugger.addInfo("fc_lite_delete_worklist_enqueue_attempts",
+            std::to_string(deleteWorklistEnqueueAttempts));
+    debugger.addInfo("fc_lite_delete_worklist_enqueue_inserted",
+            std::to_string(deleteWorklistEnqueueInserted));
+    debugger.addInfo("fc_lite_delete_det_facts", std::to_string(deletedDetFactsCount));
+    debugger.addInfo("fc_lite_delete_nondet_facts", std::to_string(deletedNonDetFactsCount));
+    debugger.addInfo("fc_lite_delete_det_impact_nodes", std::to_string(detImpactNodesCount));
+    debugger.addInfo("fc_lite_delete_det_impact_edges", std::to_string(detImpactEdgesCount));
+    debugger.addInfo("fc_lite_delete_nondet_impact_nodes", std::to_string(nonDetImpactNodesCount));
+    debugger.addInfo("fc_lite_delete_nondet_impact_edges", std::to_string(nonDetImpactEdgesCount));
+    debugger.addInfo("fc_lite_delete_nondet_only_nodes", std::to_string(nonDetOnlyNodesCount));
+    debugger.addInfo("fc_lite_delete_nondet_only_edges", std::to_string(nonDetOnlyEdgesCount));
+    debugger.addInfo("fc_lite_delete_deleted_vars", std::to_string(deletedVarsIndexCount));
     debugger.addInfo("fc_lite_rederive_ms", std::to_string(rederiveMs));
     debugger.addInfo("fc_lite_insert_prep_ms", std::to_string(insertPrepMs));
     debugger.addInfo("fc_lite_insert_preconfig_ms", std::to_string(insertPreConfigMs));
@@ -1912,6 +1996,36 @@ void buildFormulasIncCyclewise(
                   << " collect_ms=" << deleteVarCollectMs
                   << " dump_ms=" << deleteVarDumpMs
                   << " deleted_vars=" << deletedVarsIndexCount
+                  << std::endl;
+        std::cout << "[fc-profile] stage=FORWARD_COMPILATION_INC phase=delete_prep_detail"
+                  << " facts_collect_ms=" << deleteFactsCollectMs
+                  << " weight_update_ms=" << deleteWeightUpdateMs
+                  << " erase_delta_nodes_ms=" << deleteEraseDeltaNodesMs
+                  << " erase_delta_edges_ms=" << deleteEraseDeltaEdgesMs
+                  << " clean_invalid_nodes_ms=" << deleteCleanInvalidNodesMs
+                  << " clean_invalid_edges_ms=" << deleteCleanInvalidEdgesMs
+                  << " build_deleted_out_edges_ms=" << deleteBuildDeletedOutEdgesMs
+                  << " impact_det_facts_ms=" << deleteImpactDetFactsMs
+                  << " impact_det_delta_ms=" << deleteImpactDetDeltaMs
+                  << " impact_nondet_facts_ms=" << deleteImpactNonDetFactsMs
+                  << " impact_deleted_edge_seed_ms=" << deleteImpactDeletedEdgeSeedMs
+                  << " impact_deleted_edge_closure_ms=" << deleteImpactDeletedEdgeClosureMs
+                  << " nondet_var_list_ms=" << deleteNonDetVarListMs
+                  << " impact_finalize_ms=" << deleteImpactFinalizeMs
+                  << " impact_hash_ms=" << deleteImpactHashMs
+                  << " condition_ms=" << deleteCondMs
+                  << " overdelete_ms=" << deleteOverdeleteMs
+                  << " varorder_ms=" << deleteVarOrderMs
+                  << " removed_delta_node_formulas=" << deleteRemovedDeltaNodeFormulas
+                  << " removed_delta_edge_formulas=" << deleteRemovedDeltaEdgeFormulas
+                  << " removed_invalid_node_formulas=" << deleteRemovedInvalidNodeFormulas
+                  << " removed_invalid_edge_formulas=" << deleteRemovedInvalidEdgeFormulas
+                  << " worklist_enqueue_attempts=" << deleteWorklistEnqueueAttempts
+                  << " worklist_enqueue_inserted=" << deleteWorklistEnqueueInserted
+                  << " det_imp_nodes=" << detImpactNodesCount
+                  << " det_imp_edges=" << detImpactEdgesCount
+                  << " nondet_imp_nodes=" << nonDetImpactNodesCount
+                  << " nondet_imp_edges=" << nonDetImpactEdgesCount
                   << std::endl;
         std::cout << "[fc-profile] stage=FORWARD_COMPILATION_INC phase=rederive ms=" << rederiveLoopMsProfile
                   << " edge_processed=" << rederiveStats.edge_processed

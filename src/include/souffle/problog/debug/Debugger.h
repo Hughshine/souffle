@@ -168,6 +168,7 @@ public:
     void printReportJson(std::ostream& os);
     void setReportOutputFile(const std::string& path);
     std::string getReportOutputFile() const;
+    bool isAutoDumpEnabled() const;
     void setRunStatus(const std::string& status);
     void setTerminationSignal(int signal);
     void dumpReportJsonToFile(const std::string& path = "");
@@ -185,6 +186,7 @@ private:
     StageInfo* currentStage_;
     IterationInfo* currentIteration_;
     std::string reportOutputFile_;
+    bool autoDumpEnabled_;
     std::string runStatus_ = "running";
     int terminationSignal_ = 0;
 

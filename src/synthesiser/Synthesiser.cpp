@@ -4588,13 +4588,23 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
              << glb.config().get("version") << R"_(");)_" << '\n';
     }
     hook << "Debugger& debugger = Debugger::getInstance();\n";
-    hook << "std::string logBase = basenameFromPath(opt.getLogFileName());\n";
-    hook << "std::string reportFileName = generateFilename(logBase, \".json\");\n";
-    hook << "std::string reportFile = souffle::problog::makeOutputPath(opt, reportFileName);\n";
-    hook << "std::string reportTerminationFile = reportFile + \".termination\";\n";
-    hook << "debugger.setReportOutputFile(reportFile);\n";
+    hook << "const bool deferDebuggerReportSetup = !debugger.isAutoDumpEnabled();\n";
+    hook << "std::string reportFileName;\n";
+    hook << "std::string reportFile;\n";
+    hook << "std::string reportTerminationFile;\n";
+    hook << "auto ensureDebuggerReportPath = [&]() {\n";
+    hook << "    if (!reportFile.empty()) return;\n";
+    hook << "    std::string logBase = basenameFromPath(opt.getLogFileName());\n";
+    hook << "    reportFileName = generateFilename(logBase, \".json\");\n";
+    hook << "    reportFile = souffle::problog::makeOutputPath(opt, reportFileName);\n";
+    hook << "    reportTerminationFile = reportFile + \".termination\";\n";
+    hook << "    debugger.setReportOutputFile(reportFile);\n";
+    hook << "    souffle::SignalHandler::instance()->setTerminationStatusFile(reportTerminationFile);\n";
+    hook << "};\n";
+    hook << "if (!deferDebuggerReportSetup) {\n";
+    hook << "    ensureDebuggerReportPath();\n";
+    hook << "}\n";
     hook << "debugger.setRunStatus(\"running\");\n";
-    hook << "souffle::SignalHandler::instance()->setTerminationStatusFile(reportTerminationFile);\n";
     hook << "souffle::SignalHandler::instance()->set();\n";
     hook << "debugger.startTurn();\n";
     hook << "auto parseProbFast = [](const std::string& line, double& probOut) {\n";
@@ -4869,6 +4879,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
 
     emitProblogPipeline(hook);
 
+    hook << "ensureDebuggerReportPath();\n";
     hook << "debugger.setRunStatus(\"completed\");\n";
     hook << "debugger.dumpReportJsonToFile();\n";
     hook << "if (opt.isVerboseEnabled()) {\n";
@@ -4879,7 +4890,7 @@ void Synthesiser::generateCode(GenDb& db, const std::string& id, bool& withShare
     // add online incremental&interactive computation
 
 
-    hook << "} catch (std::exception& e) { debugger.setRunStatus(\"exception\"); debugger.dumpReportJsonToFile(); souffle::SignalHandler::instance()->reset(); std::cerr << \"Problog calc failed\" << e.what() << std::endl;}\n";
+    hook << "} catch (std::exception& e) { ensureDebuggerReportPath(); debugger.setRunStatus(\"exception\"); debugger.dumpReportJsonToFile(); souffle::SignalHandler::instance()->reset(); std::cerr << \"Problog calc failed\" << e.what() << std::endl;}\n";
     // }
 
 
