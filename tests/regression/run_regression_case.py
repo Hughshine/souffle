@@ -642,6 +642,99 @@ def case_inc_regional_independent_overlap_skip_vs_full(souffle_bin: Path, work_r
     assert_glob_empty(out_regional, "region-*.txt", label="independent overlap skip region text dump")
 
 
+def case_inc_regional_deterministic_chain_anchor(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("inc_regional_deterministic_chain_anchor", work_root)
+    compute_bin, input_dir = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    turns = [["insert 0.20::d(2)"]]
+
+    out_regional = case_dir / "out_inc_regional"
+    out_full = case_dir / "out_full"
+    proc = run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=out_regional,
+        mode="inc-regional",
+        turns=turns,
+        extra_args=["--profile-stage=inc-regional", "--dump=dot"],
+    )
+    run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=out_full,
+        mode="full",
+        turns=turns,
+    )
+
+    assert_prob_close(
+        iter_prob_path(out_regional, 1, "inc-regional"),
+        iter_prob_path(out_full, 1, "full"),
+        label="inc_regional_deterministic_chain_anchor iter=1",
+    )
+    probs = parse_prob_file(iter_prob_path(out_regional, 1, "inc-regional"))
+    if not math.isclose(probs.get("sink(2)", -1.0), 0.68, rel_tol=0.0, abs_tol=1e-9):
+        raise CaseFailure(f"inc_regional_deterministic_chain_anchor: expected sink(2)=0.68, got {probs}")
+    assert_stdout_contains(
+        proc.stdout,
+        "boundary head anchors: raw(2) anchors=node:i(0)",
+        label="deterministic chain anchor profile",
+    )
+    assert_stdout_contains(
+        proc.stdout,
+        "[inc-regional-final] region_nodes=2 dr_nodes=3 ratio=0.667",
+        label="deterministic chain anchor final region",
+    )
+    assert_dot_body_contains(
+        out_regional / "inc-region-1.dot",
+        '"i(0)" [shape=box, penwidth=2, color="#f2c744"]',
+        label="deterministic chain node anchor",
+    )
+    assert_glob_empty(out_regional, "inc-region-step-*.dot", label="deterministic chain intermediate region dot")
+    assert_glob_empty(out_regional, "region-*.txt", label="deterministic chain region text dump")
+
+
+def case_inc_regional_deterministic_join_anchor_reject(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("inc_regional_deterministic_join_anchor_reject", work_root)
+    compute_bin, input_dir = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+    turns = [["insert 0.20::d(0)"]]
+
+    out_regional = case_dir / "out_inc_regional"
+    out_full = case_dir / "out_full"
+    proc = run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=out_regional,
+        mode="inc-regional",
+        turns=turns,
+        extra_args=["--profile-stage=inc-regional", "--dump=dot"],
+    )
+    run_cli_mode(
+        compute_bin=compute_bin,
+        input_dir=input_dir,
+        output_dir=out_full,
+        mode="full",
+        turns=turns,
+    )
+
+    assert_prob_close(
+        iter_prob_path(out_regional, 1, "inc-regional"),
+        iter_prob_path(out_full, 1, "full"),
+        label="inc_regional_deterministic_join_anchor_reject iter=1",
+    )
+    probs = parse_prob_file(iter_prob_path(out_regional, 1, "inc-regional"))
+    if not math.isclose(probs.get("sink(0)", -1.0), 0.60, rel_tol=0.0, abs_tol=1e-9):
+        raise CaseFailure(f"inc_regional_deterministic_join_anchor_reject: expected sink(0)=0.60, got {probs}")
+    assert_stdout_contains(
+        proc.stdout,
+        "anchor-check head=head(0) candidate=node:a(0) result=NO reason=path_node_in_region",
+        label="deterministic join changed sibling rejection",
+    )
+    assert_stdout_contains(
+        proc.stdout,
+        "boundary head missing anchor: head(0)",
+        label="deterministic join has no usable anchor after changed sibling rejection",
+    )
+
+
 def case_deterministic_inc_regional_multiturn_state_machine(souffle_bin: Path, work_root: Path) -> None:
     case_dir = prepare_case_workspace("deterministic_inc_regional_multiturn_state_machine", work_root)
     compute_bin, input_dir = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
@@ -1130,6 +1223,8 @@ CASES = {
     "inc_regional_calibration_single_interface": case_inc_regional_calibration_single_interface,
     "inc_regional_shared_delta_join_vs_full": case_inc_regional_shared_delta_join_vs_full,
     "inc_regional_independent_overlap_skip_vs_full": case_inc_regional_independent_overlap_skip_vs_full,
+    "inc_regional_deterministic_chain_anchor": case_inc_regional_deterministic_chain_anchor,
+    "inc_regional_deterministic_join_anchor_reject": case_inc_regional_deterministic_join_anchor_reject,
     "deterministic_inc_regional_multiturn_state_machine": case_deterministic_inc_regional_multiturn_state_machine,
     "deterministic_inc_regional_multiturn_degenerate": case_deterministic_inc_regional_multiturn_degenerate,
     "deterministic_recursive_derivation_guard_vs_full": case_deterministic_recursive_derivation_guard_vs_full,

@@ -10,6 +10,8 @@ the selected region plus boundary calibration work.
 - [../../../src/include/souffle/cli/Executor.h:318](../../../src/include/souffle/cli/Executor.h#L318): runtime dispatch to `inc-regional`.
 - [../../../src/include/souffle/problog/ForwardCompilation.h:1967](../../../src/include/souffle/problog/ForwardCompilation.h#L1967): regional FC entry.
 - [../../../src/include/souffle/problog/ForwardCompilation.h:2476](../../../src/include/souffle/problog/ForwardCompilation.h#L2476): regional orchestrator call.
+- [../../../src/include/souffle/problog/IncRegionAnalyzer.h:1197](../../../src/include/souffle/problog/IncRegionAnalyzer.h#L1197): regional anchor search strategy.
+- [../../../src/include/souffle/problog/IncRegionAnalyzer.h:1418](../../../src/include/souffle/problog/IncRegionAnalyzer.h#L1418): boundary anchor usability checks.
 - [../../../src/include/souffle/problog/RegionalIncremental.h:1201](../../../src/include/souffle/problog/RegionalIncremental.h#L1201): regional FC class.
 - [../../../src/include/souffle/problog/RegionalIncremental.h:1537](../../../src/include/souffle/problog/RegionalIncremental.h#L1537): delta-reach dependency graph diagnostics.
 - [../../../src/include/souffle/problog/formula/CuddManager.h:568](../../../src/include/souffle/problog/formula/CuddManager.h#L568): CUDD adaptive reordering initialization.
@@ -33,6 +35,14 @@ Regional formulas are a persistent state. A later turn may request a consumer
 that cannot safely read the currently regionalized state. The CLI tracks the
 state class and falls back on the forward-compilation side when needed. The
 semantic mode of the turn remains the requested one.
+
+## Boundary Anchors
+
+Boundary anchors certify that a boundary can be reused without pulling the
+whole delta-reachable suffix into the region. The default search follows a
+bounded deterministic derivation chain to find an upstream probabilistic fact
+or non-deterministic edge anchor. For experiment bisects,
+`SOUFFLE_INC_REGION_ANCHOR_STRATEGY=local` restores the one-hop local search.
 
 ## Reordering
 

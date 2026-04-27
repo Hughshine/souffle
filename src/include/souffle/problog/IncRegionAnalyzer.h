@@ -75,6 +75,8 @@ struct IncRegionAnalysis {
         AnchorKind kind = AnchorKind::Edge;
         EdgePtr edge;
         NodePtr node;
+        std::vector<NodePtr> pathNodes;
+        std::vector<EdgePtr> pathEdges;
         static AnchorCandidate fromEdge(const EdgePtr& e) {
             AnchorCandidate c;
             c.kind = AnchorKind::Edge;
@@ -85,6 +87,20 @@ struct IncRegionAnalysis {
             AnchorCandidate c;
             c.kind = AnchorKind::Node;
             c.node = n;
+            return c;
+        }
+        static AnchorCandidate fromEdge(
+                const EdgePtr& e, std::vector<NodePtr> nodes, std::vector<EdgePtr> edges) {
+            AnchorCandidate c = fromEdge(e);
+            c.pathNodes = std::move(nodes);
+            c.pathEdges = std::move(edges);
+            return c;
+        }
+        static AnchorCandidate fromNode(
+                const NodePtr& n, std::vector<NodePtr> nodes, std::vector<EdgePtr> edges) {
+            AnchorCandidate c = fromNode(n);
+            c.pathNodes = std::move(nodes);
+            c.pathEdges = std::move(edges);
             return c;
         }
     };
@@ -553,6 +569,7 @@ private:
         edge_scope_by_source_.clear();
         edge_scope_index_.clear();
         reachable_cache_.clear();
+        full_reachable_cache_.clear();
         scc_reach_cache_.clear();
         scc_reach_nodes_cache_.clear();
         head_branching_sources_cache_.clear();
@@ -1177,6 +1194,130 @@ private:
         return mergeableEdgeAtHead_(head, e);
     }
 
+    enum class AnchorSearchStrategy : uint8_t {
+        Local,
+        DeterministicChain,
+    };
+
+    AnchorSearchStrategy anchorSearchStrategy_() const {
+        const char* value = std::getenv("SOUFFLE_INC_REGION_ANCHOR_STRATEGY");
+        if (value && std::strcmp(value, "local") == 0) {
+            return AnchorSearchStrategy::Local;
+        }
+        return AnchorSearchStrategy::DeterministicChain;
+    }
+
+    static constexpr size_t kAnchorSearchMaxDepth_ = 4;
+    static constexpr size_t kAnchorSearchNodeBudget_ = 64;
+
+    void appendDeterministicPathStep_(
+            const EdgePtr& edge,
+            const NodePtr& excludedOutput,
+            std::vector<NodePtr>& pathNodes,
+            std::vector<EdgePtr>& pathEdges) {
+        if (!edge) return;
+        pathEdges.push_back(edge);
+        NodePtr out = view_.getOutput(edge);
+        if (out && out != excludedOutput) {
+            pathNodes.push_back(out);
+        }
+        for (const auto& input : view_.getInputs(edge)) {
+            if (input) {
+                pathNodes.push_back(input);
+            }
+        }
+    }
+
+    static void appendAnchorCandidate_(
+            std::vector<IncRegionAnalysis::AnchorCandidate>& anchors,
+            std::unordered_set<NodePtr>& seenNodes,
+            std::unordered_set<EdgePtr>& seenEdges,
+            const IncRegionAnalysis::AnchorCandidate& candidate) {
+        if (candidate.kind == IncRegionAnalysis::AnchorKind::Node) {
+            if (candidate.node && seenNodes.insert(candidate.node).second) {
+                anchors.push_back(candidate);
+            }
+            return;
+        }
+        if (candidate.edge && seenEdges.insert(candidate.edge).second) {
+            anchors.push_back(candidate);
+        }
+    }
+
+    void collectDeterministicInputAnchors_(
+            const NodePtr& start,
+            std::vector<IncRegionAnalysis::AnchorCandidate>& anchors,
+            std::unordered_set<NodePtr>& seenNodeAnchors,
+            std::unordered_set<EdgePtr>& seenEdgeAnchors,
+            AnchorSearchStrategy strategy,
+            std::vector<NodePtr> initialPathNodes,
+            std::vector<EdgePtr> initialPathEdges) {
+        using AnchorCandidate = IncRegionAnalysis::AnchorCandidate;
+        if (!start) return;
+
+        struct Item {
+            NodePtr node;
+            size_t depth = 0;
+            std::vector<NodePtr> pathNodes;
+            std::vector<EdgePtr> pathEdges;
+        };
+        std::queue<Item> q;
+        std::unordered_set<NodePtr> seenSearch;
+        q.push({start, 0, std::move(initialPathNodes), std::move(initialPathEdges)});
+        seenSearch.insert(start);
+        size_t visited = 0;
+
+        while (!q.empty() && visited++ < kAnchorSearchNodeBudget_) {
+            Item item = q.front();
+            q.pop();
+            NodePtr cur = item.node;
+            if (!cur || !is_anchor_path_safe(cur)) {
+                continue;
+            }
+            if (cur->isFact) {
+                if (cur->getProbability() < 1.0 && !delta_insert_nodes_cache_.count(cur)) {
+                    appendAnchorCandidate_(
+                            anchors, seenNodeAnchors, seenEdgeAnchors,
+                            AnchorCandidate::fromNode(cur, item.pathNodes, item.pathEdges));
+                }
+                continue;
+            }
+            if (delta_insert_nodes_cache_.count(cur)) {
+                continue;
+            }
+            for (const auto& inEdge : view_.getIncomingEdges(cur)) {
+                if (!inEdge) continue;
+                if (!inEdge->isDeterministic()) {
+                    if (!delta_insert_edges_cache_.count(inEdge)) {
+                        auto pathNodes = item.pathNodes;
+                        pathNodes.push_back(cur);
+                        appendAnchorCandidate_(
+                                anchors, seenNodeAnchors, seenEdgeAnchors,
+                                AnchorCandidate::fromEdge(inEdge, std::move(pathNodes), item.pathEdges));
+                    }
+                    continue;
+                }
+                if (delta_insert_edges_cache_.count(inEdge)) {
+                    continue;
+                }
+                if (strategy == AnchorSearchStrategy::Local) {
+                    continue;
+                }
+                if (item.depth >= kAnchorSearchMaxDepth_) {
+                    continue;
+                }
+                auto nextPathNodes = item.pathNodes;
+                auto nextPathEdges = item.pathEdges;
+                appendDeterministicPathStep_(inEdge, nullptr, nextPathNodes, nextPathEdges);
+                for (const auto& tail : view_.getInputs(inEdge)) {
+                    if (tail && seenSearch.insert(tail).second) {
+                        q.push({tail, item.depth + 1, nextPathNodes, nextPathEdges});
+                    }
+                }
+            }
+        }
+    }
+
     const std::vector<IncRegionAnalysis::AnchorCandidate>& getAnchorCandidates_(const NodePtr& head) {
         using AnchorCandidate = IncRegionAnalysis::AnchorCandidate;
         static const std::vector<AnchorCandidate> kEmpty;
@@ -1187,45 +1328,166 @@ private:
             return anchor_candidates_cache_.emplace(head, kEmpty).first->second;
         }
         std::vector<AnchorCandidate> anchors;
+        std::unordered_set<NodePtr> seenNodeAnchors;
+        std::unordered_set<EdgePtr> seenEdgeAnchors;
+        const AnchorSearchStrategy strategy = anchorSearchStrategy_();
         const auto& inEs = view_.getIncomingEdges(head);
         for (const auto& e : inEs) {
             if (edgeAnchorStatus_(head, e).first) {
-                anchors.push_back(AnchorCandidate::fromEdge(e));
+                appendAnchorCandidate_(
+                        anchors, seenNodeAnchors, seenEdgeAnchors, AnchorCandidate::fromEdge(e));
                 continue;
             }
             if (!e || !e->isDeterministic()) {
                 continue;
             }
+            std::vector<NodePtr> initialPathNodes;
+            std::vector<EdgePtr> initialPathEdges;
+            appendDeterministicPathStep_(e, head, initialPathNodes, initialPathEdges);
             const auto& ins = view_.getInputs(e);
             for (const auto& inNode : ins) {
-                if (!inNode) continue;
-                if (!is_anchor_path_safe(inNode)) continue;
-                if (inNode->isFact && inNode->getProbability() < 1.0) {
-                    if (delta_insert_nodes_cache_.count(inNode)) {
-                        continue;
-                    }
-                    anchors.push_back(AnchorCandidate::fromNode(inNode));
-                    continue;
-                }
-                for (const auto& inEdge : view_.getIncomingEdges(inNode)) {
-                    if (!inEdge) continue;
-                    if (inEdge->isDeterministic()) continue;
-                    if (delta_insert_edges_cache_.count(inEdge)) continue;
-                    anchors.push_back(AnchorCandidate::fromEdge(inEdge));
-                }
+                collectDeterministicInputAnchors_(
+                        inNode, anchors, seenNodeAnchors, seenEdgeAnchors, strategy,
+                        initialPathNodes, initialPathEdges);
             }
         }
         return anchor_candidates_cache_.emplace(head, std::move(anchors)).first->second;
     }
 
-    bool hasAnyAnchorCandidate_(const NodePtr& head) {
-        if (!head) return false;
-        return !getAnchorCandidates_(head).empty();
+    const std::unordered_set<NodePtr>& incomingClosure_(
+            const Region& R,
+            const NodePtr& head,
+            std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& cache) {
+        static const std::unordered_set<NodePtr> kEmpty;
+        if (!head) return kEmpty;
+        auto it = cache.find(head);
+        if (it != cache.end()) return it->second;
+        std::unordered_set<NodePtr> closure;
+        if (!R.nodes.count(head)) {
+            return cache.emplace(head, std::move(closure)).first->second;
+        }
+        std::vector<NodePtr> stack;
+        closure.insert(head);
+        stack.push_back(head);
+        while (!stack.empty()) {
+            auto cur = stack.back();
+            stack.pop_back();
+            const auto& inEdges = view_.getIncomingEdges(cur);
+            for (const auto& e : inEdges) {
+                if (!e) continue;
+                for (const auto& in : view_.getInputs(e)) {
+                    if (!in) continue;
+                    if (!R.nodes.count(in)) continue;
+                    if (closure.insert(in).second) {
+                        stack.push_back(in);
+                    }
+                }
+            }
+        }
+        return cache.emplace(head, std::move(closure)).first->second;
+    }
+
+    bool anchorBypassesBoundary_(
+            const Region& R,
+            const NodePtr& head,
+            const IncRegionAnalysis::AnchorCandidate& candidate,
+            std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& incomingClosureCache) {
+        NodePtr source;
+        if (candidate.kind == IncRegionAnalysis::AnchorKind::Node) {
+            source = candidate.node;
+        } else if (candidate.edge) {
+            source = view_.getOutput(candidate.edge);
+        }
+        if (!source) {
+            return true;
+        }
+        const auto& closure = incomingClosure_(R, head, incomingClosureCache);
+        if (closure.empty()) {
+            return true;
+        }
+        const auto& reachable = ensureFullReachable_(source);
+        for (const auto& n : reachable) {
+            if (!R.nodes.count(n)) continue;
+            if (!closure.count(n)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool anchorCandidateUsable_(
+            const Region& R,
+            const NodePtr& head,
+            const IncRegionAnalysis::AnchorCandidate& candidate,
+            std::unordered_map<NodePtr, std::unordered_set<NodePtr>>& incomingClosureCache,
+            std::string* reason = nullptr) {
+        if (candidate.kind == IncRegionAnalysis::AnchorKind::Node) {
+            if (!candidate.node) {
+                if (reason) *reason = "node_null";
+                return false;
+            }
+            if (delta_insert_nodes_cache_.count(candidate.node)) {
+                if (reason) *reason = "input_node_delta_insert";
+                return false;
+            }
+            if (R.nodes.count(candidate.node)) {
+                if (reason) *reason = "input_node_in_region";
+                return false;
+            }
+        } else {
+            if (!candidate.edge) {
+                if (reason) *reason = "edge_null";
+                return false;
+            }
+            if (delta_insert_edges_cache_.count(candidate.edge)) {
+                if (reason) *reason = "edge_anchor_delta_insert";
+                return false;
+            }
+            if (R.edges.count(candidate.edge)) {
+                if (reason) *reason = "edge_anchor_in_region";
+                return false;
+            }
+        }
+        for (const auto& node : candidate.pathNodes) {
+            if (!node) continue;
+            if (delta_insert_nodes_cache_.count(node)) {
+                if (reason) *reason = "path_node_delta_insert";
+                return false;
+            }
+            if (R.nodes.count(node)) {
+                if (reason) *reason = "path_node_in_region";
+                return false;
+            }
+        }
+        for (const auto& edge : candidate.pathEdges) {
+            if (!edge) continue;
+            if (delta_insert_edges_cache_.count(edge)) {
+                if (reason) *reason = "path_edge_delta_insert";
+                return false;
+            }
+            if (R.edges.count(edge)) {
+                if (reason) *reason = "path_edge_in_region";
+                return false;
+            }
+        }
+        if (anchorBypassesBoundary_(R, head, candidate, incomingClosureCache)) {
+            if (reason) *reason = "anchor_bypass_incoming_closure";
+            return false;
+        }
+        if (reason) *reason = "anchor_ok";
+        return true;
     }
 
     bool mergeableHead_(const NodePtr& h, const Region& R) {
         if (!h || !R.nodes.count(h)) return false;
-        return hasAnyAnchorCandidate_(h);
+        if (delta_insert_nodes_cache_.count(h)) return false;
+        std::unordered_map<NodePtr, std::unordered_set<NodePtr>> incomingClosureCache;
+        for (const auto& candidate : getAnchorCandidates_(h)) {
+            if (anchorCandidateUsable_(R, h, candidate, incomingClosureCache)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     std::unordered_map<NodePtr, std::vector<IncRegionAnalysis::AnchorCandidate>>
@@ -1246,58 +1508,6 @@ private:
         }
         std::unordered_map<NodePtr, std::unordered_set<NodePtr>> incoming_closure_cache;
         incoming_closure_cache.reserve(boundary_vec.size());
-        auto getIncomingClosure = [&](const NodePtr& head) -> const std::unordered_set<NodePtr>& {
-            static const std::unordered_set<NodePtr> kEmpty;
-            if (!head) return kEmpty;
-            auto it = incoming_closure_cache.find(head);
-            if (it != incoming_closure_cache.end()) return it->second;
-            std::unordered_set<NodePtr> closure;
-            if (!R.nodes.count(head)) {
-                return incoming_closure_cache.emplace(head, std::move(closure)).first->second;
-            }
-            std::vector<NodePtr> stack;
-            closure.insert(head);
-            stack.push_back(head);
-            while (!stack.empty()) {
-                auto cur = stack.back();
-                stack.pop_back();
-                const auto& inEdges = view_.getIncomingEdges(cur);
-                for (const auto& e : inEdges) {
-                    if (!e) continue;
-                    for (const auto& in : view_.getInputs(e)) {
-                        if (!in) continue;
-                        if (!R.nodes.count(in)) continue;
-                        if (closure.insert(in).second) {
-                            stack.push_back(in);
-                        }
-                    }
-                }
-            }
-            return incoming_closure_cache.emplace(head, std::move(closure)).first->second;
-        };
-        auto anchorBypassesBoundary = [&](const NodePtr& head, const AnchorCandidate& cand) -> bool {
-            NodePtr source;
-            if (cand.kind == IncRegionAnalysis::AnchorKind::Node) {
-                source = cand.node;
-            } else if (cand.edge) {
-                source = view_.getOutput(cand.edge);
-            }
-            if (!source) {
-                return true;
-            }
-            const auto& incomingClosure = getIncomingClosure(head);
-            if (incomingClosure.empty()) {
-                return true;
-            }
-            const auto& reachable = ensureReachable_(source);
-            for (const auto& n : reachable) {
-                if (!R.nodes.count(n)) continue;
-                if (!incomingClosure.count(n)) {
-                    return true;
-                }
-            }
-            return false;
-        };
         for (const auto& head : boundary_vec) {
             if (delta_insert_nodes_cache_.count(head)) {
                 if (incRegionalProfileEnabled) {
@@ -1306,114 +1516,15 @@ private:
                 }
                 continue;
             }
-            if (incRegionalProfileEnabled) {
-                auto inEs = view_.getIncomingEdges(head);
-                for (auto& e : inEs) {
-                    auto edgeStatus = edgeAnchorStatus_(head, e);
-                    if (edgeStatus.first) {
-                        if (R.edges.count(e)) {
-                            logAnchorCheck_(head, std::string("edge:") + edge_id(e, view_), false,
-                                "edge_anchor_in_region");
-                            continue;
-                        }
-                        if (anchorBypassesBoundary(head, AnchorCandidate::fromEdge(e))) {
-                            logAnchorCheck_(head, std::string("edge:") + edge_id(e, view_), false,
-                                "anchor_bypass_incoming_closure");
-                            continue;
-                        }
-                        logAnchorCheck_(head, std::string("edge:") + edge_id(e, view_), true, edgeStatus.second);
-                        anchors[head].push_back(AnchorCandidate::fromEdge(e));
-                        continue;
-                    }
-                    logAnchorCheck_(head, std::string("edge:") + edge_id(e, view_), false, edgeStatus.second);
-                    if (!e || !e->isDeterministic()) {
-                        continue;
-                    }
-                    // Allow anchors via deterministic edges: use non-det fact inputs or their incoming non-det edges.
-                    const auto& ins = view_.getInputs(e);
-                    for (const auto& inNode : ins) {
-                        if (!inNode) continue;
-                        if (!is_anchor_path_safe(inNode)) {
-                            logAnchorCheck_(head, std::string("node:") + node_id(inNode), false,
-                                "input_output_or_evidence");
-                            continue;
-                        }
-                        if (R.nodes.count(inNode)) {
-                            logAnchorCheck_(head, std::string("node:") + node_id(inNode), false,
-                                "input_node_in_region");
-                            continue;
-                        }
-                        if (inNode->isFact && inNode->getProbability() < 1.0) {
-                            if (delta_insert_nodes_cache_.count(inNode)) {
-                                logAnchorCheck_(head, std::string("node:") + node_id(inNode), false,
-                                    "input_node_delta_insert");
-                                continue;
-                            }
-                            if (anchorBypassesBoundary(head, AnchorCandidate::fromNode(inNode))) {
-                                logAnchorCheck_(head, std::string("node:") + node_id(inNode), false,
-                                    "anchor_bypass_incoming_closure");
-                                continue;
-                            }
-                            anchors[head].push_back(AnchorCandidate::fromNode(inNode));
-                            logAnchorCheck_(head, std::string("node:") + node_id(inNode), true, "node_anchor_ok");
-                            continue;
-                        }
-                        if (inNode->isFact) {
-                            logAnchorCheck_(head, std::string("node:") + node_id(inNode), false,
-                                "input_fact_prob1");
-                        }
-                        for (const auto& inEdge : view_.getIncomingEdges(inNode)) {
-                            if (!inEdge) {
-                                logAnchorCheck_(head, "<null-edge>", false, "input_edge_null");
-                                continue;
-                            }
-                            if (inEdge->isDeterministic()) {
-                                logAnchorCheck_(head, std::string("edge:") + edge_id(inEdge, view_), false,
-                                    "input_edge_deterministic");
-                                continue;
-                            }
-                            if (R.edges.count(inEdge)) {
-                                logAnchorCheck_(head, std::string("edge:") + edge_id(inEdge, view_), false,
-                                    "input_edge_in_region");
-                                continue;
-                            }
-                            if (delta_insert_edges_cache_.count(inEdge)) {
-                                logAnchorCheck_(head, std::string("edge:") + edge_id(inEdge, view_), false,
-                                    "input_edge_delta_insert");
-                                continue;
-                            }
-                            if (anchorBypassesBoundary(head, AnchorCandidate::fromEdge(inEdge))) {
-                                logAnchorCheck_(head, std::string("edge:") + edge_id(inEdge, view_), false,
-                                    "anchor_bypass_incoming_closure");
-                                continue;
-                            }
-                            anchors[head].push_back(AnchorCandidate::fromEdge(inEdge));
-                            logAnchorCheck_(head, std::string("edge:") + edge_id(inEdge, view_), true,
-                                "edge_anchor_ok");
-                        }
-                    }
+            const auto& candidates = getAnchorCandidates_(head);
+            for (const auto& cand : candidates) {
+                std::string reason;
+                if (!anchorCandidateUsable_(R, head, cand, incoming_closure_cache, &reason)) {
+                    logAnchorCheck_(head, anchor_id(cand, view_), false, reason);
+                    continue;
                 }
-            } else {
-                const auto& candidates = getAnchorCandidates_(head);
-                for (const auto& cand : candidates) {
-                    if (cand.kind == IncRegionAnalysis::AnchorKind::Node) {
-                        if (R.nodes.count(cand.node)) {
-                            continue;
-                        }
-                        if (anchorBypassesBoundary(head, cand)) {
-                            continue;
-                        }
-                        anchors[head].push_back(cand);
-                    } else {
-                        if (R.edges.count(cand.edge)) {
-                            continue;
-                        }
-                        if (anchorBypassesBoundary(head, cand)) {
-                            continue;
-                        }
-                        anchors[head].push_back(cand);
-                    }
-                }
+                anchors[head].push_back(cand);
+                logAnchorCheck_(head, anchor_id(cand, view_), true, reason);
             }
             if (incRegionalProfileEnabled) {
                 const auto inCount = view_.getIncomingEdges(head).size();
@@ -2081,6 +2192,7 @@ private:
     std::unordered_map<NodePtr, std::set<EdgePtr>> edge_scope_by_source_;
     std::unordered_map<EdgePtr, std::set<NodePtr>> edge_scope_index_;
     std::unordered_map<NodePtr, std::set<NodePtr>> reachable_cache_;
+    std::unordered_map<NodePtr, std::unordered_set<NodePtr>> full_reachable_cache_;
     std::unordered_map<size_t, std::unordered_set<size_t>> scc_reach_cache_;
     std::unordered_map<size_t, std::set<NodePtr>> scc_reach_nodes_cache_;
     std::unordered_map<NodePtr, std::vector<NodePtr>> head_branching_sources_cache_;
@@ -2168,6 +2280,27 @@ private:
         // In lazy mode, avoid forcing SCC construction; a plain DFS is typically cheaper for a small
         // number of sources.
         return reachable_cache_.emplace(source, forwardReachable_(source)).first->second;
+    }
+
+    const std::unordered_set<NodePtr>& ensureFullReachable_(const NodePtr& source) {
+        static const std::unordered_set<NodePtr> kEmpty;
+        if (!source) return kEmpty;
+        auto it = full_reachable_cache_.find(source);
+        if (it != full_reachable_cache_.end()) return it->second;
+        std::unordered_set<NodePtr> reachable;
+        std::vector<NodePtr> stack;
+        stack.push_back(source);
+        while (!stack.empty()) {
+            auto cur = stack.back();
+            stack.pop_back();
+            if (!cur || !reachable.insert(cur).second) continue;
+            for (const auto& edge : view_.getOutgoingEdges(cur)) {
+                if (!edge) continue;
+                NodePtr head = view_.getOutput(edge);
+                if (head) stack.push_back(head);
+            }
+        }
+        return full_reachable_cache_.emplace(source, std::move(reachable)).first->second;
     }
 
     void ensureLeastParents_(const NodePtr& source) {
