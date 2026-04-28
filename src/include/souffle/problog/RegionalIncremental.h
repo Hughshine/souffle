@@ -1231,6 +1231,7 @@ public:
         size_t analyzeDrNodes = 0;
         size_t analyzeDrEdges = 0;
         size_t regionNodeCount = 0;
+        size_t regionEdgeCount = 0;
         size_t drNodeCount = 0;
         size_t drEdgeCount = 0;
         size_t boundaryNodeCount = 0;
@@ -2205,6 +2206,7 @@ public:
         }
 
         stats_.regionNodeCount = plan.regionNodes.size();
+        stats_.regionEdgeCount = analysis.region.edges.size();
         stats_.drNodeCount = analysisStats.dr_nodes;
         stats_.drEdgeCount = analysisStats.dr_edges;
         stats_.boundaryNodeCount = plan.boundaryNodes.size();
@@ -2505,6 +2507,7 @@ public:
                     DerivationGraphViewInterface::qualifyDumpPath(filename), analysis);
         }
         stats_.regionNodeCount = plan.regionNodes.size();
+        stats_.regionEdgeCount = analysis.region.edges.size();
         stats_.boundaryNodeCount = plan.boundaryNodes.size();
         incRegionalTurnSummary.valid = true;
         incRegionalTurnSummary.boundaryTotal = plan.boundaryNodes.size();

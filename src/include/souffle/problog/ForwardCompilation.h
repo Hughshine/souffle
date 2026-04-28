@@ -18,6 +18,7 @@
 #include <limits>
 #include <type_traits>
 #include <utility>
+#include <cstdlib>
 #include <functional>
 #include <sstream>
 #include "souffle/problog/RegionalIncremental.h"
@@ -131,9 +132,128 @@ static inline void maybePrepareIncReorderPolicy(
     addIncReorderStats(debugger, "inc_reord_auto", stats);
 }
 
+static inline std::size_t readIncReorderSizeEnv(const char* name, std::size_t fallback) {
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || raw[0] == '\0') {
+        return fallback;
+    }
+    char* end = nullptr;
+    unsigned long long parsed = std::strtoull(raw, &end, 10);
+    if (end == raw || (end != nullptr && *end != '\0')) {
+        return fallback;
+    }
+    return static_cast<std::size_t>(parsed);
+}
+
+static inline std::size_t ceilMulDiv(std::size_t lhs, std::size_t rhs, std::size_t divisor) {
+    if (lhs == 0 || rhs == 0 || divisor == 0) {
+        return 0;
+    }
+    const std::size_t max = std::numeric_limits<std::size_t>::max();
+    if (lhs > max / rhs) {
+        return max;
+    }
+    const std::size_t product = lhs * rhs;
+    if (product > max - (divisor - 1)) {
+        return max;
+    }
+    return (product + divisor - 1) / divisor;
+}
+
+static inline std::size_t effectiveIncReorderWorkThreshold(
+        std::size_t fixedThreshold, std::size_t baseWorkScore, Debugger& debugger) {
+    const std::size_t adaptiveBp =
+            readIncReorderSizeEnv("SOUFFLE_INC_REORDER_ADAPTIVE_BP", 150);
+    const std::size_t adaptiveMin =
+            readIncReorderSizeEnv("SOUFFLE_INC_REORDER_ADAPTIVE_MIN", 800);
+    debugger.addInfo("inc_reord_explicit_adaptive_bp", std::to_string(adaptiveBp));
+    debugger.addInfo("inc_reord_explicit_adaptive_min", std::to_string(adaptiveMin));
+    debugger.addInfo("inc_reord_explicit_base_work_score", std::to_string(baseWorkScore));
+    if (adaptiveBp == 0 || baseWorkScore == 0 || fixedThreshold == 0) {
+        debugger.addInfo("inc_reord_explicit_effective_threshold", std::to_string(fixedThreshold));
+        return fixedThreshold;
+    }
+    std::size_t adaptiveThreshold = ceilMulDiv(baseWorkScore, adaptiveBp, 10000);
+    if (adaptiveThreshold < adaptiveMin) {
+        adaptiveThreshold = adaptiveMin;
+    }
+    const std::size_t effectiveThreshold =
+            std::min(fixedThreshold, adaptiveThreshold);
+    debugger.addInfo("inc_reord_explicit_adaptive_threshold", std::to_string(adaptiveThreshold));
+    debugger.addInfo("inc_reord_explicit_effective_threshold", std::to_string(effectiveThreshold));
+    return effectiveThreshold;
+}
+
+struct IncReorderPressureScore {
+    std::string mode;
+    std::size_t rawDelta = 0;
+    std::size_t frontierNodes = 0;
+    std::size_t frontierEdges = 0;
+    std::size_t bddEdgesProcessed = 0;
+    std::size_t bddNodesUpdated = 0;
+
+    std::size_t total() const {
+        return rawDelta + frontierNodes + frontierEdges + bddEdgesProcessed + bddNodesUpdated;
+    }
+
+    std::size_t frontierWork() const {
+        return frontierNodes + frontierEdges;
+    }
+
+    std::size_t bddWork() const {
+        return bddEdgesProcessed + bddNodesUpdated;
+    }
+};
+
+static inline void addIncReorderPressureScore(
+        Debugger& debugger, const IncReorderPressureScore& score) {
+    debugger.addInfo("inc_reord_pressure_score_version", "unified-v1");
+    debugger.addInfo("inc_reord_pressure_mode", score.mode);
+    debugger.addInfo("inc_reord_pressure_raw_delta", std::to_string(score.rawDelta));
+    debugger.addInfo("inc_reord_pressure_frontier_nodes", std::to_string(score.frontierNodes));
+    debugger.addInfo("inc_reord_pressure_frontier_edges", std::to_string(score.frontierEdges));
+    debugger.addInfo("inc_reord_pressure_frontier_work", std::to_string(score.frontierWork()));
+    debugger.addInfo(
+            "inc_reord_pressure_bdd_edges_processed", std::to_string(score.bddEdgesProcessed));
+    debugger.addInfo("inc_reord_pressure_bdd_nodes_updated", std::to_string(score.bddNodesUpdated));
+    debugger.addInfo("inc_reord_pressure_bdd_work", std::to_string(score.bddWork()));
+    debugger.addInfo("inc_reord_pressure_score", std::to_string(score.total()));
+}
+
+static inline std::size_t weightedIncReorderComponent(
+        std::size_t component, std::size_t weightBp) {
+    return ceilMulDiv(component, weightBp, 10000);
+}
+
+static inline std::size_t weightedMaxIncReorderScore(
+        const IncReorderPressureScore& score, Debugger& debugger) {
+    const std::size_t rawWeightBp =
+            readIncReorderSizeEnv("SOUFFLE_INC_REORDER_WEIGHT_RAW_BP", 10000);
+    const std::size_t frontierWeightBp =
+            readIncReorderSizeEnv("SOUFFLE_INC_REORDER_WEIGHT_FRONTIER_BP", 10000);
+    const std::size_t bddWeightBp =
+            readIncReorderSizeEnv("SOUFFLE_INC_REORDER_WEIGHT_BDD_BP", 10000);
+    const std::size_t rawWeighted = weightedIncReorderComponent(score.rawDelta, rawWeightBp);
+    const std::size_t frontierWeighted =
+            weightedIncReorderComponent(score.frontierWork(), frontierWeightBp);
+    const std::size_t bddWeighted = weightedIncReorderComponent(score.bddWork(), bddWeightBp);
+    const std::size_t weightedMax =
+            std::max(rawWeighted, std::max(frontierWeighted, bddWeighted));
+    debugger.addInfo("inc_reord_trigger_score_version", "weighted-max-v1");
+    debugger.addInfo("inc_reord_trigger_weight_raw_bp", std::to_string(rawWeightBp));
+    debugger.addInfo("inc_reord_trigger_weight_frontier_bp", std::to_string(frontierWeightBp));
+    debugger.addInfo("inc_reord_trigger_weight_bdd_bp", std::to_string(bddWeightBp));
+    debugger.addInfo("inc_reord_trigger_raw_weighted", std::to_string(rawWeighted));
+    debugger.addInfo("inc_reord_trigger_frontier_weighted", std::to_string(frontierWeighted));
+    debugger.addInfo("inc_reord_trigger_bdd_weighted", std::to_string(bddWeighted));
+    debugger.addInfo("inc_reord_trigger_score", std::to_string(weightedMax));
+    return weightedMax;
+}
+
 template <typename FormulaNodeRef>
 static inline void maybeRunExplicitIncReorder(
-        FormulaManager<FormulaNodeRef>& formulaManager, std::size_t workScore) {
+        FormulaManager<FormulaNodeRef>& formulaManager, std::size_t workScore,
+        std::size_t baseWorkScore = 0) {
     if (!incReorderPolicyUsesExplicit()) {
         return;
     }
@@ -158,6 +278,8 @@ static inline void maybeRunExplicitIncReorder(
     debugger.addInfo("inc_reord_explicit_accumulated_before", std::to_string(accumulatedBefore));
     debugger.addInfo("inc_reord_explicit_accumulated_after", std::to_string(accumulatedAfter));
     debugger.addInfo("inc_reord_explicit_threshold", std::to_string(incReorderWorkThreshold));
+    const std::size_t effectiveThreshold =
+            effectiveIncReorderWorkThreshold(incReorderWorkThreshold, baseWorkScore, debugger);
     if (incReorderPolicy == "pressure" && incReorderWorkThreshold == 0) {
         debugger.addInfo("inc_reord_explicit_skip_reason", "pressure_threshold_not_set");
         FormulaReorderStats skipped;
@@ -166,7 +288,7 @@ static inline void maybeRunExplicitIncReorder(
         addIncReorderStats(debugger, "inc_reord_explicit", skipped);
         return;
     }
-    if (effectiveWorkScore < incReorderWorkThreshold) {
+    if (effectiveWorkScore < effectiveThreshold) {
         FormulaReorderStats skipped;
         skipped.supported = true;
         skipped.success = true;
@@ -1977,12 +2099,18 @@ void buildFormulasIncCyclewise(
     end = high_resolution_clock::now();
     debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration_cast<milliseconds>(end - start).count()) + " milliseconds");
     debugger.logMessage(Level::INFO, "Iteration rounds: " + std::to_string(round));
-    const std::size_t explicitWorkScore =
-            changedNodes.size() + depGraphReachNodes + depGraphReachEdges +
-            rederiveStats.edge_processed + insertStats.edge_processed +
-            deltaInsertedNodes.size() + deltaInsertedEdges.size() +
+    IncReorderPressureScore pressureScore;
+    pressureScore.mode = "inc-naive";
+    pressureScore.rawDelta = deltaInsertedNodes.size() + deltaInsertedEdges.size() +
             deltaDeletedNodes.size() + deltaDeletedEdges.size();
-    maybeRunExplicitIncReorder(formulaManager, explicitWorkScore);
+    pressureScore.frontierNodes = depGraphReachNodes;
+    pressureScore.frontierEdges = depGraphReachEdges;
+    pressureScore.bddEdgesProcessed = rederiveStats.edge_processed + insertStats.edge_processed;
+    pressureScore.bddNodesUpdated = changedNodes.size();
+    addIncReorderPressureScore(debugger, pressureScore);
+    const std::size_t triggerScore = weightedMaxIncReorderScore(pressureScore, debugger);
+    const std::size_t fullGraphWorkScore = view.getNodes().size() + view.getEdges().size();
+    maybeRunExplicitIncReorder(formulaManager, triggerScore, fullGraphWorkScore);
     formulaManager.dumpProfilingStatistics();
     for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
         debugger.addInfo(key, value);
@@ -2816,16 +2944,25 @@ void buildFormulasIncRegionalCyclewise(
     debugger.addInfo("fc_lite_rebuild_total_ms", std::to_string(liteRebuild.totalMs));
     debugger.addInfo("fc_lite_rebuild_reorder_ms", std::to_string(liteRebuild.reorderMs));
     debugger.addInfo("fc_lite_region_nodes", std::to_string(liteStats.regionNodeCount));
-    debugger.addInfo("fc_lite_region_edges", std::to_string(liteStats.analyzeRegionEdges));
+    debugger.addInfo("fc_lite_region_edges", std::to_string(liteStats.regionEdgeCount));
+    debugger.addInfo("fc_lite_analyze_region_edges", std::to_string(liteStats.analyzeRegionEdges));
     debugger.addInfo("fc_lite_dr_nodes", std::to_string(liteStats.drNodeCount));
     debugger.addInfo("fc_lite_dr_edges", std::to_string(liteStats.drEdgeCount));
     debugger.addInfo("fc_lite_boundary_nodes", std::to_string(liteStats.boundaryNodeCount));
     debugger.addInfo("fc_lite_calibrated_nodes", std::to_string(liteStats.calibratedCount));
     debugger.addInfo("fc_lite_used_fallback", liteStats.usedFallback ? "1" : "0");
-    const std::size_t explicitWorkScore =
-            liteStats.regionNodeCount + liteStats.analyzeRegionEdges +
+    IncReorderPressureScore pressureScore;
+    pressureScore.mode = "inc-regional";
+    pressureScore.rawDelta = deltaInsertedNodes.size() + deltaInsertedEdges.size() +
             deltaDeletedNodes.size() + deltaDeletedEdges.size();
-    maybeRunExplicitIncReorder(formulaManager, explicitWorkScore);
+    pressureScore.frontierNodes = liteStats.regionNodeCount;
+    pressureScore.frontierEdges = liteStats.regionEdgeCount;
+    pressureScore.bddEdgesProcessed = liteRebuild.edgesProcessed;
+    pressureScore.bddNodesUpdated = liteRebuild.nodesUpdated;
+    addIncReorderPressureScore(debugger, pressureScore);
+    const std::size_t triggerScore = weightedMaxIncReorderScore(pressureScore, debugger);
+    const std::size_t fullGraphWorkScore = view.getNodes().size() + view.getEdges().size();
+    maybeRunExplicitIncReorder(formulaManager, triggerScore, fullGraphWorkScore);
     if (incRegionalProfileEnabled) {
         debugger.addInfo("inc_regional_apply_update_ms", std::to_string(updateMs));
         const auto& calibrations = orchestrator.getCalibrations();
@@ -2880,6 +3017,7 @@ void buildFormulasIncRegionalCyclewise(
                                                                   static_cast<double>(stats.analyzeDrNodes);
         debugger.addInfo("inc_regional_analyze_region_dr_ratio", std::to_string(analyzeRatio));
         debugger.addInfo("inc_regional_region_nodes", std::to_string(stats.regionNodeCount));
+        debugger.addInfo("inc_regional_region_edges", std::to_string(stats.regionEdgeCount));
         debugger.addInfo("inc_regional_dr_nodes", std::to_string(stats.drNodeCount));
         debugger.addInfo("inc_regional_dr_edges", std::to_string(stats.drEdgeCount));
         double regionDrRatio = stats.drNodeCount == 0 ? 1.0
