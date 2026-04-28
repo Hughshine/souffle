@@ -1,10 +1,10 @@
 # AGENTS
 
-Repo-local constraints for Codex sessions on the incremental AE branch.
+Repo-local constraints for Codex sessions on the incremental branch.
 
 ## Source References
 
-- [README.md:1](README.md#L1): evaluator-facing branch scope.
+- [README.md:1](README.md#L1): branch scope.
 - [CMakeLists.txt:93](CMakeLists.txt#L93): CMake testing option.
 - [CMakeLists.txt:302](CMakeLists.txt#L302): regression subdirectory wiring.
 - [tests/regression/CMakeLists.txt:33](tests/regression/CMakeLists.txt#L33): `check-regression` target.
@@ -12,8 +12,8 @@ Repo-local constraints for Codex sessions on the incremental AE branch.
 
 ## Scope
 
-- Keep changes focused on the incremental AE surface.
-- Keep generated benchmark outputs, logs, and timing data out of git.
+- Keep changes focused on the incremental compiler/runtime surface.
+- Keep generated outputs, logs, timing data, and local run files out of git.
 - Update [docs/INDEX.md](docs/INDEX.md) when adding, deleting, or renaming documentation.
 - Do not modify unrelated local research workspaces unless explicitly requested.
 

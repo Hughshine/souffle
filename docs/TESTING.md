@@ -36,6 +36,3 @@ incremental modes against `full` on small programs covering:
 - negated absent tuple grounding.
 - `@post_delete_*` timestamp views for non-recursive mixed updates.
 - canonical CLI mode switching, dumps, profiles, and output naming.
-
-Paper-facing side-channel evaluation is driven by the companion
-`problog-benchmark` checkout on branch `CAV-INC`.

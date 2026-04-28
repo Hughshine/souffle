@@ -1,19 +1,18 @@
 # Documentation Index
 
-Read these documents in order when evaluating or modifying the incremental AE
-artifact.
+Read these documents in order when evaluating or modifying the incremental
+Souffle compiler/runtime branch.
 
-1. [../README.md](../README.md): branch scope, build, benchmark handoff.
+1. [../README.md](../README.md): branch scope, build, and local run.
 2. [USAGE.md](USAGE.md): compiler/runtime flags and interactive commands.
 3. [ARCHITECTURE.md](ARCHITECTURE.md): end-to-end control flow.
 4. [topics/pipeline/README.dred.md](topics/pipeline/README.dred.md): DRed and graph delta flow.
 5. [topics/pipeline/README.inc.region.md](topics/pipeline/README.inc.region.md): regional incremental forward compilation.
-6. [topics/evaluation/README.artifact.inc.md](topics/evaluation/README.artifact.inc.md): side-channel AE workflow.
-7. [TESTING.md](TESTING.md): regression command set.
-8. [topics/testing/README.regression.md](topics/testing/README.regression.md): maintained case list.
-9. [SECURITY.md](SECURITY.md): dependency and artifact hygiene.
-10. [RUNBOOK.md](RUNBOOK.md): compact local run guide.
-11. [../AGENTS.md](../AGENTS.md): agent constraints.
+6. [TESTING.md](TESTING.md): regression command set.
+7. [topics/testing/README.regression.md](topics/testing/README.regression.md): maintained case list.
+8. [SECURITY.md](SECURITY.md): dependency and local-output hygiene.
+9. [RUNBOOK.md](RUNBOOK.md): compact local run guide.
+10. [../AGENTS.md](../AGENTS.md): agent constraints.
 
 ## Examples
 

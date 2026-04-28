@@ -1,6 +1,6 @@
 # Regression Cases
 
-Each maintained case is incremental-artifact focused and runs through
+Each maintained case is incremental-runtime focused and runs through
 `tests/regression/run_regression_case.py`.
 
 Layout:
@@ -11,5 +11,4 @@ Layout:
 - variant-group case: one registered case directory containing named subcases,
   each with its own static layout
 
-Do not add non-incremental artifact or benchmark-pipeline fixtures to this
-branch's regression suite.
+Do not add unrelated fixtures to this branch's regression suite.

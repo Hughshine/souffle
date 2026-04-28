@@ -1,11 +1,11 @@
 # Architecture
 
-This artifact evaluates probabilistic Datalog programs under online updates.
+Generated runtimes execute probabilistic Datalog programs under online updates.
 The compiler emits an interactive runtime. The runtime computes a baseline
 derivation graph, accepts insert/delete turns, and writes output tuple
 probabilities after each commit.
 
-The AE comparison is `full` versus `inc-naive` or `inc-regional`.
+The local correctness comparison is `full` versus `inc-naive` or `inc-regional`.
 `full` is the exact recomputation oracle; incremental modes must produce
 matching tuple keys and probabilities on the same delta stream.
 
@@ -27,9 +27,9 @@ The normal Souffle frontend parses and transforms the program. This branch
 selects the online AST-to-RAM translator and emits a binary wired to the
 probabilistic incremental pipeline.
 
-Compile-time AE parameters set runtime defaults only. Backend, determinism, and
+Compile-time branch parameters set runtime defaults only. Backend, determinism, and
 variable-index reuse are fixed. Incremental BDD reordering uses the default
-pressure gate, with options available only for controlled comparison runs.
+pressure gate, with options available only for controlled local diagnostics.
 
 ## 2. Baseline
 

@@ -9,6 +9,8 @@
 - [../src/include/souffle/CompiledOptions.h:187](../src/include/souffle/CompiledOptions.h#L187): mode and output syntax.
 - [../src/include/souffle/CompiledOptions.h:709](../src/include/souffle/CompiledOptions.h#L709): generated runtime parser.
 - [../src/include/souffle/cli/Cli.h:679](../src/include/souffle/cli/Cli.h#L679): online CLI commands.
+- [../src/include/souffle/problog/ForwardCompilation.h:163](../src/include/souffle/problog/ForwardCompilation.h#L163): adaptive incremental reorder threshold.
+- [../src/include/souffle/problog/ForwardCompilation.h:228](../src/include/souffle/problog/ForwardCompilation.h#L228): weighted incremental reorder work score.
 
 ## Input Format
 
@@ -32,7 +34,7 @@ Rules may also carry ProbLog-style probabilities:
 Compile-time `-F` and `-D` bake default runtime directories into the generated
 binary. Runtime flags can override them.
 
-AE-facing compiler options:
+Public compiler options for this branch:
 
 - `-F, --fact-dir <DIR>`: default fact directory.
 - `-D, --output-dir <DIR>`: default output directory.
@@ -48,7 +50,7 @@ Inherited Souffle options such as `--jobs`, `--include-dir`, `--profile`,
 
 ## Runtime
 
-AE-facing generated runtime options:
+Public generated runtime options for this branch:
 
 - `-F, --facts, --input-dir <DIR>`: fact directory.
 - `-D, --output, --output-dir <DIR>`: output directory.
@@ -56,21 +58,24 @@ AE-facing generated runtime options:
 - `--dump=<json|json-before-graph|json-before-prune|dot|stat>`: default-off graph/stat dumps.
 - `--profile-stage=<dred|inc|fc|wmc|inc-delete|inc-regional|dep-graph>`: default-off profiling output.
 - `--inc-reorder-policy=<default|off|pressure|auto|explicit|both>`: incremental
-  CUDD reordering policy. The AE default is `pressure`.
+  CUDD reordering policy. The branch default is `pressure`.
 - `--inc-reorder-work-threshold=<N>`: BDD-pressure threshold for `pressure`
-  reordering. The AE default is `2500`.
+  reordering. The branch default is `2500`.
 - `--logfile=<FILE>` or `--log-file=<FILE>`: debugger log filename.
 - `-v, --verbose`: print informational graph, CUDD, and pipeline diagnostics.
 - `-p, --profile=<FILE>`: profile output, only for binaries compiled with profiling enabled.
 - `-j, --jobs=<N>`: runtime thread count when OpenMP is available.
 
 There are no public backend, determinism, or variable-index reuse switches in
-this AE branch. BDD, deterministic-relation analysis, and variable-index reuse
+this branch. BDD, deterministic-relation analysis, and variable-index reuse
 are fixed implementation defaults. Incremental BDD reordering uses the same
-pressure gate for `inc-naive` and `inc-regional`. The gate accumulates work
-score across online turns and resets after an explicit CUDD reorder;
+pressure gate for `inc-naive` and `inc-regional`. The trigger score is the
+weighted maximum of raw update size, affected graph frontier work, and BDD
+update work. In `pressure` mode the score accumulates across online turns and
+resets after an explicit CUDD reorder. The configured threshold is also bounded
+by an adaptive threshold derived from the baseline graph work score.
 `--inc-reorder-policy=default` restores legacy CUDD adaptive reordering for
-comparison runs.
+controlled local diagnostics.
 
 ## Online CLI
 

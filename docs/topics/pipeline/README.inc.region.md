@@ -1,8 +1,8 @@
 # Regional Incremental Forward Compilation
 
-`inc-regional` is the regional forward-compilation mode used by the incremental
-AE branch. It reuses formulas outside the affected region and recomputes only
-the selected region plus boundary calibration work.
+`inc-regional` is the regional forward-compilation mode used by this branch. It
+reuses formulas outside the affected region and recomputes only the selected
+region plus boundary calibration work.
 
 ## Source References
 
@@ -14,6 +14,8 @@ the selected region plus boundary calibration work.
 - [../../../src/include/souffle/problog/IncRegionAnalyzer.h:1418](../../../src/include/souffle/problog/IncRegionAnalyzer.h#L1418): boundary anchor usability checks.
 - [../../../src/include/souffle/problog/RegionalIncremental.h:1201](../../../src/include/souffle/problog/RegionalIncremental.h#L1201): regional FC class.
 - [../../../src/include/souffle/problog/RegionalIncremental.h:1537](../../../src/include/souffle/problog/RegionalIncremental.h#L1537): delta-reach dependency graph diagnostics.
+- [../../../src/include/souffle/problog/ForwardCompilation.h:163](../../../src/include/souffle/problog/ForwardCompilation.h#L163): adaptive incremental reorder threshold.
+- [../../../src/include/souffle/problog/ForwardCompilation.h:228](../../../src/include/souffle/problog/ForwardCompilation.h#L228): weighted incremental reorder work score.
 - [../../../src/include/souffle/problog/formula/CuddManager.h:568](../../../src/include/souffle/problog/formula/CuddManager.h#L568): CUDD adaptive reordering initialization.
 
 ## Control Flow
@@ -47,18 +49,21 @@ or non-deterministic edge anchor. For experiment bisects,
 ## Reordering
 
 Full BDD construction uses CUDD's normal dynamic reordering path. Incremental
-turns use a BDD-pressure gate by default: `inc-naive` and `inc-regional` compute
-their own update work score, disable inc-turn auto reordering, accumulate the
-score across online turns, and run one explicit CUDD reorder only when the
-accumulated score reaches the shared threshold (`2500`). The accumulator resets
-after an explicit reorder. Incremental turns create variables only for delta
-inserts when possible. Use `--inc-reorder-policy=default` only for legacy
-adaptive-reorder comparison runs.
+turns use a BDD-pressure gate by default. `inc-naive` and `inc-regional`
+compute their own update work score, disable inc-turn auto reordering,
+accumulate that score across online turns, and run one explicit CUDD reorder
+only when the accumulated score reaches the effective shared threshold. The
+score is the weighted maximum of raw delta size, affected graph frontier work,
+and BDD update work. The effective threshold is the smaller of the configured
+threshold (`2500` by default) and an adaptive threshold derived from the
+baseline graph work score. The accumulator resets after an explicit reorder.
+Incremental turns create variables only for delta inserts when possible. Use
+`--inc-reorder-policy=default` only for legacy adaptive-reorder diagnostics.
 
 ## Diagnostics
 
 Default runs only write probabilities. Use canonical selectors when collecting
-extra AE material:
+extra diagnostic material:
 
 ```bash
 ./compute -F input -D output --setmode inc-regional \

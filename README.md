@@ -1,13 +1,21 @@
-# Incremental Probabilistic Souffle Artifact
+# Incremental Probabilistic Souffle
 
-This branch is the incremental AE compiler/runtime branch. The compiler always
-emits the interactive incremental runtime. The public AE surface is intentionally
-small: `inc-naive`, `inc-regional`, `full`, canonical dump/profile output
-selectors, and the maintained regression suite.
+This branch contains the incremental probabilistic Souffle compiler/runtime.
+The compiler always emits the interactive incremental runtime. The public
+surface is intentionally small: `inc-naive`, `inc-regional`, `full`, canonical
+dump/profile output selectors, and the maintained regression suite.
 
-The companion benchmark repository is `problog-benchmark` on branch `CAV-INC`.
-Use this repository for the compiler and generated runtimes, and use the
-companion repository for side-channel case generation and result collection.
+## Start With Examples
+
+Before reading the implementation notes, start with the small programs under
+`examples/`:
+
+- [examples/cycle_repair_path/README.md](examples/cycle_repair_path/README.md):
+  interactive recursive delete/rederive cycle repair with DOT output.
+- [examples/inc_bdd_region/README.md](examples/inc_bdd_region/README.md):
+  regional forward-compilation scope and mergeable-anchor diagnostics.
+- [examples/inc_bdd_calibration/README.md](examples/inc_bdd_calibration/README.md):
+  boundary calibration for reused downstream BDDs.
 
 ## Source References
 
@@ -58,23 +66,12 @@ For a small interactive cycle-repair example, see
 ## Optional Outputs
 
 Extra graph/profiling outputs are off by default. Enable them explicitly when
-collecting AE debugging material:
+collecting debugging material:
 
 ```bash
 ./compute -F input -D output --setmode inc-regional \
   --dump=dot,json,stat --profile-stage=inc,wmc,fc
 ```
-
-## Benchmark
-
-From the companion `problog-benchmark` checkout on `CAV-INC`:
-
-```bash
-SOUFFLE_BIN=/path/to/inc-artifact-ae/build/src/souffle \
-python3 benchmarks/side_channel/cli/side_channel_inc.py <command> ...
-```
-
-For the current AE subset, run cases `P13` through `P20`.
 
 ## Verification
 
@@ -89,5 +86,4 @@ cmake --build build --target check-regression
 - [docs/USAGE.md](docs/USAGE.md): compiler/runtime interface.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): control-flow map.
 - [docs/TESTING.md](docs/TESTING.md): regression checks.
-- [docs/SECURITY.md](docs/SECURITY.md): dependency and artifact hygiene.
-- [docs/topics/evaluation/README.artifact.inc.md](docs/topics/evaluation/README.artifact.inc.md): AE benchmark workflow.
+- [docs/SECURITY.md](docs/SECURITY.md): dependency and local-output hygiene.
