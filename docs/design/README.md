@@ -10,6 +10,7 @@ Design proposals and optimization ideas that are not fully implemented.
 - Refactor scope, staging, and acceptance planning.
 - Formalization and ordering design notes.
 - Approximate probabilistic pipeline design (`derivation graph -> query formula -> AMC/WAMC`).
+- Optional external dependency setup for the standalone approximation backends.
 
 ## Status
 - Treat these files as design references, not normative runtime behavior.
@@ -22,6 +23,7 @@ Design proposals and optimization ideas that are not fully implemented.
 - [docs/design/README.rewrite.opt.md](docs/design/README.rewrite.opt.md)
 - [docs/design/README.refactor.scope.md](docs/design/README.refactor.scope.md)
 - [docs/design/README.approx.pipeline.md](docs/design/README.approx.pipeline.md)
+- [docs/design/README.approx.external-deps.md](docs/design/README.approx.external-deps.md)
 - [docs/design/README.scbf.pipeline.md](docs/design/README.scbf.pipeline.md)
 - [docs/design/README.scbf.ir.md](docs/design/README.scbf.ir.md)
 - [docs/design/README.scbf.evaluator.md](docs/design/README.scbf.evaluator.md)
@@ -30,6 +32,7 @@ Design proposals and optimization ideas that are not fully implemented.
 - [docs/design/README.scbf.rewrite.md](docs/design/README.scbf.rewrite.md)
 
 ## Related commits
+- `UNCOMMITTED` — docs(approx): document optional external dependency setup
 - `UNCOMMITTED` — docs(design): add unified flag surface proposal
 - `UNCOMMITTED` — docs(design): add formal refactor scope and roadmap entry
 - `UNCOMMITTED` — docs(reorg): add design docs landing page and relocate root design notes

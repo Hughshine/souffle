@@ -112,6 +112,7 @@ Legend:
 
 ## Design Notes (Not Implemented)
 - [DESIGN] `docs/design/README.approx.pipeline.md` — approximate probabilistic pipeline (DG -> query formula -> AMC/WAMC)
+- [DESIGN] `docs/design/README.approx.external-deps.md` — optional local external dependency setup for ApproxMC, pepin, and Schlandals direct paths
 - [DESIGN] `docs/design/README.scbf.pipeline.md` — SCBF pipeline (DG -> SCBF -> rewrite -> DD/WMC)
 - [DESIGN] `docs/design/README.scbf.ir.md` — independent SCBF IR/module prototype and smoke workflow
 - [DESIGN] `docs/design/README.scbf.evaluator.md` — independent SCBF evaluator prototype and smoke workflow
@@ -149,8 +150,10 @@ Legend:
 - [src/MainDriver.cpp](src/MainDriver.cpp)
 - [src/include/souffle/cli/Cli.h](src/include/souffle/cli/Cli.h)
 - [tests/regression/CMakeLists.txt](tests/regression/CMakeLists.txt)
+- [docs/design/README.approx.external-deps.md](docs/design/README.approx.external-deps.md)
 
 ## Related commits
+- `UNCOMMITTED` — docs(approx): document optional external dependency setup
 - `UNCOMMITTED` — docs(design): index the formal refactor scope document
 - `UNCOMMITTED` — docs(rewrite): add dedicated implicit rewrite implementation guide
 - `UNCOMMITTED` — docs(codex): index the Codex bootstrap pack

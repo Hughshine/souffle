@@ -19,6 +19,10 @@
     is available; otherwise it falls back to the older CNF-file + CLI path
 - Not implemented in the main runtime pipeline yet
   ([src/problog/Pipeline.cpp](../../src/problog/Pipeline.cpp)).
+- Optional direct-library dependencies for `ApproxMC`, `pepin`, and
+  `Schlandals` are documented in
+  [README.approx.external-deps.md](README.approx.external-deps.md). These
+  dependencies are intentionally not vendored into the branch.
 - Side-channel full usage currently goes through the standalone replay path after
   generating `output/derivation.json`; it is not wired into the benchmark CLI as
   a first-class backend.
