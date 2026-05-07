@@ -2,7 +2,7 @@
 
 ## Status
 - Experimental standalone implementation exists in
-  [src/problog_graph_query.cpp](/home/hugh/research/datalog/souffle/src/problog_graph_query.cpp):
+  [src/problog_graph_query.cpp](../../src/problog_graph_query.cpp):
   offline `derivation.json` replay supports:
   - `--backend amc` with query slicing, query-local formula extraction,
     weighted-to-unweighted conversion, and an ApproxMC backend
@@ -18,7 +18,7 @@
     direct in-memory `Schlandals` PWMC library call when the local Rust wrapper
     is available; otherwise it falls back to the older CNF-file + CLI path
 - Not implemented in the main runtime pipeline yet
-  ([src/problog/Pipeline.cpp](/home/hugh/research/datalog/souffle/src/problog/Pipeline.cpp)).
+  ([src/problog/Pipeline.cpp](../../src/problog/Pipeline.cpp)).
 - Side-channel full usage currently goes through the standalone replay path after
   generating `output/derivation.json`; it is not wired into the benchmark CLI as
   a first-class backend.
@@ -263,17 +263,17 @@ Out of scope for phase-1:
 
 ## Existing Hooks To Reuse
 - Graph lifecycle and mode orchestration:
-  [src/problog/Pipeline.cpp](/home/hugh/research/datalog/souffle/src/problog/Pipeline.cpp)
+  [src/problog/Pipeline.cpp](../../src/problog/Pipeline.cpp)
 - Formula construction abstraction:
-  [src/include/souffle/problog/formula/FormulaManager.h](/home/hugh/research/datalog/souffle/src/include/souffle/problog/formula/FormulaManager.h)
+  [src/include/souffle/problog/formula/FormulaManager.h](../../src/include/souffle/problog/formula/FormulaManager.h)
 - Cyclewise forward compilation:
-  [src/include/souffle/problog/ForwardCompilation.h](/home/hugh/research/datalog/souffle/src/include/souffle/problog/ForwardCompilation.h)
+  [src/include/souffle/problog/ForwardCompilation.h](../../src/include/souffle/problog/ForwardCompilation.h)
 - Query slicing/evaluation prototype:
-  [src/problog_graph_query.cpp](/home/hugh/research/datalog/souffle/src/problog_graph_query.cpp)
+  [src/problog_graph_query.cpp](../../src/problog_graph_query.cpp)
 - Weighted conversion experiment:
-  [src/problog/approx/WeightedConversion.cpp](/home/hugh/research/datalog/souffle/src/problog/approx/WeightedConversion.cpp)
+  [src/problog/approx/WeightedConversion.cpp](../../src/problog/approx/WeightedConversion.cpp)
   and
-  [experiments/approxmc_demo/weighted_appmc.cpp](/home/hugh/research/datalog/souffle/experiments/approxmc_demo/weighted_appmc.cpp)
+  [experiments/approxmc_demo/weighted_appmc.cpp](../../experiments/approxmc_demo/weighted_appmc.cpp)
 
 ## High-Level Architecture
 
@@ -456,13 +456,12 @@ After full-only stabilizes:
 - Regression hook: add dedicated regression cases once runtime flags are finalized.
 
 ## References
-- ApproxMC experiment notes: [amc.md](/home/hugh/research/datalog/souffle/amc.md)
-- ApproxMC demo: [experiments/approxmc_demo/README.md](/home/hugh/research/datalog/souffle/experiments/approxmc_demo/README.md)
+- ApproxMC demo: [experiments/approxmc_demo/README.md](../../experiments/approxmc_demo/README.md)
 - Weighted conversion internals:
-  [experiments/approxmc_demo/WEIGHTED_TO_UNWEIGHTED.md](/home/hugh/research/datalog/souffle/experiments/approxmc_demo/WEIGHTED_TO_UNWEIGHTED.md)
+  [experiments/approxmc_demo/WEIGHTED_TO_UNWEIGHTED.md](../../experiments/approxmc_demo/WEIGHTED_TO_UNWEIGHTED.md)
+- Approx backend reading notes live in the separate local `research/` repo when
+  it is cloned next to the source tree.
 
 ## Related commits
-- `UNCOMMITTED` — fix(approx): interpret horn-sampling delta as per-query confidence
-- `UNCOMMITTED` — feat(approx): add experimental horn-sampling backend with shared-world Horn closure
-- `UNCOMMITTED` — feat(approx): add experimental pepin DNF backend to standalone graph-query tool
-- `UNCOMMITTED` — docs(approx): record pepin backend scope and current weighted-rational limitation
+- `f16853459` — build(approx): add demo tools and schlandals ffi sources
+- `c8abe1334` — feat(problog): extend standalone approximation backends
