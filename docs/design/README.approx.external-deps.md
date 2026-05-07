@@ -160,6 +160,6 @@ are not build failures.
 - [docs/design/README.approx.pipeline.md](README.approx.pipeline.md)
 
 ## Related commits
-- `UNCOMMITTED` — docs(approx): document optional external dependency setup
+- `17ae5e255` — docs(approx): document external dependency setup
 - `a862a74c2` — docs(approx): refresh clean-clone pipeline references
 - `f16853459` — build(approx): add demo tools and schlandals ffi sources

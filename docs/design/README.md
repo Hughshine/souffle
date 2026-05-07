@@ -32,7 +32,7 @@ Design proposals and optimization ideas that are not fully implemented.
 - [docs/design/README.scbf.rewrite.md](docs/design/README.scbf.rewrite.md)
 
 ## Related commits
-- `UNCOMMITTED` — docs(approx): document optional external dependency setup
+- `17ae5e255` — docs(approx): document external dependency setup
 - `UNCOMMITTED` — docs(design): add unified flag surface proposal
 - `UNCOMMITTED` — docs(design): add formal refactor scope and roadmap entry
 - `UNCOMMITTED` — docs(reorg): add design docs landing page and relocate root design notes

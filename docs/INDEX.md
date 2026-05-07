@@ -153,7 +153,7 @@ Legend:
 - [docs/design/README.approx.external-deps.md](docs/design/README.approx.external-deps.md)
 
 ## Related commits
-- `UNCOMMITTED` — docs(approx): document optional external dependency setup
+- `17ae5e255` — docs(approx): document external dependency setup
 - `UNCOMMITTED` — docs(design): index the formal refactor scope document
 - `UNCOMMITTED` — docs(rewrite): add dedicated implicit rewrite implementation guide
 - `UNCOMMITTED` — docs(codex): index the Codex bootstrap pack
