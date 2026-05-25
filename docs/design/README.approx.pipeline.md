@@ -11,6 +11,9 @@
   - `--backend horn-sampling` with direct derivation-slice-to-Horn compilation,
     world sampling over projected probabilistic supports, and Horn least-model
     closure to answer one or many queries from the same sampled world
+  - `--backend lbp` with the same Horn/distribution frontend lowered to a
+    shared factor graph and evaluated by synchronous loopy belief propagation
+    over Bernoulli support, definite-AND, and definite-OR factors
   - `--backend pepin` with query-local Boolean extraction followed by bounded
     DNF expansion and a direct in-memory `pepin` library call when the local
     library is available; otherwise it falls back to the older CLI route
@@ -116,6 +119,29 @@
     - stratified-negation guard fixtures (`pass(1)`, `blocked_pass(1)`)
     - thicker side-channel query `P19: KEY_IND(217457)`, where Horn sampling
       is much cheaper than exact Horn search and stays close to exact BDD
+- Standalone `lbp` replay is a Bingo-style heuristic baseline, not a certified
+  counter:
+  - detailed ProbLog/backend alignment note:
+    `research/outputs/short_term/LBP_PROBLOG_BACKEND_ALIGNMENT_20260517.md`
+  - the frontend is shared with `horn-sampling`: probabilistic facts and rule
+    applications become projected support variables, deterministic graph nodes
+    become Boolean variables, and derivation rules become definite-AND factors
+    feeding node-level definite-OR factors
+  - all query tuples in one invocation share one factor graph and one BP run, so
+    multi-query evaluation is not repeated per query
+  - `--lbp-max-iters`, `--lbp-tol`, and `--lbp-damping` control the synchronous
+    message-passing fixed point; convergence only reports message residual, not
+    probability error
+  - positive recursive derivation slices are allowed and are reported with
+    `cyclic_slice=1`; this is the standard loopy-BP baseline behavior, not a
+    Horn least-model guarantee
+  - unsupported negation semantics still fail explicitly through the shared
+    Horn/distribution frontend; there is no silent fallback to exact DD or
+    generic CNF routing
+  - the first taint smoke with rule probability `0.9` shows the expected
+    behavior: tree-like `ci_pt` queries match exact BDD, while a small loopy
+    `ci_IM` batch converges but undershoots exact BDD (`0.59049` vs `0.6561`)
+    because BP double-counts correlated evidence in the factor graph
 - AMC per-query diagnostics now include weighted/unweighted CNF sizes,
   projection-set size, added vars/clauses from weighted conversion, tilt, and
   quantization error. These are emitted in `[amc-run]` / `[amc-query]` so

@@ -1293,6 +1293,59 @@ def case_graph_query_canonical_surface(souffle_bin: Path, work_root: Path) -> No
             f"expected={expected_prob:.12g} actual={rewrite_results[query_key]:.12g}"
         )
 
+    recursive_lbp_json = case_dir / "recursive_lbp.json"
+    recursive_lbp_json.write_text(
+        """
+{
+  "facts": [
+    {"name": "seed(0)", "probability": 0.5},
+    {"name": "loop(0)", "probability": 0.5}
+  ],
+  "rules": [
+    {
+      "head": "q(0)",
+      "probability": 1.0,
+      "bodies": [
+        {"negation": false, "name": "seed(0)"}
+      ]
+    },
+    {
+      "head": "q(0)",
+      "probability": 1.0,
+      "bodies": [
+        {"negation": false, "name": "q(0)"},
+        {"negation": false, "name": "loop(0)"}
+      ]
+    }
+  ]
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    lbp_proc = run_cmd(
+        [
+            str(graph_query_bin),
+            "--json",
+            str(recursive_lbp_json),
+            "--query",
+            "q(0)",
+            "--backend",
+            "lbp",
+            "--lbp-max-iters",
+            "50",
+            "--lbp-tol",
+            "1e-9",
+        ],
+        cwd=case_dir,
+        timeout=240,
+    )
+    lbp_results = parse_graph_query_results(lbp_proc.stdout)
+    if "q(0)" not in lbp_results:
+        raise CaseFailure(f"graph-query recursive LBP: missing result for q(0)\n{lbp_proc.stdout}")
+    if "cyclic_slice=1" not in lbp_proc.stdout:
+        raise CaseFailure(f"graph-query recursive LBP: missing cyclic_slice marker\n{lbp_proc.stdout}")
+
     run_cmd_expect_fail(
         [
             str(graph_query_bin),

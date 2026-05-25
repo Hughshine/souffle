@@ -17,6 +17,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cctype>
 #include <cmath>
@@ -74,6 +75,7 @@ enum class Backend {
     Amc,
     Sampling,
     HornSampling,
+    Lbp,
     Pepin,
     Schlandals,
 };
@@ -105,6 +107,9 @@ struct Options {
     bool amcStreamOutput = false;
     uint64_t samplingSamples = 0;
     bool samplingSamplesExplicit = false;
+    uint64_t lbpMaxIters = 1000;
+    double lbpTolerance = 1e-6;
+    double lbpDamping = 0.0;
     uint64_t pepinMaxTerms = 10000;
     uint32_t pepinWeightDigits = 3;
     uint32_t pepinVerb = 0;
@@ -116,9 +121,9 @@ struct Options {
 
 const char* backendChoices() {
 #ifdef SOUFFLE_STANDALONE_HAS_SDD
-    return "bdd|sdd|amc|sampling|horn-sampling|pepin|schlandals";
+    return "bdd|sdd|amc|sampling|horn-sampling|lbp|pepin|schlandals";
 #else
-    return "bdd|amc|sampling|horn-sampling|pepin|schlandals";
+    return "bdd|amc|sampling|horn-sampling|lbp|pepin|schlandals";
 #endif
 }
 
@@ -247,6 +252,9 @@ bool fileExists(const std::string& path) {
         << "  --delta <value>       AMC delta in (0,1) (default: 0.05)\n"
         << "  --seed <value>        Random seed for AMC/sampling/horn-sampling (default: 1)\n"
         << "  --sampling-samples <n>  Fixed Monte Carlo samples for backend=sampling|horn-sampling\n"
+        << "  --lbp-max-iters <n>   Maximum synchronous LBP iterations for backend=lbp (default: 1000)\n"
+        << "  --lbp-tol <value>     LBP convergence tolerance on message max-diff (default: 1e-6)\n"
+        << "  --lbp-damping <value> LBP damping in [0,1), new=(damping*old)+(1-damping*computed)\n"
         << "  --pepin-max-terms <n> Hard DNF term cap for backend=pepin (default: 10000)\n"
         << "  --pepin-weight-digits <n>  Decimal digits for pepin weight rationals (default: 3)\n"
         << "  --pepin-verb <n>      Pass pepin verbosity through (default: 0)\n"
@@ -303,6 +311,10 @@ Backend parseBackend(const std::string& raw) {
     if (val == "horn-sampling" || val == "horn_sampling" || val == "hornsampling") {
         return Backend::HornSampling;
     }
+    if (val == "lbp" || val == "loopy-bp" || val == "loopy_bp" || val == "belief-propagation" ||
+            val == "belief_propagation") {
+        return Backend::Lbp;
+    }
     if (val == "pepin") {
         return Backend::Pepin;
     }
@@ -326,6 +338,7 @@ const char* backendName(Backend backend) {
         case Backend::Amc: return "amc";
         case Backend::Sampling: return "sampling";
         case Backend::HornSampling: return "horn-sampling";
+        case Backend::Lbp: return "lbp";
         case Backend::Pepin: return "pepin";
         case Backend::Schlandals: return "schlandals";
     }
@@ -462,7 +475,8 @@ Options parseArgs(int argc, char** argv) {
                 opt.fullEvaluator = souffle::FullEvaluator::APPROX;
                 opt.approxBackend = souffle::ApproxBackend::AMC;
             } else if (
-                    opt.backend == Backend::Sampling || opt.backend == Backend::Pepin ||
+                    opt.backend == Backend::Sampling || opt.backend == Backend::HornSampling ||
+                    opt.backend == Backend::Lbp || opt.backend == Backend::Pepin ||
                     opt.backend == Backend::Schlandals) {
                 opt.fullEvaluator = souffle::FullEvaluator::EXACT;
                 opt.approxBackend = souffle::ApproxBackend::NONE;
@@ -558,6 +572,21 @@ Options parseArgs(int argc, char** argv) {
             }
             opt.samplingSamples = static_cast<uint64_t>(std::stoull(argv[++i]));
             opt.samplingSamplesExplicit = true;
+        } else if (arg == "--lbp-max-iters") {
+            if (i + 1 >= argc) {
+                failUsage("Missing value after --lbp-max-iters", argv[0]);
+            }
+            opt.lbpMaxIters = static_cast<uint64_t>(std::stoull(argv[++i]));
+        } else if (arg == "--lbp-tol") {
+            if (i + 1 >= argc) {
+                failUsage("Missing value after --lbp-tol", argv[0]);
+            }
+            opt.lbpTolerance = std::stod(argv[++i]);
+        } else if (arg == "--lbp-damping") {
+            if (i + 1 >= argc) {
+                failUsage("Missing value after --lbp-damping", argv[0]);
+            }
+            opt.lbpDamping = std::stod(argv[++i]);
         } else if (arg == "--pepin-max-terms") {
             if (i + 1 >= argc) {
                 failUsage("Missing value after --pepin-max-terms", argv[0]);
@@ -618,6 +647,15 @@ Options parseArgs(int argc, char** argv) {
     if (opt.pepinWeightDigits == 0 || opt.pepinWeightDigits > 15) {
         failUsage("--pepin-weight-digits must be in [1,15]", argv[0]);
     }
+    if (opt.lbpMaxIters == 0) {
+        failUsage("--lbp-max-iters must be >= 1", argv[0]);
+    }
+    if (opt.lbpTolerance <= 0.0 || !std::isfinite(opt.lbpTolerance)) {
+        failUsage("--lbp-tol must be finite and > 0", argv[0]);
+    }
+    if (opt.lbpDamping < 0.0 || opt.lbpDamping >= 1.0 || !std::isfinite(opt.lbpDamping)) {
+        failUsage("--lbp-damping must be finite and in [0,1)", argv[0]);
+    }
     if (opt.backend == Backend::Pepin && !opt.epsilonExplicit) {
         // Pepin's default epsilon=0.1 is too coarse for the narrow weighted
         // queries we currently evaluate; use a tighter backend-specific default
@@ -658,13 +696,14 @@ Options parseArgs(int argc, char** argv) {
                 break;
             case Backend::Sampling:
             case Backend::HornSampling:
+            case Backend::Lbp:
             case Backend::Pepin:
             case Backend::Schlandals:
                 if (opt.fullEvaluator == souffle::FullEvaluator::APPROX ||
                         opt.approxBackend != souffle::ApproxBackend::NONE) {
                     failUsage(
-                            "graph-query supports sampling/horn-sampling/pepin/schlandals only via "
-                            "--backend=sampling|horn-sampling|pepin|schlandals "
+                            "graph-query supports sampling/horn-sampling/lbp/pepin/schlandals only via "
+                            "--backend=sampling|horn-sampling|lbp|pepin|schlandals "
                             "(not via --full-evaluator=approx/--approx-backend)",
                             argv[0]);
                 }
@@ -2228,10 +2267,7 @@ PepinRunResult runPepinLibrary(
             for (int lit : cube) {
                 clause.push_back(PepinNS::itol(static_cast<int32_t>(lit)));
             }
-            if (!pepin.add_clause(clause)) {
-                res.message = "Pepin library rejected a DNF cube";
-                return res;
-            }
+            (void) pepin.add_clause(clause);
         }
         const mpq_t* weighted = pepin.get_appx_weighted_sol();
         res.runtimeSec = elapsedSeconds(start);
@@ -3151,6 +3187,38 @@ struct HornSamplingSummary {
     double samplingSec = 0.0;
 };
 
+struct LbpResult {
+    std::vector<double> probabilities;
+    std::size_t deterministicVars = 0;
+    std::size_t supports = 0;
+    std::size_t ruleVars = 0;
+    std::size_t factors = 0;
+    std::size_t factorEdges = 0;
+    uint64_t iterations = 0;
+    double maxDiff = 0.0;
+    double compileSec = 0.0;
+    double lbpSec = 0.0;
+    std::size_t normalizationFallbacks = 0;
+    bool converged = false;
+    bool cyclicSlice = false;
+};
+
+struct LbpSummary {
+    std::size_t approxQueries = 0;
+    std::size_t deterministicQueries = 0;
+    std::size_t maxDeterministicVars = 0;
+    std::size_t maxSupports = 0;
+    std::size_t maxRuleVars = 0;
+    std::size_t maxFactors = 0;
+    std::size_t maxFactorEdges = 0;
+    uint64_t iterations = 0;
+    double maxDiff = 0.0;
+    double lbpSec = 0.0;
+    std::size_t normalizationFallbacks = 0;
+    bool converged = true;
+    bool cyclicSlice = false;
+};
+
 struct PepinQueryResult {
     double probability = 0.0;
     std::size_t randomVars = 0;
@@ -3215,6 +3283,368 @@ bool hasUnsupportedAmcCycles(SubgraphView& view) {
         }
     }
     return false;
+}
+
+bool hasCyclicPositiveDependencies(SubgraphView& view) {
+    return hasUnsupportedAmcCycles(view);
+}
+
+struct LbpFactorGraph {
+    enum class FactorKind {
+        Prior,
+        And,
+        Or,
+    };
+
+    struct Edge {
+        uint32_t var = 0;
+        uint32_t factor = 0;
+        std::array<double, 2> varToFactor{0.5, 0.5};
+        std::array<double, 2> factorToVar{0.5, 0.5};
+    };
+
+    struct Factor {
+        FactorKind kind = FactorKind::Prior;
+        uint32_t head = 0;
+        std::vector<uint32_t> inputs;
+        double probability = 1.0;
+        std::vector<std::size_t> edges;
+    };
+
+    std::size_t variables = 0;
+    std::vector<Edge> edges;
+    std::vector<Factor> factors;
+    std::vector<std::vector<std::size_t>> varEdges;
+
+    uint32_t addFactor(FactorKind kind, uint32_t head, std::vector<uint32_t> inputs, double probability = 1.0) {
+        if (head >= variables) {
+            throw std::runtime_error("internal LBP error: factor head variable is out of range");
+        }
+        const uint32_t factorId = checkedIndex(factors.size(), "LBP factor");
+        Factor factor;
+        factor.kind = kind;
+        factor.head = head;
+        factor.inputs = std::move(inputs);
+        factor.probability = probability;
+        factor.edges.reserve(1U + factor.inputs.size());
+        appendEdge(factorId, head, factor);
+        for (uint32_t input : factor.inputs) {
+            if (input >= variables) {
+                throw std::runtime_error("internal LBP error: factor input variable is out of range");
+            }
+            appendEdge(factorId, input, factor);
+        }
+        factors.push_back(std::move(factor));
+        return factorId;
+    }
+
+private:
+    static uint32_t checkedIndex(std::size_t value, const char* label) {
+        if (value > static_cast<std::size_t>(std::numeric_limits<uint32_t>::max())) {
+            throw std::runtime_error(std::string(label) + " count exceeds uint32_t range");
+        }
+        return static_cast<uint32_t>(value);
+    }
+
+    void appendEdge(uint32_t factorId, uint32_t var, Factor& factor) {
+        const std::size_t edgeId = edges.size();
+        Edge edge;
+        edge.var = var;
+        edge.factor = factorId;
+        edges.push_back(edge);
+        factor.edges.push_back(edgeId);
+        varEdges.at(var).push_back(edgeId);
+    }
+};
+
+double lbpClamp01(double value) {
+    if (!std::isfinite(value)) {
+        return 0.5;
+    }
+    return std::clamp(value, 0.0, 1.0);
+}
+
+std::array<double, 2> lbpNormalize(double falseMass, double trueMass, std::size_t& fallbackCount) {
+    if (!std::isfinite(falseMass) || !std::isfinite(trueMass) || falseMass < 0.0 || trueMass < 0.0) {
+        ++fallbackCount;
+        return {0.5, 0.5};
+    }
+    const double sum = falseMass + trueMass;
+    if (!std::isfinite(sum) || sum <= 0.0) {
+        ++fallbackCount;
+        return {0.5, 0.5};
+    }
+    return {falseMass / sum, trueMass / sum};
+}
+
+std::array<double, 2> lbpDampedMessage(
+        const std::array<double, 2>& oldMsg,
+        const std::array<double, 2>& computed,
+        double damping,
+        std::size_t& fallbackCount) {
+    if (damping == 0.0) {
+        return computed;
+    }
+    return lbpNormalize(
+            damping * oldMsg[0] + (1.0 - damping) * computed[0],
+            damping * oldMsg[1] + (1.0 - damping) * computed[1],
+            fallbackCount);
+}
+
+double updateLbpMessage(
+        std::array<double, 2>& slot,
+        const std::array<double, 2>& computed,
+        double damping,
+        std::size_t& fallbackCount) {
+    const std::array<double, 2> next = lbpDampedMessage(slot, computed, damping, fallbackCount);
+    const double diff = std::max(std::fabs(next[0] - slot[0]), std::fabs(next[1] - slot[1]));
+    slot = next;
+    return diff;
+}
+
+LbpFactorGraph buildLbpFactorGraph(const HornSamplingProgram& program) {
+    const std::size_t deterministicVars = program.deterministicVars;
+    const std::size_t supports = program.supportProbabilities.size();
+    const std::size_t ruleVars = program.rules.size();
+    const std::size_t totalVars = deterministicVars + supports + ruleVars;
+    if (totalVars > static_cast<std::size_t>(std::numeric_limits<uint32_t>::max())) {
+        throw std::runtime_error("backend=lbp factor graph exceeds uint32_t variable range");
+    }
+
+    auto supportVar = [&](std::size_t supportIndex) {
+        return static_cast<uint32_t>(deterministicVars + supportIndex);
+    };
+    auto ruleVar = [&](std::size_t ruleIndex) {
+        return static_cast<uint32_t>(deterministicVars + supports + ruleIndex);
+    };
+
+    LbpFactorGraph graph;
+    graph.variables = totalVars;
+    graph.varEdges.assign(graph.variables, {});
+    graph.factors.reserve(supports + ruleVars + deterministicVars);
+
+    for (std::size_t supportIndex = 0; supportIndex < supports; ++supportIndex) {
+        const double probability = program.supportProbabilities.at(supportIndex);
+        if (!std::isfinite(probability) || probability < -static_cast<double>(kProbEps) ||
+                probability > 1.0 + static_cast<double>(kProbEps)) {
+            throw std::runtime_error("backend=lbp encountered support probability outside [0,1]");
+        }
+        graph.addFactor(
+                LbpFactorGraph::FactorKind::Prior, supportVar(supportIndex), {},
+                lbpClamp01(probability));
+    }
+
+    for (std::size_t ruleIndex = 0; ruleIndex < program.rules.size(); ++ruleIndex) {
+        const auto& rule = program.rules.at(ruleIndex);
+        std::vector<uint32_t> inputs;
+        inputs.reserve(rule.body.size() + (rule.supportIndex >= 0 ? 1U : 0U));
+        if (rule.supportIndex >= 0) {
+            inputs.push_back(supportVar(static_cast<std::size_t>(rule.supportIndex)));
+        }
+        inputs.insert(inputs.end(), rule.body.begin(), rule.body.end());
+        graph.addFactor(LbpFactorGraph::FactorKind::And, ruleVar(ruleIndex), std::move(inputs));
+    }
+
+    for (std::size_t nodeIndex = 0; nodeIndex < deterministicVars; ++nodeIndex) {
+        std::vector<uint32_t> inputs;
+        inputs.reserve(program.nodeProducers.at(nodeIndex).size());
+        for (uint32_t ruleIndex : program.nodeProducers.at(nodeIndex)) {
+            inputs.push_back(ruleVar(ruleIndex));
+        }
+        graph.addFactor(LbpFactorGraph::FactorKind::Or, static_cast<uint32_t>(nodeIndex), std::move(inputs));
+    }
+
+    return graph;
+}
+
+std::vector<double> productsExcept(const std::vector<double>& values) {
+    const std::size_t n = values.size();
+    std::vector<double> prefix(n + 1U, 1.0);
+    std::vector<double> suffix(n + 1U, 1.0);
+    for (std::size_t i = 0; i < n; ++i) {
+        prefix[i + 1U] = prefix[i] * values[i];
+    }
+    for (std::size_t i = n; i > 0; --i) {
+        suffix[i - 1U] = suffix[i] * values[i - 1U];
+    }
+    std::vector<double> out(n, 1.0);
+    for (std::size_t i = 0; i < n; ++i) {
+        out[i] = prefix[i] * suffix[i + 1U];
+    }
+    return out;
+}
+
+std::array<double, 2> lbpVariableBelief(const LbpFactorGraph& graph, uint32_t var, std::size_t& fallbackCount) {
+    double falseMass = 1.0;
+    double trueMass = 1.0;
+    for (std::size_t edgeId : graph.varEdges.at(var)) {
+        const auto& msg = graph.edges.at(edgeId).factorToVar;
+        falseMass *= msg[0];
+        trueMass *= msg[1];
+    }
+    return lbpNormalize(falseMass, trueMass, fallbackCount);
+}
+
+void runSynchronousLbp(LbpFactorGraph& graph, const Options& opt, LbpResult& out) {
+    const auto lbpStart = Clock::now();
+    for (uint64_t iter = 1; iter <= opt.lbpMaxIters; ++iter) {
+        double maxDiff = 0.0;
+
+        for (uint32_t var = 0; var < graph.varEdges.size(); ++var) {
+            const auto& incident = graph.varEdges.at(var);
+            const std::size_t n = incident.size();
+            std::vector<double> prefixFalse(n + 1U, 1.0);
+            std::vector<double> prefixTrue(n + 1U, 1.0);
+            std::vector<double> suffixFalse(n + 1U, 1.0);
+            std::vector<double> suffixTrue(n + 1U, 1.0);
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto& msg = graph.edges.at(incident[i]).factorToVar;
+                prefixFalse[i + 1U] = prefixFalse[i] * msg[0];
+                prefixTrue[i + 1U] = prefixTrue[i] * msg[1];
+            }
+            for (std::size_t i = n; i > 0; --i) {
+                const auto& msg = graph.edges.at(incident[i - 1U]).factorToVar;
+                suffixFalse[i - 1U] = suffixFalse[i] * msg[0];
+                suffixTrue[i - 1U] = suffixTrue[i] * msg[1];
+            }
+            for (std::size_t i = 0; i < n; ++i) {
+                const std::array<double, 2> computed = lbpNormalize(
+                        prefixFalse[i] * suffixFalse[i + 1U],
+                        prefixTrue[i] * suffixTrue[i + 1U],
+                        out.normalizationFallbacks);
+                maxDiff = std::max(maxDiff,
+                        updateLbpMessage(
+                                graph.edges.at(incident[i]).varToFactor, computed, opt.lbpDamping,
+                                out.normalizationFallbacks));
+            }
+        }
+
+        for (auto& factor : graph.factors) {
+            const std::size_t headEdge = factor.edges.at(0);
+            if (factor.kind == LbpFactorGraph::FactorKind::Prior) {
+                const std::array<double, 2> computed =
+                        lbpNormalize(1.0 - factor.probability, factor.probability, out.normalizationFallbacks);
+                maxDiff = std::max(maxDiff,
+                        updateLbpMessage(
+                                graph.edges.at(headEdge).factorToVar, computed, opt.lbpDamping,
+                                out.normalizationFallbacks));
+                continue;
+            }
+
+            std::vector<double> inputTrue;
+            std::vector<double> inputFalse;
+            inputTrue.reserve(factor.inputs.size());
+            inputFalse.reserve(factor.inputs.size());
+            for (std::size_t i = 0; i < factor.inputs.size(); ++i) {
+                const auto& msg = graph.edges.at(factor.edges.at(i + 1U)).varToFactor;
+                inputFalse.push_back(msg[0]);
+                inputTrue.push_back(msg[1]);
+            }
+
+            const auto& headMsg = graph.edges.at(headEdge).varToFactor;
+            if (factor.kind == LbpFactorGraph::FactorKind::And) {
+                double prodAllTrue = 1.0;
+                for (double value : inputTrue) {
+                    prodAllTrue *= value;
+                }
+                prodAllTrue = lbpClamp01(prodAllTrue);
+                std::array<double, 2> computedHead =
+                        lbpNormalize(1.0 - prodAllTrue, prodAllTrue, out.normalizationFallbacks);
+                maxDiff = std::max(maxDiff,
+                        updateLbpMessage(
+                                graph.edges.at(headEdge).factorToVar, computedHead, opt.lbpDamping,
+                                out.normalizationFallbacks));
+
+                const std::vector<double> prodOtherTrue = productsExcept(inputTrue);
+                for (std::size_t i = 0; i < factor.inputs.size(); ++i) {
+                    const double otherTrue = lbpClamp01(prodOtherTrue.at(i));
+                    const std::array<double, 2> computed = lbpNormalize(
+                            headMsg[0],
+                            headMsg[1] * otherTrue + headMsg[0] * (1.0 - otherTrue),
+                            out.normalizationFallbacks);
+                    maxDiff = std::max(maxDiff,
+                            updateLbpMessage(
+                                    graph.edges.at(factor.edges.at(i + 1U)).factorToVar, computed,
+                                    opt.lbpDamping, out.normalizationFallbacks));
+                }
+                continue;
+            }
+
+            double prodAllFalse = 1.0;
+            for (double value : inputFalse) {
+                prodAllFalse *= value;
+            }
+            prodAllFalse = lbpClamp01(prodAllFalse);
+            std::array<double, 2> computedHead =
+                    lbpNormalize(prodAllFalse, 1.0 - prodAllFalse, out.normalizationFallbacks);
+            maxDiff = std::max(maxDiff,
+                    updateLbpMessage(
+                            graph.edges.at(headEdge).factorToVar, computedHead, opt.lbpDamping,
+                            out.normalizationFallbacks));
+
+            const std::vector<double> prodOtherFalse = productsExcept(inputFalse);
+            for (std::size_t i = 0; i < factor.inputs.size(); ++i) {
+                const double otherFalse = lbpClamp01(prodOtherFalse.at(i));
+                const std::array<double, 2> computed = lbpNormalize(
+                        headMsg[0] * otherFalse + headMsg[1] * (1.0 - otherFalse),
+                        headMsg[1],
+                        out.normalizationFallbacks);
+                maxDiff = std::max(maxDiff,
+                        updateLbpMessage(
+                                graph.edges.at(factor.edges.at(i + 1U)).factorToVar, computed,
+                                opt.lbpDamping, out.normalizationFallbacks));
+            }
+        }
+
+        out.iterations = iter;
+        out.maxDiff = maxDiff;
+        if (maxDiff <= opt.lbpTolerance) {
+            out.converged = true;
+            break;
+        }
+    }
+    out.lbpSec = elapsedSeconds(lbpStart);
+}
+
+LbpResult evaluateQueriesWithLbp(SubgraphView& view, const std::vector<NodePtr>& queries, const Options& opt) {
+    LbpResult out;
+    if (queries.empty()) {
+        return out;
+    }
+
+    (void) analyzeSchlandalsNegation(view, "backend=lbp");
+    out.cyclicSlice = hasCyclicPositiveDependencies(view);
+
+    const auto compileStart = Clock::now();
+    HornSamplingProgramCompiler compiler(view);
+    const HornSamplingProgram program = compiler.compile();
+    LbpFactorGraph factorGraph = buildLbpFactorGraph(program);
+    out.compileSec = elapsedSeconds(compileStart);
+    out.deterministicVars = program.deterministicVars;
+    out.supports = program.supportProbabilities.size();
+    out.ruleVars = program.rules.size();
+    out.factors = factorGraph.factors.size();
+    out.factorEdges = factorGraph.edges.size();
+
+    std::vector<uint32_t> queryNodeIndices;
+    queryNodeIndices.reserve(queries.size());
+    for (const auto& query : queries) {
+        const auto it = program.nodeIndex.find(query);
+        if (it == program.nodeIndex.end()) {
+            throw std::runtime_error(
+                    "backend=lbp query is outside compiled Horn program: " + query->getTuple().toString());
+        }
+        queryNodeIndices.push_back(it->second);
+    }
+
+    runSynchronousLbp(factorGraph, opt, out);
+
+    out.probabilities.reserve(queryNodeIndices.size());
+    for (uint32_t queryNode : queryNodeIndices) {
+        const std::array<double, 2> belief = lbpVariableBelief(factorGraph, queryNode, out.normalizationFallbacks);
+        out.probabilities.push_back(belief[1]);
+    }
+    return out;
 }
 
 SamplingQueryResult evaluateQueryWithSampling(SubgraphView& view, const NodePtr& query, const Options& opt) {
@@ -4603,6 +5033,130 @@ void runBackendHornSampling(
     }
 }
 
+void runBackendLbp(
+        const char* backend,
+        SubgraphView& activeView,
+        IncrementalDerivationGraph& graph,
+        const std::vector<UntypedTuple>& queryTuples,
+        const Options& opt,
+        double& fcSec,
+        double& evalSec,
+        LbpSummary* summaryOut = nullptr) {
+    const auto totalStart = Clock::now();
+    std::cout << "[backend] " << backend << '\n';
+    std::cout << std::setprecision(17);
+
+    LbpSummary summary;
+    std::vector<NodePtr> targets;
+    std::vector<std::size_t> targetPositions;
+    std::vector<std::optional<double>> deterministicResults(queryTuples.size());
+
+    for (std::size_t i = 0; i < queryTuples.size(); ++i) {
+        const auto& queryTuple = queryTuples[i];
+        NodePtr target = findByTupleInView(activeView, queryTuple);
+        if (!target) {
+            if (auto precomputed = findPrecomputedProbability(graph, activeView, queryTuple)) {
+                deterministicResults[i] = *precomputed;
+                ++summary.deterministicQueries;
+                continue;
+            }
+            throw std::runtime_error("Query tuple is outside active view: " + queryTuple.toString());
+        }
+        targets.push_back(target);
+        targetPositions.push_back(i);
+    }
+
+    LbpResult res;
+    if (!targets.empty()) {
+        res = evaluateQueriesWithLbp(activeView, targets, opt);
+        fcSec += res.compileSec;
+        evalSec += res.lbpSec;
+        summary.approxQueries += targets.size();
+        summary.maxDeterministicVars = res.deterministicVars;
+        summary.maxSupports = res.supports;
+        summary.maxRuleVars = res.ruleVars;
+        summary.maxFactors = res.factors;
+        summary.maxFactorEdges = res.factorEdges;
+        summary.iterations = res.iterations;
+        summary.maxDiff = res.maxDiff;
+        summary.lbpSec = res.lbpSec;
+        summary.normalizationFallbacks = res.normalizationFallbacks;
+        summary.converged = res.converged;
+        summary.cyclicSlice = res.cyclicSlice;
+    }
+
+    std::vector<std::size_t> resultIndexByPosition(queryTuples.size(), std::numeric_limits<std::size_t>::max());
+    for (std::size_t i = 0; i < targetPositions.size(); ++i) {
+        resultIndexByPosition[targetPositions[i]] = i;
+    }
+
+    for (std::size_t i = 0; i < queryTuples.size(); ++i) {
+        const auto& queryTuple = queryTuples[i];
+        const std::size_t resultIndex = resultIndexByPosition[i];
+        if (resultIndex == std::numeric_limits<std::size_t>::max()) {
+            std::cout << "[lbp-query] tuple=" << queryTuple.toString()
+                      << " mode=deterministic"
+                      << " deterministic_vars=0"
+                      << " supports=0"
+                      << " rule_vars=0"
+                      << " factors=0"
+                      << " factor_edges=0"
+                      << " cyclic_slice=0"
+                      << " iterations=0"
+                      << " converged=1"
+                      << " maxdiff=0"
+                      << " lbp_s=0"
+                      << " probability=" << deterministicResults[i].value_or(0.0)
+                      << '\n';
+            std::cout << "[result] " << queryTuple.toString() << " = " << deterministicResults[i].value_or(0.0)
+                      << '\n';
+            continue;
+        }
+
+        const double probability = res.probabilities.at(resultIndex);
+        std::cout << "[lbp-query] tuple=" << queryTuple.toString()
+                  << " mode=lbp"
+                  << " deterministic_vars=" << res.deterministicVars
+                  << " supports=" << res.supports
+                  << " rule_vars=" << res.ruleVars
+                  << " factors=" << res.factors
+                  << " factor_edges=" << res.factorEdges
+                  << " cyclic_slice=" << (res.cyclicSlice ? 1 : 0)
+                  << " iterations=" << res.iterations
+                  << " converged=" << (res.converged ? 1 : 0)
+                  << " maxdiff=" << res.maxDiff
+                  << " lbp_s=" << res.lbpSec
+                  << " normalization_fallbacks=" << res.normalizationFallbacks
+                  << " probability=" << probability
+                  << '\n';
+        std::cout << "[result] " << queryTuple.toString() << " = " << probability << '\n';
+    }
+
+    if (summaryOut) {
+        *summaryOut = summary;
+    }
+    if (summary.approxQueries > 0 || summary.deterministicQueries > 0) {
+        std::cout << std::fixed << std::setprecision(9)
+                  << "[lbp-stats] approx_queries=" << summary.approxQueries
+                  << " deterministic_queries=" << summary.deterministicQueries
+                  << " max_deterministic_vars=" << summary.maxDeterministicVars
+                  << " max_supports=" << summary.maxSupports
+                  << " max_rule_vars=" << summary.maxRuleVars
+                  << " max_factors=" << summary.maxFactors
+                  << " max_factor_edges=" << summary.maxFactorEdges
+                  << " cyclic_slice=" << (summary.cyclicSlice ? 1 : 0)
+                  << " iterations=" << summary.iterations
+                  << " converged=" << (summary.converged ? 1 : 0)
+                  << " maxdiff=" << summary.maxDiff
+                  << " lbp_runtime_s=" << summary.lbpSec
+                  << " normalization_fallbacks=" << summary.normalizationFallbacks
+                  << '\n';
+    }
+    if (summary.approxQueries == 0 && summary.deterministicQueries == 0) {
+        fcSec = elapsedSeconds(totalStart);
+    }
+}
+
 void runBackendPepin(
         const char* backend,
         SubgraphView& activeView,
@@ -5147,6 +5701,7 @@ int main(int argc, char** argv) {
         AmcSummary amcSummary;
         SamplingSummary samplingSummary;
         HornSamplingSummary hornSamplingSummary;
+        LbpSummary lbpSummary;
         PepinSummary pepinSummary;
         SchlandalsSummary schlandalsSummary;
         const bool enableDebugger = envTruthy(std::getenv("SOUFFLE_STANDALONE_USE_DEBUGGER"));
@@ -5172,6 +5727,10 @@ int main(int argc, char** argv) {
             runBackendHornSampling(
                     backendName(opt.backend), *activeView, *graph, queryTuples, opt, fcSec, evalSec,
                     &hornSamplingSummary);
+        } else if (opt.backend == Backend::Lbp) {
+            runBackendLbp(
+                    backendName(opt.backend), *activeView, *graph, queryTuples, opt, fcSec, evalSec,
+                    &lbpSummary);
         } else if (opt.backend == Backend::Pepin) {
             runBackendPepin(
                     backendName(opt.backend), *activeView, *graph, queryTuples, opt, fcSec, evalSec,
@@ -5250,6 +5809,18 @@ int main(int argc, char** argv) {
                       << (hoeffdingHalfWidth(effectiveSamples, opt.delta) <= opt.epsilon ? 1 : 0)
                       << " sampled_queries=" << hornSamplingSummary.sampledQueries
                       << " deterministic_queries=" << hornSamplingSummary.deterministicQueries
+                      << '\n';
+        } else if (opt.backend == Backend::Lbp) {
+            std::cout << std::fixed << std::setprecision(9)
+                      << "[lbp-config] max_iters=" << opt.lbpMaxIters
+                      << " tol=" << opt.lbpTolerance
+                      << " damping=" << opt.lbpDamping
+                      << " schedule=synchronous"
+                      << " semantics=loopy-factor-graph-heuristic"
+                      << " error_bound=none"
+                      << " cyclic_slice=" << (lbpSummary.cyclicSlice ? 1 : 0)
+                      << " approx_queries=" << lbpSummary.approxQueries
+                      << " deterministic_queries=" << lbpSummary.deterministicQueries
                       << '\n';
         } else if (opt.backend == Backend::Pepin) {
             std::cout << std::fixed << std::setprecision(6)

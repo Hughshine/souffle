@@ -1,8 +1,67 @@
 use std::ffi::c_char;
+use std::io::Write;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::slice;
 
 use schlandals::args::Args;
+
+#[cfg(unix)]
+struct StdoutSilencer {
+    saved_stdout: i32,
+    dev_null: i32,
+}
+
+#[cfg(unix)]
+impl StdoutSilencer {
+    fn new() -> Option<Self> {
+        unsafe {
+            let _ = std::io::stdout().flush();
+            let saved_stdout = dup(STDOUT_FILENO);
+            if saved_stdout < 0 {
+                return None;
+            }
+            let dev_null = open(c"/dev/null".as_ptr(), O_WRONLY);
+            if dev_null < 0 {
+                close(saved_stdout);
+                return None;
+            }
+            if dup2(dev_null, STDOUT_FILENO) < 0 {
+                close(dev_null);
+                close(saved_stdout);
+                return None;
+            }
+            Some(Self {
+                saved_stdout,
+                dev_null,
+            })
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for StdoutSilencer {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = std::io::stdout().flush();
+            dup2(self.saved_stdout, STDOUT_FILENO);
+            close(self.dev_null);
+            close(self.saved_stdout);
+        }
+    }
+}
+
+#[cfg(unix)]
+const STDOUT_FILENO: i32 = 1;
+#[cfg(unix)]
+const O_WRONLY: i32 = 1;
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn close(fd: i32) -> i32;
+    fn dup(fd: i32) -> i32;
+    fn dup2(oldfd: i32, newfd: i32) -> i32;
+    fn open(pathname: *const c_char, flags: i32) -> i32;
+}
 
 fn write_error(error_buf: *mut c_char, error_buf_len: usize, message: &str) {
     if error_buf.is_null() || error_buf_len == 0 {
@@ -111,10 +170,12 @@ pub extern "C" fn souffle_schlandals_solve(
         let mut args = Args::default();
         args.set_epsilon(epsilon);
         args.set_lds(lds);
+        args.set_statistics(true);
 
-        let solution = schlandals::solve_in_memory(args, &distributions, &clauses);
-        let (lower, upper) = solution.bounds();
-        let estimate = solution.to_f64();
+        #[cfg(unix)]
+        let _silencer = StdoutSilencer::new();
+        let (lower, upper) = schlandals::pysearch(args, &distributions, &clauses);
+        let estimate = (lower * upper).sqrt();
         Ok((estimate, lower, upper))
     }));
 
