@@ -1,0 +1,10 @@
+.decl seed(x:symbol)
+.input seed
+
+.decl map(x:symbol, y:symbol)
+.input map
+
+.decl out(x:symbol)
+.output out
+
+0.7::out(X) :- seed(X), map(X, Y).

@@ -1,0 +1,18 @@
+.decl a(x:symbol)
+.input a
+
+.decl dormant(x:symbol, y:symbol)
+
+.decl edge(x:symbol, y:symbol)
+.input edge
+
+.decl good(x:symbol)
+.output good
+
+.decl bad(x:symbol)
+.output bad
+
+good(X) :- a(X).
+good(X) :- dormant(X, Y).
+
+bad(X) :- edge(X, Y).

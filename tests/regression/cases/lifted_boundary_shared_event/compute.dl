@@ -1,0 +1,23 @@
+.decl base(x:symbol)
+.input base
+
+.decl step(x:symbol, y:symbol)
+.input step
+
+.decl left(x:symbol)
+.output left
+
+.decl right(x:symbol)
+.output right
+
+.decl concrete(x:symbol)
+.output concrete
+
+0.7::left(X) :- base(X).
+0.6::right(X) :- base(X).
+concrete(X) :- left(X), right(X).
+concrete(Y) :- concrete(X), step(X, Y).
+
+query(left(_)).
+query(right(_)).
+query(concrete(_)).

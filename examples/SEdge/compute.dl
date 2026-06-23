@@ -1,0 +1,6 @@
+.decl a(X:symbol)
+.input a
+.decl b(X:symbol)
+.output b
+
+b(X) :- a(X).

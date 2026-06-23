@@ -1,0 +1,7 @@
+.decl edge(x:symbol, y:symbol)
+.input edge
+
+.decl out(x:symbol)
+.output out
+
+0.7::out(X) :- edge(X, Y).
