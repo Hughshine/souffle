@@ -272,6 +272,19 @@ public:
         probabilisticSupportTokens = std::move(tokens);
     }
     void clearProbabilisticSupportTokens() { probabilisticSupportTokens.clear(); }
+    const std::vector<EdgePtr>& getEmbeddedProbabilisticEvents() const {
+        return embeddedProbabilisticEvents;
+    }
+    void setEmbeddedProbabilisticEvents(std::vector<EdgePtr> events) {
+        events.erase(std::remove_if(events.begin(), events.end(), [](const EdgePtr& event) {
+            return !event || event->isDeterministic();
+        }), events.end());
+        std::sort(events.begin(), events.end(), [](const EdgePtr& a, const EdgePtr& b) {
+            return a->getId() < b->getId();
+        });
+        events.erase(std::unique(events.begin(), events.end()), events.end());
+        embeddedProbabilisticEvents = std::move(events);
+    }
     const std::vector<bool>& getBodyNegationsStable() const {
         if (cachedSortedBodyNegations.has_value()) {
             return *cachedSortedBodyNegations;
@@ -441,6 +454,10 @@ private:
     const Rule* rule;
     const RuleApplication ruleApp;
     std::vector<SupportToken> probabilisticSupportTokens;
+    // Probabilistic rule events whose formulas were inlined into this edge.
+    // Shared EdgePtr identity is intentional: all consumers must resolve the
+    // same original event to the same decision-diagram variable.
+    std::vector<EdgePtr> embeddedProbabilisticEvents;
 };
 
 class DerivationGraphViewInterface {
@@ -805,6 +822,34 @@ void DerivationGraphViewInterface::dumpJson(const std::string& filename) const {
     out.close();
 }
 
+inline std::string escapeDotLabel(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const char ch : value) {
+        switch (ch) {
+            case '\\':
+                escaped += "\\\\";
+                break;
+            case '"':
+                escaped += "\\\"";
+                break;
+            case '\n':
+                escaped += "\\n";
+                break;
+            case '\r':
+                escaped += "\\r";
+                break;
+            case '\t':
+                escaped += "\\t";
+                break;
+            default:
+                escaped += ch;
+                break;
+        }
+    }
+    return escaped;
+}
+
 void DerivationGraphViewInterface::dumpDot(const std::string& filename) const {
     if (!isDumpDotEnabled()) {
         return;
@@ -822,7 +867,7 @@ void DerivationGraphViewInterface::dumpDot(const std::string& filename) const {
     out << "  node [shape=box, style=filled, fillcolor=lightblue];\n";
     for (const auto& node : getNodes()) {
         out << "  node" << node->getId() << " [label=\""
-            << node->getTuple().toString() << "\"];\n";
+            << escapeDotLabel(node->getTuple().toString()) << "\"];\n";
     }
 
     // Edge style
@@ -1516,6 +1561,60 @@ public:
         return newEdge;
     }
 
+    EdgePtr createDetachedHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& rm) {
+        const Rule* rule = rm.getRule(ruleApp.ruleId);
+        assert(rule != nullptr && "Rule not found");
+        if (rule->isFact()) {
+            return nullptr;
+        }
+        std::vector<std::string> vars = rule->getVars();
+
+        UntypedTuple headTuple{rule->getHead().getRelation(),
+                rule->getHead().instantiatedFields(vars, ruleApp.varValuesPure)};
+        auto headNode = createNode(headTuple);
+
+        std::vector<NodePtr> bodyNodes;
+        std::vector<bool> bodyNegations;
+        const std::unordered_set<std::string> ruleVarSet(vars.begin(), vars.end());
+        for (const auto& bodyAtom : rule->getBodyAtoms()) {
+            UntypedTuple bodyTuple{bodyAtom.getRelation(),
+                    bodyAtom.instantiatedFields(vars, ruleApp.varValuesPure)};
+            if (bodyAtom.isNegatedAtom() && !tupleExistsInUniverse(bodyTuple)) {
+                continue;
+            }
+            auto bodyNode = createNode(bodyTuple);
+            bodyNodes.push_back(bodyNode);
+            bodyNegations.push_back(bodyAtom.isNegatedAtom());
+        }
+        for (size_t aggregateIndex = 0; aggregateIndex < rule->getAggregates().size(); ++aggregateIndex) {
+            auto aggNode = buildAggregateSumNode(
+                    ruleApp.ruleId, aggregateIndex, headNode, rule->getAggregates()[aggregateIndex],
+                    vars, ruleApp.varValuesPure, ruleVarSet);
+            assert(aggNode != nullptr && "Aggregate replay failed to reconstruct target sum");
+            bodyNodes.push_back(aggNode);
+            bodyNegations.push_back(false);
+        }
+        if (bodyNodes.empty()) {
+            return nullptr;
+        }
+        return EdgePtr(new Hyperedge(bodyNodes, headNode, nextEdgeId++, rule, bodyNegations, ruleApp));
+    }
+
+    EdgePtr createTemplateHyperedgeFromRuleApp(
+            const RuleApplication& ruleApp, const RuleManager& rm, const EdgePtr& embeddedEvent) {
+        EdgePtr detached = createDetachedHyperedgeFromRuleApp(ruleApp, rm);
+        if (!detached) {
+            return nullptr;
+        }
+        auto edge = createHyperedge(
+                detached->getInputs(), detached->getOutput(), nullptr,
+                detached->getBodyNegations(), ruleApp);
+        if (edge && embeddedEvent && !embeddedEvent->isDeterministic()) {
+            edge->setEmbeddedProbabilisticEvents({embeddedEvent});
+        }
+        return edge;
+    }
+
     NodePtr findNode(const UntypedTuple& tuple) const {
         auto it = tupleToNodeMap.find(tuple);
         if (it != tupleToNodeMap.end()) {
@@ -1969,7 +2068,7 @@ public:
     WorkingSubgraphView prune(const std::vector<souffle::Relation*>& outputRelations);
     WorkingSubgraphView prune(const std::vector<std::string>& outputRelations);
 
-    static WorkingDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {}) {
+    static WorkingDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {}, const std::unordered_set<std::string>& excludedRelations = {}, const std::unordered_set<RuleApplication>* suppressedRuleApps = nullptr, std::unordered_map<RuleApplication, EdgePtr>* detachedSuppressedEvents = nullptr, const std::unordered_set<RuleApplication>* extraTemplateRuleApps = nullptr) {
         FunctionTimer timer(" creating derivation graph ");
         if (DerivationGraphViewInterface::isDumpStatsEnabled()) {
             resetEdgeLookupTiming();
@@ -1979,6 +2078,9 @@ public:
         {
             FunctionTimer scopeTimer("create graph: init fact nodes");
             for (const auto& [tuple, prob] : fact_prob) {
+                if (excludedRelations.count(tuple.relation_name) > 0) {
+                    continue;
+                }
                 graph->existingTuples.insert(tuple);
                 auto node = graph->createNode(tuple);  // actually "find node" here
                 node->setProbability(prob);
@@ -1987,19 +2089,52 @@ public:
             }
         }
         for (const auto& [tuple, _] : ruleApps) {
+            if (excludedRelations.count(tuple.relation_name) > 0) {
+                continue;
+            }
             graph->existingTuples.insert(tuple);
         }
         graph->buildAggregateTupleIndices(ruleApps, fact_prob, ruleManager);
         {
             FunctionTimer scopeTimer("create graph: build rule apps");
             for (const auto& [tuple, ruleAppSet] : ruleApps) {
+                if (excludedRelations.count(tuple.relation_name) > 0) {
+                    continue;
+                }
                 auto node = graph->createNode(tuple, 0.0);
 //            if (node->isFact) {
 //                std::cout << "Found fact node: " << node->getTuple().toString() << std::endl;
 //                continue;  // skip fact nodes currently
 //            }
                 for (const auto& ruleApp : *ruleAppSet) {
+                    if (suppressedRuleApps != nullptr &&
+                            suppressedRuleApps->count(ruleApp) != 0) {
+                        if (detachedSuppressedEvents != nullptr) {
+                            auto event = graph->createDetachedHyperedgeFromRuleApp(ruleApp, ruleManager);
+                            if (event) {
+                                detachedSuppressedEvents->emplace(ruleApp, event);
+                                graph->createTemplateHyperedgeFromRuleApp(
+                                        ruleApp, ruleManager, event);
+                            }
+                        }
+                        continue;
+                    }
                     auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
+                }
+            }
+            if (extraTemplateRuleApps != nullptr) {
+                for (const auto& ruleApp : *extraTemplateRuleApps) {
+                    const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
+                    if (rule == nullptr ||
+                            rule->isDeterminstic() ||
+                            excludedRelations.count(rule->getHead().getRelation()) > 0) {
+                        continue;
+                    }
+                    auto event = graph->createDetachedHyperedgeFromRuleApp(ruleApp, ruleManager);
+                    if (event) {
+                        graph->createTemplateHyperedgeFromRuleApp(
+                                ruleApp, ruleManager, event);
+                    }
                 }
             }
         }

@@ -33,7 +33,8 @@ public:
     Rule(std::size_t ruleId, Atom head, std::vector<Atom> bodyAtoms = {},
             std::vector<std::string> vars = {}, double probability = 1.0,
             bool recursive = false, bool recursiveStratum = false,
-            bool isEqrelHead = false, std::vector<AggregateSpec> aggregates = {});
+            bool isEqrelHead = false,
+            std::vector<AggregateSpec> aggregates = {});
 
     const Atom& getHead() const;
     const std::vector<Atom>& getBodyAtoms() const;

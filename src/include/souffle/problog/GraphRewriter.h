@@ -45,6 +45,9 @@ struct GraphRewriteStats {
     size_t numNodesRemoved = 0;        ///< Internal nodes removed from the view
     size_t numEdgesRemoved = 0;        ///< Internal edges removed from the view
     size_t numEdgesAdded = 0;          ///< Synthetic edges added
+    size_t generalNodesRemoved = 0;    ///< Nodes removed directly by general-SISO rewrites
+    size_t generalEdgesRemoved = 0;    ///< Edges removed directly by general-SISO rewrites
+    size_t generalEdgesAdded = 0;      ///< Edges added directly by general-SISO rewrites
     size_t totalRandomVars = 0;        ///< Sum of random vars across regions (facts + edges, excl. entry/exit facts)
     size_t maxRandomVars = 0;          ///< Max random vars in a single region
     size_t simpleFactRegions = 0;      ///< Count of simple fact-based regions rewritten
@@ -432,7 +435,16 @@ public:
                 if (!region.valid) {
                     continue;
                 }
-
+                // Boundary-inlined lifted formulas are represented as ordinary
+                // residual edges carrying embedded probabilistic events. The
+                // local rewrite fast paths summarize probabilities from node
+                // and edge weights only, so rewriting such a region would drop
+                // correlations introduced by the embedded events. Keep the
+                // region intact and let forward compilation account for the
+                // embedded event variables exactly.
+                if (hasEmbeddedProbabilisticEvents(region)) {
+                    continue;
+                }
                 // Fast-path by SISO kind.
                 switch (region.kind) {
                     case SISORegionKind::AllFactsToSO: {
@@ -983,12 +995,18 @@ public:
                     continue;
                 }
 
+                const size_t nodesRemovedBeforeApply = stats.numNodesRemoved;
+                const size_t edgesRemovedBeforeApply = stats.numEdgesRemoved;
+                const size_t edgesAddedBeforeApply = stats.numEdgesAdded;
                 auto applyStart = std::chrono::steady_clock::now();
                 EdgePtr newEdge = applyRegionRewrite(graph, view, region, condProb, stats, dumpStats, isSimple);
                 double applyMs = toMs(std::chrono::steady_clock::now() - applyStart);
                 timing.applyMs = applyMs;
                 loopRewrittenMs += applyMs;
                 if (!isSimple) {
+                    stats.generalNodesRemoved += stats.numNodesRemoved - nodesRemovedBeforeApply;
+                    stats.generalEdgesRemoved += stats.numEdgesRemoved - edgesRemovedBeforeApply;
+                    stats.generalEdgesAdded += stats.numEdgesAdded - edgesAddedBeforeApply;
                     stats.totalApplyMs += applyMs;
                     ++stats.numGeneralRegionsRewritten;
                     if (usedFastGeneralSummary) {
@@ -1101,6 +1119,7 @@ public:
                     if (!edge) continue;
                     const auto& inputs = edge->getInputs();
                     if (inputs.empty()) continue;
+                    if (hasEmbeddedProbabilisticEvents(edge)) continue;
                     std::vector<NodePtr> keepInputs;
                     std::vector<bool> keepNegs;
                     const auto& negs = edge->getBodyNegations();
@@ -1362,7 +1381,6 @@ public:
                   << " ms over " << stats.numIterations << " iterations"
                   << " (randomVars " << stats.randomVarsBefore << " -> " << stats.randomVarsAfter << ")"
                   << std::endl;
-
         return stats;
     }
 
@@ -1411,6 +1429,19 @@ private:
         if (!edge) return false;
         double p = edge->getProbability();
         return p > 0.0 && p < 1.0;
+    }
+
+    static bool hasEmbeddedProbabilisticEvents(const EdgePtr& edge) {
+        return edge && !edge->getEmbeddedProbabilisticEvents().empty();
+    }
+
+    static bool hasEmbeddedProbabilisticEvents(const SISORegionInfo& region) {
+        for (const auto& edge : region.internalEdges) {
+            if (hasEmbeddedProbabilisticEvents(edge)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static bool addIndependentSupportTokens(const std::vector<SupportToken>& tokens,

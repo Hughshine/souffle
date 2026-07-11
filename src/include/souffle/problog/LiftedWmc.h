@@ -32,11 +32,20 @@ struct LiftedWmcResult {
   std::size_t abstractEdges = 0;
   std::size_t symbolicVariables = 0;
   std::size_t bddNodes = 0;
+  std::size_t witnessIndexedTemplatesCount = 0;
+  std::size_t witnessIndexedRows = 0;
+  std::size_t witnessIndexedTupleFormulas = 0;
+  std::size_t witnessIndexedTemplateDdNodes = 0;
+  std::string executionMode;
   std::vector<std::string> handledOutputRelations;
   std::vector<std::string> handledRelations;
   std::map<std::string, std::string> rejectedOutputReasons;
   std::string abstractGraph;
   std::string abstractGraphDot;
+  std::string witnessIndexedTemplates;
+  std::string witnessIndexedWitnesses;
+  std::string witnessIndexedRelations;
+  std::string witnessIndexedTupleStats;
   std::map<std::string, double> probabilities;
 };
 

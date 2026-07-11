@@ -4,8 +4,12 @@
 #include "souffle/problog/Rule.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -600,6 +604,8 @@ private:
       if (activeRuleIds.count(rule->getRuleId()) == 0) {
         continue;
       }
+      // Recursive rules (and any rule in a recursive stratum) are not lifted;
+      // their output relations fall back to concrete WMC.
       if (rule->isRecursive() || rule->isInRecursiveStratum()) {
         return fail("recursive rule is not supported: " +
                     std::to_string(rule->getRuleId()));
@@ -1059,6 +1065,1306 @@ private:
   const SymbolicBdd &bdd;
 };
 
+struct ConcreteBddNode {
+  ConcreteVariableKey variable;
+  std::uint32_t low = 0;
+  std::uint32_t high = 0;
+  bool terminal = true;
+};
+
+struct ConcreteBddNodeKey {
+  ConcreteVariableKey variable;
+  std::uint32_t low = 0;
+  std::uint32_t high = 0;
+
+  bool operator<(const ConcreteBddNodeKey &other) const {
+    if (variable < other.variable) {
+      return true;
+    }
+    if (other.variable < variable) {
+      return false;
+    }
+    return std::tie(low, high) < std::tie(other.low, other.high);
+  }
+};
+
+class ConcreteWeightedBdd {
+public:
+  ConcreteWeightedBdd() {
+    nodes.emplace_back();
+    nodes.emplace_back();
+  }
+
+  std::uint32_t getFalse() const { return 0; }
+  std::uint32_t getTrue() const { return 1; }
+
+  std::uint32_t makeVariable(const ConcreteVariableKey &variable,
+                             double weight) {
+    auto [it, inserted] = variableWeights.emplace(variable, weight);
+    if (!inserted && std::fabs(it->second - weight) > 1e-12) {
+      throw std::runtime_error("multi-witness variable weight conflict");
+    }
+    return makeNode(variable, getFalse(), getTrue());
+  }
+
+  std::uint32_t makeAnd(std::uint32_t lhs, std::uint32_t rhs) {
+    return apply(BddOperation::And, lhs, rhs);
+  }
+
+  std::uint32_t makeOr(std::uint32_t lhs, std::uint32_t rhs) {
+    return apply(BddOperation::Or, lhs, rhs);
+  }
+
+  std::uint32_t makeNot(std::uint32_t node) {
+    if (node == getFalse()) {
+      return getTrue();
+    }
+    if (node == getTrue()) {
+      return getFalse();
+    }
+    auto it = notCache.find(node);
+    if (it != notCache.end()) {
+      return it->second;
+    }
+    // Copy fields before recursing: makeNode may reallocate `nodes`.
+    const auto variable = nodes.at(node).variable;
+    const auto low = nodes.at(node).low;
+    const auto high = nodes.at(node).high;
+    const auto result = makeNode(variable, makeNot(low), makeNot(high));
+    notCache.emplace(node, result);
+    return result;
+  }
+
+  double wmc(std::uint32_t root) const {
+    std::vector<double> memo(nodes.size(),
+                             std::numeric_limits<double>::quiet_NaN());
+    memo[getFalse()] = 0.0;
+    memo[getTrue()] = 1.0;
+    std::function<double(std::uint32_t)> visit = [&](std::uint32_t id) {
+      if (!std::isnan(memo.at(id))) {
+        return memo[id];
+      }
+      const auto &node = nodes.at(id);
+      const auto weightIt = variableWeights.find(node.variable);
+      if (weightIt == variableWeights.end()) {
+        throw std::runtime_error("multi-witness BDD variable has no weight");
+      }
+      const double weight = weightIt->second;
+      const double value = weight * visit(node.high) +
+                           (1.0 - weight) * visit(node.low);
+      memo[id] = value;
+      return value;
+    };
+    return visit(root);
+  }
+
+  std::size_t nodeCount() const { return nodes.size(); }
+  std::size_t variableCount() const { return variableWeights.size(); }
+
+private:
+  std::uint32_t makeNode(const ConcreteVariableKey &variable,
+                         std::uint32_t low, std::uint32_t high) {
+    if (low == high) {
+      return low;
+    }
+    ConcreteBddNodeKey key{variable, low, high};
+    auto it = uniqueNodes.find(key);
+    if (it != uniqueNodes.end()) {
+      return it->second;
+    }
+    if (nodes.size() >= std::numeric_limits<std::uint32_t>::max()) {
+      throw std::runtime_error("multi-witness BDD node limit exceeded");
+    }
+    const auto id = static_cast<std::uint32_t>(nodes.size());
+    ConcreteBddNode node;
+    node.variable = variable;
+    node.low = low;
+    node.high = high;
+    node.terminal = false;
+    nodes.push_back(std::move(node));
+    uniqueNodes.emplace(std::move(key), id);
+    return id;
+  }
+
+  std::uint32_t apply(BddOperation operation, std::uint32_t lhs,
+                      std::uint32_t rhs) {
+    if (lhs > rhs) {
+      std::swap(lhs, rhs);
+    }
+    if (operation == BddOperation::And) {
+      if (lhs == getFalse() || rhs == getFalse()) {
+        return getFalse();
+      }
+      if (lhs == getTrue()) {
+        return rhs;
+      }
+      if (lhs == rhs) {
+        return lhs;
+      }
+    } else {
+      if (lhs == getTrue() || rhs == getTrue()) {
+        return getTrue();
+      }
+      if (lhs == getFalse()) {
+        return rhs;
+      }
+      if (lhs == rhs) {
+        return lhs;
+      }
+    }
+
+    const auto cacheKey = std::make_tuple(operation, lhs, rhs);
+    auto cached = applyCache.find(cacheKey);
+    if (cached != applyCache.end()) {
+      return cached->second;
+    }
+
+    const auto &lhsNode = nodes.at(lhs);
+    const auto &rhsNode = nodes.at(rhs);
+    ConcreteVariableKey top;
+    if (lhsNode.terminal) {
+      top = rhsNode.variable;
+    } else if (rhsNode.terminal || lhsNode.variable < rhsNode.variable) {
+      top = lhsNode.variable;
+    } else {
+      top = rhsNode.variable;
+    }
+
+    auto cofactor = [&](std::uint32_t id, bool high) {
+      const auto &node = nodes.at(id);
+      if (!node.terminal && !(top < node.variable) && !(node.variable < top)) {
+        return high ? node.high : node.low;
+      }
+      return id;
+    };
+
+    const auto low =
+        apply(operation, cofactor(lhs, false), cofactor(rhs, false));
+    const auto high =
+        apply(operation, cofactor(lhs, true), cofactor(rhs, true));
+    const auto result = makeNode(top, low, high);
+    applyCache.emplace(cacheKey, result);
+    return result;
+  }
+
+  std::vector<ConcreteBddNode> nodes;
+  std::map<ConcreteBddNodeKey, std::uint32_t> uniqueNodes;
+  std::map<std::tuple<BddOperation, std::uint32_t, std::uint32_t>,
+           std::uint32_t>
+      applyCache;
+  std::map<std::uint32_t, std::uint32_t> notCache;
+  std::map<ConcreteVariableKey, double> variableWeights;
+};
+
+static bool isUsableProbability(double value) {
+  return value > 0.0 && value < 1.0;
+}
+
+static bool relationContainsTuple(Relation *relation,
+                                  const std::vector<RamDomain> &fields) {
+  if (relation == nullptr || relation->getArity() != fields.size()) {
+    return false;
+  }
+  souffle::tuple probe(relation);
+  for (std::size_t i = 0; i < fields.size(); ++i) {
+    probe[i] = fields[i];
+  }
+  return relation->contains(probe);
+}
+
+static std::string sanitizeTemplateField(std::string value);
+static bool hasUnsupportedSymbolicField(const std::vector<SymbolicField> &fields);
+static std::string joinStrings(const std::vector<std::string> &items,
+                               const char *separator);
+
+static void appendLiftedArtifact(LiftedWmcResult &target,
+                                 const LiftedWmcResult &extra) {
+  if (!extra.abstractGraph.empty()) {
+    target.abstractGraph += extra.abstractGraph;
+  }
+  if (!extra.abstractGraphDot.empty() &&
+      (target.abstractGraphDot.empty() ||
+          target.abstractGraphDot.find("->") == std::string::npos)) {
+    target.abstractGraphDot = extra.abstractGraphDot;
+  }
+  target.witnessIndexedTemplates += extra.witnessIndexedTemplates;
+  target.witnessIndexedWitnesses += extra.witnessIndexedWitnesses;
+  target.witnessIndexedRelations += extra.witnessIndexedRelations;
+  target.witnessIndexedTupleStats += extra.witnessIndexedTupleStats;
+  target.witnessIndexedTemplatesCount += extra.witnessIndexedTemplatesCount;
+  target.witnessIndexedRows += extra.witnessIndexedRows;
+  target.witnessIndexedTupleFormulas += extra.witnessIndexedTupleFormulas;
+}
+
+static std::string sanitizeTemplateField(std::string value) {
+  for (char &ch : value) {
+    if (ch == '\t' || ch == '\n' || ch == '\r') {
+      ch = ' ';
+    }
+  }
+  return value;
+}
+
+static std::string symbolicFieldToTemplateString(const SymbolicField &field) {
+  if (std::holds_alternative<VariableField>(field.field)) {
+    return std::get<VariableField>(field.field).name;
+  }
+  return "<const>";
+}
+
+static std::string atomToTemplateString(const Atom &atom) {
+  std::ostringstream out;
+  if (atom.isNegatedAtom()) {
+    out << '!';
+  }
+  out << atom.getRelation() << '(';
+  const auto &fields = atom.getFields();
+  for (std::size_t i = 0; i < fields.size(); ++i) {
+    if (i > 0) {
+      out << ',';
+    }
+    out << symbolicFieldToTemplateString(fields[i]);
+  }
+  out << ')';
+  return out.str();
+}
+
+static std::string joinStrings(const std::vector<std::string> &items,
+                               const char *separator) {
+  std::ostringstream out;
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    if (i > 0) {
+      out << separator;
+    }
+    out << items[i];
+  }
+  return out.str();
+}
+
+static std::string joinRamDomains(const std::vector<RamDomain> &values,
+                                  const char *separator = ",") {
+  std::ostringstream out;
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    if (i > 0) {
+      out << separator;
+    }
+    out << values[i];
+  }
+  return out.str();
+}
+
+static std::string makeWitnessTemplateId(const std::string &relation,
+                                         std::size_t ruleId) {
+  return relation + "#rule" + std::to_string(ruleId);
+}
+
+static std::string describeWitnessTemplate(const Rule &rule,
+                                           const std::string &templateId) {
+  const auto ruleVars = rule.getVars();
+  std::vector<std::string> headVars;
+  std::unordered_set<std::string> headVarSet;
+  for (const auto &field : rule.getHead().getFields()) {
+    const auto text = symbolicFieldToTemplateString(field);
+    headVars.push_back(text);
+    headVarSet.insert(text);
+  }
+
+  std::vector<std::string> witnessVars;
+  for (const auto &var : ruleVars) {
+    if (headVarSet.count(var) == 0) {
+      witnessVars.push_back(var);
+    }
+  }
+
+  std::vector<std::string> bodyAtoms;
+  bodyAtoms.reserve(rule.getBodyAtoms().size());
+  for (const auto &atom : rule.getBodyAtoms()) {
+    bodyAtoms.push_back(atomToTemplateString(atom));
+  }
+
+  std::ostringstream formula;
+  formula << "OrOver " << templateId << "(head; witness): And(";
+  for (std::size_t i = 0; i < bodyAtoms.size(); ++i) {
+    if (i > 0) {
+      formula << ", ";
+    }
+    formula << "Ref(" << bodyAtoms[i] << ")";
+  }
+  if (!rule.isDeterminstic()) {
+    if (!bodyAtoms.empty()) {
+      formula << ", ";
+    }
+    formula << "Event(rule=" << rule.getRuleId() << ", head, witness)";
+  }
+  formula << ')';
+
+  std::ostringstream out;
+  out << templateId << '\t' << rule.getHead().getRelation() << '\t'
+      << rule.getRuleId() << '\t' << joinStrings(headVars, ",") << '\t'
+      << joinStrings(witnessVars, ",") << '\t'
+      << sanitizeTemplateField(joinStrings(bodyAtoms, " & ")) << '\t'
+      << sanitizeTemplateField(formula.str()) << '\n';
+  return out.str();
+}
+
+static std::vector<RamDomain> extractWitnessValues(
+    const Rule &rule, const std::vector<RamDomain> &allValues) {
+  const auto ruleVars = rule.getVars();
+  std::unordered_set<std::string> headVarSet;
+  for (const auto &field : rule.getHead().getFields()) {
+    if (std::holds_alternative<VariableField>(field.field)) {
+      headVarSet.insert(std::get<VariableField>(field.field).name);
+    }
+  }
+
+  std::vector<RamDomain> witnessValues;
+  for (std::size_t i = 0; i < ruleVars.size() && i < allValues.size(); ++i) {
+    if (headVarSet.count(ruleVars[i]) == 0) {
+      witnessValues.push_back(allValues[i]);
+    }
+  }
+  return witnessValues;
+}
+
+enum class TemplateSlotKind {
+  RuleEvent,
+  BodyRef,
+};
+
+struct TemplateSlot {
+  TemplateSlotKind kind = TemplateSlotKind::BodyRef;
+  std::size_t index = 0;
+
+  bool operator<(const TemplateSlot &other) const {
+    return std::tie(kind, index) < std::tie(other.kind, other.index);
+  }
+
+  bool operator==(const TemplateSlot &other) const {
+    return std::tie(kind, index) == std::tie(other.kind, other.index);
+  }
+};
+
+struct TemplateBddNode {
+  TemplateSlot slot;
+  std::uint32_t low = 0;
+  std::uint32_t high = 0;
+  bool terminal = true;
+};
+
+struct TemplateBddNodeKey {
+  TemplateSlot slot;
+  std::uint32_t low = 0;
+  std::uint32_t high = 0;
+
+  bool operator<(const TemplateBddNodeKey &other) const {
+    if (slot < other.slot) {
+      return true;
+    }
+    if (other.slot < slot) {
+      return false;
+    }
+    return std::tie(low, high) < std::tie(other.low, other.high);
+  }
+};
+
+class SymbolicTemplateBdd {
+public:
+  SymbolicTemplateBdd() {
+    nodes.emplace_back();
+    nodes.emplace_back();
+  }
+
+  std::uint32_t getFalse() const { return 0; }
+  std::uint32_t getTrue() const { return 1; }
+
+  std::uint32_t makeVariable(TemplateSlot slot) {
+    return makeNode(slot, getFalse(), getTrue());
+  }
+
+  std::uint32_t makeAnd(std::uint32_t lhs, std::uint32_t rhs) {
+    return apply(BddOperation::And, lhs, rhs);
+  }
+
+  const TemplateBddNode &getNode(std::uint32_t id) const {
+    return nodes.at(id);
+  }
+
+  std::size_t nodeCount() const { return nodes.size(); }
+
+  std::size_t internalNodeCount() const {
+    return nodes.size() >= 2 ? nodes.size() - 2 : 0;
+  }
+
+private:
+  std::uint32_t makeNode(TemplateSlot slot, std::uint32_t low,
+                         std::uint32_t high) {
+    if (low == high) {
+      return low;
+    }
+    TemplateBddNodeKey key{slot, low, high};
+    auto it = uniqueNodes.find(key);
+    if (it != uniqueNodes.end()) {
+      return it->second;
+    }
+    if (nodes.size() >= std::numeric_limits<std::uint32_t>::max()) {
+      throw std::runtime_error("template BDD node limit exceeded");
+    }
+    const auto id = static_cast<std::uint32_t>(nodes.size());
+    TemplateBddNode node;
+    node.slot = slot;
+    node.low = low;
+    node.high = high;
+    node.terminal = false;
+    nodes.push_back(std::move(node));
+    uniqueNodes.emplace(std::move(key), id);
+    return id;
+  }
+
+  std::uint32_t apply(BddOperation operation, std::uint32_t lhs,
+                      std::uint32_t rhs) {
+    if (lhs > rhs) {
+      std::swap(lhs, rhs);
+    }
+    if (operation == BddOperation::And) {
+      if (lhs == getFalse() || rhs == getFalse()) {
+        return getFalse();
+      }
+      if (lhs == getTrue()) {
+        return rhs;
+      }
+      if (lhs == rhs) {
+        return lhs;
+      }
+    }
+
+    const auto cacheKey = std::make_tuple(operation, lhs, rhs);
+    auto cached = applyCache.find(cacheKey);
+    if (cached != applyCache.end()) {
+      return cached->second;
+    }
+
+    const auto &lhsNode = nodes.at(lhs);
+    const auto &rhsNode = nodes.at(rhs);
+    TemplateSlot top;
+    if (lhsNode.terminal) {
+      top = rhsNode.slot;
+    } else if (rhsNode.terminal || lhsNode.slot < rhsNode.slot) {
+      top = lhsNode.slot;
+    } else {
+      top = rhsNode.slot;
+    }
+
+    auto cofactor = [&](std::uint32_t id, bool high) {
+      const auto &node = nodes.at(id);
+      if (!node.terminal && node.slot == top) {
+        return high ? node.high : node.low;
+      }
+      return id;
+    };
+
+    const auto low =
+        apply(operation, cofactor(lhs, false), cofactor(rhs, false));
+    const auto high =
+        apply(operation, cofactor(lhs, true), cofactor(rhs, true));
+    const auto result = makeNode(top, low, high);
+    applyCache.emplace(cacheKey, result);
+    return result;
+  }
+
+  std::vector<TemplateBddNode> nodes;
+  std::map<TemplateBddNodeKey, std::uint32_t> uniqueNodes;
+  std::map<std::tuple<BddOperation, std::uint32_t, std::uint32_t>,
+           std::uint32_t>
+      applyCache;
+};
+
+struct WitnessIndexedBodyRef {
+  std::string relation;
+  std::vector<SymbolicField> fields;
+};
+
+struct WitnessIndexedTemplate {
+  std::string id;
+  const Rule *rule = nullptr;
+  std::size_t ruleId = 0;
+  std::string headRelation;
+  std::vector<std::string> ruleVariables;
+  std::vector<std::string> witnessVariables;
+  std::vector<WitnessIndexedBodyRef> bodyRefs;
+  bool hasRuleEvent = false;
+  SymbolicTemplateBdd templateBdd;
+  std::uint32_t templateRoot = 1;
+
+  std::size_t templateDdNodes() const {
+    return templateBdd.internalNodeCount();
+  }
+};
+
+struct WitnessIndexedWitness {
+  const WitnessIndexedTemplate *tmpl = nullptr;
+  UntypedTuple outputTuple;
+  std::vector<RamDomain> ruleVariableValues;
+  std::vector<RamDomain> witnessValues;
+  std::vector<std::string> bodyTupleTexts;
+  std::uint32_t formula = 0;
+};
+
+struct WitnessIndexedTupleFormula {
+  UntypedTuple outputTuple;
+  std::vector<WitnessIndexedWitness> witnesses;
+  std::set<std::size_t> ruleIds;
+};
+
+struct WitnessIndexedRelationProgram {
+  std::string relation;
+  std::map<std::size_t, WitnessIndexedTemplate> templatesByRule;
+  std::vector<WitnessIndexedTupleFormula> tuples;
+};
+
+static WitnessIndexedTemplate compileWitnessIndexedTemplate(
+    const Rule &rule, const std::string &templateId) {
+  WitnessIndexedTemplate tmpl;
+  tmpl.id = templateId;
+  tmpl.rule = &rule;
+  tmpl.ruleId = rule.getRuleId();
+  tmpl.headRelation = rule.getHead().getRelation();
+  tmpl.ruleVariables = rule.getVars();
+  tmpl.hasRuleEvent = !rule.isDeterminstic();
+
+  std::unordered_set<std::string> headVarSet;
+  for (const auto &field : rule.getHead().getFields()) {
+    if (std::holds_alternative<VariableField>(field.field)) {
+      headVarSet.insert(std::get<VariableField>(field.field).name);
+    }
+  }
+  for (const auto &variable : tmpl.ruleVariables) {
+    if (headVarSet.count(variable) == 0) {
+      tmpl.witnessVariables.push_back(variable);
+    }
+  }
+
+  tmpl.bodyRefs.reserve(rule.getBodyAtoms().size());
+  for (const auto &atom : rule.getBodyAtoms()) {
+    WitnessIndexedBodyRef ref;
+    ref.relation = atom.getRelation();
+    ref.fields = atom.getFields();
+    tmpl.bodyRefs.push_back(std::move(ref));
+  }
+
+  std::uint32_t root = tmpl.templateBdd.getTrue();
+  if (tmpl.hasRuleEvent) {
+    root = tmpl.templateBdd.makeAnd(
+        root, tmpl.templateBdd.makeVariable(
+                  TemplateSlot{TemplateSlotKind::RuleEvent, 0}));
+  }
+  for (std::size_t i = 0; i < tmpl.bodyRefs.size(); ++i) {
+    root = tmpl.templateBdd.makeAnd(
+        root, tmpl.templateBdd.makeVariable(
+                  TemplateSlot{TemplateSlotKind::BodyRef, i}));
+  }
+  tmpl.templateRoot = root;
+  return tmpl;
+}
+
+static bool isDirectMultiWitnessRuleSupported(
+    SouffleProgram &program, const Rule &rule,
+    const std::unordered_set<std::string> &inputRelations) {
+  if (rule.isFact() || rule.isRecursive() || rule.isInRecursiveStratum() ||
+      !rule.getAggregates().empty()) {
+    return false;
+  }
+  if (rule.getBodyAtoms().empty()) {
+    return false;
+  }
+  if (rule.getBodyAtoms().size() < 2) {
+    return false;
+  }
+  for (const auto &atom : rule.getBodyAtoms()) {
+    if (atom.isNegatedAtom() || inputRelations.count(atom.getRelation()) == 0) {
+      return false;
+    }
+    Relation *relation = program.getRelation(atom.getRelation());
+    if (relation == nullptr || relation->getArity() != atom.getFields().size()) {
+      return false;
+    }
+    for (const auto &field : atom.getFields()) {
+      if (std::holds_alternative<std::shared_ptr<ExprField>>(field.field)) {
+        return false;
+      }
+    }
+  }
+  const auto &head = rule.getHead();
+  Relation *headRelation = program.getRelation(head.getRelation());
+  if (headRelation == nullptr || headRelation->getArity() != head.getFields().size()) {
+    return false;
+  }
+  const auto ruleVars = rule.getVars();
+  std::unordered_set<std::string> ruleVariables(ruleVars.begin(),
+                                                ruleVars.end());
+  for (const auto &field : head.getFields()) {
+    if (!std::holds_alternative<VariableField>(field.field)) {
+      return false;
+    }
+    const auto &name = std::get<VariableField>(field.field).name;
+    if (name == "_" || ruleVariables.count(name) == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static std::vector<RamDomain> evaluateAtomTuple(
+    const Atom &atom, const std::vector<std::string> &vars,
+    const std::vector<RamDomain> &values) {
+  std::vector<RamDomain> fields;
+  fields.reserve(atom.getFields().size());
+  for (const auto &field : atom.getFields()) {
+    fields.push_back(evaluateSymbolicField(field, vars, values));
+  }
+  return fields;
+}
+
+static std::uint32_t instantiateWitnessTemplateSlot(
+    SouffleProgram &program,
+    const std::unordered_map<UntypedTuple, double> &factProb,
+    ConcreteWeightedBdd &bdd, const WitnessIndexedTemplate &tmpl,
+    WitnessIndexedWitness &witness, TemplateSlot slot) {
+  if (slot.kind == TemplateSlotKind::RuleEvent) {
+    ConcreteVariableKey key;
+    key.kind = SymbolicVariableKind::ProbabilisticRule;
+    key.relation = tmpl.headRelation;
+    key.ruleId = tmpl.ruleId;
+    key.arguments = witness.ruleVariableValues;
+    return bdd.makeVariable(key, tmpl.rule->getProbability());
+  }
+
+  if (slot.index >= tmpl.bodyRefs.size()) {
+    throw std::runtime_error("template body-ref slot index out of range");
+  }
+  const auto &ref = tmpl.bodyRefs[slot.index];
+  const auto fields =
+      evaluateAtomTuple(Atom(ref.relation, ref.fields, false), tmpl.ruleVariables,
+                        witness.ruleVariableValues);
+  Relation *bodyRelation = program.getRelation(ref.relation);
+  if (!relationContainsTuple(bodyRelation, fields)) {
+    return bdd.getFalse();
+  }
+  UntypedTuple bodyTuple{ref.relation, fields};
+  witness.bodyTupleTexts.push_back(bodyTuple.toString());
+  auto probIt = factProb.find(bodyTuple);
+  if (probIt != factProb.end() && isUsableProbability(probIt->second)) {
+    ConcreteVariableKey key;
+    key.kind = SymbolicVariableKind::ExtensionalFact;
+    key.relation = ref.relation;
+    key.arguments = fields;
+    return bdd.makeVariable(key, probIt->second);
+  }
+  return bdd.getTrue();
+}
+
+static std::uint32_t instantiateWitnessTemplateBdd(
+    SouffleProgram &program,
+    const std::unordered_map<UntypedTuple, double> &factProb,
+    ConcreteWeightedBdd &bdd, const WitnessIndexedTemplate &tmpl,
+    WitnessIndexedWitness &witness, std::uint32_t nodeId,
+    std::unordered_map<std::uint32_t, std::uint32_t> &nodeMemo,
+    std::map<TemplateSlot, std::uint32_t> &slotMemo) {
+  if (nodeId == tmpl.templateBdd.getFalse()) {
+    return bdd.getFalse();
+  }
+  if (nodeId == tmpl.templateBdd.getTrue()) {
+    return bdd.getTrue();
+  }
+  auto memoIt = nodeMemo.find(nodeId);
+  if (memoIt != nodeMemo.end()) {
+    return memoIt->second;
+  }
+
+  const auto &node = tmpl.templateBdd.getNode(nodeId);
+  auto slotIt = slotMemo.find(node.slot);
+  if (slotIt == slotMemo.end()) {
+    slotIt = slotMemo
+                 .emplace(node.slot,
+                          instantiateWitnessTemplateSlot(program, factProb, bdd,
+                                                         tmpl, witness, node.slot))
+                 .first;
+  }
+  const auto low = instantiateWitnessTemplateBdd(
+      program, factProb, bdd, tmpl, witness, node.low, nodeMemo, slotMemo);
+  const auto high = instantiateWitnessTemplateBdd(
+      program, factProb, bdd, tmpl, witness, node.high, nodeMemo, slotMemo);
+  const auto result =
+      bdd.makeOr(bdd.makeAnd(slotIt->second, high),
+                 bdd.makeAnd(/* not(slot) branch is encoded by low only when slot=false */
+                             slotIt->second == bdd.getFalse() ? bdd.getTrue()
+                                                              : bdd.getFalse(),
+                             low));
+  // The current template compiler only emits conjunction templates whose low
+  // branch is false. If this changes, add concrete BDD negation before using
+  // arbitrary low branches.
+  if (low != bdd.getFalse()) {
+    throw std::runtime_error(
+        "template BDD instantiation requires negation support for non-false low branch");
+  }
+  nodeMemo.emplace(nodeId, result);
+  return result;
+}
+
+static std::uint32_t compileWitnessIndexedRow(
+    SouffleProgram &program,
+    const std::unordered_map<UntypedTuple, double> &factProb,
+    ConcreteWeightedBdd &bdd, const WitnessIndexedTemplate &tmpl,
+    WitnessIndexedWitness &witness) {
+  if (tmpl.rule == nullptr ||
+      witness.ruleVariableValues.size() != tmpl.ruleVariables.size()) {
+    throw std::runtime_error("witness-indexed row has invalid rule binding");
+  }
+
+  witness.witnessValues = extractWitnessValues(*tmpl.rule, witness.ruleVariableValues);
+  witness.bodyTupleTexts.clear();
+  std::unordered_map<std::uint32_t, std::uint32_t> nodeMemo;
+  std::map<TemplateSlot, std::uint32_t> slotMemo;
+  std::uint32_t term = instantiateWitnessTemplateBdd(
+      program, factProb, bdd, tmpl, witness, tmpl.templateRoot, nodeMemo,
+      slotMemo);
+  witness.formula = term;
+  return term;
+}
+
+static bool hasUnsupportedSymbolicField(const std::vector<SymbolicField> &fields) {
+  for (const auto &field : fields) {
+    if (std::holds_alternative<std::shared_ptr<ExprField>>(field.field)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static double evaluateWitnessIndexedTuple(
+    SouffleProgram &program,
+    const std::unordered_map<UntypedTuple, double> &factProb,
+    WitnessIndexedTupleFormula &tupleFormula, ConcreteWeightedBdd &bdd) {
+  std::uint32_t root = bdd.getFalse();
+  for (auto &witness : tupleFormula.witnesses) {
+    if (witness.tmpl == nullptr) {
+      throw std::runtime_error("witness-indexed tuple has a witness without template");
+    }
+    const std::uint32_t term =
+        compileWitnessIndexedRow(program, factProb, bdd, *witness.tmpl, witness);
+    root = bdd.makeOr(root, term);
+  }
+  return bdd.wmc(root);
+}
+
+static bool tryEvaluateDirectMultiWitnessOutputs(
+    const CmdOptions &opt, SouffleProgram &program,
+    const RuleManager &ruleManager,
+    const std::unordered_map<UntypedTuple, double> &factProb,
+    LiftedWmcResult &result) {
+  const auto outputs = program.getOutputRelations();
+  std::unordered_set<std::string> inputRelations;
+  for (const auto *input : program.getInputRelations()) {
+    if (input != nullptr) {
+      inputRelations.insert(input->getName());
+    }
+  }
+
+  std::size_t totalOutputRelations = 0;
+  std::size_t totalBddNodes = 0;
+  std::size_t totalVariables = 0;
+  std::size_t totalAbstractEdges = 0;
+  std::size_t totalAbstractNodes = 0;
+  std::size_t totalWitnessTemplates = 0;
+  std::size_t totalWitnessRows = 0;
+  std::size_t totalWitnessTemplateDdNodes = 0;
+  std::set<std::string> handledRelations;
+  std::ostringstream graphTsv;
+  graphTsv << "kind\trelation\ttuple\trule_id\twitnesses\tformula\n";
+  std::ostringstream graphDot;
+  graphDot << "digraph MultiWitnessLiftedFormulas {\n  rankdir=LR;\n";
+  std::ostringstream templateTsv;
+  templateTsv << "template_id\thead_relation\trule_id\thead_vars\twitness_vars"
+              << "\tbody_atoms\tformula\n";
+  std::ostringstream witnessTsv;
+  witnessTsv << "template_id\toutput_tuple\twitness_values\tbody_tuples\n";
+  std::ostringstream relationStatsTsv;
+  relationStatsTsv << "relation\ttemplates\ttuple_formulas\twitness_rows"
+                   << "\ttemplate_dd_nodes\tbdd_nodes\tbdd_variables\thandled\n";
+  std::ostringstream tupleStatsTsv;
+  tupleStatsTsv << "relation\toutput_tuple\trule_ids\twitness_rows"
+                << "\tbdd_nodes\tbdd_variables\tprobability\n";
+
+  for (auto *output : outputs) {
+    if (output == nullptr) {
+      continue;
+    }
+    ++totalOutputRelations;
+    const std::string relation = output->getName();
+    if (output->size() < opt.getLiftedWmcThreshold()) {
+      result.rejectedOutputReasons.emplace(relation, "below_runtime_threshold");
+      continue;
+    }
+
+    std::vector<const Rule *> supportedRules;
+    std::unordered_set<std::size_t> supportedRuleIds;
+    for (const Rule *rule : ruleManager.getRulesForPredicate(relation)) {
+      if (rule != nullptr &&
+          isDirectMultiWitnessRuleSupported(program, *rule, inputRelations)) {
+        supportedRules.push_back(rule);
+        supportedRuleIds.insert(rule->getRuleId());
+      }
+    }
+    if (supportedRules.empty()) {
+      result.rejectedOutputReasons.emplace(
+          relation, "no_supported_direct_multi_witness_rule");
+      continue;
+    }
+
+    bool relationHadMultiWitness = false;
+    bool relationOk = true;
+    std::map<std::string, double> relationProbabilities;
+    std::ostringstream relationTemplateTsv;
+    std::ostringstream relationWitnessTsv;
+    std::ostringstream relationTupleStatsTsv;
+    std::unordered_set<std::size_t> emittedTemplateRules;
+    WitnessIndexedRelationProgram relationProgram;
+    relationProgram.relation = relation;
+    std::size_t relationEdges = 0;
+    std::size_t relationNodes = 0;
+    std::size_t relationBddNodes = 0;
+    std::size_t relationBddVariables = 0;
+    std::size_t relationTemplateDdNodes = 0;
+
+    for (const Rule *rule : supportedRules) {
+      if (rule != nullptr && emittedTemplateRules.insert(rule->getRuleId()).second) {
+        auto tmpl = compileWitnessIndexedTemplate(
+            *rule, makeWitnessTemplateId(relation, rule->getRuleId()));
+        relationTemplateDdNodes += tmpl.templateDdNodes();
+        relationProgram.templatesByRule.emplace(rule->getRuleId(), std::move(tmpl));
+        relationTemplateTsv << describeWitnessTemplate(
+            *rule, makeWitnessTemplateId(relation, rule->getRuleId()));
+      }
+    }
+
+    for (auto it = output->begin(); it != output->end(); ++it) {
+      const UntypedTuple tuple = UntypedTuple::fromSouffleTuple(*it);
+      auto appsIt = DerivationManager::untypedTuple2RuleApplications.find(tuple);
+      if (appsIt == DerivationManager::untypedTuple2RuleApplications.end() ||
+          appsIt->second == nullptr || appsIt->second->empty()) {
+        relationOk = false;
+        result.rejectedOutputReasons.emplace(relation,
+                                             "missing_runtime_witnesses");
+        break;
+      }
+
+      WitnessIndexedTupleFormula tupleFormula;
+      tupleFormula.outputTuple = tuple;
+      std::set<std::size_t> tupleRuleIds;
+      for (const auto &application : *appsIt->second) {
+        const auto ruleId = static_cast<std::size_t>(application.ruleId);
+        if (supportedRuleIds.count(ruleId) == 0) {
+          relationOk = false;
+          result.rejectedOutputReasons.emplace(
+              relation, "unsupported_runtime_witness_rule");
+          break;
+        }
+        const Rule *rule = nullptr;
+        for (const Rule *candidate : supportedRules) {
+          if (candidate->getRuleId() == ruleId) {
+            rule = candidate;
+            break;
+          }
+        }
+        if (rule == nullptr ||
+            application.varValuesPure.size() != rule->getVars().size()) {
+          relationOk = false;
+          result.rejectedOutputReasons.emplace(relation,
+                                               "runtime_witness_arity_mismatch");
+          break;
+        }
+
+        auto tmplIt = relationProgram.templatesByRule.find(ruleId);
+        if (tmplIt == relationProgram.templatesByRule.end()) {
+          relationOk = false;
+          result.rejectedOutputReasons.emplace(relation,
+                                               "missing_witness_template");
+          break;
+        }
+        WitnessIndexedWitness witness;
+        witness.tmpl = &tmplIt->second;
+        witness.outputTuple = tuple;
+        witness.ruleVariableValues = application.varValuesPure;
+        witness.witnessValues = extractWitnessValues(*rule, witness.ruleVariableValues);
+        tupleRuleIds.insert(ruleId);
+        tupleFormula.ruleIds.insert(ruleId);
+        tupleFormula.witnesses.push_back(std::move(witness));
+      }
+      if (!relationOk) {
+        break;
+      }
+
+      ConcreteWeightedBdd bdd;
+      const double probability =
+          evaluateWitnessIndexedTuple(program, factProb, tupleFormula, bdd);
+      const std::size_t witnessCount = tupleFormula.witnesses.size();
+      relationProgram.tuples.push_back(std::move(tupleFormula));
+      const auto &storedTuple = relationProgram.tuples.back();
+      for (const auto &witness : storedTuple.witnesses) {
+        if (witness.tmpl == nullptr) {
+          relationOk = false;
+          result.rejectedOutputReasons.emplace(relation,
+                                               "missing_witness_template");
+          break;
+        }
+        relationWitnessTsv << witness.tmpl->id << '\t'
+                           << sanitizeTemplateField(witness.outputTuple.toString()) << '\t'
+                           << joinRamDomains(witness.witnessValues) << '\t'
+                           << sanitizeTemplateField(joinStrings(witness.bodyTupleTexts, " & "))
+                           << '\n';
+      }
+      if (!relationOk) {
+        break;
+      }
+      if (witnessCount > 1) {
+        relationHadMultiWitness = true;
+      }
+      relationProbabilities.emplace(tuple.toString(), probability);
+      totalBddNodes += bdd.nodeCount();
+      totalVariables += bdd.variableCount();
+      relationBddNodes += bdd.nodeCount();
+      relationBddVariables += bdd.variableCount();
+      relationEdges += witnessCount;
+      relationNodes += 1;
+
+      graphTsv << "multi_witness\t" << relation << '\t' << tuple.toString()
+               << '\t';
+      std::ostringstream tupleRuleIdsText;
+      bool first = true;
+      for (const auto ruleId : tupleRuleIds) {
+        if (!first) {
+          graphTsv << ',';
+          tupleRuleIdsText << ',';
+        }
+        graphTsv << ruleId;
+        tupleRuleIdsText << ruleId;
+        first = false;
+      }
+      graphTsv << '\t' << witnessCount
+               << "\tOR_w AND(body_facts(rule,w), rule_event(rule,w))\n";
+      relationTupleStatsTsv
+          << relation << '\t' << sanitizeTemplateField(tuple.toString())
+          << '\t' << tupleRuleIdsText.str() << '\t' << witnessCount << '\t'
+          << bdd.nodeCount() << '\t' << bdd.variableCount() << '\t'
+          << std::setprecision(17) << probability << '\n';
+      graphDot << "  \"" << escapeDotLabel(relation)
+               << "_template\" [shape=ellipse,label=\""
+               << escapeDotLabel(relation) << "\\nmulti-witness template\"];\n";
+      graphDot << "  \"" << escapeDotLabel(tuple.toString())
+               << "\" [shape=box,label=\"" << escapeDotLabel(tuple.toString())
+               << "\\nwitnesses=" << witnessCount << "\"];\n";
+      graphDot << "  \"" << escapeDotLabel(relation) << "_template\" -> \""
+               << escapeDotLabel(tuple.toString()) << "\";\n";
+    }
+
+    if (!relationOk || !relationHadMultiWitness) {
+      if (!relationHadMultiWitness &&
+          result.rejectedOutputReasons.count(relation) == 0) {
+        result.rejectedOutputReasons.emplace(relation, "no_multi_witness_tuple");
+      }
+      continue;
+    }
+
+    result.probabilities.insert(relationProbabilities.begin(),
+                                relationProbabilities.end());
+    templateTsv << relationTemplateTsv.str();
+    witnessTsv << relationWitnessTsv.str();
+    tupleStatsTsv << relationTupleStatsTsv.str();
+    relationStatsTsv << relation << '\t' << relationProgram.templatesByRule.size()
+                     << '\t' << relationProgram.tuples.size() << '\t'
+                     << relationEdges << '\t' << relationTemplateDdNodes << '\t'
+                     << relationBddNodes << '\t' << relationBddVariables << "\t1\n";
+    result.handledOutputRelations.push_back(relation);
+    result.liftedOutputTuples += output->size();
+    handledRelations.insert(relation);
+    for (const Rule *rule : supportedRules) {
+      handledRelations.insert(rule->getHead().getRelation());
+      for (const auto &atom : rule->getBodyAtoms()) {
+        handledRelations.insert(atom.getRelation());
+      }
+    }
+    totalAbstractEdges += relationEdges;
+    totalAbstractNodes += relationNodes;
+    totalWitnessTemplates += relationProgram.templatesByRule.size();
+    totalWitnessTemplateDdNodes += relationTemplateDdNodes;
+    for (const auto &tupleFormula : relationProgram.tuples) {
+      totalWitnessRows += tupleFormula.witnesses.size();
+    }
+  }
+
+  std::set<std::string> outputRelationNames;
+  for (const auto *output : outputs) {
+    if (output != nullptr) {
+      outputRelationNames.insert(output->getName());
+    }
+  }
+  std::set<std::string> candidateInternalRelations;
+  for (const Rule *rule : ruleManager.getAllRules()) {
+    if (rule == nullptr) {
+      continue;
+    }
+    const std::string relation = rule->getHead().getRelation();
+    if (outputRelationNames.count(relation) == 0 &&
+        handledRelations.count(relation) == 0) {
+      candidateInternalRelations.insert(relation);
+    }
+  }
+
+  for (const auto &relation : candidateInternalRelations) {
+    Relation *runtimeRelation = program.getRelation(relation);
+    if (runtimeRelation == nullptr ||
+        runtimeRelation->size() < opt.getLiftedWmcThreshold()) {
+      continue;
+    }
+
+    std::vector<const Rule *> supportedRules;
+    std::unordered_set<std::size_t> supportedRuleIds;
+    for (const Rule *rule : ruleManager.getRulesForPredicate(relation)) {
+      if (rule != nullptr &&
+          isDirectMultiWitnessRuleSupported(program, *rule, inputRelations)) {
+        supportedRules.push_back(rule);
+        supportedRuleIds.insert(rule->getRuleId());
+      }
+    }
+    if (supportedRules.empty()) {
+      continue;
+    }
+
+    bool relationOk = true;
+    bool relationHadMultiWitness = false;
+    std::size_t relationEdges = 0;
+    std::size_t relationTemplateDdNodes = 0;
+    std::unordered_set<std::size_t> emittedTemplateRules;
+    std::ostringstream relationTemplateTsv;
+    for (const Rule *rule : supportedRules) {
+      if (rule != nullptr &&
+          emittedTemplateRules.insert(rule->getRuleId()).second) {
+        auto tmpl = compileWitnessIndexedTemplate(
+            *rule, makeWitnessTemplateId(relation, rule->getRuleId()));
+        relationTemplateDdNodes += tmpl.templateDdNodes();
+        relationTemplateTsv << describeWitnessTemplate(
+            *rule, makeWitnessTemplateId(relation, rule->getRuleId()));
+      }
+    }
+
+    for (auto it = runtimeRelation->begin(); it != runtimeRelation->end();
+         ++it) {
+      const UntypedTuple tuple = UntypedTuple::fromSouffleTuple(*it);
+      auto appsIt = DerivationManager::untypedTuple2RuleApplications.find(tuple);
+      if (appsIt == DerivationManager::untypedTuple2RuleApplications.end() ||
+          appsIt->second == nullptr || appsIt->second->empty()) {
+        relationOk = false;
+        break;
+      }
+      std::size_t witnessCount = 0;
+      for (const auto &application : *appsIt->second) {
+        const auto ruleId = static_cast<std::size_t>(application.ruleId);
+        if (supportedRuleIds.count(ruleId) == 0) {
+          relationOk = false;
+          break;
+        }
+        ++witnessCount;
+      }
+      if (!relationOk) {
+        break;
+      }
+      if (witnessCount > 1) {
+        relationHadMultiWitness = true;
+      }
+      relationEdges += witnessCount;
+    }
+
+    if (!relationOk || !relationHadMultiWitness) {
+      continue;
+    }
+
+    templateTsv << relationTemplateTsv.str();
+    relationStatsTsv << relation << '\t' << supportedRules.size() << '\t'
+                     << runtimeRelation->size() << '\t' << relationEdges
+                     << '\t' << relationTemplateDdNodes
+                     << "\t0\t0\t1\n";
+    handledRelations.insert(relation);
+    for (const Rule *rule : supportedRules) {
+      handledRelations.insert(rule->getHead().getRelation());
+      for (const auto &atom : rule->getBodyAtoms()) {
+        handledRelations.insert(atom.getRelation());
+      }
+    }
+    totalAbstractEdges += relationEdges;
+    totalAbstractNodes += runtimeRelation->size();
+    totalWitnessTemplates += supportedRules.size();
+    totalWitnessRows += relationEdges;
+    totalWitnessTemplateDdNodes += relationTemplateDdNodes;
+    graphTsv << "internal_multi_witness\t" << relation
+             << "\t*\t*\t" << relationEdges
+             << "\tTemplateRef-only boundary relation\n";
+  }
+
+  graphDot << "}\n";
+  if (result.handledOutputRelations.empty() && handledRelations.empty()) {
+    return false;
+  }
+  result.handled = true;
+  result.complete = result.handledOutputRelations.size() == totalOutputRelations;
+  result.concreteOutputTuples = result.outputTuples - result.liftedOutputTuples;
+  result.relationTemplates = handledRelations.size();
+  result.handledRelations.assign(handledRelations.begin(), handledRelations.end());
+  result.abstractEdges = totalAbstractEdges;
+  result.abstractNodes = totalAbstractNodes;
+  result.symbolicVariables = totalVariables;
+  result.bddNodes = totalBddNodes;
+  result.witnessIndexedTemplatesCount = totalWitnessTemplates;
+  result.witnessIndexedRows = totalWitnessRows;
+  result.witnessIndexedTupleFormulas = result.liftedOutputTuples;
+  result.witnessIndexedTemplateDdNodes = totalWitnessTemplateDdNodes;
+  result.executionMode = "witness_indexed_template";
+  result.abstractGraph = graphTsv.str();
+  result.abstractGraphDot = graphDot.str();
+  result.witnessIndexedTemplates = templateTsv.str();
+  result.witnessIndexedWitnesses = witnessTsv.str();
+  result.witnessIndexedRelations = relationStatsTsv.str();
+  result.witnessIndexedTupleStats = tupleStatsTsv.str();
+  result.reason = result.complete ? "multi_witness_lifted"
+                                  : "partial_multi_witness_lifted";
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Post-hoc stratification round: topological depth of each derived tuple over
+// the concrete derivation DAG.  round(t) = 0 for EDB/fact leaves; otherwise
+// 1 + max round over its DERIVED body tuples, across all rule applications.
+// Because the concrete tuple derivation graph is acyclic, every derived body
+// tuple is guaranteed a strictly smaller round -- a sound stratification of a
+// recursive SCC into layers that only depend on strictly-earlier layers.  This
+// is the foundation for stratified lifting; it does not change WMC yet.
+// ---------------------------------------------------------------------------
+int computeDerivationRound(const UntypedTuple &tuple,
+                           const RuleManager &ruleManager,
+                           std::unordered_map<UntypedTuple, int> &memo,
+                           std::unordered_set<UntypedTuple> &active) {
+  auto cached = memo.find(tuple);
+  if (cached != memo.end()) {
+    return cached->second;
+  }
+  auto it = DerivationManager::untypedTuple2RuleApplications.find(tuple);
+  if (it == DerivationManager::untypedTuple2RuleApplications.end() ||
+      it->second == nullptr || it->second->empty()) {
+    memo.emplace(tuple, 0);
+    return 0;  // EDB / input fact leaf
+  }
+  if (!active.insert(tuple).second) {
+    // The concrete tuple derivation graph is acyclic; guard defensively so a
+    // malformed cycle cannot loop forever.
+    return 0;
+  }
+  int best = 0;
+  for (const auto &app : *it->second) {
+    const Rule *rule =
+        ruleManager.getRule(static_cast<std::size_t>(app.ruleId));
+    if (rule == nullptr) {
+      continue;
+    }
+    const auto ruleVars = rule->getVars();
+    if (app.varValuesPure.size() != ruleVars.size()) {
+      continue;
+    }
+    std::unordered_set<std::string> varSet(ruleVars.begin(), ruleVars.end());
+    for (const auto &atom : rule->getBodyAtoms()) {
+      if (atom.isNegatedAtom()) {
+        continue;
+      }
+      bool resolvable = true;
+      for (const auto &field : atom.getFields()) {
+        if (std::holds_alternative<VariableField>(field.field) &&
+            varSet.count(std::get<VariableField>(field.field).name) == 0) {
+          resolvable = false;
+          break;
+        }
+      }
+      if (!resolvable) {
+        continue;
+      }
+      std::vector<RamDomain> values;
+      values.reserve(atom.getFields().size());
+      for (const auto &field : atom.getFields()) {
+        values.push_back(
+            evaluateSymbolicField(field, ruleVars, app.varValuesPure));
+      }
+      UntypedTuple body{atom.getRelation(), std::move(values)};
+      auto bodyIt =
+          DerivationManager::untypedTuple2RuleApplications.find(body);
+      if (bodyIt == DerivationManager::untypedTuple2RuleApplications.end() ||
+          bodyIt->second == nullptr || bodyIt->second->empty()) {
+        continue;  // EDB / det leaf contributes round 0
+      }
+      const int r =
+          computeDerivationRound(body, ruleManager, memo, active) + 1;
+      if (r > best) {
+        best = r;
+      }
+    }
+  }
+  active.erase(tuple);
+  memo.emplace(tuple, best);
+  return best;
+}
+
+std::unordered_map<UntypedTuple, int> computeDerivationRounds(
+    const RuleManager &ruleManager) {
+  std::unordered_map<UntypedTuple, int> memo;
+  std::unordered_set<UntypedTuple> active;
+  for (const auto &entry : DerivationManager::untypedTuple2RuleApplications) {
+    computeDerivationRound(entry.first, ruleManager, memo, active);
+  }
+  return memo;
+}
+
+// Gated by env var LIFTED_DUMP_ROUNDS: dump per-tuple rounds to a TSV and print
+// a per-relation summary.  Non-invasive validation hook for the round layering.
+void maybeDumpDerivationRounds(const RuleManager &ruleManager) {
+  const char *path = std::getenv("LIFTED_DUMP_ROUNDS");
+  if (path == nullptr) {
+    return;
+  }
+  const auto rounds = computeDerivationRounds(ruleManager);
+  std::map<std::string, std::pair<int, std::size_t>> relSummary;  // rel->(max,count)
+  int maxRound = 0;
+  std::ofstream out(path);
+  out << "relation\tround\tfields\n";
+  for (const auto &entry : rounds) {
+    const UntypedTuple &t = entry.first;
+    const int r = entry.second;
+    out << t.relation_name << "\t" << r << "\t";
+    for (std::size_t i = 0; i < t.fields.size(); ++i) {
+      if (i > 0) {
+        out << ",";
+      }
+      out << t.fields[i];
+    }
+    out << "\n";
+    auto &s = relSummary[t.relation_name];
+    s.first = std::max(s.first, r);
+    s.second += 1;
+    maxRound = std::max(maxRound, r);
+  }
+  std::cout << "[lifted-rounds] tuples=" << rounds.size()
+            << " max_round=" << maxRound << " dump=" << path << "\n";
+  for (const auto &entry : relSummary) {
+    std::cout << "[lifted-rounds]   " << entry.first
+              << " max_round=" << entry.second.first
+              << " tuples=" << entry.second.second << "\n";
+  }
+}
+
 } // namespace
 
 LiftedWmcResult tryEvaluateLiftedPointwise(
@@ -1067,6 +2373,7 @@ LiftedWmcResult tryEvaluateLiftedPointwise(
     const std::unordered_map<UntypedTuple, double> &factProb,
     const std::vector<std::pair<UntypedTuple, bool>> &evidences) {
   LiftedWmcResult result;
+  result.executionMode = "none";
   if (!opt.isLiftedWmcEnabled()) {
     result.reason = "disabled";
     return result;
@@ -1096,6 +2403,18 @@ LiftedWmcResult tryEvaluateLiftedPointwise(
       result.outputTuples += output->size();
     }
   }
+
+  LiftedWmcResult directResult = result;
+  if (tryEvaluateDirectMultiWitnessOutputs(opt, program, ruleManager, factProb,
+                                           directResult)) {
+    if (!directResult.handledOutputRelations.empty() || directResult.complete) {
+      return directResult;
+    }
+    return directResult;
+  }
+  result.rejectedOutputReasons.clear();
+
+  maybeDumpDerivationRounds(ruleManager);
 
   std::unordered_set<std::size_t> activeRuleIds;
   for (const auto &[tuple, applications] :
@@ -1196,6 +2515,7 @@ LiftedWmcResult tryEvaluateLiftedPointwise(
     result.handled = true;
     result.complete =
         result.handledOutputRelations.size() == outputRelationCount;
+    result.executionMode = "pointwise_template";
     result.reason =
         result.complete ? "pointwise_lifted" : "partial_pointwise_lifted";
   } catch (const std::exception &error) {
@@ -1231,6 +2551,26 @@ void dumpLiftedProbabilities(const LiftedWmcResult &result,
     std::ofstream graphFile(
         joinOutputPath(outputDir, "abstract-derivation-graph.dot"));
     graphFile << result.abstractGraphDot;
+  }
+  if (!result.witnessIndexedTemplates.empty()) {
+    std::ofstream templateFile(
+        joinOutputPath(outputDir, "witness-indexed-templates.tsv"));
+    templateFile << result.witnessIndexedTemplates;
+  }
+  if (!result.witnessIndexedWitnesses.empty()) {
+    std::ofstream witnessFile(
+        joinOutputPath(outputDir, "witness-indexed-witnesses.tsv"));
+    witnessFile << result.witnessIndexedWitnesses;
+  }
+  if (!result.witnessIndexedRelations.empty()) {
+    std::ofstream relationFile(
+        joinOutputPath(outputDir, "witness-indexed-relations.tsv"));
+    relationFile << result.witnessIndexedRelations;
+  }
+  if (!result.witnessIndexedTupleStats.empty()) {
+    std::ofstream tupleFile(
+        joinOutputPath(outputDir, "witness-indexed-tuple-stats.tsv"));
+    tupleFile << result.witnessIndexedTupleStats;
   }
 }
 

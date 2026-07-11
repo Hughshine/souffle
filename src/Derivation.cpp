@@ -695,10 +695,10 @@ bool RuleApplication::operator<(const RuleApplication& other) const {
 json11::Json RuleApplication::toJson() const {
     json11::Json::array mapping;
     for (const auto& value : varValuesPure) {
-        mapping.emplace_back(value);
+        mapping.emplace_back(static_cast<long long>(value));
     }
     json11::Json result = json11::Json::object{
-            {{"ruleId", ruleId}, {"mapping", mapping}},
+            {{"ruleId", static_cast<long long>(ruleId)}, {"mapping", mapping}},
     };
     return result;
 }

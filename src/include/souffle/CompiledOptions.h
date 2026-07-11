@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <sys/stat.h>
 
@@ -87,6 +88,7 @@ protected:
     bool enable_rewrite = false;  // enable smart rewrite dispatch
     bool force_graph_rewrite = false;  // select explicit graph rewrite
     bool force_implicit_rewrite = false;  // select implicit split rewrite
+    std::string split_mode = "naive-split";  // no-split/naive-split
     bool dump_json = false;  // dump derivation graph JSON after prune
     bool dump_dot = false;  // dump derivation graph DOT after prune
     bool dump_stat = false;  // dump derivation graph stats after prune
@@ -98,6 +100,8 @@ protected:
     bool single_rand_fast = true;  // enable single-randvar fast path in component FC
     bool force_full_siso_detect = false;  // force full-graph SISO detection (disable dirty-frontier detect)
     bool relax_compaction_dirty = true;  // dirty only the surviving compacted edge endpoints
+    bool lifted_wmc = false;  // enable adaptive pointwise lifted WMC
+    std::size_t lifted_threshold = 1024;  // minimum runtime output cardinality for lifted WMC
     bool help_requested = false;  // true when help was printed intentionally
 public:
     // all argument constructor
@@ -171,6 +175,9 @@ public:
     bool isImplicitRewriteForced() const {
         return force_implicit_rewrite;
     }
+    const std::string& getSplitMode() const {
+        return split_mode;
+    }
     bool isDumpJsonEnabled() const {
         return dump_json;
     }
@@ -216,6 +223,12 @@ public:
     bool isRelaxCompactionDirtyEnabled() const {
         return relax_compaction_dirty;
     }
+    bool isLiftedWmcEnabled() const {
+        return lifted_wmc;
+    }
+    std::size_t getLiftedWmcThreshold() const {
+        return lifted_threshold;
+    }
     /**
      * get filename of profile
      */
@@ -260,12 +273,15 @@ public:
                 {"rewrite", false, nullptr, 'r'},
                 {"explicit-rewrite", false, nullptr, 1021},
                 {"implicit-rewrite", false, nullptr, 1022},
+                {"split-mode", true, nullptr, 'P'},
                 {"dumpjson", false, nullptr, 'J'}, {"dumpdot", false, nullptr, 'T'},
                 {"dumpstat", false, nullptr, 'S'},
                 {"fc-profile", false, nullptr, 1005},
                 {"profile-wmc", false, nullptr, 1014},
                 {"profile-dep-graph", false, nullptr, 1010},
                 {"det-opt", false, nullptr, 'Z'},
+                {"lifted-wmc", false, nullptr, 1023},
+                {"lifted-threshold", true, nullptr, 1024},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -273,7 +289,7 @@ public:
         bool ok = true;
         knowledge_representation = "bdd";  // default knowledge representation
         int c; /* command-line arguments processing */
-        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d::erJTSZ", longOptions, nullptr)) != EOF) {
+        while ((c = getopt_long(argc, argv, "D:F:hp:j:i:d::erP:JTSZ", longOptions, nullptr)) != EOF) {
             switch (c) {
                 /* Fact directories */
                 case 'F':
@@ -370,6 +386,18 @@ public:
                     enable_rewrite = true;
                     force_implicit_rewrite = true;
                     break;
+                case 'P': {
+                    const std::string mode(optarg);
+                    if (mode == "no-split" || mode == "none") {
+                        split_mode = "no-split";
+                    } else if (mode == "naive-split" || mode == "naive") {
+                        split_mode = "naive-split";
+                    } else {
+                        std::cerr << "Invalid split mode [-P|--split-mode]: " << optarg << "\n";
+                        ok = false;
+                    }
+                    break;
+                }
                 case 'J':
                     dump_json = true;
                     break;
@@ -390,6 +418,23 @@ public:
                     break;
                 case 'Z':
                     det_opt = true;
+                    break;
+                case 1023:
+                    lifted_wmc = true;
+                    break;
+                case 1024:
+                    try {
+                        const std::string value(optarg);
+                        std::size_t consumed = 0;
+                        const auto parsed = std::stoull(value, &consumed);
+                        if (consumed != value.size() || parsed == 0) {
+                            throw std::invalid_argument("invalid lifted threshold");
+                        }
+                        lifted_threshold = static_cast<std::size_t>(parsed);
+                    } catch (const std::exception&) {
+                        std::cerr << "Invalid value for --lifted-threshold: " << optarg << "\n";
+                        ok = false;
+                    }
                     break;
                 default: printHelpPage(exec_name); return false;
             }
@@ -418,6 +463,7 @@ private:
         std::cerr << " Options:\n";
         std::cerr << "    -D <DIR>, --output=<DIR>     -- Specify directory for output relations\n";
         std::cerr << "                                    (default: " << output_dir << ")\n";
+        std::cerr << "    -P <MODE>, --split-mode=<MODE> -- no-split or naive-split\n";
         std::cerr << "                                    (suppress output with \"\")\n";
         std::cerr << "    -F <DIR>, --facts=<DIR>      -- Specify directory for fact files\n";
         std::cerr << "                                    (default: " << input_dir << ")\n";
@@ -427,6 +473,9 @@ private:
         }
         std::cerr << "    -r, --rewrite                -- Enable artifact rewrite dispatcher\n";
         std::cerr << "    --det-opt                    -- Enable deterministic-relation analysis and graph gating\n";
+        std::cerr << "    --lifted-wmc                 -- Enable adaptive pointwise lifted WMC\n";
+        std::cerr << "    --lifted-threshold=<N>       -- Minimum output tuples for lifted WMC"
+                  << " (default: " << lifted_threshold << ")\n";
         std::cerr << "    -l <FILE>, --logfile=<FILE>  -- Debugger JSON base name\n";
 #ifdef _OPENMP
         std::cerr << "    -j <NUM>, --jobs=<NUM>       -- Specify number of threads\n";

@@ -36,6 +36,7 @@ struct ComponentAnalysis {
     bool hasNegation = false;
     bool hasOr = false;
     bool hasCycle = false;
+    bool hasEmbeddedEvents = false;
 };
 
 struct SlowComponentEval {
@@ -261,13 +262,28 @@ inline std::vector<ComponentAnalysis> analyzeComponents(
             }
         }
 
+        std::unordered_set<const Hyperedge*> seenRandomEdges;
         for (const auto& edge : analysis.comp.edges) {
-            if (isSemanticRandomProb(edge->getProbability())) {
+            if (isSemanticRandomProb(edge->getProbability()) &&
+                    seenRandomEdges.insert(edge.get()).second) {
                 analysis.randVars++;
                 if (analysis.randVars == 1) {
                     analysis.singleRand.node.reset();
                     analysis.singleRand.edge = edge;
                     analysis.singleRand.probability = edge->getProbability();
+                }
+            }
+            for (const auto& embedded : edge->getEmbeddedProbabilisticEvents()) {
+                if (!embedded || !isSemanticRandomProb(embedded->getProbability()) ||
+                        !seenRandomEdges.insert(embedded.get()).second) {
+                    continue;
+                }
+                analysis.hasEmbeddedEvents = true;
+                analysis.randVars++;
+                if (analysis.randVars == 1) {
+                    analysis.singleRand.node.reset();
+                    analysis.singleRand.edge = embedded;
+                    analysis.singleRand.probability = embedded->getProbability();
                 }
             }
             auto negs = view.getBodyNegations(edge);

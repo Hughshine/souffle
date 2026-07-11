@@ -210,9 +210,13 @@ target_include_directories(libsouffle
                                   "${CMAKE_CURRENT_BINARY_DIR}"
                            )
 
+# install souffle directory
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/souffle DESTINATION include)
+
 add_library(compiled STATIC
   Derivation.cpp
   problog/Atom.cpp
+  problog/LiftedWmc.cpp
   problog/Pipeline.cpp
   problog/QueryManager.cpp
   problog/Rule.cpp
@@ -328,6 +332,7 @@ add_executable(souffle
                souffle.cpp)
 target_link_libraries(souffle libsouffle)
 add_dependencies(souffle compiled)
+install(TARGETS souffle DESTINATION bin)
 
 # --------------------------------------------------
 # Substitutions for souffle-compile.py
@@ -463,5 +468,6 @@ ${TEMPLATE}
 ")
 
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/souffle-compile.py" CONTENT "${SOUFFLE_COMPILE_PY}")
+install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/souffle-compile.py DESTINATION bin)
 
 # ---------------------------------------

@@ -1,0 +1,24 @@
+.decl vt(v:symbol, t:symbol)
+.input vt
+
+.decl filt(h:symbol, t:symbol)
+.input filt
+
+.decl ch(o:symbol, h:symbol)
+.input ch
+
+.decl assign(v:symbol, u:symbol)
+.input assign
+
+.decl seed(c:symbol, u:symbol, o:symbol)
+.input seed
+
+.decl typeFilter(v:symbol, o:symbol)
+0.999::typeFilter(V, O) :- vt(V, T), filt(H, T), ch(O, H).
+
+.decl pt(c:symbol, v:symbol, o:symbol)
+.output pt
+pt(C, U, O) :- seed(C, U, O).
+pt(C, V, O) :- assign(V, U), pt(C, U, O), typeFilter(V, O).
+
+query(pt(_, _, _)).

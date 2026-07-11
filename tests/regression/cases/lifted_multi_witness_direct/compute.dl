@@ -1,0 +1,15 @@
+.decl vt(v:symbol, t:symbol)
+.input vt
+
+.decl filt(h:symbol, t:symbol)
+.input filt
+
+.decl ch(o:symbol, h:symbol)
+.input ch
+
+.decl typeFilter(v:symbol, o:symbol)
+.output typeFilter
+
+typeFilter(V, O) :- vt(V, T), filt(H, T), ch(O, H).
+
+query(typeFilter(_, _)).

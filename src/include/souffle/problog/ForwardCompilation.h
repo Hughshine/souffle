@@ -117,6 +117,7 @@ void buildFormulasCyclewiseInternal(
     auto baseStart = Clock::now();
     std::map<NodePtr, FormulaNodeRef> baseNodeFormulas;
     std::map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
+    std::map<EdgePtr, FormulaNodeRef> embeddedEventFormulas;
     size_t round = 0;
     auto assertProb = [](double p, const std::string& ctx) {
 //        std::cout << "[ForwardCompilation] probability check " << p << " at " << ctx << std::endl;
@@ -179,7 +180,28 @@ void buildFormulasCyclewiseInternal(
             assertProb(edge->getProbability(), "edge init " + edge->toString());
             formulaManager.setVariableWeight(idx, edge->getProbability(), 1 - edge->getProbability());
         }
-        baseEdgeFormulas[edge] = f;
+        std::vector<FormulaNodeRef> eventFactors = {f};
+        for (const auto& embedded : edge->getEmbeddedProbabilisticEvents()) {
+            if (!embedded || embedded->isDeterministic()) {
+                continue;
+            }
+            auto it = embeddedEventFormulas.find(embedded);
+            if (it == embeddedEventFormulas.end()) {
+                const int embeddedIdx = formulaManager.getVarIndex(*embedded);
+                assertProb(embedded->getProbability(),
+                        "embedded edge init " + embedded->toString());
+                FormulaNodeRef embeddedFormula =
+                        formulaManager.createVar(embeddedIdx, *embedded);
+                formulaManager.setVariableWeight(embeddedIdx,
+                        embedded->getProbability(), 1 - embedded->getProbability());
+                it = embeddedEventFormulas.emplace(embedded, embeddedFormula).first;
+                ++nonDetEdges;
+            }
+            eventFactors.push_back(it->second);
+        }
+        baseEdgeFormulas[edge] = eventFactors.size() == 1
+                ? eventFactors.front()
+                : formulaManager.makeAnd(eventFactors);
     }
     auto baseInitMs = toMs(Clock::now() - baseStart);
 
@@ -601,6 +623,7 @@ struct SingleRandVarInfo {
 inline bool findSingleRandVar(const ComponentSubgraph& comp, SingleRandVarInfo& out) {
     std::size_t count = 0;
     out = SingleRandVarInfo{};
+    std::unordered_set<const Hyperedge*> seenEdges;
 
     for (const auto& node : comp.nodes) {
         if (node->isFact && node->getProbability() != 1.0) {
@@ -614,7 +637,7 @@ inline bool findSingleRandVar(const ComponentSubgraph& comp, SingleRandVarInfo& 
         }
     }
     for (const auto& edge : comp.edges) {
-        if (!edge->isDeterministic()) {
+        if (!edge->isDeterministic() && seenEdges.insert(edge.get()).second) {
             ++count;
             if (count > 1) {
                 return false;
@@ -622,6 +645,19 @@ inline bool findSingleRandVar(const ComponentSubgraph& comp, SingleRandVarInfo& 
             out.node.reset();
             out.edge = edge;
             out.probability = edge->getProbability();
+        }
+        for (const auto& embedded : edge->getEmbeddedProbabilisticEvents()) {
+            if (!embedded || embedded->isDeterministic() ||
+                    !seenEdges.insert(embedded.get()).second) {
+                continue;
+            }
+            ++count;
+            if (count > 1) {
+                return false;
+            }
+            out.node.reset();
+            out.edge = embedded;
+            out.probability = embedded->getProbability();
         }
     }
     return count == 1;

@@ -188,12 +188,12 @@ def run_exact_once(
     output_dir: Path,
     extra_args: Sequence[str] | None = None,
     timeout: int = COMMAND_TIMEOUT_SECONDS,
-) -> None:
+) -> subprocess.CompletedProcess[str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [str(compute_bin), "-F", str(input_dir), "-D", str(output_dir)]
     if extra_args:
         cmd.extend(extra_args)
-    run_cmd(cmd, cwd=compute_bin.parent, timeout=timeout)
+    return run_cmd(cmd, cwd=compute_bin.parent, timeout=timeout)
 
 
 def assert_glob_nonempty(base_dir: Path, pattern: str, *, label: str) -> None:
@@ -411,7 +411,12 @@ def case_rewrite_dispatch_equiv(souffle_bin: Path, work_root: Path) -> None:
     compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
 
     out_base = case_dir / "out_base"
-    run_exact_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base)
+    run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_base,
+        extra_args=["--rewrite", "--det-opt"],
+    )
     base_prob = out_base / "facts.prob"
 
     out_rewrite = case_dir / "out_rewrite"
@@ -857,6 +862,483 @@ def case_dump_outputs_contract(souffle_bin: Path, work_root: Path) -> None:
         assert_valid_graph_stats_json(stats_json, label=f"dump contract graph stats {stats_json.name}")
 
 
+def case_lifted_partial_outputs(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("lifted_partial_outputs", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+
+    out_base = case_dir / "out_base"
+    out_partial = case_dir / "out_partial"
+    run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_base,
+        extra_args=["--rewrite", "--det-opt"],
+    )
+    partial_run = run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_partial,
+        extra_args=[
+            "--rewrite",
+            "--det-opt",
+            "--lifted-wmc",
+            "--lifted-threshold=1",
+            "--dumpdot",
+            "--logfile",
+            "partial",
+        ],
+    )
+
+    assert_prob_close(
+        out_partial / "facts.prob",
+        out_base / "facts.prob",
+        label="lifted_partial_outputs",
+    )
+    expected_log_parts = [
+        "[lifted-wmc] handled=1",
+        "reason=partial_pointwise_lifted",
+        "lifted_output_tuples=2",
+        "concrete_output_tuples=2",
+        "handled_outputs=1",
+        "rejected_outputs=1",
+    ]
+    for part in expected_log_parts:
+        if part not in partial_run.stdout:
+            raise CaseFailure(
+                f"lifted_partial_outputs: missing runtime diagnostic {part!r}\n"
+                f"stdout:\n{partial_run.stdout}"
+            )
+
+    lifted_pos = partial_run.stdout.find("[lifted-wmc] handled=1")
+    rewrite_pos = partial_run.stdout.find("[pipeline] rewrite dispatch")
+    if lifted_pos < 0 or rewrite_pos < 0 or lifted_pos >= rewrite_pos:
+        raise CaseFailure(
+            "lifted_partial_outputs: expected lifted evaluation before "
+            f"residual rewrite\nstdout:\n{partial_run.stdout}"
+        )
+
+    abstract_dot = out_partial / "abstract-derivation-graph.dot"
+    assert_valid_dot(abstract_dot, label="lifted partial abstract graph")
+    abstract_text = abstract_dot.read_text(encoding="utf-8")
+    if "good($0)" not in abstract_text or "a($0)" not in abstract_text:
+        raise CaseFailure(
+            "lifted_partial_outputs: abstract graph is missing the handled good/a region"
+        )
+    if "bad(" in abstract_text or "edge(" in abstract_text:
+        raise CaseFailure(
+            "lifted_partial_outputs: abstract graph contains the concrete bad/edge region"
+        )
+
+    for dot_name in ("before_prune.dot", "after_prune.dot"):
+        concrete_dot = out_partial / dot_name
+        assert_valid_dot(concrete_dot, label=f"lifted partial concrete graph {dot_name}")
+        concrete_text = concrete_dot.read_text(encoding="utf-8")
+        if "bad(" not in concrete_text or "edge(" not in concrete_text:
+            raise CaseFailure(
+                "lifted_partial_outputs: concrete graph is missing the unsupported "
+                f"bad/edge region in {dot_name}"
+            )
+        if "good(" in concrete_text or "a(" in concrete_text:
+            raise CaseFailure(
+                "lifted_partial_outputs: handled good/a region was instantiated in "
+                f"the concrete graph {dot_name}"
+            )
+
+
+def case_lifted_unique_witness(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("lifted_unique_witness", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+
+    out_base = case_dir / "out_base"
+    out_lifted = case_dir / "out_lifted"
+    run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_base,
+        extra_args=["--rewrite", "--det-opt"],
+    )
+    lifted_run = run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_lifted,
+        extra_args=[
+            "--rewrite",
+            "--det-opt",
+            "--lifted-wmc",
+            "--lifted-threshold=1",
+            "--dumpdot",
+            "--logfile",
+            "lifted",
+        ],
+    )
+
+    assert_prob_close(
+        out_lifted / "facts.prob",
+        out_base / "facts.prob",
+        label="lifted_unique_witness",
+    )
+    expected_log_parts = [
+        "[lifted-wmc] handled=1",
+        "reason=pointwise_lifted",
+        "output_tuples=2",
+        "lifted_output_tuples=2",
+        "concrete_output_tuples=0",
+        "handled_outputs=1",
+        "rejected_outputs=0",
+    ]
+    for part in expected_log_parts:
+        if part not in lifted_run.stdout:
+            raise CaseFailure(
+                f"lifted_unique_witness: missing runtime diagnostic {part!r}\n"
+                f"stdout:\n{lifted_run.stdout}"
+            )
+
+    if "[pipeline] rewrite dispatch" in lifted_run.stdout:
+        raise CaseFailure(
+            "lifted_unique_witness: complete lifted evaluation should return "
+            "before rewrite because no residual graph remains"
+        )
+
+    abstract_dot = out_lifted / "abstract-derivation-graph.dot"
+    assert_valid_dot(abstract_dot, label="lifted unique-witness abstract graph")
+    abstract_text = abstract_dot.read_text(encoding="utf-8")
+    for expected in ("out($0)", "seed($0)", "map($0,$e0v1)"):
+        if expected not in abstract_text:
+            raise CaseFailure(
+                "lifted_unique_witness: abstract graph is missing "
+                f"{expected!r}\n{abstract_text}"
+            )
+
+
+def case_lifted_multi_witness_fallback(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("lifted_multi_witness_fallback", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+
+    out_base = case_dir / "out_base"
+    out_fallback = case_dir / "out_fallback"
+    run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_base,
+        extra_args=["--rewrite", "--det-opt"],
+    )
+    fallback_run = run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_fallback,
+        extra_args=[
+            "--rewrite",
+            "--det-opt",
+            "--lifted-wmc",
+            "--lifted-threshold=1",
+            "--dumpdot",
+            "--logfile",
+            "fallback",
+        ],
+    )
+
+    assert_prob_close(
+        out_fallback / "facts.prob",
+        out_base / "facts.prob",
+        label="lifted_multi_witness_fallback",
+    )
+    expected_log_parts = [
+        "[lifted-wmc] handled=0",
+        "reason=multiple runtime witnesses for rule:",
+        "lifted_output_tuples=0",
+        "concrete_output_tuples=2",
+        "handled_outputs=0",
+        "rejected_outputs=1",
+    ]
+    for part in expected_log_parts:
+        if part not in fallback_run.stdout:
+            raise CaseFailure(
+                f"lifted_multi_witness_fallback: missing runtime diagnostic {part!r}\n"
+                f"stdout:\n{fallback_run.stdout}"
+            )
+
+    lifted_pos = fallback_run.stdout.find("[lifted-wmc] handled=0")
+    rewrite_pos = fallback_run.stdout.find("[pipeline] rewrite dispatch")
+    if lifted_pos < 0 or rewrite_pos < 0 or lifted_pos >= rewrite_pos:
+        raise CaseFailure(
+            "lifted_multi_witness_fallback: expected lifted rejection before "
+            f"rewrite fallback\nstdout:\n{fallback_run.stdout}"
+        )
+
+    if (out_fallback / "abstract-derivation-graph.dot").exists():
+        raise CaseFailure(
+            "lifted_multi_witness_fallback: fallback unexpectedly emitted an abstract graph"
+        )
+    for dot_name in ("before_prune.dot", "after_prune.dot"):
+        assert_valid_dot(
+            out_fallback / dot_name,
+            label=f"lifted multi-witness concrete graph {dot_name}",
+        )
+
+
+def case_lifted_multi_witness_direct(
+    souffle_bin: Path, work_root: Path
+) -> None:
+    case_dir = prepare_case_workspace("lifted_multi_witness_direct", work_root)
+    compute_bin, in_dir, _ = compile_compute(
+        souffle_bin=souffle_bin, case_dir=case_dir
+    )
+
+    out_base = case_dir / "out_base"
+    out_lifted = case_dir / "out_lifted"
+    run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_base,
+    )
+    lifted_run = run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_lifted,
+        extra_args=["--lifted-wmc", "--lifted-threshold=1", "--dumpdot"],
+    )
+
+    assert_prob_close(
+        out_lifted / "facts.prob",
+        out_base / "facts.prob",
+        label="lifted_multi_witness_direct",
+    )
+    if "reason=multi_witness_lifted" not in lifted_run.stdout:
+        raise CaseFailure(
+            "lifted_multi_witness_direct: expected multi-witness lifted path\n"
+            f"stdout:\n{lifted_run.stdout}"
+        )
+    if (
+        "execution_mode=witness_indexed_template" not in lifted_run.stdout
+        or "witness_templates=1" not in lifted_run.stdout
+        or "witness_rows=2" not in lifted_run.stdout
+        or "witness_tuple_formulas=1" not in lifted_run.stdout
+        or "witness_template_dd_nodes=6" not in lifted_run.stdout
+    ):
+        raise CaseFailure(
+            "lifted_multi_witness_direct: expected witness-indexed IR counters\n"
+            f"stdout:\n{lifted_run.stdout}"
+        )
+    if not (out_lifted / "abstract-derivation-graph.tsv").exists():
+        raise CaseFailure("lifted_multi_witness_direct: missing abstract graph TSV")
+    template_path = out_lifted / "witness-indexed-templates.tsv"
+    witness_path = out_lifted / "witness-indexed-witnesses.tsv"
+    relation_stats_path = out_lifted / "witness-indexed-relations.tsv"
+    tuple_stats_path = out_lifted / "witness-indexed-tuple-stats.tsv"
+    if not template_path.exists():
+        raise CaseFailure("lifted_multi_witness_direct: missing witness-indexed template TSV")
+    if not witness_path.exists():
+        raise CaseFailure("lifted_multi_witness_direct: missing witness-indexed witness TSV")
+    if not relation_stats_path.exists():
+        raise CaseFailure("lifted_multi_witness_direct: missing witness-indexed relation stats TSV")
+    if not tuple_stats_path.exists():
+        raise CaseFailure("lifted_multi_witness_direct: missing witness-indexed tuple stats TSV")
+    template_text = template_path.read_text(encoding="utf-8")
+    witness_text = witness_path.read_text(encoding="utf-8")
+    relation_stats_text = relation_stats_path.read_text(encoding="utf-8")
+    tuple_stats_text = tuple_stats_path.read_text(encoding="utf-8")
+    if "OrOver" not in template_text or "typeFilter#rule" not in template_text:
+        raise CaseFailure(
+            "lifted_multi_witness_direct: witness-indexed template TSV does not describe "
+            "the expected OrOver template"
+        )
+    if witness_text.count("typeFilter#rule") < 2:
+        raise CaseFailure(
+            "lifted_multi_witness_direct: witness table should contain two runtime witnesses"
+        )
+    if "typeFilter\t1\t1\t2\t6\t" not in relation_stats_text:
+        raise CaseFailure(
+            "lifted_multi_witness_direct: relation stats should report one template, "
+            "one tuple formula, two witness rows, and six template DD nodes"
+        )
+    if 'typeFilter\ttypeFilter("a","o")\t1\t2\t' not in tuple_stats_text:
+        raise CaseFailure(
+            "lifted_multi_witness_direct: tuple stats should report two witnesses for typeFilter(a,o)"
+        )
+    assert_valid_dot(
+        out_lifted / "abstract-derivation-graph.dot",
+        label="lifted multi-witness dot",
+    )
+
+
+def case_lifted_disconnected_witness_fallback(
+    souffle_bin: Path, work_root: Path
+) -> None:
+    case_dir = prepare_case_workspace(
+        "lifted_disconnected_witness_fallback", work_root
+    )
+    compute_bin, in_dir, _ = compile_compute(
+        souffle_bin=souffle_bin, case_dir=case_dir
+    )
+
+    out_base = case_dir / "out_base"
+    out_fallback = case_dir / "out_fallback"
+    run_exact_once(compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base)
+    fallback_run = run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_fallback,
+        extra_args=[
+            "--rewrite",
+            "--det-opt",
+            "--lifted-wmc",
+            "--lifted-threshold=1",
+            "--logfile",
+            "fallback",
+        ],
+    )
+
+    assert_prob_close(
+        out_fallback / "facts.prob",
+        out_base / "facts.prob",
+        label="lifted_disconnected_witness_fallback",
+    )
+    expected_log_parts = [
+        "[lifted-wmc] handled=0",
+        "reason=body has a disconnected free-variable component for rule:",
+        "lifted_output_tuples=0",
+        "concrete_output_tuples=2",
+    ]
+    for part in expected_log_parts:
+        if part not in fallback_run.stdout:
+            raise CaseFailure(
+                "lifted_disconnected_witness_fallback: missing runtime "
+                f"diagnostic {part!r}\nstdout:\n{fallback_run.stdout}"
+            )
+
+
+def case_lifted_boundary_shared_event(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("lifted_boundary_shared_event", work_root)
+    compute_bin, in_dir, _ = compile_compute(
+        souffle_bin=souffle_bin, case_dir=case_dir
+    )
+
+    out_base = case_dir / "out_base"
+    out_lifted = case_dir / "out_lifted"
+    run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_base,
+        extra_args=["--det-opt"],
+    )
+    lifted_run = run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_lifted,
+        extra_args=[
+            "--det-opt",
+            "--rewrite",
+            "--lifted-wmc",
+            "--lifted-threshold=1",
+            "--dumpdot",
+            "--logfile",
+            "lifted-boundary",
+        ],
+    )
+
+    assert_prob_close(
+        out_lifted / "facts.prob",
+        out_base / "facts.prob",
+        label="lifted_boundary_shared_event",
+    )
+    probs = parse_prob_file(out_lifted / "facts.prob")
+    expected = {
+        'left("a")': 0.28,
+        'right("a")': 0.24,
+        'concrete("a")': 0.168,
+    }
+    for key, value in expected.items():
+        if key not in probs or not math.isclose(
+            probs[key], value, rel_tol=0.0, abs_tol=1e-8
+        ):
+            raise CaseFailure(
+                "lifted_boundary_shared_event: shared event identity was not "
+                f"preserved for {key}; expected={value} actual={probs.get(key)}"
+            )
+
+    match = re.search(r"\[lifted-boundary\].*inlined_nodes=(\d+)", lifted_run.stdout)
+    if match is None or int(match.group(1)) < 2:
+        raise CaseFailure(
+            "lifted_boundary_shared_event: boundary pass did not inline both "
+            f"helper nodes\nstdout:\n{lifted_run.stdout}"
+        )
+    boundary_dot = out_lifted / "lifted_boundary_before_rewrite.dot"
+    assert_valid_dot(boundary_dot, label="lifted boundary final graph")
+    boundary_text = boundary_dot.read_text(encoding="utf-8")
+    if 'left("a")' in boundary_text or 'right("a")' in boundary_text:
+        raise CaseFailure(
+            "lifted_boundary_shared_event: inlined helper instances remain in "
+            "the active concrete graph"
+        )
+
+
+def case_lifted_internal_template_ref(souffle_bin: Path, work_root: Path) -> None:
+    case_dir = prepare_case_workspace("lifted_internal_template_ref", work_root)
+    compute_bin, in_dir, _ = compile_compute(souffle_bin=souffle_bin, case_dir=case_dir)
+
+    out_base = case_dir / "out_base"
+    out_lifted = case_dir / "out_lifted"
+    run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_base,
+        extra_args=["--det-opt", "--rewrite"],
+    )
+    lifted_run = run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_lifted,
+        extra_args=[
+            "--det-opt",
+            "--rewrite",
+            "--lifted-wmc",
+            "--lifted-threshold=1",
+            "--dumpdot",
+            "--logfile",
+            "lifted-internal-template-ref",
+        ],
+    )
+
+    assert_prob_close(
+        out_lifted / "facts.prob",
+        out_base / "facts.prob",
+        label="lifted_internal_template_ref",
+    )
+    required = [
+        "[lifted-wmc] handled=1",
+        "handled_outputs=0",
+        "witness_templates=1",
+        "reason=partial_multi_witness_lifted",
+        "[lifted-boundary]",
+    ]
+    for part in required:
+        if part not in lifted_run.stdout:
+            raise CaseFailure(
+                f"lifted_internal_template_ref: missing runtime diagnostic {part!r}\n"
+                f"stdout:\n{lifted_run.stdout}"
+            )
+    match = re.search(r"\[lifted-boundary\].*inlined_nodes=(\d+)", lifted_run.stdout)
+    if match is None or int(match.group(1)) < 1:
+        raise CaseFailure(
+            "lifted_internal_template_ref: internal template relation was not "
+            f"inlined into the residual graph\nstdout:\n{lifted_run.stdout}"
+        )
+    match = re.search(r"\[lifted-boundary\].*embedded_event_refs=(\d+)", lifted_run.stdout)
+    if match is None or int(match.group(1)) < 1:
+        raise CaseFailure(
+            "lifted_internal_template_ref: probabilistic source rule event was "
+            f"not preserved as an embedded event\nstdout:\n{lifted_run.stdout}"
+        )
+    relation_stats = out_lifted / "witness-indexed-relations.tsv"
+    if not relation_stats.exists() or "typeFilter" not in relation_stats.read_text(encoding="utf-8"):
+        raise CaseFailure(
+            "lifted_internal_template_ref: missing typeFilter witness-indexed "
+            "relation stats"
+        )
+
+
+
+
 CASES = {
     "smoke_exact_inference": case_smoke_exact_inference,
     "rewrite_dispatch_equiv": case_rewrite_dispatch_equiv,
@@ -872,6 +1354,13 @@ CASES = {
     "language_taint_mini": case_language_taint_mini,
     "language_symbolization_mini": case_language_symbolization_mini,
     "dump_outputs_contract": case_dump_outputs_contract,
+    "lifted_partial_outputs": case_lifted_partial_outputs,
+    "lifted_unique_witness": case_lifted_unique_witness,
+    "lifted_multi_witness_fallback": case_lifted_multi_witness_fallback,
+    "lifted_multi_witness_direct": case_lifted_multi_witness_direct,
+    "lifted_disconnected_witness_fallback": case_lifted_disconnected_witness_fallback,
+    "lifted_boundary_shared_event": case_lifted_boundary_shared_event,
+    "lifted_internal_template_ref": case_lifted_internal_template_ref,
 }
 
 
