@@ -2,6 +2,22 @@
 
 set(REGRESSION_RUNNER "${CMAKE_CURRENT_SOURCE_DIR}/run_regression_case.py")
 
+add_executable(canonical_rule_schema_test canonical_rule_schema_test.cpp)
+target_link_libraries(canonical_rule_schema_test PRIVATE compiled)
+add_test(NAME regression.canonical_rule_schema COMMAND canonical_rule_schema_test)
+set_tests_properties(regression.canonical_rule_schema PROPERTIES
+    LABELS "regression;canonical_rule_schema"
+    TIMEOUT 60
+)
+
+add_executable(provenance_fingerprint_test provenance_fingerprint_test.cpp)
+target_link_libraries(provenance_fingerprint_test PRIVATE compiled)
+add_test(NAME regression.provenance_fingerprint COMMAND provenance_fingerprint_test)
+set_tests_properties(regression.provenance_fingerprint PROPERTIES
+    LABELS "regression;provenance_fingerprint"
+    TIMEOUT 60
+)
+
 function(add_regression_case test_name case_id timeout_sec)
     add_test(
         NAME "regression.${test_name}"
