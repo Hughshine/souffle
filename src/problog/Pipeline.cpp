@@ -2,12 +2,14 @@
 
 #include "souffle/Derivation.h"
 #include "souffle/problog/DerivationGraph.h"
+#include "souffle/problog/ExactProvenanceTemplate.h"
 #include "souffle/problog/ForwardCompilation.h"
 #include "souffle/problog/GraphAnalyzer.h"
 #include "souffle/problog/GraphRewriter.h"
 #include "souffle/problog/ImplicitSplitRewrite.h"
 #include "souffle/problog/LiftedWmc.h"
 #include "souffle/problog/PipelineComponents.h"
+#include "souffle/problog/PreGraphLiveSet.h"
 #include "souffle/problog/QueryManager.h"
 #include "souffle/problog/RuleManager.h"
 #include "souffle/problog/debug/Debugger.h"
@@ -123,12 +125,33 @@ static std::size_t estimateBddVarCount(const SubgraphView& view) {
         }
     }
     std::unordered_set<const Hyperedge*> embeddedEvents;
+    std::unordered_set<const Node*> templateFactEvents;
     for (const auto& edge : view.getEdges()) {
         for (const auto& embedded : edge->getEmbeddedProbabilisticEvents()) {
             if (embedded && isSemanticRandomProb(embedded->getProbability()) &&
                     embeddedEvents.insert(embedded.get()).second &&
                     view.getEdges().count(embedded) == 0) {
                 ++count;
+            }
+        }
+        for (const auto& reference : edge->getExactTemplateReferences()) {
+            if (!reference.instantiation || !reference.instantiation->member) {
+                continue;
+            }
+            for (const auto& event : reference.instantiation->member->events) {
+                if (event.kind == ExactTemplateVariableKind::Fact) {
+                    if (event.fact && isSemanticRandomProb(event.fact->getProbability()) &&
+                            templateFactEvents.insert(event.fact.get()).second &&
+                            view.getNodes().count(event.fact) == 0) {
+                        ++count;
+                    }
+                } else if (event.kind == ExactTemplateVariableKind::Rule &&
+                        event.rule &&
+                        isSemanticRandomProb(event.rule->getProbability()) &&
+                        embeddedEvents.insert(event.rule.get()).second &&
+                        view.getEdges().count(event.rule) == 0) {
+                    ++count;
+                }
             }
         }
     }
@@ -788,6 +811,247 @@ std::string makeOutputPath(const CmdOptions& opt, const std::string& filename) {
         return dir + filename;
     }
     return dir + "/" + filename;
+}
+
+struct TemplatePipelineProfile {
+    std::string mode = "baseline";
+
+    std::size_t sourceTuples = 0;
+    std::size_t sourceRuleApplications = 0;
+    std::size_t pointwiseGroundTuples = 0;
+    std::size_t pointwiseGroundRuleApplications = 0;
+    std::size_t preGraphPrunedTuples = 0;
+    std::size_t preGraphPrunedRuleApplications = 0;
+
+    std::size_t pointwiseHandledOutputs = 0;
+    std::size_t pointwiseOutputTuples = 0;
+    std::size_t pointwiseRelations = 0;
+    std::size_t pointwiseTemplateBackedTuples = 0;
+    std::size_t pointwiseAbstractNodes = 0;
+    std::size_t pointwiseAbstractEdges = 0;
+    std::size_t pointwiseSymbolicVariables = 0;
+    std::size_t pointwiseBddNodes = 0;
+    std::size_t pointwiseTemplateDefinitions = 0;
+    std::size_t pointwiseEventBindings = 0;
+    double pointwiseTotalMs = 0.0;
+    double pointwiseDirectMultiWitnessMs = 0.0;
+    double pointwiseEligibilityMs = 0.0;
+    double pointwiseAbstractGraphMs = 0.0;
+    double pointwiseSymbolicDdMs = 0.0;
+    double pointwiseInstantiateWmcMs = 0.0;
+
+    bool preGraphLiveApplied = false;
+    std::size_t preGraphLiveTuples = 0;
+    std::size_t preGraphLiveRuleApplications = 0;
+    std::size_t residualBeforePruneNodes = 0;
+    std::size_t residualBeforePruneEdges = 0;
+    std::size_t residualAfterPruneNodes = 0;
+    std::size_t residualAfterPruneEdges = 0;
+    double createGraphMs = 0.0;
+    double pruneMs = 0.0;
+    double backendMs = 0.0;
+};
+
+enum class TemplateGroundOwner {
+    Pointwise,
+    PreGraphPruned,
+    Residual
+};
+
+static TemplateGroundOwner classifyTemplateGroundTuple(
+        const UntypedTuple& tuple,
+        const std::unordered_set<std::string>& pointwiseRelations,
+        const std::unordered_set<UntypedTuple>& pointwiseTuples,
+        const PreGraphLiveSetResult* preGraphLive) {
+    if (pointwiseRelations.count(tuple.relation_name) > 0 ||
+            pointwiseTuples.count(tuple) > 0) {
+        return TemplateGroundOwner::Pointwise;
+    }
+    if (preGraphLive != nullptr && preGraphLive->handled &&
+            preGraphLive->tuples.count(tuple) == 0) {
+        return TemplateGroundOwner::PreGraphPruned;
+    }
+    return TemplateGroundOwner::Residual;
+}
+
+static void attributeTemplateGroundObjects(
+        TemplatePipelineProfile& profile,
+        const MaterializedDerivationMap& derivations,
+        const std::unordered_map<UntypedTuple, double>& probabilisticFacts,
+        const std::unordered_set<UntypedTuple>& inputFacts,
+        const std::unordered_set<std::string>& pointwiseRelations,
+        const std::unordered_set<UntypedTuple>& pointwiseTuples,
+        const PreGraphLiveSetResult* preGraphLive) {
+    auto countTuple = [&](const UntypedTuple& tuple) {
+        ++profile.sourceTuples;
+        switch (classifyTemplateGroundTuple(tuple, pointwiseRelations,
+                pointwiseTuples, preGraphLive)) {
+            case TemplateGroundOwner::Pointwise:
+                ++profile.pointwiseGroundTuples;
+                break;
+            case TemplateGroundOwner::PreGraphPruned:
+                ++profile.preGraphPrunedTuples;
+                break;
+            case TemplateGroundOwner::Residual:
+                break;
+        }
+    };
+
+    for (const auto& [tuple, applications] : derivations) {
+        countTuple(tuple);
+        if (applications == nullptr) {
+            continue;
+        }
+        profile.sourceRuleApplications += applications->size();
+        const auto owner = classifyTemplateGroundTuple(tuple, pointwiseRelations,
+                pointwiseTuples, preGraphLive);
+        for (const auto& application : *applications) {
+            switch (owner) {
+                case TemplateGroundOwner::Pointwise:
+                    ++profile.pointwiseGroundRuleApplications;
+                    break;
+                case TemplateGroundOwner::PreGraphPruned:
+                    if (preGraphLive == nullptr ||
+                            preGraphLive->ruleApplications.count(application) == 0) {
+                        ++profile.preGraphPrunedRuleApplications;
+                    }
+                    break;
+                case TemplateGroundOwner::Residual:
+                    if (preGraphLive != nullptr && preGraphLive->handled &&
+                            preGraphLive->ruleApplications.count(application) == 0) {
+                        ++profile.preGraphPrunedRuleApplications;
+                    }
+                    break;
+            }
+        }
+    }
+    for (const auto& [tuple, probability] : probabilisticFacts) {
+        (void)probability;
+        if (derivations.count(tuple) == 0) {
+            countTuple(tuple);
+        }
+    }
+    for (const auto& tuple : inputFacts) {
+        if (derivations.count(tuple) == 0 &&
+                probabilisticFacts.count(tuple) == 0) {
+            countTuple(tuple);
+        }
+    }
+}
+
+static double percentage(std::size_t numerator, std::size_t denominator) {
+    return denominator == 0
+                   ? 0.0
+                   : 100.0 * static_cast<double>(numerator) /
+                             static_cast<double>(denominator);
+}
+
+static void writeTemplatePipelineProfile(
+        const TemplatePipelineProfile& profile, const CmdOptions& opt) {
+    if (!opt.isTemplateProfileEnabled()) {
+        return;
+    }
+
+    const std::size_t sourceObjects =
+            profile.sourceTuples + profile.sourceRuleApplications;
+    const std::size_t pointwiseObjects =
+            profile.pointwiseGroundTuples +
+            profile.pointwiseGroundRuleApplications;
+    const std::size_t preGraphPrunedObjects =
+            profile.preGraphPrunedTuples +
+            profile.preGraphPrunedRuleApplications;
+
+    std::vector<std::pair<std::string, std::string>> fields;
+    auto add = [&](const std::string& name, const auto& value) {
+        std::ostringstream rendered;
+        rendered << std::fixed << std::setprecision(6) << value;
+        fields.emplace_back(name, rendered.str());
+    };
+    add("mode", profile.mode);
+    add("source_tuples", profile.sourceTuples);
+    add("source_rule_apps", profile.sourceRuleApplications);
+    add("source_graph_objects", sourceObjects);
+    add("pointwise_ground_tuples", profile.pointwiseGroundTuples);
+    add("pointwise_ground_rule_apps", profile.pointwiseGroundRuleApplications);
+    add("pointwise_ground_objects", pointwiseObjects);
+    add("pointwise_ground_object_pct",
+            percentage(pointwiseObjects, sourceObjects));
+    add("template_ground_object_pct",
+            percentage(pointwiseObjects, sourceObjects));
+    add("pregraph_pruned_tuples", profile.preGraphPrunedTuples);
+    add("pregraph_pruned_rule_apps",
+            profile.preGraphPrunedRuleApplications);
+    add("pregraph_pruned_objects", preGraphPrunedObjects);
+    add("pregraph_pruned_object_pct",
+            percentage(preGraphPrunedObjects, sourceObjects));
+
+    add("pointwise_handled_outputs", profile.pointwiseHandledOutputs);
+    add("pointwise_output_tuples", profile.pointwiseOutputTuples);
+    add("pointwise_relations", profile.pointwiseRelations);
+    add("pointwise_template_backed_tuples",
+            profile.pointwiseTemplateBackedTuples);
+    add("pointwise_abstract_nodes", profile.pointwiseAbstractNodes);
+    add("pointwise_abstract_edges", profile.pointwiseAbstractEdges);
+    add("pointwise_symbolic_variables",
+            profile.pointwiseSymbolicVariables);
+    add("pointwise_bdd_nodes", profile.pointwiseBddNodes);
+    add("pointwise_template_definitions",
+            profile.pointwiseTemplateDefinitions);
+    add("pointwise_event_bindings", profile.pointwiseEventBindings);
+    add("pointwise_total_ms", profile.pointwiseTotalMs);
+    add("pointwise_direct_multiwitness_ms",
+            profile.pointwiseDirectMultiWitnessMs);
+    add("pointwise_eligibility_ms", profile.pointwiseEligibilityMs);
+    add("pointwise_abstract_graph_ms", profile.pointwiseAbstractGraphMs);
+    add("pointwise_symbolic_dd_ms", profile.pointwiseSymbolicDdMs);
+    add("pointwise_instantiate_wmc_ms",
+            profile.pointwiseInstantiateWmcMs);
+
+    add("pregraph_live_applied", profile.preGraphLiveApplied ? 1 : 0);
+    add("pregraph_live_tuples", profile.preGraphLiveTuples);
+    add("pregraph_live_rule_apps",
+            profile.preGraphLiveRuleApplications);
+    add("residual_before_prune_nodes",
+            profile.residualBeforePruneNodes);
+    add("residual_before_prune_edges",
+            profile.residualBeforePruneEdges);
+    add("residual_after_prune_nodes", profile.residualAfterPruneNodes);
+    add("residual_after_prune_edges", profile.residualAfterPruneEdges);
+    add("create_graph_ms", profile.createGraphMs);
+    add("prune_ms", profile.pruneMs);
+    add("backend_ms", profile.backendMs);
+
+    const auto path = makeOutputPath(opt, "template-profile.tsv");
+    ensureParentDirectoryExists(path);
+    std::ofstream output(path);
+    if (!output.is_open()) {
+        throw std::runtime_error("Cannot open template profile: " + path);
+    }
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (i > 0) {
+            output << '\t';
+        }
+        output << fields[i].first;
+    }
+    output << '\n';
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (i > 0) {
+            output << '\t';
+        }
+        output << fields[i].second;
+    }
+    output << '\n';
+
+    std::cout << "[template-profile]"
+              << " mode=" << profile.mode
+              << " source_objects=" << sourceObjects
+              << " pointwise_objects=" << pointwiseObjects
+              << " pointwise_pct=" << percentage(pointwiseObjects, sourceObjects)
+              << " pregraph_pruned_objects=" << preGraphPrunedObjects
+              << " pointwise_ms=" << profile.pointwiseTotalMs
+              << " residual_nodes=" << profile.residualAfterPruneNodes
+              << " residual_edges=" << profile.residualAfterPruneEdges
+              << std::endl;
 }
 
 static std::vector<std::pair<NodePtr, bool>> applyEvidence(
@@ -2878,6 +3142,158 @@ LiftedBoundaryInliningStats inlineLiftedBoundaryFormulas(
     return stats;
 }
 
+static ExactTemplateBindingStats bindExactTemplateReferences(
+        WorkingDerivationGraph& graph, const RuleManager& ruleManager,
+        const std::unordered_map<UntypedTuple, double>& probabilisticFacts) {
+    ExactTemplateBindingStats stats;
+    std::unordered_map<const ExactTemplateMemberBinding*,
+            std::shared_ptr<const ExactTemplateBoundMember>> boundMembers;
+    std::unordered_map<const PendingExactTemplateInstantiation*,
+            std::shared_ptr<const ExactTemplateInstantiation>> boundInstantiations;
+    std::unordered_map<RuleApplication, EdgePtr> detachedRuleEvents;
+
+    auto bindMember = [&](const std::shared_ptr<const ExactTemplateMemberBinding>& member)
+            -> std::shared_ptr<const ExactTemplateBoundMember> {
+        const auto existing = boundMembers.find(member.get());
+        if (existing != boundMembers.end()) {
+            return existing->second;
+        }
+        if (!member || !member->definition) {
+            throw std::runtime_error("exact-template reference has no member definition");
+        }
+        std::unordered_map<std::size_t, UntypedTuple> tupleBindings;
+        std::unordered_map<std::size_t, RuleApplication> applicationBindings;
+        for (const auto& binding : member->tupleBindings) {
+            tupleBindings.emplace(binding.canonicalNode, binding.tuple);
+        }
+        for (const auto& binding : member->applicationBindings) {
+            applicationBindings.emplace(binding.canonicalNode, binding.application);
+        }
+        auto bound = std::make_shared<ExactTemplateBoundMember>();
+        bound->substitution = member;
+        bound->events.reserve(member->definition->variables.size());
+        for (const auto& variable : member->definition->variables) {
+            ExactTemplateBoundEvent event;
+            event.kind = variable.kind;
+            if (variable.kind == ExactTemplateVariableKind::Fact) {
+                const auto binding = tupleBindings.find(variable.canonicalNode);
+                if (binding == tupleBindings.end()) {
+                    throw std::runtime_error(
+                            "exact-template fact slot has no ground substitution");
+                }
+                const auto probability = probabilisticFacts.find(binding->second);
+                if (probability == probabilisticFacts.end()) {
+                    throw std::runtime_error(
+                            "exact-template fact substitution has no probability");
+                }
+                NodePtr node = graph.findNode(binding->second);
+                if (!node) {
+                    node = graph.createNode(binding->second);
+                }
+                node->isFact = true;
+                node->setProbability(probability->second);
+                node->setOriginalFact(true);
+                event.fact = std::move(node);
+                ++stats.factEvents;
+            } else {
+                const auto binding = applicationBindings.find(variable.canonicalNode);
+                if (binding == applicationBindings.end()) {
+                    throw std::runtime_error(
+                            "exact-template rule slot has no ground substitution");
+                }
+                const Rule* rule = ruleManager.getRule(
+                        static_cast<std::size_t>(binding->second.ruleId));
+                if (rule == nullptr) {
+                    throw std::runtime_error(
+                            "exact-template rule substitution has no rule");
+                }
+                if (rule->isFact()) {
+                    const auto variables = rule->getVars();
+                    UntypedTuple factTuple{rule->getHead().getRelation(),
+                            rule->getHead().instantiatedFields(
+                                    variables, binding->second.varValuesPure)};
+                    NodePtr node = graph.findNode(factTuple);
+                    if (!node) {
+                        node = graph.createNode(factTuple);
+                    }
+                    node->isFact = true;
+                    node->setProbability(rule->getProbability());
+                    node->setOriginalFact(true);
+                    event.kind = ExactTemplateVariableKind::Fact;
+                    event.fact = std::move(node);
+                    ++stats.factEvents;
+                    bound->events.push_back(std::move(event));
+                    continue;
+                }
+                EdgePtr edge = graph.findHyperedgeFromRuleApp(
+                        binding->second, rule->getVars());
+                if (!edge) {
+                    const auto detached = detachedRuleEvents.find(binding->second);
+                    if (detached != detachedRuleEvents.end()) {
+                        edge = detached->second;
+                    } else {
+                        edge = graph.createDetachedRuleEventFromRuleApp(
+                                binding->second, ruleManager);
+                        if (edge) {
+                            detachedRuleEvents.emplace(binding->second, edge);
+                        }
+                    }
+                }
+                if (!edge) {
+                    throw std::runtime_error(
+                            "exact-template rule substitution has no event identity");
+                }
+                event.rule = std::move(edge);
+                ++stats.ruleEvents;
+            }
+            bound->events.push_back(std::move(event));
+        }
+        const std::shared_ptr<const ExactTemplateBoundMember> immutable = bound;
+        boundMembers.emplace(member.get(), immutable);
+        ++stats.memberBindings;
+        return immutable;
+    };
+
+    for (const EdgePtr& edge : graph.getEdges()) {
+        if (!edge || edge->getPendingExactTemplateReferences().empty()) {
+            continue;
+        }
+        std::vector<ExactTemplateReference> references;
+        references.reserve(edge->getPendingExactTemplateReferences().size());
+        for (const auto& pendingReference :
+                edge->getPendingExactTemplateReferences()) {
+            if (!pendingReference.instantiation) {
+                throw std::runtime_error("null pending exact-template reference");
+            }
+            auto runtime = boundInstantiations.find(
+                    pendingReference.instantiation.get());
+            if (runtime == boundInstantiations.end()) {
+                auto instance = std::make_shared<ExactTemplateInstantiation>();
+                instance->member = bindMember(pendingReference.instantiation->member);
+                instance->canonicalTuple =
+                        pendingReference.instantiation->canonicalTuple;
+                instance->root = pendingReference.instantiation->root;
+                instance->tuple = pendingReference.instantiation->tuple;
+                const std::shared_ptr<const ExactTemplateInstantiation> immutable = instance;
+                runtime = boundInstantiations.emplace(
+                        pendingReference.instantiation.get(), immutable).first;
+            }
+            const auto& instance = *runtime->second;
+            std::string label = "T" + std::to_string(
+                    instance.member->substitution->definition->templateId) +
+                    "[slot" + std::to_string(instance.canonicalTuple) + "->" +
+                    instance.tuple.toString() + "]";
+            references.push_back(
+                    {runtime->second, pendingReference.negated, std::move(label)});
+            ++stats.references;
+        }
+        edge->setExactTemplateReferences(std::move(references));
+        edge->clearPendingExactTemplateReferences();
+        ++stats.dependencyEdges;
+    }
+    return stats;
+}
+
 
 
 void runPipeline(
@@ -2909,15 +3325,51 @@ void runPipeline(
     precomputedProbResult.clear();
     precomputedTupleProbResult.clear();
 
+    TemplatePipelineProfile templateProfile;
+    templateProfile.mode = opt.isLiftedWmcEnabled() ? "template" : "baseline";
     std::unordered_set<std::string> liftedOutputRelations;
     std::unordered_set<std::string> liftedRelationClosure;
+    std::unordered_set<UntypedTuple> liftedTemplateBackedTuples;
+    std::unordered_map<UntypedTuple,
+            std::shared_ptr<const PendingExactTemplateInstantiation>>
+            liftedTemplateInstantiations;
+    std::unordered_map<UntypedTuple,
+            std::shared_ptr<const PendingExactTemplateInstantiation>>
+            liftedRootTemplateInstantiations;
+    std::unordered_set<RuleApplication>
+            liftedSuppressedRuleApplications;
+    std::size_t liftedTemplateRuleApplicationsExcluded = 0;
     if (opt.isLiftedWmcEnabled()) {
         const auto liftedStart = std::chrono::steady_clock::now();
         auto lifted =
                 tryEvaluateLiftedPointwise(opt, program, ruleManager, factProb, evidences);
-        const auto liftedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                      std::chrono::steady_clock::now() - liftedStart)
-                                      .count();
+        const double liftedMs =
+                std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - liftedStart)
+                        .count();
+        templateProfile.pointwiseHandledOutputs =
+                lifted.handledOutputRelations.size();
+        templateProfile.pointwiseOutputTuples = lifted.liftedOutputTuples;
+        templateProfile.pointwiseRelations = lifted.relationTemplates;
+        templateProfile.pointwiseTemplateBackedTuples =
+                lifted.templateBackedTuples;
+        templateProfile.pointwiseAbstractNodes = lifted.abstractNodes;
+        templateProfile.pointwiseAbstractEdges = lifted.abstractEdges;
+        templateProfile.pointwiseSymbolicVariables =
+                lifted.symbolicVariables;
+        templateProfile.pointwiseBddNodes = lifted.bddNodes;
+        templateProfile.pointwiseTemplateDefinitions =
+                lifted.templateDefinitions;
+        templateProfile.pointwiseEventBindings =
+                lifted.templateEventBindings;
+        templateProfile.pointwiseTotalMs = liftedMs;
+        templateProfile.pointwiseDirectMultiWitnessMs =
+                lifted.directMultiWitnessMs;
+        templateProfile.pointwiseEligibilityMs = lifted.eligibilityMs;
+        templateProfile.pointwiseAbstractGraphMs = lifted.abstractGraphMs;
+        templateProfile.pointwiseSymbolicDdMs = lifted.symbolicDdMs;
+        templateProfile.pointwiseInstantiateWmcMs =
+                lifted.instantiateWmcMs;
         std::cout << "[lifted-wmc] handled=" << (lifted.handled ? 1 : 0)
                   << " reason=" << lifted.reason
                   << " execution_mode=" << lifted.executionMode
@@ -2935,6 +3387,37 @@ void runPipeline(
                   << " witness_rows=" << lifted.witnessIndexedRows
                   << " witness_tuple_formulas=" << lifted.witnessIndexedTupleFormulas
                   << " witness_template_dd_nodes=" << lifted.witnessIndexedTemplateDdNodes
+                  << " template_backed_tuples=" << lifted.templateBackedTuples
+                  << " template_definitions=" << lifted.templateDefinitions
+                  << " template_event_bindings=" << lifted.templateEventBindings
+                  << " direct_multiwitness_ms="
+                  << lifted.directMultiWitnessMs
+                  << " direct_preflight_relations="
+                  << lifted.directPreflightRelations
+                  << " direct_evaluated_relations="
+                  << lifted.directEvaluatedRelations
+                  << " direct_preflight_tuples="
+                  << lifted.directPreflightTuples
+                  << " direct_preflight_rows="
+                  << lifted.directPreflightRows
+                  << " composed_body_refs="
+                  << lifted.composedBodyReferences
+                  << " partial_template_tuples="
+                  << lifted.partialTemplateTuples
+                  << " partial_template_rule_apps="
+                  << lifted.partialTemplateRuleApplications
+                  << " wmc_family_cache_hits="
+                  << lifted.wmcFamilyCacheHits
+                  << " wmc_family_cache_misses="
+                  << lifted.wmcFamilyCacheMisses
+                  << " direct_preflight_ms="
+                  << lifted.directPreflightMs
+                  << " direct_evaluation_ms="
+                  << lifted.directEvaluationMs
+                  << " eligibility_ms=" << lifted.eligibilityMs
+                  << " abstract_graph_ms=" << lifted.abstractGraphMs
+                  << " symbolic_dd_ms=" << lifted.symbolicDdMs
+                  << " instantiate_wmc_ms=" << lifted.instantiateWmcMs
                   << " elapsed_ms=" << liftedMs << std::endl;
         if (lifted.handled) {
             debugger.startStage(StageKind::FC_WMC_HYBRID);
@@ -2962,6 +3445,44 @@ void runPipeline(
                     std::to_string(lifted.witnessIndexedTupleFormulas));
             debugger.addInfo("lifted_witness_template_dd_nodes",
                     std::to_string(lifted.witnessIndexedTemplateDdNodes));
+            debugger.addInfo("lifted_template_backed_tuples",
+                    std::to_string(lifted.templateBackedTuples));
+            debugger.addInfo("lifted_template_definitions",
+                    std::to_string(lifted.templateDefinitions));
+            debugger.addInfo("lifted_template_event_bindings",
+                    std::to_string(lifted.templateEventBindings));
+            debugger.addInfo("lifted_direct_multiwitness_ms",
+                    std::to_string(lifted.directMultiWitnessMs));
+            debugger.addInfo("lifted_direct_preflight_relations",
+                    std::to_string(lifted.directPreflightRelations));
+            debugger.addInfo("lifted_direct_evaluated_relations",
+                    std::to_string(lifted.directEvaluatedRelations));
+            debugger.addInfo("lifted_direct_preflight_tuples",
+                    std::to_string(lifted.directPreflightTuples));
+            debugger.addInfo("lifted_direct_preflight_rows",
+                    std::to_string(lifted.directPreflightRows));
+            debugger.addInfo("lifted_composed_body_refs",
+                    std::to_string(lifted.composedBodyReferences));
+            debugger.addInfo("lifted_partial_template_tuples",
+                    std::to_string(lifted.partialTemplateTuples));
+            debugger.addInfo("lifted_partial_template_rule_apps",
+                    std::to_string(lifted.partialTemplateRuleApplications));
+            debugger.addInfo("lifted_wmc_family_cache_hits",
+                    std::to_string(lifted.wmcFamilyCacheHits));
+            debugger.addInfo("lifted_wmc_family_cache_misses",
+                    std::to_string(lifted.wmcFamilyCacheMisses));
+            debugger.addInfo("lifted_direct_preflight_ms",
+                    std::to_string(lifted.directPreflightMs));
+            debugger.addInfo("lifted_direct_evaluation_ms",
+                    std::to_string(lifted.directEvaluationMs));
+            debugger.addInfo("lifted_eligibility_ms",
+                    std::to_string(lifted.eligibilityMs));
+            debugger.addInfo("lifted_abstract_graph_ms",
+                    std::to_string(lifted.abstractGraphMs));
+            debugger.addInfo("lifted_symbolic_dd_ms",
+                    std::to_string(lifted.symbolicDdMs));
+            debugger.addInfo("lifted_instantiate_wmc_ms",
+                    std::to_string(lifted.instantiateWmcMs));
             debugger.addInfo("lifted_elapsed_ms", std::to_string(liftedMs));
             debugger.endStage();
 
@@ -2970,6 +3491,14 @@ void runPipeline(
                     opt.isDumpDotEnabled(), lifted.complete);
             debugger.endStage();
             if (lifted.complete) {
+                std::unordered_set<std::string> completePointwiseRelations(
+                        lifted.handledRelations.begin(),
+                        lifted.handledRelations.end());
+                attributeTemplateGroundObjects(templateProfile,
+                        DerivationManager::untypedTuple2RuleApplications,
+                        factProb, inputFactSet, completePointwiseRelations,
+                        lifted.excludedTuples, nullptr);
+                writeTemplatePipelineProfile(templateProfile, opt);
                 debugger.endTurn();
                 dumpInitialInputRelations(
                         opt.getOutputFileDir() + "/initial-input-relations-iter0.txt");
@@ -2980,6 +3509,23 @@ void runPipeline(
                     lifted.handledOutputRelations.begin(), lifted.handledOutputRelations.end());
             liftedRelationClosure.insert(
                     lifted.handledRelations.begin(), lifted.handledRelations.end());
+            liftedTemplateBackedTuples = std::move(lifted.excludedTuples);
+            liftedTemplateInstantiations =
+                    std::move(lifted.templateInstantiations);
+            liftedRootTemplateInstantiations =
+                    std::move(lifted.rootTemplateInstantiations);
+            liftedSuppressedRuleApplications =
+                    std::move(lifted.suppressedRuleApplications);
+            for (const auto& tuple : liftedTemplateBackedTuples) {
+                const auto applications =
+                        DerivationManager::untypedTuple2RuleApplications.find(tuple);
+                if (applications !=
+                                DerivationManager::untypedTuple2RuleApplications.end() &&
+                        applications->second != nullptr) {
+                    liftedTemplateRuleApplicationsExcluded +=
+                            applications->second->size();
+                }
+            }
             for (const auto& [tuple, probability] : lifted.probabilities) {
                 precomputedTupleProbResult.emplace(tuple, probability);
             }
@@ -2993,8 +3539,6 @@ void runPipeline(
         }
     }
 
-    debugger.startStage(StageKind::CREATE_GRAPH);
-    debugger.addInfo("input_fact_size", std::to_string(countInitialInputFacts()));
     std::unordered_set<std::string> concreteRoots;
     for (const auto* output : program.getOutputRelations()) {
         if (output != nullptr && liftedOutputRelations.count(output->getName()) == 0) {
@@ -3015,16 +3559,192 @@ void runPipeline(
             excludedConcreteRelations.insert(relation);
         }
     }
+
+    std::unordered_set<UntypedTuple> exactExcludedTuples =
+            liftedTemplateBackedTuples;
+    std::unordered_map<UntypedTuple,
+            std::shared_ptr<const PendingExactTemplateInstantiation>>
+            exactTemplateInstantiations = liftedTemplateInstantiations;
+    std::unordered_map<UntypedTuple,
+            std::shared_ptr<const PendingExactTemplateInstantiation>>
+            exactRootTemplateInstantiations =
+                    liftedRootTemplateInstantiations;
+    std::unordered_set<RuleApplication> exactSuppressedRuleApplications =
+            liftedSuppressedRuleApplications;
+    std::vector<std::string> concreteOutputRelations;
+    std::unordered_set<std::string> concreteOutputRelationNames;
+    for (const auto* output : program.getOutputRelations()) {
+        if (output != nullptr && liftedOutputRelations.count(output->getName()) == 0) {
+            concreteOutputRelations.push_back(output->getName());
+            concreteOutputRelationNames.insert(output->getName());
+        }
+    }
+
+    PreGraphLiveSetResult preGraphLive;
+    bool preGraphLiveApplied = false;
+    if (opt.isLiftedWmcEnabled() && !opt.isDerivationOnly() &&
+            evidences.empty()) {
+        std::unordered_set<UntypedTuple> roots;
+        const auto allQueries = queryManager.getAllQuery();
+        auto isQueryRoot = [&](const UntypedTuple& tuple) {
+            for (const Query* query : allQueries) {
+                if (query != nullptr &&
+                        liftedOutputRelations.count(query->getRelationName()) == 0 &&
+                        query->matchesTuple(tuple.relation_name, tuple.fields)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        auto addRoot = [&](const UntypedTuple& tuple) {
+            if (exactExcludedTuples.count(tuple) > 0 ||
+                    excludedConcreteRelations.count(tuple.relation_name) > 0) {
+                return;
+            }
+            if (concreteOutputRelationNames.count(tuple.relation_name) > 0 ||
+                    isQueryRoot(tuple)) {
+                roots.insert(tuple);
+            }
+        };
+        for (const auto& [tuple, applications] :
+                DerivationManager::untypedTuple2RuleApplications) {
+            (void)applications;
+            addRoot(tuple);
+        }
+        for (const auto& [tuple, probability] : factProb) {
+            (void)probability;
+            addRoot(tuple);
+        }
+        if (!allQueries.empty()) {
+            std::unordered_set<UntypedTuple> materializedUniverse;
+            materializedUniverse.reserve(
+                    DerivationManager::untypedTuple2RuleApplications.size() +
+                    factProb.size());
+            for (const auto& [tuple, applications] :
+                    DerivationManager::untypedTuple2RuleApplications) {
+                (void)applications;
+                materializedUniverse.insert(tuple);
+            }
+            for (const auto& [tuple, probability] : factProb) {
+                (void)probability;
+                materializedUniverse.insert(tuple);
+            }
+            for (const auto& [headTuple, applications] :
+                    DerivationManager::untypedTuple2RuleApplications) {
+                (void)headTuple;
+                if (applications == nullptr) {
+                    continue;
+                }
+                for (const auto& application : *applications) {
+                    const Rule* rule = ruleManager.getRule(application.ruleId);
+                    if (rule == nullptr ||
+                            rule->getVars().size() != application.varValuesPure.size()) {
+                        continue;
+                    }
+                    const auto variables = rule->getVars();
+                    for (const auto& atom : rule->getBodyAtoms()) {
+                        UntypedTuple bodyTuple{atom.getRelation(),
+                                atom.instantiatedFields(
+                                        variables, application.varValuesPure)};
+                        if (!atom.isNegatedAtom() ||
+                                materializedUniverse.count(bodyTuple) > 0) {
+                            addRoot(bodyTuple);
+                        }
+                    }
+                }
+            }
+        }
+
+        std::unordered_set<UntypedTuple> factTuples;
+        factTuples.reserve(factProb.size());
+        for (const auto& [tuple, probability] : factProb) {
+            (void)probability;
+            factTuples.insert(tuple);
+        }
+        std::unordered_set<std::string> deterministicRelations;
+        if (opt.isDetOptEnabled()) {
+            for (const auto& [relation, deterministic] : relationIsDet) {
+                if (deterministic) {
+                    deterministicRelations.insert(relation);
+                }
+            }
+        }
+        preGraphLive = collectPreGraphLiveSet(
+                DerivationManager::untypedTuple2RuleApplications, ruleManager, roots,
+                factTuples, deterministicRelations, excludedConcreteRelations,
+                exactExcludedTuples);
+        preGraphLiveApplied = preGraphLive.handled;
+        std::cout << "[pregraph-live] handled=" << (preGraphLive.handled ? 1 : 0)
+                  << " reason=" << preGraphLive.reason
+                  << " source_tuples=" << preGraphLive.sourceTuples
+                  << " source_rule_apps=" << preGraphLive.sourceRuleApplications
+                  << " roots=" << preGraphLive.roots
+                  << " live_tuples=" << preGraphLive.tuples.size()
+                  << " live_rule_apps=" << preGraphLive.ruleApplications.size()
+                  << " body_refs=" << preGraphLive.bodyReferences
+                  << " self_apps_skipped="
+                  << preGraphLive.selfDependentApplicationsSkipped << std::endl;
+    } else if (opt.isLiftedWmcEnabled()) {
+        std::cout << "[pregraph-live] handled=0 reason="
+                  << (!evidences.empty()
+                                  ? "evidence is not supported"
+                                  : "derivation-only mode")
+                  << std::endl;
+    }
+    templateProfile.preGraphLiveApplied = preGraphLiveApplied;
+    if (preGraphLiveApplied) {
+        templateProfile.preGraphLiveTuples = preGraphLive.tuples.size();
+        templateProfile.preGraphLiveRuleApplications =
+                preGraphLive.ruleApplications.size();
+    }
+
+    debugger.startStage(StageKind::CREATE_GRAPH);
+    debugger.addInfo("input_fact_size", std::to_string(countInitialInputFacts()));
     if (!excludedConcreteRelations.empty()) {
         std::cout << "[lifted-wmc] excluding "
                   << excludedConcreteRelations.size()
                   << " lifted relation template(s) from concrete graph construction"
                   << std::endl;
     }
+    if (!exactExcludedTuples.empty()) {
+        std::cout << "[exact-template] excluding " << exactExcludedTuples.size()
+                  << " template-backed tuple(s) from concrete graph construction"
+                  << std::endl;
+    }
+    if (!liftedTemplateBackedTuples.empty()) {
+        std::cout << "[lifted-template-ref] tuples_excluded="
+                  << liftedTemplateBackedTuples.size()
+                  << " rule_apps_excluded="
+                  << liftedTemplateRuleApplicationsExcluded
+                  << " instantiations=" << liftedTemplateInstantiations.size()
+                  << std::endl;
+    }
     auto t0 = std::chrono::steady_clock::now();
     auto graph = std::unique_ptr<WorkingDerivationGraph>(WorkingDerivationGraph::createFrom(
             DerivationManager::untypedTuple2RuleApplications, ruleManager, queryManager,
-            factProb, evidences, excludedConcreteRelations));
+            factProb, evidences, excludedConcreteRelations,
+            exactSuppressedRuleApplications.empty()
+                    ? nullptr
+                    : &exactSuppressedRuleApplications,
+            &exactExcludedTuples, &exactTemplateInstantiations,
+            preGraphLiveApplied ? &preGraphLive.tuples : nullptr,
+            preGraphLiveApplied ? &preGraphLive.ruleApplications : nullptr,
+            exactRootTemplateInstantiations.empty()
+                    ? nullptr
+                    : &exactRootTemplateInstantiations));
+    ExactTemplateBindingStats exactTemplateBindingStats;
+    if (!exactTemplateInstantiations.empty() ||
+            !exactRootTemplateInstantiations.empty()) {
+        exactTemplateBindingStats =
+                bindExactTemplateReferences(*graph, ruleManager, factProb);
+        std::cout << "[exact-template-ref] dependency_edges="
+                  << exactTemplateBindingStats.dependencyEdges
+                  << " references=" << exactTemplateBindingStats.references
+                  << " member_bindings=" << exactTemplateBindingStats.memberBindings
+                  << " fact_events=" << exactTemplateBindingStats.factEvents
+                  << " rule_events=" << exactTemplateBindingStats.ruleEvents
+                  << std::endl;
+    }
     if (!liftedOutputRelations.empty()) {
         for (const auto& node : graph->getNodes()) {
             if (node && liftedOutputRelations.count(node->getTuple().relation_name) > 0) {
@@ -3034,6 +3754,10 @@ void runPipeline(
         }
     }
     auto t1 = std::chrono::steady_clock::now();
+    templateProfile.createGraphMs =
+            std::chrono::duration<double, std::milli>(t1 - t0).count();
+    templateProfile.residualBeforePruneNodes = graph->getNodes().size();
+    templateProfile.residualBeforePruneEdges = graph->getEdges().size();
     std::cout << "[pipeline] create graph took "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
               << " ms\n";
@@ -3045,20 +3769,40 @@ void runPipeline(
 
     debugger.startStage(StageKind::PRUNING);
     auto t2 = std::chrono::steady_clock::now();
-    std::vector<std::string> concreteOutputRelations;
-    for (const auto* output : program.getOutputRelations()) {
-        if (output != nullptr && liftedOutputRelations.count(output->getName()) == 0) {
-            concreteOutputRelations.push_back(output->getName());
-        }
-    }
-    auto prunedView = graph->prune(concreteOutputRelations);
+    const std::size_t prePruneNodeCount = graph->getNodes().size();
+    const std::size_t prePruneEdgeCount = graph->getEdges().size();
+    const bool auditPreGraphLive = preGraphLiveApplied && opt.isDumpStatEnabled();
+    auto prunedView = graph->prune(concreteOutputRelations, nullptr,
+            preGraphLiveApplied && !auditPreGraphLive);
     auto view = buildWorkingViewLocal(prunedView.getNodes(), prunedView.getEdges());
+    if (preGraphLiveApplied) {
+        const std::size_t residualPrunedNodes =
+                prePruneNodeCount >= view.getNodes().size()
+                        ? prePruneNodeCount - view.getNodes().size()
+                        : 0;
+        const std::size_t residualPrunedEdges =
+                prePruneEdgeCount >= view.getEdges().size()
+                        ? prePruneEdgeCount - view.getEdges().size()
+                        : 0;
+        std::cout << "[pregraph-live] prune_mode="
+                  << (auditPreGraphLive ? "audit_bfs" : "reuse_live_set")
+                  << " validation_before_nodes=" << prePruneNodeCount
+                  << " validation_after_nodes=" << view.getNodes().size()
+                  << " residual_pruned_nodes=" << residualPrunedNodes
+                  << " validation_before_edges=" << prePruneEdgeCount
+                  << " validation_after_edges=" << view.getEdges().size()
+                  << " residual_pruned_edges=" << residualPrunedEdges << std::endl;
+    }
     addGraphSummaryInfo(debugger, "after_prune_", summarizeGraphLight(view));
     if (opt.isDumpStatEnabled()) {
         writeProvenanceTemplateStats(
                 *graph, view, makeOutputPath(opt, "provenance-template-stats.tsv"));
     }
     auto t3 = std::chrono::steady_clock::now();
+    templateProfile.pruneMs =
+            std::chrono::duration<double, std::milli>(t3 - t2).count();
+    templateProfile.residualAfterPruneNodes = view.getNodes().size();
+    templateProfile.residualAfterPruneEdges = view.getEdges().size();
     std::cout << "[pipeline] pruning took "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()
               << " ms\n";
@@ -3092,7 +3836,12 @@ void runPipeline(
     StageInfo* rewriteHybridStage = nullptr;
     RewriteDispatchDecision rewriteDecision;
     bool haveRewriteDecision = false;
-    const bool rewriteEnabledForThisRun = opt.isRewriteEnabled();
+    const bool rewriteEnabledForThisRun = opt.isRewriteEnabled() &&
+            exactTemplateBindingStats.references == 0;
+    if (opt.isRewriteEnabled() && !rewriteEnabledForThisRun) {
+        std::cout << "[pipeline] rewrite skipped reason=exact_template_references"
+                  << " references=" << exactTemplateBindingStats.references << std::endl;
+    }
     if (rewriteEnabledForThisRun && !opt.isDerivationOnly()) {
         rewriteHybridStage = debugger.startStage(StageKind::FC_WMC_HYBRID);
     }
@@ -3511,6 +4260,7 @@ void runPipeline(
         std::cout << "[pipeline] derivation-only mode; skip rewrite" << std::endl;
     }
 
+    const auto backendStart = std::chrono::steady_clock::now();
     if (program.getKnowledge() == souffle::Knowledge::BDD) {
         runBddPipeline(opt, program, ruleManager, queryManager, *graph, view, evidences, rewriteHybridStage);
     } else if (program.getKnowledge() == souffle::Knowledge::SDD) {
@@ -3522,6 +4272,16 @@ void runPipeline(
     } else {
         std::cerr << "Unknown knowledge representation" << std::endl;
     }
+    templateProfile.backendMs =
+            std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - backendStart)
+                    .count();
+    attributeTemplateGroundObjects(templateProfile,
+            DerivationManager::untypedTuple2RuleApplications,
+            factProb, inputFactSet, excludedConcreteRelations,
+            liftedTemplateBackedTuples,
+            preGraphLiveApplied ? &preGraphLive : nullptr);
+    writeTemplatePipelineProfile(templateProfile, opt);
     setActiveSymbolTable(nullptr);
 }
 

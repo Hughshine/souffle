@@ -102,6 +102,7 @@ protected:
     bool relax_compaction_dirty = true;  // dirty only the surviving compacted edge endpoints
     bool lifted_wmc = false;  // enable adaptive pointwise lifted WMC
     std::size_t lifted_threshold = 1024;  // minimum runtime output cardinality for lifted WMC
+    bool template_profile = false;  // emit pointwise template size and time profile
     bool help_requested = false;  // true when help was printed intentionally
 public:
     // all argument constructor
@@ -229,6 +230,9 @@ public:
     std::size_t getLiftedWmcThreshold() const {
         return lifted_threshold;
     }
+    bool isTemplateProfileEnabled() const {
+        return template_profile;
+    }
     /**
      * get filename of profile
      */
@@ -282,6 +286,7 @@ public:
                 {"det-opt", false, nullptr, 'Z'},
                 {"lifted-wmc", false, nullptr, 1023},
                 {"lifted-threshold", true, nullptr, 1024},
+                {"profile-templates", false, nullptr, 1028},
                 // the terminal option -- needs to be null
                 {nullptr, false, nullptr, 0}};
 
@@ -436,6 +441,9 @@ public:
                         ok = false;
                     }
                     break;
+                case 1028:
+                    template_profile = true;
+                    break;
                 default: printHelpPage(exec_name); return false;
             }
         }
@@ -476,6 +484,7 @@ private:
         std::cerr << "    --lifted-wmc                 -- Enable adaptive pointwise lifted WMC\n";
         std::cerr << "    --lifted-threshold=<N>       -- Minimum output tuples for lifted WMC"
                   << " (default: " << lifted_threshold << ")\n";
+        std::cerr << "    --profile-templates          -- Emit pointwise size and time profile\n";
         std::cerr << "    -l <FILE>, --logfile=<FILE>  -- Debugger JSON base name\n";
 #ifdef _OPENMP
         std::cerr << "    -j <NUM>, --jobs=<NUM>       -- Specify number of threads\n";

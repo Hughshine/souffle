@@ -216,10 +216,9 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/souffle DESTINATION includ
 add_library(compiled STATIC
   Derivation.cpp
   problog/Atom.cpp
-  problog/CanonicalRuleSchema.cpp
   problog/LiftedWmc.cpp
   problog/Pipeline.cpp
-  problog/ProvenanceFingerprint.cpp
+  problog/PreGraphLiveSet.cpp
   problog/QueryManager.cpp
   problog/Rule.cpp
   problog/RuleManager.cpp

@@ -1088,6 +1088,9 @@ struct ConcreteBddNodeKey {
   }
 };
 
+static bool relationContainsTuple(Relation *relation,
+                                  const std::vector<RamDomain> &fields);
+
 class ConcreteWeightedBdd {
 public:
   ConcreteWeightedBdd() {
@@ -1160,6 +1163,10 @@ public:
 
   std::size_t nodeCount() const { return nodes.size(); }
   std::size_t variableCount() const { return variableWeights.size(); }
+  const std::vector<ConcreteBddNode> &getNodes() const { return nodes; }
+  const std::map<ConcreteVariableKey, double> &getVariableWeights() const {
+    return variableWeights;
+  }
 
 private:
   std::uint32_t makeNode(const ConcreteVariableKey &variable,
@@ -1255,6 +1262,214 @@ private:
   std::map<std::uint32_t, std::uint32_t> notCache;
   std::map<ConcreteVariableKey, double> variableWeights;
 };
+
+static std::uint32_t instantiatePointwiseBdd(
+    SouffleProgram &program,
+    const std::unordered_map<UntypedTuple, double> &factProb,
+    const AbstractDerivationGraph &graph, const SymbolicBdd &symbolic,
+    BddId root, const std::vector<RamDomain> &rootValues,
+    ConcreteWeightedBdd &concrete) {
+  RuntimeBindingContext bindings(graph, rootValues);
+  std::unordered_map<BddId, std::uint32_t> memo;
+  memo.emplace(symbolic.getFalse(), concrete.getFalse());
+  memo.emplace(symbolic.getTrue(), concrete.getTrue());
+
+  auto concretize = [&](const SymbolicVariable &variable) {
+    ConcreteVariableKey key;
+    key.kind = variable.kind;
+    if (variable.kind == SymbolicVariableKind::ExtensionalFact) {
+      const auto &node = graph.getNode(variable.node);
+      key.relation = node.relation;
+      key.arguments = bindings.evaluateTerms(node.arguments);
+    } else {
+      const auto &edge = graph.getEdge(variable.edge);
+      key.relation = edge.domain.headRelation;
+      key.ruleId = edge.domain.ruleId;
+      key.arguments = bindings.evaluateTerms(edge.domain.groundingKey);
+    }
+    return key;
+  };
+
+  std::function<std::uint32_t(BddId)> visit = [&](BddId nodeId) {
+    const auto cached = memo.find(nodeId);
+    if (cached != memo.end()) {
+      return cached->second;
+    }
+    const auto &node = symbolic.getNode(nodeId);
+    if (node.variable.kind == SymbolicVariableKind::RuleApplicationGuard) {
+      const bool present = bindings.resolve(node.variable.edge) != nullptr;
+      const auto result = visit(present ? node.high : node.low);
+      memo.emplace(nodeId, result);
+      return result;
+    }
+
+    const ConcreteVariableKey key = concretize(node.variable);
+    double weight = 0.0;
+    if (node.variable.kind == SymbolicVariableKind::ExtensionalFact) {
+      UntypedTuple tuple{key.relation, key.arguments};
+      const auto probability = factProb.find(tuple);
+      if (probability != factProb.end()) {
+        weight = probability->second;
+      } else {
+        weight = relationContainsTuple(program.getRelation(key.relation),
+                                       key.arguments)
+                     ? 1.0
+                     : 0.0;
+      }
+    } else {
+      weight = graph.getEdge(node.variable.edge).probability;
+    }
+
+    const auto low = visit(node.low);
+    const auto high = visit(node.high);
+    std::uint32_t result;
+    if (weight <= 0.0) {
+      result = low;
+    } else if (weight >= 1.0) {
+      result = high;
+    } else {
+      const auto variable = concrete.makeVariable(key, weight);
+      result = concrete.makeOr(
+          concrete.makeAnd(concrete.makeNot(variable), low),
+          concrete.makeAnd(variable, high));
+    }
+    memo.emplace(nodeId, result);
+    return result;
+  };
+  return visit(root);
+}
+
+using LiftedDefinitionCache =
+    std::map<std::string, std::shared_ptr<const ExactTemplateDefinition>>;
+
+using LiftedWmcFamilyKey =
+    std::pair<std::size_t, std::vector<std::uint64_t>>;
+using LiftedWmcFamilyCache = std::map<LiftedWmcFamilyKey, double>;
+constexpr std::size_t MIN_WMC_FAMILY_CACHE_BDD_NODES = 16;
+
+struct ExportedConcreteTemplate {
+  std::shared_ptr<const PendingExactTemplateInstantiation> instantiation;
+  double probability = std::numeric_limits<double>::quiet_NaN();
+};
+
+static ExportedConcreteTemplate
+exportConcreteTemplateInstantiation(
+    const UntypedTuple &tuple, const ConcreteWeightedBdd &bdd,
+    std::uint32_t root, bool computeProbability,
+    LiftedDefinitionCache &definitionCache,
+    LiftedWmcFamilyCache &wmcFamilyCache,
+    std::size_t &wmcFamilyCacheHits,
+    std::size_t &wmcFamilyCacheMisses,
+    std::size_t &nextTemplateId, std::size_t &definitionsCreated,
+    std::size_t &eventBindingsCreated) {
+  std::vector<ConcreteVariableKey> variables;
+  variables.reserve(bdd.getVariableWeights().size());
+  const bool useWmcFamilyCache =
+      computeProbability &&
+      bdd.nodeCount() >= MIN_WMC_FAMILY_CACHE_BDD_NODES;
+  std::vector<std::uint64_t> weightBits;
+  if (useWmcFamilyCache) {
+    weightBits.reserve(bdd.getVariableWeights().size());
+  }
+  std::map<ConcreteVariableKey, std::size_t> variableIds;
+  for (const auto &[variable, weight] : bdd.getVariableWeights()) {
+    variableIds.emplace(variable, variables.size());
+    variables.push_back(variable);
+    if (useWmcFamilyCache) {
+      std::uint64_t bits = 0;
+      static_assert(sizeof(bits) == sizeof(weight));
+      std::memcpy(&bits, &weight, sizeof(bits));
+      weightBits.push_back(bits);
+    }
+  }
+
+  std::vector<ExactTemplateBddNode> nodes(bdd.getNodes().size());
+  std::ostringstream shape;
+  shape << "root=" << root << ";vars=";
+  for (const auto &variable : variables) {
+    const auto kind = variable.kind == SymbolicVariableKind::ExtensionalFact
+                          ? ExactTemplateVariableKind::Fact
+                          : ExactTemplateVariableKind::Rule;
+    shape << static_cast<int>(kind) << ',';
+  }
+  shape << ";nodes=";
+  for (std::size_t nodeId = 2; nodeId < bdd.getNodes().size(); ++nodeId) {
+    const auto &node = bdd.getNodes()[nodeId];
+    const auto variable = variableIds.find(node.variable);
+    if (variable == variableIds.end()) {
+      throw std::runtime_error(
+          "lifted concrete BDD node has no declared event variable");
+    }
+    nodes[nodeId] = ExactTemplateBddNode{variable->second, node.low, node.high};
+    shape << variable->second << ':' << node.low << ':' << node.high << ',';
+  }
+
+  const std::string definitionShape = shape.str();
+  std::shared_ptr<const ExactTemplateDefinition> definition;
+  const auto cached = definitionCache.find(definitionShape);
+  if (cached != definitionCache.end()) {
+    definition = cached->second;
+  } else {
+    auto created = std::make_shared<ExactTemplateDefinition>();
+    created->templateId = nextTemplateId++;
+    created->nodes = std::move(nodes);
+    created->variables.reserve(variables.size());
+    for (std::size_t i = 0; i < variables.size(); ++i) {
+      const auto kind =
+          variables[i].kind == SymbolicVariableKind::ExtensionalFact
+              ? ExactTemplateVariableKind::Fact
+              : ExactTemplateVariableKind::Rule;
+      created->variables.push_back(ExactTemplateVariable{kind, i});
+    }
+    definition = created;
+    definitionCache.emplace(definitionShape, definition);
+    ++definitionsCreated;
+  }
+
+  double probability = std::numeric_limits<double>::quiet_NaN();
+  if (useWmcFamilyCache) {
+    LiftedWmcFamilyKey familyKey{definition->templateId,
+                                 std::move(weightBits)};
+    const auto cachedProbability = wmcFamilyCache.find(familyKey);
+    if (cachedProbability != wmcFamilyCache.end()) {
+      probability = cachedProbability->second;
+      ++wmcFamilyCacheHits;
+    } else {
+      probability = bdd.wmc(root);
+      wmcFamilyCache.emplace(std::move(familyKey), probability);
+      ++wmcFamilyCacheMisses;
+    }
+  } else if (computeProbability) {
+    probability = bdd.wmc(root);
+  }
+
+  auto member = std::make_shared<ExactTemplateMemberBinding>();
+  member->definition = definition;
+  for (std::size_t i = 0; i < variables.size(); ++i) {
+    const auto &variable = variables[i];
+    if (variable.kind == SymbolicVariableKind::ExtensionalFact) {
+      member->tupleBindings.push_back(
+          RootedTupleBinding{i, UntypedTuple{variable.relation,
+                                             variable.arguments}});
+    } else if (variable.kind == SymbolicVariableKind::ProbabilisticRule) {
+      member->applicationBindings.push_back(RootedApplicationBinding{
+          i, RuleApplication{static_cast<RamDomain>(variable.ruleId),
+                             variable.arguments}});
+    } else {
+      throw std::runtime_error(
+          "lifted template contains a non-event concrete variable");
+    }
+  }
+  const std::size_t canonicalTuple = variables.size();
+  eventBindingsCreated += variables.size();
+
+  auto instantiation = std::make_shared<PendingExactTemplateInstantiation>();
+  instantiation->member = std::move(member);
+  instantiation->canonicalTuple = canonicalTuple;
+  instantiation->root = root;
+  instantiation->tuple = tuple;
+  return ExportedConcreteTemplate{std::move(instantiation), probability};
+}
 
 static bool isUsableProbability(double value) {
   return value > 0.0 && value < 1.0;
@@ -1666,9 +1881,8 @@ static WitnessIndexedTemplate compileWitnessIndexedTemplate(
   return tmpl;
 }
 
-static bool isDirectMultiWitnessRuleSupported(
-    SouffleProgram &program, const Rule &rule,
-    const std::unordered_set<std::string> &inputRelations) {
+static bool isWitnessIndexedRuleShapeSupported(
+    SouffleProgram &program, const Rule &rule) {
   if (rule.isFact() || rule.isRecursive() || rule.isInRecursiveStratum() ||
       !rule.getAggregates().empty()) {
     return false;
@@ -1680,7 +1894,7 @@ static bool isDirectMultiWitnessRuleSupported(
     return false;
   }
   for (const auto &atom : rule.getBodyAtoms()) {
-    if (atom.isNegatedAtom() || inputRelations.count(atom.getRelation()) == 0) {
+    if (atom.isNegatedAtom()) {
       return false;
     }
     Relation *relation = program.getRelation(atom.getRelation());
@@ -1713,6 +1927,139 @@ static bool isDirectMultiWitnessRuleSupported(
   return true;
 }
 
+using PendingTemplateMap = std::unordered_map<UntypedTuple,
+    std::shared_ptr<const PendingExactTemplateInstantiation>>;
+
+struct DirectRelationPreflight {
+  bool complete = false;
+  bool hasMultiWitnessTuple = false;
+  bool hasTemplateBody = false;
+  std::size_t tuples = 0;
+  std::size_t rows = 0;
+  std::size_t unsupportedRows = 0;
+  std::size_t partialTuples = 0;
+  std::string reason;
+};
+
+static bool isWitnessApplicationSupported(
+    SouffleProgram &program, const Rule &rule,
+    const RuleApplication &application,
+    const std::unordered_set<std::string> &inputRelations,
+    const PendingTemplateMap &availableTemplates,
+    bool *usesTemplate = nullptr) {
+  if (application.varValuesPure.size() != rule.getVars().size()) {
+    return false;
+  }
+  bool foundTemplate = false;
+  const auto variables = rule.getVars();
+  for (const auto &atom : rule.getBodyAtoms()) {
+    const UntypedTuple bodyTuple{
+        atom.getRelation(),
+        atom.instantiatedFields(variables, application.varValuesPure)};
+    if (!relationContainsTuple(program.getRelation(atom.getRelation()),
+                               bodyTuple.fields)) {
+      return false;
+    }
+    if (inputRelations.count(atom.getRelation()) > 0 ||
+        (detOptEnabled && isDetRelation(atom.getRelation()))) {
+      continue;
+    }
+    if (availableTemplates.count(bodyTuple) == 0) {
+      return false;
+    }
+    foundTemplate = true;
+  }
+  if (usesTemplate != nullptr) {
+    *usesTemplate = foundTemplate;
+  }
+  return true;
+}
+
+static DirectRelationPreflight preflightDirectRelation(
+    SouffleProgram &program, Relation &relation,
+    const std::unordered_map<std::size_t, const Rule *> &supportedRules,
+    const std::unordered_set<std::string> &inputRelations,
+    const PendingTemplateMap &availableTemplates) {
+  DirectRelationPreflight result;
+  for (auto it = relation.begin(); it != relation.end(); ++it) {
+    ++result.tuples;
+    const UntypedTuple tuple = UntypedTuple::fromSouffleTuple(*it);
+    const auto appsIt =
+        DerivationManager::untypedTuple2RuleApplications.find(tuple);
+    if (appsIt == DerivationManager::untypedTuple2RuleApplications.end() ||
+        appsIt->second == nullptr || appsIt->second->empty()) {
+      result.reason = "missing_runtime_witnesses";
+      return result;
+    }
+
+    std::size_t tupleRows = 0;
+    std::size_t tupleUnsupportedRows = 0;
+    for (const auto &application : *appsIt->second) {
+      const auto ruleId = static_cast<std::size_t>(application.ruleId);
+      const auto ruleIt = supportedRules.find(ruleId);
+      if (ruleIt == supportedRules.end()) {
+        ++tupleUnsupportedRows;
+        continue;
+      }
+      if (ruleIt->second == nullptr) {
+        ++tupleUnsupportedRows;
+        continue;
+      }
+
+      bool applicationUsesTemplate = false;
+      if (!isWitnessApplicationSupported(
+              program, *ruleIt->second, application, inputRelations,
+              availableTemplates, &applicationUsesTemplate)) {
+        ++tupleUnsupportedRows;
+        continue;
+      }
+      ++tupleRows;
+      result.hasTemplateBody |= applicationUsesTemplate;
+    }
+    result.rows += tupleRows;
+    result.unsupportedRows += tupleUnsupportedRows;
+    if (tupleRows > 0 && tupleUnsupportedRows > 0) {
+      ++result.partialTuples;
+    }
+    result.hasMultiWitnessTuple |= tupleRows > 1;
+  }
+  result.complete = result.unsupportedRows == 0;
+  if (result.rows == 0) {
+    result.reason = "no_supported_runtime_witnesses";
+  } else if (!result.complete) {
+    result.reason = "partial_runtime_witness_support";
+  } else if (!result.hasMultiWitnessTuple && !result.hasTemplateBody) {
+    result.reason = "no_multi_witness_tuple";
+  }
+  return result;
+}
+
+static std::unordered_set<std::string> collectOutputDependencyRelations(
+    const std::vector<Relation *> &outputs, const RuleManager &ruleManager) {
+  std::unordered_set<std::string> reachable;
+  std::deque<std::string> worklist;
+  for (const auto *output : outputs) {
+    if (output != nullptr && reachable.insert(output->getName()).second) {
+      worklist.push_back(output->getName());
+    }
+  }
+  while (!worklist.empty()) {
+    const auto relation = std::move(worklist.front());
+    worklist.pop_front();
+    for (const Rule *rule : ruleManager.getRulesForPredicate(relation)) {
+      if (rule == nullptr) {
+        continue;
+      }
+      for (const auto &atom : rule->getBodyAtoms()) {
+        if (reachable.insert(atom.getRelation()).second) {
+          worklist.push_back(atom.getRelation());
+        }
+      }
+    }
+  }
+  return reachable;
+}
+
 static std::vector<RamDomain> evaluateAtomTuple(
     const Atom &atom, const std::vector<std::string> &vars,
     const std::vector<RamDomain> &values) {
@@ -1724,11 +2071,140 @@ static std::vector<RamDomain> evaluateAtomTuple(
   return fields;
 }
 
+struct ImportedTemplateKey {
+  const PendingExactTemplateInstantiation *instantiation = nullptr;
+  std::uint32_t root = 0;
+
+  bool operator<(const ImportedTemplateKey &other) const {
+    return std::tie(instantiation, root) <
+           std::tie(other.instantiation, other.root);
+  }
+};
+
+static std::uint32_t importPendingTemplateBdd(
+    const PendingExactTemplateInstantiation &instantiation,
+    const RuleManager &ruleManager,
+    const std::unordered_map<UntypedTuple, double> &factProb,
+    const PendingTemplateMap &availableTemplates, ConcreteWeightedBdd &bdd,
+    std::map<ImportedTemplateKey, std::uint32_t> &imported,
+    std::set<ImportedTemplateKey> &activeImports) {
+  const ImportedTemplateKey key{&instantiation, instantiation.root};
+  const auto cached = imported.find(key);
+  if (cached != imported.end()) {
+    return cached->second;
+  }
+  if (!activeImports.insert(key).second) {
+    throw std::runtime_error("recursive pointwise template reference");
+  }
+  if (!instantiation.member || !instantiation.member->definition) {
+    throw std::runtime_error("pointwise template reference has no definition");
+  }
+
+  const auto &member = *instantiation.member;
+  const auto &definition = *member.definition;
+  std::unordered_map<std::uint32_t, std::uint32_t> memo;
+  memo.emplace(0, bdd.getFalse());
+  memo.emplace(1, bdd.getTrue());
+
+  auto findTupleBinding = [&](std::size_t canonicalNode)
+      -> const RootedTupleBinding * {
+    for (const auto &binding : member.tupleBindings) {
+      if (binding.canonicalNode == canonicalNode) {
+        return &binding;
+      }
+    }
+    return nullptr;
+  };
+  auto findApplicationBinding = [&](std::size_t canonicalNode)
+      -> const RootedApplicationBinding * {
+    for (const auto &binding : member.applicationBindings) {
+      if (binding.canonicalNode == canonicalNode) {
+        return &binding;
+      }
+    }
+    return nullptr;
+  };
+  std::function<std::uint32_t(std::uint32_t)> visit =
+      [&](std::uint32_t nodeId) -> std::uint32_t {
+    const auto found = memo.find(nodeId);
+    if (found != memo.end()) {
+      return found->second;
+    }
+    if (nodeId >= definition.nodes.size()) {
+      throw std::runtime_error("pointwise template BDD node is out of range");
+    }
+    const auto &node = definition.nodes[nodeId];
+    if (node.variable >= definition.variables.size()) {
+      throw std::runtime_error(
+          "pointwise template BDD variable is out of range");
+    }
+    const auto &variable = definition.variables[node.variable];
+    std::uint32_t condition = bdd.getFalse();
+    if (variable.kind == ExactTemplateVariableKind::Fact) {
+      const auto *binding = findTupleBinding(variable.canonicalNode);
+      if (binding == nullptr) {
+        throw std::runtime_error(
+            "pointwise template fact has no ground binding");
+      }
+      const auto probability = factProb.find(binding->tuple);
+      if (probability == factProb.end()) {
+        throw std::runtime_error(
+            "pointwise template fact has no probability");
+      }
+      ConcreteVariableKey event;
+      event.kind = SymbolicVariableKind::ExtensionalFact;
+      event.relation = binding->tuple.relation_name;
+      event.arguments = binding->tuple.fields;
+      condition = bdd.makeVariable(event, probability->second);
+    } else if (variable.kind == ExactTemplateVariableKind::Rule) {
+      const auto *binding =
+          findApplicationBinding(variable.canonicalNode);
+      if (binding == nullptr) {
+        throw std::runtime_error(
+            "pointwise template rule event has no ground binding");
+      }
+      const Rule *rule = ruleManager.getRule(
+          static_cast<std::size_t>(binding->application.ruleId));
+      if (rule == nullptr) {
+        throw std::runtime_error(
+            "pointwise template rule event has no runtime rule");
+      }
+      ConcreteVariableKey event;
+      event.kind = SymbolicVariableKind::ProbabilisticRule;
+      event.relation = rule->getHead().getRelation();
+      event.ruleId = rule->getRuleId();
+      event.arguments = binding->application.varValuesPure;
+      condition = bdd.makeVariable(event, rule->getProbability());
+    } else {
+      throw std::runtime_error("pointwise template has an unknown variable kind");
+    }
+
+    const auto low = visit(node.low);
+    const auto high = visit(node.high);
+    const auto result = bdd.makeOr(
+        bdd.makeAnd(bdd.makeNot(condition), low),
+        bdd.makeAnd(condition, high));
+    memo.emplace(nodeId, result);
+    return result;
+  };
+
+  const auto root = visit(instantiation.root);
+  activeImports.erase(key);
+  imported.emplace(key, root);
+  return root;
+}
+
 static std::uint32_t instantiateWitnessTemplateSlot(
     SouffleProgram &program,
+    const RuleManager &ruleManager,
     const std::unordered_map<UntypedTuple, double> &factProb,
+    const std::unordered_set<std::string> &inputRelations,
+    const PendingTemplateMap &availableTemplates,
     ConcreteWeightedBdd &bdd, const WitnessIndexedTemplate &tmpl,
-    WitnessIndexedWitness &witness, TemplateSlot slot) {
+    WitnessIndexedWitness &witness, TemplateSlot slot,
+    std::map<ImportedTemplateKey, std::uint32_t> &importedTemplates,
+    std::set<ImportedTemplateKey> &activeImports,
+    std::size_t &composedBodyReferences) {
   if (slot.kind == TemplateSlotKind::RuleEvent) {
     ConcreteVariableKey key;
     key.kind = SymbolicVariableKind::ProbabilisticRule;
@@ -1751,6 +2227,18 @@ static std::uint32_t instantiateWitnessTemplateSlot(
   }
   UntypedTuple bodyTuple{ref.relation, fields};
   witness.bodyTupleTexts.push_back(bodyTuple.toString());
+  if (inputRelations.count(ref.relation) == 0 &&
+      !(detOptEnabled && isDetRelation(ref.relation))) {
+    const auto nested = availableTemplates.find(bodyTuple);
+    if (nested == availableTemplates.end() || !nested->second) {
+      throw std::runtime_error(
+          "derived pointwise body tuple has no complete template");
+    }
+    ++composedBodyReferences;
+    return importPendingTemplateBdd(
+        *nested->second, ruleManager, factProb, availableTemplates, bdd,
+        importedTemplates, activeImports);
+  }
   auto probIt = factProb.find(bodyTuple);
   if (probIt != factProb.end() && isUsableProbability(probIt->second)) {
     ConcreteVariableKey key;
@@ -1764,11 +2252,17 @@ static std::uint32_t instantiateWitnessTemplateSlot(
 
 static std::uint32_t instantiateWitnessTemplateBdd(
     SouffleProgram &program,
+    const RuleManager &ruleManager,
     const std::unordered_map<UntypedTuple, double> &factProb,
+    const std::unordered_set<std::string> &inputRelations,
+    const PendingTemplateMap &availableTemplates,
     ConcreteWeightedBdd &bdd, const WitnessIndexedTemplate &tmpl,
     WitnessIndexedWitness &witness, std::uint32_t nodeId,
     std::unordered_map<std::uint32_t, std::uint32_t> &nodeMemo,
-    std::map<TemplateSlot, std::uint32_t> &slotMemo) {
+    std::map<TemplateSlot, std::uint32_t> &slotMemo,
+    std::map<ImportedTemplateKey, std::uint32_t> &importedTemplates,
+    std::set<ImportedTemplateKey> &activeImports,
+    std::size_t &composedBodyReferences) {
   if (nodeId == tmpl.templateBdd.getFalse()) {
     return bdd.getFalse();
   }
@@ -1785,14 +2279,21 @@ static std::uint32_t instantiateWitnessTemplateBdd(
   if (slotIt == slotMemo.end()) {
     slotIt = slotMemo
                  .emplace(node.slot,
-                          instantiateWitnessTemplateSlot(program, factProb, bdd,
-                                                         tmpl, witness, node.slot))
+                          instantiateWitnessTemplateSlot(
+                              program, ruleManager, factProb, inputRelations,
+                              availableTemplates, bdd, tmpl, witness, node.slot,
+                              importedTemplates, activeImports,
+                              composedBodyReferences))
                  .first;
   }
   const auto low = instantiateWitnessTemplateBdd(
-      program, factProb, bdd, tmpl, witness, node.low, nodeMemo, slotMemo);
+      program, ruleManager, factProb, inputRelations, availableTemplates, bdd,
+      tmpl, witness, node.low, nodeMemo, slotMemo, importedTemplates,
+      activeImports, composedBodyReferences);
   const auto high = instantiateWitnessTemplateBdd(
-      program, factProb, bdd, tmpl, witness, node.high, nodeMemo, slotMemo);
+      program, ruleManager, factProb, inputRelations, availableTemplates, bdd,
+      tmpl, witness, node.high, nodeMemo, slotMemo, importedTemplates,
+      activeImports, composedBodyReferences);
   const auto result =
       bdd.makeOr(bdd.makeAnd(slotIt->second, high),
                  bdd.makeAnd(/* not(slot) branch is encoded by low only when slot=false */
@@ -1812,9 +2313,15 @@ static std::uint32_t instantiateWitnessTemplateBdd(
 
 static std::uint32_t compileWitnessIndexedRow(
     SouffleProgram &program,
+    const RuleManager &ruleManager,
     const std::unordered_map<UntypedTuple, double> &factProb,
+    const std::unordered_set<std::string> &inputRelations,
+    const PendingTemplateMap &availableTemplates,
     ConcreteWeightedBdd &bdd, const WitnessIndexedTemplate &tmpl,
-    WitnessIndexedWitness &witness) {
+    WitnessIndexedWitness &witness,
+    std::map<ImportedTemplateKey, std::uint32_t> &importedTemplates,
+    std::set<ImportedTemplateKey> &activeImports,
+    std::size_t &composedBodyReferences) {
   if (tmpl.rule == nullptr ||
       witness.ruleVariableValues.size() != tmpl.ruleVariables.size()) {
     throw std::runtime_error("witness-indexed row has invalid rule binding");
@@ -1825,8 +2332,9 @@ static std::uint32_t compileWitnessIndexedRow(
   std::unordered_map<std::uint32_t, std::uint32_t> nodeMemo;
   std::map<TemplateSlot, std::uint32_t> slotMemo;
   std::uint32_t term = instantiateWitnessTemplateBdd(
-      program, factProb, bdd, tmpl, witness, tmpl.templateRoot, nodeMemo,
-      slotMemo);
+      program, ruleManager, factProb, inputRelations, availableTemplates, bdd,
+      tmpl, witness, tmpl.templateRoot, nodeMemo, slotMemo, importedTemplates,
+      activeImports, composedBodyReferences);
   witness.formula = term;
   return term;
 }
@@ -1840,20 +2348,28 @@ static bool hasUnsupportedSymbolicField(const std::vector<SymbolicField> &fields
   return false;
 }
 
-static double evaluateWitnessIndexedTuple(
+static void evaluateWitnessIndexedTuple(
     SouffleProgram &program,
+    const RuleManager &ruleManager,
     const std::unordered_map<UntypedTuple, double> &factProb,
-    WitnessIndexedTupleFormula &tupleFormula, ConcreteWeightedBdd &bdd) {
-  std::uint32_t root = bdd.getFalse();
+    const std::unordered_set<std::string> &inputRelations,
+    const PendingTemplateMap &availableTemplates,
+    WitnessIndexedTupleFormula &tupleFormula, ConcreteWeightedBdd &bdd,
+    std::uint32_t &root, std::size_t &composedBodyReferences) {
+  root = bdd.getFalse();
+  std::map<ImportedTemplateKey, std::uint32_t> importedTemplates;
+  std::set<ImportedTemplateKey> activeImports;
   for (auto &witness : tupleFormula.witnesses) {
     if (witness.tmpl == nullptr) {
       throw std::runtime_error("witness-indexed tuple has a witness without template");
     }
     const std::uint32_t term =
-        compileWitnessIndexedRow(program, factProb, bdd, *witness.tmpl, witness);
+        compileWitnessIndexedRow(
+            program, ruleManager, factProb, inputRelations, availableTemplates,
+            bdd, *witness.tmpl, witness, importedTemplates, activeImports,
+            composedBodyReferences);
     root = bdd.makeOr(root, term);
   }
-  return bdd.wmc(root);
 }
 
 static bool tryEvaluateDirectMultiWitnessOutputs(
@@ -1868,6 +2384,8 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
       inputRelations.insert(input->getName());
     }
   }
+  const auto reachableRelations =
+      collectOutputDependencyRelations(outputs, ruleManager);
 
   std::size_t totalOutputRelations = 0;
   std::size_t totalBddNodes = 0;
@@ -1877,7 +2395,13 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
   std::size_t totalWitnessTemplates = 0;
   std::size_t totalWitnessRows = 0;
   std::size_t totalWitnessTemplateDdNodes = 0;
+  std::size_t exportedDefinitions = 0;
+  std::size_t exportedEventBindings = 0;
+  std::size_t nextTemplateId = 1000000000ULL;
+  LiftedDefinitionCache definitionCache;
+  LiftedWmcFamilyCache wmcFamilyCache;
   std::set<std::string> handledRelations;
+  std::set<std::string> directProcessedRelations;
   std::ostringstream graphTsv;
   graphTsv << "kind\trelation\ttuple\trule_id\twitnesses\tformula\n";
   std::ostringstream graphDot;
@@ -1909,7 +2433,7 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
     std::unordered_set<std::size_t> supportedRuleIds;
     for (const Rule *rule : ruleManager.getRulesForPredicate(relation)) {
       if (rule != nullptr &&
-          isDirectMultiWitnessRuleSupported(program, *rule, inputRelations)) {
+          isWitnessIndexedRuleShapeSupported(program, *rule)) {
         supportedRules.push_back(rule);
         supportedRuleIds.insert(rule->getRuleId());
       }
@@ -1920,9 +2444,42 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
       continue;
     }
 
+    std::unordered_map<std::size_t, const Rule *> supportedRulesById;
+    for (const Rule *rule : supportedRules) {
+      supportedRulesById.emplace(rule->getRuleId(), rule);
+    }
+    const auto preflightStart = std::chrono::steady_clock::now();
+    const auto preflight =
+        preflightDirectRelation(program, *output, supportedRulesById,
+                                inputRelations,
+                                result.templateInstantiations);
+    result.directPreflightMs +=
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - preflightStart)
+            .count();
+    ++result.directPreflightRelations;
+    result.directPreflightTuples += preflight.tuples;
+    result.directPreflightRows += preflight.rows;
+    const bool usefulDirectTemplate =
+        preflight.rows > 0 &&
+        (preflight.hasMultiWitnessTuple || preflight.hasTemplateBody ||
+         !preflight.complete);
+    if (!usefulDirectTemplate) {
+      result.rejectedOutputReasons.emplace(relation, preflight.reason);
+      if (preflight.complete) {
+        directProcessedRelations.insert(relation);
+      }
+      continue;
+    }
+    ++result.directEvaluatedRelations;
+
     bool relationHadMultiWitness = false;
     bool relationOk = true;
     std::map<std::string, double> relationProbabilities;
+    std::unordered_map<UntypedTuple,
+        std::shared_ptr<const PendingExactTemplateInstantiation>>
+        relationInstantiations;
+    std::unordered_set<RuleApplication> relationSupportedApplications;
     std::ostringstream relationTemplateTsv;
     std::ostringstream relationWitnessTsv;
     std::ostringstream relationTupleStatsTsv;
@@ -1962,26 +2519,14 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
       std::set<std::size_t> tupleRuleIds;
       for (const auto &application : *appsIt->second) {
         const auto ruleId = static_cast<std::size_t>(application.ruleId);
-        if (supportedRuleIds.count(ruleId) == 0) {
-          relationOk = false;
-          result.rejectedOutputReasons.emplace(
-              relation, "unsupported_runtime_witness_rule");
-          break;
+        const auto ruleIt = supportedRulesById.find(ruleId);
+        if (ruleIt == supportedRulesById.end() || ruleIt->second == nullptr ||
+            !isWitnessApplicationSupported(
+                program, *ruleIt->second, application, inputRelations,
+                result.templateInstantiations)) {
+          continue;
         }
-        const Rule *rule = nullptr;
-        for (const Rule *candidate : supportedRules) {
-          if (candidate->getRuleId() == ruleId) {
-            rule = candidate;
-            break;
-          }
-        }
-        if (rule == nullptr ||
-            application.varValuesPure.size() != rule->getVars().size()) {
-          relationOk = false;
-          result.rejectedOutputReasons.emplace(relation,
-                                               "runtime_witness_arity_mismatch");
-          break;
-        }
+        const Rule *rule = ruleIt->second;
 
         auto tmplIt = relationProgram.templatesByRule.find(ruleId);
         if (tmplIt == relationProgram.templatesByRule.end()) {
@@ -1998,14 +2543,29 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
         tupleRuleIds.insert(ruleId);
         tupleFormula.ruleIds.insert(ruleId);
         tupleFormula.witnesses.push_back(std::move(witness));
+        relationSupportedApplications.insert(application);
       }
       if (!relationOk) {
         break;
       }
+      if (tupleFormula.witnesses.empty()) {
+        continue;
+      }
 
       ConcreteWeightedBdd bdd;
-      const double probability =
-          evaluateWitnessIndexedTuple(program, factProb, tupleFormula, bdd);
+      std::uint32_t concreteRoot = bdd.getFalse();
+      evaluateWitnessIndexedTuple(
+          program, ruleManager, factProb, inputRelations,
+          result.templateInstantiations, tupleFormula, bdd, concreteRoot,
+          result.composedBodyReferences);
+      auto exported = exportConcreteTemplateInstantiation(
+          tuple, bdd, concreteRoot, preflight.complete, definitionCache,
+          wmcFamilyCache, result.wmcFamilyCacheHits,
+          result.wmcFamilyCacheMisses, nextTemplateId, exportedDefinitions,
+          exportedEventBindings);
+      const double probability = exported.probability;
+      relationInstantiations.emplace(
+          tuple, std::move(exported.instantiation));
       const std::size_t witnessCount = tupleFormula.witnesses.size();
       relationProgram.tuples.push_back(std::move(tupleFormula));
       const auto &storedTuple = relationProgram.tuples.back();
@@ -2028,7 +2588,9 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
       if (witnessCount > 1) {
         relationHadMultiWitness = true;
       }
-      relationProbabilities.emplace(tuple.toString(), probability);
+      if (preflight.complete) {
+        relationProbabilities.emplace(tuple.toString(), probability);
+      }
       totalBddNodes += bdd.nodeCount();
       totalVariables += bdd.variableCount();
       relationBddNodes += bdd.nodeCount();
@@ -2066,30 +2628,55 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
                << escapeDotLabel(tuple.toString()) << "\";\n";
     }
 
-    if (!relationOk || !relationHadMultiWitness) {
-      if (!relationHadMultiWitness &&
+    if (!relationOk || relationProgram.tuples.empty() ||
+        (!relationHadMultiWitness && !preflight.hasTemplateBody &&
+         preflight.complete)) {
+      if (!relationHadMultiWitness && !preflight.hasTemplateBody &&
           result.rejectedOutputReasons.count(relation) == 0) {
         result.rejectedOutputReasons.emplace(relation, "no_multi_witness_tuple");
       }
       continue;
     }
 
-    result.probabilities.insert(relationProbabilities.begin(),
-                                relationProbabilities.end());
+    if (preflight.complete) {
+      result.probabilities.insert(relationProbabilities.begin(),
+                                  relationProbabilities.end());
+      for (auto &[tuple, instantiation] : relationInstantiations) {
+        result.excludedTuples.insert(tuple);
+        result.templateInstantiations.emplace(tuple, std::move(instantiation));
+      }
+    } else {
+      for (auto &[tuple, instantiation] : relationInstantiations) {
+        result.rootTemplateInstantiations.emplace(
+            tuple, std::move(instantiation));
+      }
+      result.suppressedRuleApplications.insert(
+          relationSupportedApplications.begin(),
+          relationSupportedApplications.end());
+      result.partialTemplateTuples += relationInstantiations.size();
+      result.partialTemplateRuleApplications +=
+          relationSupportedApplications.size();
+      result.rejectedOutputReasons[relation] =
+          "partial_runtime_witness_support";
+    }
     templateTsv << relationTemplateTsv.str();
     witnessTsv << relationWitnessTsv.str();
     tupleStatsTsv << relationTupleStatsTsv.str();
     relationStatsTsv << relation << '\t' << relationProgram.templatesByRule.size()
                      << '\t' << relationProgram.tuples.size() << '\t'
                      << relationEdges << '\t' << relationTemplateDdNodes << '\t'
-                     << relationBddNodes << '\t' << relationBddVariables << "\t1\n";
-    result.handledOutputRelations.push_back(relation);
-    result.liftedOutputTuples += output->size();
-    handledRelations.insert(relation);
-    for (const Rule *rule : supportedRules) {
-      handledRelations.insert(rule->getHead().getRelation());
-      for (const auto &atom : rule->getBodyAtoms()) {
-        handledRelations.insert(atom.getRelation());
+                     << relationBddNodes << '\t' << relationBddVariables
+                     << '\t' << (preflight.complete ? "complete" : "partial")
+                     << '\n';
+    if (preflight.complete) {
+      result.handledOutputRelations.push_back(relation);
+      result.liftedOutputTuples += output->size();
+      handledRelations.insert(relation);
+      for (const Rule *rule : supportedRules) {
+        handledRelations.insert(rule->getHead().getRelation());
+        for (const auto &atom : rule->getBodyAtoms()) {
+          handledRelations.insert(atom.getRelation());
+        }
       }
     }
     totalAbstractEdges += relationEdges;
@@ -2099,6 +2686,7 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
     for (const auto &tupleFormula : relationProgram.tuples) {
       totalWitnessRows += tupleFormula.witnesses.size();
     }
+    directProcessedRelations.insert(relation);
   }
 
   std::set<std::string> outputRelationNames;
@@ -2113,13 +2701,23 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
       continue;
     }
     const std::string relation = rule->getHead().getRelation();
-    if (outputRelationNames.count(relation) == 0 &&
-        handledRelations.count(relation) == 0) {
+    if (handledRelations.count(relation) == 0 &&
+        directProcessedRelations.count(relation) == 0 &&
+        reachableRelations.count(relation) > 0) {
       candidateInternalRelations.insert(relation);
     }
   }
 
-  for (const auto &relation : candidateInternalRelations) {
+  std::unordered_set<std::string> processedInternalRelations;
+  for (std::size_t pass = 0; pass < candidateInternalRelations.size();
+       ++pass) {
+    bool passMadeProgress = false;
+    for (const auto &relation : candidateInternalRelations) {
+      if (processedInternalRelations.count(relation) > 0) {
+        continue;
+      }
+    const bool relationIsOutput =
+        outputRelationNames.count(relation) > 0;
     Relation *runtimeRelation = program.getRelation(relation);
     if (runtimeRelation == nullptr ||
         runtimeRelation->size() < opt.getLiftedWmcThreshold()) {
@@ -2130,7 +2728,7 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
     std::unordered_set<std::size_t> supportedRuleIds;
     for (const Rule *rule : ruleManager.getRulesForPredicate(relation)) {
       if (rule != nullptr &&
-          isDirectMultiWitnessRuleSupported(program, *rule, inputRelations)) {
+          isWitnessIndexedRuleShapeSupported(program, *rule)) {
         supportedRules.push_back(rule);
         supportedRuleIds.insert(rule->getRuleId());
       }
@@ -2139,78 +2737,211 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
       continue;
     }
 
+    std::unordered_map<std::size_t, const Rule *> supportedRulesById;
+    for (const Rule *rule : supportedRules) {
+      supportedRulesById.emplace(rule->getRuleId(), rule);
+    }
+    const auto preflightStart = std::chrono::steady_clock::now();
+    const auto preflight =
+        preflightDirectRelation(program, *runtimeRelation, supportedRulesById,
+                                inputRelations,
+                                result.templateInstantiations);
+    result.directPreflightMs +=
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - preflightStart)
+            .count();
+    ++result.directPreflightRelations;
+    result.directPreflightTuples += preflight.tuples;
+    result.directPreflightRows += preflight.rows;
+    const bool usefulDirectTemplate =
+        preflight.rows > 0 &&
+        (preflight.hasMultiWitnessTuple || preflight.hasTemplateBody ||
+         !preflight.complete);
+    if (!usefulDirectTemplate) {
+      continue;
+    }
+    ++result.directEvaluatedRelations;
+
     bool relationOk = true;
-    bool relationHadMultiWitness = false;
-    std::size_t relationEdges = 0;
+    std::size_t relationEdges = preflight.rows;
     std::size_t relationTemplateDdNodes = 0;
+    std::size_t relationBddNodes = 0;
+    std::size_t relationBddVariables = 0;
     std::unordered_set<std::size_t> emittedTemplateRules;
     std::ostringstream relationTemplateTsv;
+    WitnessIndexedRelationProgram relationProgram;
+    relationProgram.relation = relation;
     for (const Rule *rule : supportedRules) {
       if (rule != nullptr &&
           emittedTemplateRules.insert(rule->getRuleId()).second) {
         auto tmpl = compileWitnessIndexedTemplate(
             *rule, makeWitnessTemplateId(relation, rule->getRuleId()));
         relationTemplateDdNodes += tmpl.templateDdNodes();
+        relationProgram.templatesByRule.emplace(rule->getRuleId(),
+                                                std::move(tmpl));
         relationTemplateTsv << describeWitnessTemplate(
             *rule, makeWitnessTemplateId(relation, rule->getRuleId()));
       }
     }
 
-    for (auto it = runtimeRelation->begin(); it != runtimeRelation->end();
-         ++it) {
+    std::unordered_map<UntypedTuple,
+        std::shared_ptr<const PendingExactTemplateInstantiation>>
+        relationInstantiations;
+    std::unordered_set<RuleApplication> relationSupportedApplications;
+    std::ostringstream relationWitnessTsv;
+    std::ostringstream relationTupleStatsTsv;
+    for (auto it = runtimeRelation->begin(); it != runtimeRelation->end(); ++it) {
       const UntypedTuple tuple = UntypedTuple::fromSouffleTuple(*it);
-      auto appsIt = DerivationManager::untypedTuple2RuleApplications.find(tuple);
+      const auto appsIt =
+          DerivationManager::untypedTuple2RuleApplications.find(tuple);
       if (appsIt == DerivationManager::untypedTuple2RuleApplications.end() ||
           appsIt->second == nullptr || appsIt->second->empty()) {
         relationOk = false;
         break;
       }
-      std::size_t witnessCount = 0;
+
+      WitnessIndexedTupleFormula tupleFormula;
+      tupleFormula.outputTuple = tuple;
       for (const auto &application : *appsIt->second) {
         const auto ruleId = static_cast<std::size_t>(application.ruleId);
-        if (supportedRuleIds.count(ruleId) == 0) {
+        const auto ruleIt = supportedRulesById.find(ruleId);
+        if (ruleIt == supportedRulesById.end() || ruleIt->second == nullptr ||
+            !isWitnessApplicationSupported(
+                program, *ruleIt->second, application, inputRelations,
+                result.templateInstantiations)) {
+          continue;
+        }
+        const auto tmplIt = relationProgram.templatesByRule.find(ruleId);
+        if (tmplIt == relationProgram.templatesByRule.end()) {
           relationOk = false;
           break;
         }
-        ++witnessCount;
+        WitnessIndexedWitness witness;
+        witness.tmpl = &tmplIt->second;
+        witness.outputTuple = tuple;
+        witness.ruleVariableValues = application.varValuesPure;
+        tupleFormula.ruleIds.insert(ruleId);
+        tupleFormula.witnesses.push_back(std::move(witness));
+        relationSupportedApplications.insert(application);
       }
       if (!relationOk) {
         break;
       }
-      if (witnessCount > 1) {
-        relationHadMultiWitness = true;
+      if (tupleFormula.witnesses.empty()) {
+        continue;
       }
-      relationEdges += witnessCount;
-    }
 
-    if (!relationOk || !relationHadMultiWitness) {
+      ConcreteWeightedBdd bdd;
+      std::uint32_t concreteRoot = bdd.getFalse();
+      evaluateWitnessIndexedTuple(
+          program, ruleManager, factProb, inputRelations,
+          result.templateInstantiations, tupleFormula, bdd, concreteRoot,
+          result.composedBodyReferences);
+      auto exported = exportConcreteTemplateInstantiation(
+          tuple, bdd, concreteRoot, false, definitionCache, wmcFamilyCache,
+          result.wmcFamilyCacheHits, result.wmcFamilyCacheMisses,
+          nextTemplateId, exportedDefinitions, exportedEventBindings);
+      const double probability = exported.probability;
+      relationInstantiations.emplace(
+          tuple, std::move(exported.instantiation));
+      relationBddNodes += bdd.nodeCount();
+      relationBddVariables += bdd.variableCount();
+      totalBddNodes += bdd.nodeCount();
+      totalVariables += bdd.variableCount();
+
+      relationProgram.tuples.push_back(std::move(tupleFormula));
+      const auto &stored = relationProgram.tuples.back();
+      for (const auto &witness : stored.witnesses) {
+        relationWitnessTsv
+            << witness.tmpl->id << '\t'
+            << sanitizeTemplateField(tuple.toString()) << '\t'
+            << joinRamDomains(witness.witnessValues) << '\t'
+            << sanitizeTemplateField(
+                   joinStrings(witness.bodyTupleTexts, " & "))
+            << '\n';
+      }
+      relationTupleStatsTsv
+          << relation << '\t' << sanitizeTemplateField(tuple.toString())
+          << "\t*\t" << stored.witnesses.size() << '\t' << bdd.nodeCount()
+          << '\t' << bdd.variableCount() << '\t' << std::setprecision(17)
+          << probability << '\n';
+    }
+    if (!relationOk || relationProgram.tuples.empty()) {
       continue;
     }
 
     templateTsv << relationTemplateTsv.str();
+    witnessTsv << relationWitnessTsv.str();
+    tupleStatsTsv << relationTupleStatsTsv.str();
     relationStatsTsv << relation << '\t' << supportedRules.size() << '\t'
                      << runtimeRelation->size() << '\t' << relationEdges
                      << '\t' << relationTemplateDdNodes
-                     << "\t0\t0\t1\n";
-    handledRelations.insert(relation);
-    for (const Rule *rule : supportedRules) {
-      handledRelations.insert(rule->getHead().getRelation());
-      for (const auto &atom : rule->getBodyAtoms()) {
-        handledRelations.insert(atom.getRelation());
+                     << '\t' << relationBddNodes << '\t'
+                     << relationBddVariables << '\t'
+                     << (preflight.complete ? "complete" : "partial")
+                     << '\n';
+    if (preflight.complete && !relationIsOutput) {
+      for (auto &[tuple, instantiation] : relationInstantiations) {
+        result.excludedTuples.insert(tuple);
+        result.templateInstantiations.emplace(tuple, std::move(instantiation));
       }
+      handledRelations.insert(relation);
+      for (const Rule *rule : supportedRules) {
+        handledRelations.insert(rule->getHead().getRelation());
+        for (const auto &atom : rule->getBodyAtoms()) {
+          handledRelations.insert(atom.getRelation());
+        }
+      }
+    } else if (preflight.complete) {
+      for (auto &[tuple, instantiation] : relationInstantiations) {
+        result.templateInstantiations.emplace(tuple, instantiation);
+        result.rootTemplateInstantiations.emplace(
+            tuple, std::move(instantiation));
+      }
+      result.suppressedRuleApplications.insert(
+          relationSupportedApplications.begin(),
+          relationSupportedApplications.end());
+      result.partialTemplateTuples += relationInstantiations.size();
+      result.partialTemplateRuleApplications +=
+          relationSupportedApplications.size();
+      handledRelations.insert(relation);
+      for (const Rule *rule : supportedRules) {
+        for (const auto &atom : rule->getBodyAtoms()) {
+          handledRelations.insert(atom.getRelation());
+        }
+      }
+    } else {
+      for (auto &[tuple, instantiation] : relationInstantiations) {
+        result.rootTemplateInstantiations.emplace(
+            tuple, std::move(instantiation));
+      }
+      result.suppressedRuleApplications.insert(
+          relationSupportedApplications.begin(),
+          relationSupportedApplications.end());
+      result.partialTemplateTuples += relationInstantiations.size();
+      result.partialTemplateRuleApplications +=
+          relationSupportedApplications.size();
     }
     totalAbstractEdges += relationEdges;
     totalAbstractNodes += runtimeRelation->size();
     totalWitnessTemplates += supportedRules.size();
     totalWitnessRows += relationEdges;
+    result.witnessIndexedTupleFormulas += relationProgram.tuples.size();
     totalWitnessTemplateDdNodes += relationTemplateDdNodes;
     graphTsv << "internal_multi_witness\t" << relation
              << "\t*\t*\t" << relationEdges
              << "\tTemplateRef-only boundary relation\n";
+      processedInternalRelations.insert(relation);
+      passMadeProgress = true;
+    }
+    if (!passMadeProgress) {
+      break;
+    }
   }
 
   graphDot << "}\n";
-  if (result.handledOutputRelations.empty() && handledRelations.empty()) {
+  if (result.handledOutputRelations.empty() && handledRelations.empty() &&
+      result.rootTemplateInstantiations.empty()) {
     return false;
   }
   result.handled = true;
@@ -2224,8 +2955,13 @@ static bool tryEvaluateDirectMultiWitnessOutputs(
   result.bddNodes = totalBddNodes;
   result.witnessIndexedTemplatesCount = totalWitnessTemplates;
   result.witnessIndexedRows = totalWitnessRows;
-  result.witnessIndexedTupleFormulas = result.liftedOutputTuples;
+  result.witnessIndexedTupleFormulas += result.liftedOutputTuples;
   result.witnessIndexedTemplateDdNodes = totalWitnessTemplateDdNodes;
+  result.templateBackedTuples =
+      result.templateInstantiations.size() +
+      result.rootTemplateInstantiations.size();
+  result.templateDefinitions = exportedDefinitions;
+  result.templateEventBindings = exportedEventBindings;
   result.executionMode = "witness_indexed_template";
   result.abstractGraph = graphTsv.str();
   result.abstractGraphDot = graphDot.str();
@@ -2245,6 +2981,12 @@ LiftedWmcResult tryEvaluateLiftedPointwise(
     const RuleManager &ruleManager,
     const std::unordered_map<UntypedTuple, double> &factProb,
     const std::vector<std::pair<UntypedTuple, bool>> &evidences) {
+  using ProfileClock = std::chrono::steady_clock;
+  const auto elapsedMs = [](ProfileClock::time_point start) {
+    return std::chrono::duration<double, std::milli>(
+               ProfileClock::now() - start)
+        .count();
+  };
   LiftedWmcResult result;
   result.executionMode = "none";
   if (!opt.isLiftedWmcEnabled()) {
@@ -2278,8 +3020,21 @@ LiftedWmcResult tryEvaluateLiftedPointwise(
   }
 
   LiftedWmcResult directResult = result;
-  if (tryEvaluateDirectMultiWitnessOutputs(opt, program, ruleManager, factProb,
-                                           directResult)) {
+  const auto directStart = ProfileClock::now();
+  const bool directHandled = tryEvaluateDirectMultiWitnessOutputs(
+      opt, program, ruleManager, factProb, directResult);
+  const double directMs = elapsedMs(directStart);
+  directResult.directMultiWitnessMs = directMs;
+  directResult.directEvaluationMs =
+      std::max(0.0, directMs - directResult.directPreflightMs);
+  result.directMultiWitnessMs = directMs;
+  result.directPreflightRelations = directResult.directPreflightRelations;
+  result.directEvaluatedRelations = directResult.directEvaluatedRelations;
+  result.directPreflightTuples = directResult.directPreflightTuples;
+  result.directPreflightRows = directResult.directPreflightRows;
+  result.directPreflightMs = directResult.directPreflightMs;
+  result.directEvaluationMs = directResult.directEvaluationMs;
+  if (directHandled) {
     if (!directResult.handledOutputRelations.empty() || directResult.complete) {
       return directResult;
     }
@@ -2287,6 +3042,7 @@ LiftedWmcResult tryEvaluateLiftedPointwise(
   }
   result.rejectedOutputReasons.clear();
 
+  const auto eligibilityStart = ProfileClock::now();
   std::unordered_set<std::size_t> activeRuleIds;
   for (const auto &[tuple, applications] :
        DerivationManager::untypedTuple2RuleApplications) {
@@ -2330,6 +3086,7 @@ LiftedWmcResult tryEvaluateLiftedPointwise(
     relationTemplates.insert(eligibility.relations().begin(),
                              eligibility.relations().end());
   }
+  result.eligibilityMs = elapsedMs(eligibilityStart);
   result.concreteOutputTuples = result.outputTuples - result.liftedOutputTuples;
   if (liftedOutputs.empty()) {
     if (!result.rejectedOutputReasons.empty()) {
@@ -2345,6 +3102,7 @@ LiftedWmcResult tryEvaluateLiftedPointwise(
   std::sort(result.handledRelations.begin(), result.handledRelations.end());
 
   try {
+    const auto graphStart = ProfileClock::now();
     AbstractDerivationGraph graph(ruleManager, activeRuleIds,
                                   std::move(inputRelations));
     std::map<std::string, AbstractNodeId> outputNodes;
@@ -2357,7 +3115,9 @@ LiftedWmcResult tryEvaluateLiftedPointwise(
     result.abstractEdges = graph.edgeCount();
     result.abstractGraph = graph.toTsv();
     result.abstractGraphDot = graph.toDot();
+    result.abstractGraphMs = elapsedMs(graphStart);
 
+    const auto symbolicDdStart = ProfileClock::now();
     SymbolicBdd bdd;
     ParameterizedForwardCompiler compiler(graph, bdd);
     std::map<std::string, BddId> outputRoots;
@@ -2367,8 +3127,12 @@ LiftedWmcResult tryEvaluateLiftedPointwise(
                                                    output->getName())));
       }
     }
+    result.symbolicDdMs = elapsedMs(symbolicDdStart);
 
-    LiftedEvaluator evaluator(program, factProb, graph, bdd);
+    const auto instantiateStart = ProfileClock::now();
+    LiftedDefinitionCache definitionCache;
+    LiftedWmcFamilyCache wmcFamilyCache;
+    std::size_t nextTemplateId = 2000000000ULL;
     for (const auto *output : liftedOutputs) {
       if (output == nullptr) {
         continue;
@@ -2376,13 +3140,26 @@ LiftedWmcResult tryEvaluateLiftedPointwise(
       const BddId root = outputRoots.at(output->getName());
       for (auto it = output->begin(); it != output->end(); ++it) {
         const UntypedTuple tuple = UntypedTuple::fromSouffleTuple(*it);
-        result.probabilities.emplace(tuple.toString(),
-                                     evaluator.evaluate(root, tuple.fields));
+        ConcreteWeightedBdd concreteBdd;
+        const auto concreteRoot = instantiatePointwiseBdd(
+            program, factProb, graph, bdd, root, tuple.fields, concreteBdd);
+        auto exported = exportConcreteTemplateInstantiation(
+            tuple, concreteBdd, concreteRoot, true, definitionCache,
+            wmcFamilyCache, result.wmcFamilyCacheHits,
+            result.wmcFamilyCacheMisses, nextTemplateId,
+            result.templateDefinitions, result.templateEventBindings);
+        const double probability = exported.probability;
+        result.probabilities.emplace(tuple.toString(), probability);
+        result.excludedTuples.insert(tuple);
+        result.templateInstantiations.emplace(
+            tuple, std::move(exported.instantiation));
       }
     }
+    result.instantiateWmcMs = elapsedMs(instantiateStart);
 
     result.symbolicVariables = bdd.getVariables().size();
     result.bddNodes = bdd.nodeCount();
+    result.templateBackedTuples = result.templateInstantiations.size();
     result.handled = true;
     result.complete =
         result.handledOutputRelations.size() == outputRelationCount;
@@ -2396,6 +3173,11 @@ LiftedWmcResult tryEvaluateLiftedPointwise(
     result.probabilities.clear();
     result.handledOutputRelations.clear();
     result.handledRelations.clear();
+    result.excludedTuples.clear();
+    result.templateInstantiations.clear();
+    result.templateBackedTuples = 0;
+    result.templateDefinitions = 0;
+    result.templateEventBindings = 0;
     result.liftedOutputTuples = 0;
     result.concreteOutputTuples = result.outputTuples;
   }

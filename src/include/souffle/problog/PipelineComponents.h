@@ -251,8 +251,10 @@ inline std::vector<ComponentAnalysis> analyzeComponents(
         std::unordered_map<NodePtr, std::size_t> incomingCounts;
         incomingCounts.reserve(analysis.comp.nodes.size());
 
+        std::unordered_set<const Node*> seenRandomNodes;
         for (const auto& node : analysis.comp.nodes) {
-            if (node->isFact && isSemanticRandomProb(node->getProbability())) {
+            if (node->isFact && isSemanticRandomProb(node->getProbability()) &&
+                    seenRandomNodes.insert(node.get()).second) {
                 analysis.randVars++;
                 if (analysis.randVars == 1) {
                     analysis.singleRand.node = node;
@@ -284,6 +286,39 @@ inline std::vector<ComponentAnalysis> analyzeComponents(
                     analysis.singleRand.node.reset();
                     analysis.singleRand.edge = embedded;
                     analysis.singleRand.probability = embedded->getProbability();
+                }
+            }
+            for (const auto& reference : edge->getExactTemplateReferences()) {
+                if (!reference.instantiation || !reference.instantiation->member) {
+                    continue;
+                }
+                analysis.hasEmbeddedEvents = true;
+                for (const auto& event : reference.instantiation->member->events) {
+                    if (event.kind == ExactTemplateVariableKind::Fact) {
+                        if (!event.fact ||
+                                !isSemanticRandomProb(event.fact->getProbability()) ||
+                                !seenRandomNodes.insert(event.fact.get()).second) {
+                            continue;
+                        }
+                        analysis.randVars++;
+                        if (analysis.randVars == 1) {
+                            analysis.singleRand.node = event.fact;
+                            analysis.singleRand.edge.reset();
+                            analysis.singleRand.probability = event.fact->getProbability();
+                        }
+                    } else {
+                        if (!event.rule ||
+                                !isSemanticRandomProb(event.rule->getProbability()) ||
+                                !seenRandomEdges.insert(event.rule.get()).second) {
+                            continue;
+                        }
+                        analysis.randVars++;
+                        if (analysis.randVars == 1) {
+                            analysis.singleRand.node.reset();
+                            analysis.singleRand.edge = event.rule;
+                            analysis.singleRand.probability = event.rule->getProbability();
+                        }
+                    }
                 }
             }
             auto negs = view.getBodyNegations(edge);

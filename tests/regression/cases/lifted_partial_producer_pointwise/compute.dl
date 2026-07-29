@@ -1,0 +1,15 @@
+.decl seed(x:symbol)
+.input seed
+
+.decl witness(x:symbol, y:symbol)
+.input witness
+
+.decl alt(x:symbol)
+.input alt
+
+.decl out(x:symbol)
+0.7::out(X) :- seed(X), witness(X, Y).
+0.6::out(X) :- alt(X).
+.output out
+
+query(out(_)).

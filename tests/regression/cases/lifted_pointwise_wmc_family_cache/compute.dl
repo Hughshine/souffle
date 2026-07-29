@@ -1,0 +1,16 @@
+.decl event(x:symbol, i:number)
+.input event
+
+.decl keep(x:symbol)
+.input keep
+
+.decl out(x:symbol)
+0.7::out(X) :-
+    event(X, 1), event(X, 2), event(X, 3), event(X, 4),
+    event(X, 5), event(X, 6), event(X, 7), event(X, 8),
+    event(X, 9), event(X, 10), event(X, 11), event(X, 12),
+    event(X, 13), event(X, 14), event(X, 15), event(X, 16),
+    keep(X).
+.output out
+
+query(out(_)).

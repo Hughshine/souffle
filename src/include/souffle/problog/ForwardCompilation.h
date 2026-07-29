@@ -4,6 +4,7 @@
 #include <iostream>
 #include "souffle/Derivation.h"
 #include "souffle/problog/DerivationGraph.h"
+#include "souffle/problog/ExactProvenanceTemplate.h"
 #include "souffle/problog/RuleManager.h"
 #include "souffle/problog/formula/FormulaManager.h"
 #include "souffle/problog/formula/LogicFormulaManager.h"
@@ -60,6 +61,10 @@ struct FcProfileStats {
     std::size_t input_literal_calls = 0;
     std::size_t input_literal_missing = 0;
     double input_literal_ms = 0.0;
+    std::size_t exact_template_formula_cache_hits = 0;
+    std::size_t exact_template_formula_cache_misses = 0;
+    std::size_t exact_template_node_cache_hits = 0;
+    std::size_t exact_template_node_cache_misses = 0;
 };
 
 struct FcHeartbeatSnapshot {
@@ -118,6 +123,13 @@ void buildFormulasCyclewiseInternal(
     std::map<NodePtr, FormulaNodeRef> baseNodeFormulas;
     std::map<EdgePtr, FormulaNodeRef> baseEdgeFormulas;
     std::map<EdgePtr, FormulaNodeRef> embeddedEventFormulas;
+    std::map<NodePtr, FormulaNodeRef> exactTemplateFactFormulas;
+    std::map<EdgePtr, FormulaNodeRef> exactTemplateRuleFormulas;
+    using ExactTemplateFormulaKey =
+            std::pair<const souffle::problog::ExactTemplateBoundMember*, std::uint32_t>;
+    std::map<ExactTemplateFormulaKey, FormulaNodeRef> exactTemplateFormulas;
+    std::map<const souffle::problog::ExactTemplateBoundMember*,
+            std::unordered_map<std::uint32_t, FormulaNodeRef>> exactTemplateNodeFormulas;
     size_t round = 0;
     auto assertProb = [](double p, const std::string& ctx) {
 //        std::cout << "[ForwardCompilation] probability check " << p << " at " << ctx << std::endl;
@@ -143,6 +155,100 @@ void buildFormulasCyclewiseInternal(
             return true;
         }
         return false;
+    };
+
+    auto compileExactTemplate =
+            [&](const std::shared_ptr<const souffle::problog::ExactTemplateInstantiation>&
+                            instantiation) -> FormulaNodeRef {
+        if (!instantiation || !instantiation->member ||
+                !instantiation->member->substitution ||
+                !instantiation->member->substitution->definition) {
+            throw std::runtime_error("invalid exact-template instantiation");
+        }
+        const ExactTemplateFormulaKey cacheKey{
+                instantiation->member.get(), instantiation->root};
+        const auto cached = exactTemplateFormulas.find(cacheKey);
+        if (cached != exactTemplateFormulas.end()) {
+            ++stats.exact_template_formula_cache_hits;
+            return cached->second;
+        }
+        ++stats.exact_template_formula_cache_misses;
+        const auto& definition =
+                *instantiation->member->substitution->definition;
+        const auto& events = instantiation->member->events;
+        if (events.size() != definition.variables.size()) {
+            throw std::runtime_error("exact-template event binding arity mismatch");
+        }
+        auto& memo = exactTemplateNodeFormulas[instantiation->member.get()];
+        if (memo.empty()) {
+            memo.emplace(0, formulaManager.getFalse());
+            memo.emplace(1, formulaManager.getTrue());
+        }
+        std::function<FormulaNodeRef(std::uint32_t)> visit =
+                [&](std::uint32_t nodeId) -> FormulaNodeRef {
+            const auto found = memo.find(nodeId);
+            if (found != memo.end()) {
+                ++stats.exact_template_node_cache_hits;
+                return found->second;
+            }
+            ++stats.exact_template_node_cache_misses;
+            if (nodeId >= definition.nodes.size()) {
+                throw std::runtime_error("exact-template BDD node is out of range");
+            }
+            const auto& node = definition.nodes[nodeId];
+            if (node.variable >= events.size()) {
+                throw std::runtime_error("exact-template BDD variable is out of range");
+            }
+            const auto& event = events[node.variable];
+            FormulaNodeRef variable;
+            if (event.kind ==
+                    souffle::problog::ExactTemplateVariableKind::Fact) {
+                if (!event.fact) {
+                    throw std::runtime_error("exact-template fact event is unbound");
+                }
+                auto eventFormula = exactTemplateFactFormulas.find(event.fact);
+                if (eventFormula == exactTemplateFactFormulas.end()) {
+                    const int index = formulaManager.getVarIndex(*event.fact);
+                    variable = formulaManager.createVar(index, *event.fact);
+                    formulaManager.setVariableWeight(index, event.fact->getProbability(),
+                            1.0 - event.fact->getProbability());
+                    exactTemplateFactFormulas.emplace(event.fact, variable);
+                } else {
+                    variable = eventFormula->second;
+                }
+            } else {
+                if (!event.rule) {
+                    throw std::runtime_error("exact-template rule event is unbound");
+                }
+                auto eventFormula = exactTemplateRuleFormulas.find(event.rule);
+                if (eventFormula == exactTemplateRuleFormulas.end()) {
+                    const int index = formulaManager.getVarIndex(*event.rule);
+                    variable = formulaManager.createVar(index, *event.rule);
+                    formulaManager.setVariableWeight(index, event.rule->getProbability(),
+                            1.0 - event.rule->getProbability());
+                    exactTemplateRuleFormulas.emplace(event.rule, variable);
+                } else {
+                    variable = eventFormula->second;
+                }
+            }
+            const FormulaNodeRef low = visit(node.low);
+            const FormulaNodeRef high = visit(node.high);
+            FormulaNodeRef formula;
+            if (node.low == 0 && node.high == 1) {
+                formula = variable;
+            } else if (node.low == node.high) {
+                formula = low;
+            } else {
+                formula = formulaManager.makeOr(
+                        formulaManager.makeAnd(formulaManager.makeNot(variable), low),
+                        formulaManager.makeAnd(variable, high));
+            }
+            memo.emplace(nodeId, formula);
+            return formula;
+        };
+        FormulaNodeRef formula = visit(instantiation->root);
+        exactTemplateFormulas.emplace(cacheKey, formula);
+        return formula;
     };
 
     // 1. Initialize formulas
@@ -198,6 +304,13 @@ void buildFormulasCyclewiseInternal(
                 ++nonDetEdges;
             }
             eventFactors.push_back(it->second);
+        }
+        for (const auto& reference : edge->getExactTemplateReferences()) {
+            FormulaNodeRef formula = compileExactTemplate(reference.instantiation);
+            if (reference.negated) {
+                formula = formulaManager.makeNot(formula);
+            }
+            eventFactors.push_back(formula);
         }
         baseEdgeFormulas[edge] = eventFactors.size() == 1
                 ? eventFactors.front()
@@ -423,6 +536,31 @@ void buildFormulasCyclewiseInternal(
     for (auto& [key, value]: formulaManager.getProfilingStatistics()) {
         debugger.addInfo(key, value);
     }
+    debugger.addInfo("exact_template_formula_cache_hits",
+            std::to_string(stats.exact_template_formula_cache_hits));
+    debugger.addInfo("exact_template_formula_cache_misses",
+            std::to_string(stats.exact_template_formula_cache_misses));
+    debugger.addInfo("exact_template_node_cache_hits",
+            std::to_string(stats.exact_template_node_cache_hits));
+    debugger.addInfo("exact_template_node_cache_misses",
+            std::to_string(stats.exact_template_node_cache_misses));
+    if (stats.exact_template_formula_cache_hits != 0 ||
+            stats.exact_template_formula_cache_misses != 0) {
+        std::cout << "[exact-template-formula-cache] entries="
+                  << exactTemplateFormulas.size()
+                  << " hits=" << stats.exact_template_formula_cache_hits
+                  << " misses=" << stats.exact_template_formula_cache_misses
+                  << " node_entries=" << [&]() {
+                         std::size_t entries = 0;
+                         for (const auto& item : exactTemplateNodeFormulas) {
+                             entries += item.second.size();
+                         }
+                         return entries;
+                     }()
+                  << " node_hits=" << stats.exact_template_node_cache_hits
+                  << " node_misses=" << stats.exact_template_node_cache_misses
+                  << std::endl;
+    }
     if (fcProfile) {
         debugger.logMessage(Level::INFO, "Total rounds: " + std::to_string(round));
         debugger.logMessage(Level::INFO, "Insertion time: " + std::to_string(duration) + " ms");
@@ -461,6 +599,14 @@ void buildFormulasCyclewiseInternal(
                   << " input_literal_calls=" << stats.input_literal_calls
                   << " input_literal_missing=" << stats.input_literal_missing
                   << " input_literal_ms=" << stats.input_literal_ms
+                  << " exact_template_formula_cache_hits="
+                  << stats.exact_template_formula_cache_hits
+                  << " exact_template_formula_cache_misses="
+                  << stats.exact_template_formula_cache_misses
+                  << " exact_template_node_cache_hits="
+                  << stats.exact_template_node_cache_hits
+                  << " exact_template_node_cache_misses="
+                  << stats.exact_template_node_cache_misses
                   << std::endl;
     }
 //    std::cout << "鉁?buildFormulasCyclewiseNew completed using global depth info.\n";
@@ -624,9 +770,11 @@ inline bool findSingleRandVar(const ComponentSubgraph& comp, SingleRandVarInfo& 
     std::size_t count = 0;
     out = SingleRandVarInfo{};
     std::unordered_set<const Hyperedge*> seenEdges;
+    std::unordered_set<const Node*> seenNodes;
 
     for (const auto& node : comp.nodes) {
-        if (node->isFact && node->getProbability() != 1.0) {
+        if (node->isFact && node->getProbability() != 1.0 &&
+                seenNodes.insert(node.get()).second) {
             ++count;
             if (count > 1) {
                 return false;
@@ -658,6 +806,38 @@ inline bool findSingleRandVar(const ComponentSubgraph& comp, SingleRandVarInfo& 
             out.node.reset();
             out.edge = embedded;
             out.probability = embedded->getProbability();
+        }
+        for (const auto& reference : edge->getExactTemplateReferences()) {
+            if (!reference.instantiation || !reference.instantiation->member) {
+                continue;
+            }
+            for (const auto& event : reference.instantiation->member->events) {
+                if (event.kind == souffle::problog::ExactTemplateVariableKind::Fact) {
+                    if (!event.fact || event.fact->getProbability() == 1.0 ||
+                            !seenNodes.insert(event.fact.get()).second) {
+                        continue;
+                    }
+                    ++count;
+                    if (count > 1) {
+                        return false;
+                    }
+                    out.node = event.fact;
+                    out.edge.reset();
+                    out.probability = event.fact->getProbability();
+                } else {
+                    if (!event.rule || event.rule->isDeterministic() ||
+                            !seenEdges.insert(event.rule.get()).second) {
+                        continue;
+                    }
+                    ++count;
+                    if (count > 1) {
+                        return false;
+                    }
+                    out.node.reset();
+                    out.edge = event.rule;
+                    out.probability = event.rule->getProbability();
+                }
+            }
         }
     }
     return count == 1;

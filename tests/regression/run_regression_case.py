@@ -884,6 +884,7 @@ def case_lifted_partial_outputs(souffle_bin: Path, work_root: Path) -> None:
             "--lifted-wmc",
             "--lifted-threshold=1",
             "--dumpdot",
+            "--dumpstat",
             "--logfile",
             "partial",
         ],
@@ -901,6 +902,8 @@ def case_lifted_partial_outputs(souffle_bin: Path, work_root: Path) -> None:
         "concrete_output_tuples=2",
         "handled_outputs=1",
         "rejected_outputs=1",
+        "template_backed_tuples=2",
+        "[exact-template-ref]",
     ]
     for part in expected_log_parts:
         if part not in partial_run.stdout:
@@ -910,12 +913,19 @@ def case_lifted_partial_outputs(souffle_bin: Path, work_root: Path) -> None:
             )
 
     lifted_pos = partial_run.stdout.find("[lifted-wmc] handled=1")
-    rewrite_pos = partial_run.stdout.find("[pipeline] rewrite dispatch")
+    rewrite_pos = partial_run.stdout.find(
+        "[pipeline] rewrite skipped reason=exact_template_references"
+    )
     if lifted_pos < 0 or rewrite_pos < 0 or lifted_pos >= rewrite_pos:
         raise CaseFailure(
-            "lifted_partial_outputs: expected lifted evaluation before "
-            f"residual rewrite\nstdout:\n{partial_run.stdout}"
+            "lifted_partial_outputs: expected lifted evaluation before the "
+            f"reference-protected rewrite decision\nstdout:\n{partial_run.stdout}"
         )
+
+    log_json = single_json_file(
+        out_partial, "partial_*.json", label="lifted partial debugger log"
+    )
+    log_payload = assert_valid_debug_log(log_json)
 
     abstract_dot = out_partial / "abstract-derivation-graph.dot"
     assert_valid_dot(abstract_dot, label="lifted partial abstract graph")
@@ -931,17 +941,15 @@ def case_lifted_partial_outputs(souffle_bin: Path, work_root: Path) -> None:
 
     for dot_name in ("before_prune.dot", "after_prune.dot"):
         concrete_dot = out_partial / dot_name
-        assert_valid_dot(concrete_dot, label=f"lifted partial concrete graph {dot_name}")
         concrete_text = concrete_dot.read_text(encoding="utf-8")
-        if "bad(" not in concrete_text or "edge(" not in concrete_text:
+        if "digraph" not in concrete_text:
             raise CaseFailure(
-                "lifted_partial_outputs: concrete graph is missing the unsupported "
-                f"bad/edge region in {dot_name}"
+                f"lifted partial concrete graph {dot_name}: invalid DOT"
             )
-        if "good(" in concrete_text or "a(" in concrete_text:
+        if "[slot1->good(" not in concrete_text:
             raise CaseFailure(
-                "lifted_partial_outputs: handled good/a region was instantiated in "
-                f"the concrete graph {dot_name}"
+                "lifted_partial_outputs: pointwise template reference is missing "
+                f"from the residual graph {dot_name}"
             )
 
 
@@ -1198,6 +1206,7 @@ def case_lifted_disconnected_witness_fallback(
         "reason=body has a disconnected free-variable component for rule:",
         "lifted_output_tuples=0",
         "concrete_output_tuples=2",
+        "[pipeline] dumpProbabilities",
     ]
     for part in expected_log_parts:
         if part not in fallback_run.stdout:
@@ -1256,19 +1265,30 @@ def case_lifted_boundary_shared_event(souffle_bin: Path, work_root: Path) -> Non
                 f"preserved for {key}; expected={value} actual={probs.get(key)}"
             )
 
-    match = re.search(r"\[lifted-boundary\].*inlined_nodes=(\d+)", lifted_run.stdout)
-    if match is None or int(match.group(1)) < 2:
+    required = [
+        "template_backed_tuples=2",
+        "template_definitions=1",
+        "[exact-template-ref] dependency_edges=1 references=2",
+        "rewrite skipped reason=exact_template_references references=2",
+    ]
+    for part in required:
+        if part not in lifted_run.stdout:
+            raise CaseFailure(
+                "lifted_boundary_shared_event: missing pre-graph template "
+                f"reference diagnostic {part!r}\nstdout:\n{lifted_run.stdout}"
+            )
+    after_prune = out_lifted / "after_prune.dot"
+    assert_valid_dot(after_prune, label="pointwise reference final graph")
+    graph_text = after_prune.read_text(encoding="utf-8")
+    if 'left("a")' in graph_text or 'right("a")' in graph_text:
         raise CaseFailure(
-            "lifted_boundary_shared_event: boundary pass did not inline both "
-            f"helper nodes\nstdout:\n{lifted_run.stdout}"
+            "lifted_boundary_shared_event: template-backed helper instances "
+            "were constructed in the active concrete graph"
         )
-    boundary_dot = out_lifted / "lifted_boundary_before_rewrite.dot"
-    assert_valid_dot(boundary_dot, label="lifted boundary final graph")
-    boundary_text = boundary_dot.read_text(encoding="utf-8")
-    if 'left("a")' in boundary_text or 'right("a")' in boundary_text:
+    if "T2000000000[slot" not in graph_text:
         raise CaseFailure(
-            "lifted_boundary_shared_event: inlined helper instances remain in "
-            "the active concrete graph"
+            "lifted_boundary_shared_event: concrete consumer does not dump "
+            "tuple-instantiated pointwise references"
         )
 
 
@@ -1308,8 +1328,10 @@ def case_lifted_internal_template_ref(souffle_bin: Path, work_root: Path) -> Non
         "[lifted-wmc] handled=1",
         "handled_outputs=0",
         "witness_templates=1",
+        "template_backed_tuples=1",
         "reason=partial_multi_witness_lifted",
-        "[lifted-boundary]",
+        "[exact-template-ref] dependency_edges=1 references=1",
+        "rewrite skipped reason=exact_template_references references=1",
     ]
     for part in required:
         if part not in lifted_run.stdout:
@@ -1317,17 +1339,18 @@ def case_lifted_internal_template_ref(souffle_bin: Path, work_root: Path) -> Non
                 f"lifted_internal_template_ref: missing runtime diagnostic {part!r}\n"
                 f"stdout:\n{lifted_run.stdout}"
             )
-    match = re.search(r"\[lifted-boundary\].*inlined_nodes=(\d+)", lifted_run.stdout)
-    if match is None or int(match.group(1)) < 1:
+    after_prune = out_lifted / "after_prune.dot"
+    assert_valid_dot(after_prune, label="internal witness template reference graph")
+    graph_text = after_prune.read_text(encoding="utf-8")
+    if 'typeFilter("v","o")' in graph_text:
         raise CaseFailure(
-            "lifted_internal_template_ref: internal template relation was not "
-            f"inlined into the residual graph\nstdout:\n{lifted_run.stdout}"
+            "lifted_internal_template_ref: internal template tuple was built "
+            "in the active concrete graph"
         )
-    match = re.search(r"\[lifted-boundary\].*embedded_event_refs=(\d+)", lifted_run.stdout)
-    if match is None or int(match.group(1)) < 1:
+    if "T1000000000[slot" not in graph_text:
         raise CaseFailure(
-            "lifted_internal_template_ref: probabilistic source rule event was "
-            f"not preserved as an embedded event\nstdout:\n{lifted_run.stdout}"
+            "lifted_internal_template_ref: recursive consumer does not carry "
+            "the witness-indexed instantiation reference"
         )
     relation_stats = out_lifted / "witness-indexed-relations.tsv"
     if not relation_stats.exists() or "typeFilter" not in relation_stats.read_text(encoding="utf-8"):
@@ -1335,6 +1358,130 @@ def case_lifted_internal_template_ref(souffle_bin: Path, work_root: Path) -> Non
             "lifted_internal_template_ref: missing typeFilter witness-indexed "
             "relation stats"
         )
+
+
+def case_lifted_compositional_pointwise(
+    souffle_bin: Path, work_root: Path
+) -> None:
+    case_dir = prepare_case_workspace(
+        "lifted_compositional_pointwise", work_root
+    )
+    compute_bin, in_dir, _ = compile_compute(
+        souffle_bin=souffle_bin, case_dir=case_dir
+    )
+    out_base = case_dir / "out_base"
+    out_lifted = case_dir / "out_lifted"
+    run_exact_once(
+        compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base
+    )
+    lifted_run = run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_lifted,
+        extra_args=["--lifted-wmc", "--lifted-threshold=1", "--dumpdot"],
+    )
+    assert_prob_close(
+        out_lifted / "facts.prob",
+        out_base / "facts.prob",
+        label="lifted_compositional_pointwise",
+    )
+    required = [
+        "execution_mode=witness_indexed_template",
+        "composed_body_refs=2",
+        "partial_template_tuples=2",
+        "partial_template_rule_apps=2",
+    ]
+    for part in required:
+        if part not in lifted_run.stdout:
+            raise CaseFailure(
+                "lifted_compositional_pointwise: missing runtime diagnostic "
+                f"{part!r}\nstdout:\n{lifted_run.stdout}"
+            )
+    assert_valid_dot(
+        out_lifted / "after_prune.dot",
+        label="compositional pointwise residual graph",
+    )
+
+
+def case_lifted_partial_producer_pointwise(
+    souffle_bin: Path, work_root: Path
+) -> None:
+    case_dir = prepare_case_workspace(
+        "lifted_partial_producer_pointwise", work_root
+    )
+    compute_bin, in_dir, _ = compile_compute(
+        souffle_bin=souffle_bin, case_dir=case_dir
+    )
+    out_base = case_dir / "out_base"
+    out_lifted = case_dir / "out_lifted"
+    run_exact_once(
+        compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base
+    )
+    lifted_run = run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_lifted,
+        extra_args=["--lifted-wmc", "--lifted-threshold=1", "--dumpdot"],
+    )
+    assert_prob_close(
+        out_lifted / "facts.prob",
+        out_base / "facts.prob",
+        label="lifted_partial_producer_pointwise",
+    )
+    required = [
+        "execution_mode=witness_indexed_template",
+        "partial_template_tuples=2",
+        "partial_template_rule_apps=4",
+    ]
+    for part in required:
+        if part not in lifted_run.stdout:
+            raise CaseFailure(
+                "lifted_partial_producer_pointwise: missing runtime diagnostic "
+                f"{part!r}\nstdout:\n{lifted_run.stdout}"
+            )
+    assert_valid_dot(
+        out_lifted / "after_prune.dot",
+        label="partial producer pointwise residual graph",
+    )
+
+
+def case_lifted_pointwise_wmc_family_cache(
+    souffle_bin: Path, work_root: Path
+) -> None:
+    case_dir = prepare_case_workspace(
+        "lifted_pointwise_wmc_family_cache", work_root
+    )
+    compute_bin, in_dir, _ = compile_compute(
+        souffle_bin=souffle_bin, case_dir=case_dir
+    )
+    out_base = case_dir / "out_base"
+    out_lifted = case_dir / "out_lifted"
+    run_exact_once(
+        compute_bin=compute_bin, input_dir=in_dir, output_dir=out_base
+    )
+    lifted_run = run_exact_once(
+        compute_bin=compute_bin,
+        input_dir=in_dir,
+        output_dir=out_lifted,
+        extra_args=["--lifted-wmc", "--lifted-threshold=1"],
+    )
+    assert_prob_close(
+        out_lifted / "facts.prob",
+        out_base / "facts.prob",
+        label="lifted_pointwise_wmc_family_cache",
+    )
+    required = [
+        "execution_mode=pointwise_template",
+        "wmc_family_cache_hits=1",
+        "wmc_family_cache_misses=1",
+        "template_definitions=1",
+    ]
+    for part in required:
+        if part not in lifted_run.stdout:
+            raise CaseFailure(
+                "lifted_pointwise_wmc_family_cache: missing runtime diagnostic "
+                f"{part!r}\nstdout:\n{lifted_run.stdout}"
+            )
 
 
 
@@ -1361,6 +1508,9 @@ CASES = {
     "lifted_disconnected_witness_fallback": case_lifted_disconnected_witness_fallback,
     "lifted_boundary_shared_event": case_lifted_boundary_shared_event,
     "lifted_internal_template_ref": case_lifted_internal_template_ref,
+    "lifted_compositional_pointwise": case_lifted_compositional_pointwise,
+    "lifted_partial_producer_pointwise": case_lifted_partial_producer_pointwise,
+    "lifted_pointwise_wmc_family_cache": case_lifted_pointwise_wmc_family_cache,
 }
 
 

@@ -1,0 +1,17 @@
+.decl seed(x:symbol)
+.input seed
+
+.decl witness(x:symbol, y:symbol)
+.input witness
+
+.decl keep(x:symbol)
+.input keep
+
+.decl mid(x:symbol)
+0.7::mid(X) :- seed(X), witness(X, Y).
+
+.decl out(x:symbol)
+0.8::out(X) :- mid(X), keep(X).
+.output out
+
+query(out(_)).

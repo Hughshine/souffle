@@ -7,6 +7,7 @@
 #include "souffle/RamTypes.h"
 #include "souffle/SouffleInterface.h"
 #include "souffle/datastructure/SymbolTableImpl.h"
+#include "souffle/problog/ExactProvenanceTemplate.h"
 #include "souffle/problog/Rule.h"
 #include "souffle/problog/RuleManager.h"
 #include "souffle/problog/QueryManager.h"
@@ -69,10 +70,25 @@ class Node;
 class Hyperedge;
 class DerivationGraph;
 struct CycleDependencyGraph;
+namespace souffle::problog {
+struct PendingExactTemplateInstantiation;
+struct ExactTemplateInstantiation;
+}
 
 using NodePtr = std::shared_ptr<Node>;
 using EdgePtr = std::shared_ptr<Hyperedge>;
 using SupportToken = std::uint64_t;
+
+struct PendingExactTemplateReference {
+    std::shared_ptr<const souffle::problog::PendingExactTemplateInstantiation> instantiation;
+    bool negated = false;
+};
+
+struct ExactTemplateReference {
+    std::shared_ptr<const souffle::problog::ExactTemplateInstantiation> instantiation;
+    bool negated = false;
+    std::string bindingLabel;
+};
 
 inline constexpr SupportToken kEdgeSupportTokenMask = SupportToken{1} << 63;
 
@@ -285,6 +301,20 @@ public:
         events.erase(std::unique(events.begin(), events.end()), events.end());
         embeddedProbabilisticEvents = std::move(events);
     }
+    const std::vector<PendingExactTemplateReference>& getPendingExactTemplateReferences() const {
+        return pendingExactTemplateReferences;
+    }
+    void setPendingExactTemplateReferences(
+            std::vector<PendingExactTemplateReference> references) {
+        pendingExactTemplateReferences = std::move(references);
+    }
+    void clearPendingExactTemplateReferences() { pendingExactTemplateReferences.clear(); }
+    const std::vector<ExactTemplateReference>& getExactTemplateReferences() const {
+        return exactTemplateReferences;
+    }
+    void setExactTemplateReferences(std::vector<ExactTemplateReference> references) {
+        exactTemplateReferences = std::move(references);
+    }
     const std::vector<bool>& getBodyNegationsStable() const {
         if (cachedSortedBodyNegations.has_value()) {
             return *cachedSortedBodyNegations;
@@ -458,6 +488,11 @@ private:
     // Shared EdgePtr identity is intentional: all consumers must resolve the
     // same original event to the same decision-diagram variable.
     std::vector<EdgePtr> embeddedProbabilisticEvents;
+    // A concrete consumer can depend on an omitted provenance region through
+    // a parameterised exact-template instance. Pending references carry the
+    // canonical-to-ground substitution until graph event identities are bound.
+    std::vector<PendingExactTemplateReference> pendingExactTemplateReferences;
+    std::vector<ExactTemplateReference> exactTemplateReferences;
 };
 
 class DerivationGraphViewInterface {
@@ -880,6 +915,17 @@ void DerivationGraphViewInterface::dumpDot(const std::string& filename) const {
         NodePtr outNode = this->getOutput(edge);
         auto inputs = this->getInputs(edge);
         out << "  edge" << edge->getId() << ";\n";
+
+        std::size_t templateIndex = 0;
+        for (const auto& reference : edge->getExactTemplateReferences()) {
+            out << "  template" << edge->getId() << "_" << templateIndex
+                << " [shape=diamond, style=filled, fillcolor=lightgoldenrod1, label=\""
+                << (reference.negated ? "!" : "")
+                << escapeDotLabel(reference.bindingLabel) << "\"];\n";
+            out << "  template" << edge->getId() << "_" << templateIndex
+                << " -> edge" << edge->getId() << ";\n";
+            ++templateIndex;
+        }
 
         for (const auto& input : inputs) {
             if (getNodes().count(input)) {  // TODO: seems redundant
@@ -1381,7 +1427,10 @@ public:
         return existingTuples.find(tuple) != existingTuples.end();
     }
 
-    EdgePtr createHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& rm) {
+    EdgePtr createHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& rm,
+            const std::unordered_map<UntypedTuple,
+                    std::shared_ptr<const souffle::problog::PendingExactTemplateInstantiation>>*
+                    exactTemplateInstantiations = nullptr) {
         const bool timing = DerivationGraphViewInterface::isDumpStatsEnabled();
 
         if (!timing) {
@@ -1409,10 +1458,19 @@ public:
             // Create input nodes.
             std::vector<NodePtr> bodyNodes;
             std::vector<bool> bodyNegations;
+            std::vector<PendingExactTemplateReference> templateReferences;
             const std::unordered_set<std::string> ruleVarSet(vars.begin(), vars.end());
             for (const auto& bodyAtom : rule->getBodyAtoms()) {
                 UntypedTuple bodyTuple{bodyAtom.getRelation(),
                         bodyAtom.instantiatedFields(vars, ruleApp.varValuesPure)};
+                if (exactTemplateInstantiations != nullptr) {
+                    const auto templateIt = exactTemplateInstantiations->find(bodyTuple);
+                    if (templateIt != exactTemplateInstantiations->end()) {
+                        templateReferences.push_back(
+                                {templateIt->second, bodyAtom.isNegatedAtom()});
+                        continue;
+                    }
+                }
                 if (bodyAtom.isNegatedAtom() && !tupleExistsInUniverse(bodyTuple)) {
                     continue;
                 }
@@ -1428,7 +1486,12 @@ public:
                 bodyNodes.push_back(aggNode);
                 bodyNegations.push_back(false);
             }
-            auto newEdge = createHyperedge(bodyNodes, headNode, rule, bodyNegations, ruleApp);
+            auto newEdge = bodyNodes.empty() && !templateReferences.empty()
+                    ? createReferenceOnlyHyperedge(headNode, rule, ruleApp)
+                    : createHyperedge(bodyNodes, headNode, rule, bodyNegations, ruleApp);
+            if (newEdge && !templateReferences.empty()) {
+                newEdge->setPendingExactTemplateReferences(std::move(templateReferences));
+            }
 
             // Add the new edge to the map.
             std::string key = createEdgeKey(ruleApp.ruleId, vars, ruleApp.varValuesPure);
@@ -1479,6 +1542,7 @@ public:
         // Create input nodes.
         std::vector<NodePtr> bodyNodes;
         std::vector<bool> bodyNegations;
+        std::vector<PendingExactTemplateReference> templateReferences;
         const std::unordered_set<std::string> ruleVarSet(vars.begin(), vars.end());
         size_t body_atoms = 0;
         double body_inst_s = 0.0;
@@ -1489,6 +1553,17 @@ public:
             UntypedTuple bodyTuple{bodyAtom.getRelation(),
                     bodyAtom.instantiatedFields(vars, ruleApp.varValuesPure)};
             const auto t_body_inst1 = std::chrono::steady_clock::now();
+            if (exactTemplateInstantiations != nullptr) {
+                const auto templateIt = exactTemplateInstantiations->find(bodyTuple);
+                if (templateIt != exactTemplateInstantiations->end()) {
+                    templateReferences.push_back(
+                            {templateIt->second, bodyAtom.isNegatedAtom()});
+                    body_inst_s +=
+                            std::chrono::duration<double>(t_body_inst1 - t_body_inst0).count();
+                    ++body_atoms;
+                    continue;
+                }
+            }
             if (bodyAtom.isNegatedAtom() && !tupleExistsInUniverse(bodyTuple)) {
                 body_inst_s += std::chrono::duration<double>(t_body_inst1 - t_body_inst0).count();
                 continue;
@@ -1526,7 +1601,12 @@ public:
 //            std::cout << "isNegated: " << bodyNegations[i] << std::endl;
 //        }
         const auto t_edge0 = std::chrono::steady_clock::now();
-        auto newEdge = createHyperedge(bodyNodes, headNode, rule, bodyNegations, ruleApp);
+        auto newEdge = bodyNodes.empty() && !templateReferences.empty()
+                ? createReferenceOnlyHyperedge(headNode, rule, ruleApp)
+                : createHyperedge(bodyNodes, headNode, rule, bodyNegations, ruleApp);
+        if (newEdge && !templateReferences.empty()) {
+            newEdge->setPendingExactTemplateReferences(std::move(templateReferences));
+        }
         const auto t_edge1 = std::chrono::steady_clock::now();
 
         // Add the new edge to the map.
@@ -1561,58 +1641,23 @@ public:
         return newEdge;
     }
 
-    EdgePtr createDetachedHyperedgeFromRuleApp(const RuleApplication& ruleApp, const RuleManager& rm) {
+    // A template reference needs the probabilistic identity of a rule
+    // application, not its ground body.  Keep this event detached from the
+    // graph so binding a pre-graph template does not recreate the derivation
+    // that the template was introduced to omit.
+    EdgePtr createDetachedRuleEventFromRuleApp(
+            const RuleApplication& ruleApp, const RuleManager& rm) {
         const Rule* rule = rm.getRule(ruleApp.ruleId);
         assert(rule != nullptr && "Rule not found");
-        if (rule->isFact()) {
+        if (rule->isFact() || rule->isDeterminstic()) {
             return nullptr;
         }
-        std::vector<std::string> vars = rule->getVars();
-
+        const std::vector<std::string> vars = rule->getVars();
         UntypedTuple headTuple{rule->getHead().getRelation(),
                 rule->getHead().instantiatedFields(vars, ruleApp.varValuesPure)};
-        auto headNode = createNode(headTuple);
-
-        std::vector<NodePtr> bodyNodes;
-        std::vector<bool> bodyNegations;
-        const std::unordered_set<std::string> ruleVarSet(vars.begin(), vars.end());
-        for (const auto& bodyAtom : rule->getBodyAtoms()) {
-            UntypedTuple bodyTuple{bodyAtom.getRelation(),
-                    bodyAtom.instantiatedFields(vars, ruleApp.varValuesPure)};
-            if (bodyAtom.isNegatedAtom() && !tupleExistsInUniverse(bodyTuple)) {
-                continue;
-            }
-            auto bodyNode = createNode(bodyTuple);
-            bodyNodes.push_back(bodyNode);
-            bodyNegations.push_back(bodyAtom.isNegatedAtom());
-        }
-        for (size_t aggregateIndex = 0; aggregateIndex < rule->getAggregates().size(); ++aggregateIndex) {
-            auto aggNode = buildAggregateSumNode(
-                    ruleApp.ruleId, aggregateIndex, headNode, rule->getAggregates()[aggregateIndex],
-                    vars, ruleApp.varValuesPure, ruleVarSet);
-            assert(aggNode != nullptr && "Aggregate replay failed to reconstruct target sum");
-            bodyNodes.push_back(aggNode);
-            bodyNegations.push_back(false);
-        }
-        if (bodyNodes.empty()) {
-            return nullptr;
-        }
-        return EdgePtr(new Hyperedge(bodyNodes, headNode, nextEdgeId++, rule, bodyNegations, ruleApp));
-    }
-
-    EdgePtr createTemplateHyperedgeFromRuleApp(
-            const RuleApplication& ruleApp, const RuleManager& rm, const EdgePtr& embeddedEvent) {
-        EdgePtr detached = createDetachedHyperedgeFromRuleApp(ruleApp, rm);
-        if (!detached) {
-            return nullptr;
-        }
-        auto edge = createHyperedge(
-                detached->getInputs(), detached->getOutput(), nullptr,
-                detached->getBodyNegations(), ruleApp);
-        if (edge && embeddedEvent && !embeddedEvent->isDeterministic()) {
-            edge->setEmbeddedProbabilisticEvents({embeddedEvent});
-        }
-        return edge;
+        NodePtr eventOutput(new Node(headTuple, nextNodeId++));
+        return EdgePtr(new Hyperedge(
+                {}, std::move(eventOutput), nextEdgeId++, rule, {}, ruleApp));
     }
 
     NodePtr findNode(const UntypedTuple& tuple) const {
@@ -1911,6 +1956,19 @@ public:
     }
 
     // this one does not check if the edge already exists
+    EdgePtr createReferenceOnlyHyperedge(
+            NodePtr output, const Rule* rule, RuleApplication ruleApp) {
+        if (output == nullptr || rule == nullptr || rule->isFact()) {
+            return nullptr;
+        }
+        auto edge = EdgePtr(new Hyperedge(
+                {}, output, nextEdgeId++, rule, {}, std::move(ruleApp)));
+        output->addIncomingEdge(edge);
+        edges.insert(edge);
+        return edge;
+    }
+
+    // this one does not check if the edge already exists
     EdgePtr createHyperedge(const std::vector<NodePtr>& inputs, NodePtr output, const Rule* rule, const std::vector<bool>& bodyNegations, RuleApplication ruleApp = naiveRuleApplication) {
         if (inputs.empty() || (rule != nullptr && rule->isFact())) {
             // we do not create edges with no inputs or edges for fact rules
@@ -2066,9 +2124,11 @@ public:
     WorkingDerivationGraph() : DerivationGraph() {}
     WorkingDerivationGraph(const RuleManager* rm) : DerivationGraph(rm) {}
     WorkingSubgraphView prune(const std::vector<souffle::Relation*>& outputRelations);
-    WorkingSubgraphView prune(const std::vector<std::string>& outputRelations);
+    WorkingSubgraphView prune(const std::vector<std::string>& outputRelations,
+            const std::unordered_set<UntypedTuple>* precomputedOutputTuples = nullptr,
+            bool assumePreGraphLive = false);
 
-    static WorkingDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {}, const std::unordered_set<std::string>& excludedRelations = {}, const std::unordered_set<RuleApplication>* suppressedRuleApps = nullptr, std::unordered_map<RuleApplication, EdgePtr>* detachedSuppressedEvents = nullptr, const std::unordered_set<RuleApplication>* extraTemplateRuleApps = nullptr) {
+    static WorkingDerivationGraph* createFrom(const std::unordered_map<UntypedTuple, std::unordered_set<RuleApplication>*>& ruleApps, const RuleManager& ruleManager, const QueryManager& queryManager, const std::unordered_map<UntypedTuple, double>& fact_prob = {}, const std::vector<std::pair<UntypedTuple,bool>>& evidences = {}, const std::unordered_set<std::string>& excludedRelations = {}, const std::unordered_set<RuleApplication>* suppressedRuleApps = nullptr, const std::unordered_set<UntypedTuple>* excludedTuples = nullptr, const std::unordered_map<UntypedTuple, std::shared_ptr<const souffle::problog::PendingExactTemplateInstantiation>>* exactTemplateInstantiations = nullptr, const std::unordered_set<UntypedTuple>* includedTuples = nullptr, const std::unordered_set<RuleApplication>* includedRuleApps = nullptr, const std::unordered_map<UntypedTuple, std::shared_ptr<const souffle::problog::PendingExactTemplateInstantiation>>* rootTemplateInstantiations = nullptr) {
         FunctionTimer timer(" creating derivation graph ");
         if (DerivationGraphViewInterface::isDumpStatsEnabled()) {
             resetEdgeLookupTiming();
@@ -2078,7 +2138,9 @@ public:
         {
             FunctionTimer scopeTimer("create graph: init fact nodes");
             for (const auto& [tuple, prob] : fact_prob) {
-                if (excludedRelations.count(tuple.relation_name) > 0) {
+                if (excludedRelations.count(tuple.relation_name) > 0 ||
+                        (excludedTuples != nullptr && excludedTuples->count(tuple) > 0) ||
+                        (includedTuples != nullptr && includedTuples->count(tuple) == 0)) {
                     continue;
                 }
                 graph->existingTuples.insert(tuple);
@@ -2089,7 +2151,9 @@ public:
             }
         }
         for (const auto& [tuple, _] : ruleApps) {
-            if (excludedRelations.count(tuple.relation_name) > 0) {
+            if (excludedRelations.count(tuple.relation_name) > 0 ||
+                    (excludedTuples != nullptr && excludedTuples->count(tuple) > 0) ||
+                    (includedTuples != nullptr && includedTuples->count(tuple) == 0)) {
                 continue;
             }
             graph->existingTuples.insert(tuple);
@@ -2098,7 +2162,9 @@ public:
         {
             FunctionTimer scopeTimer("create graph: build rule apps");
             for (const auto& [tuple, ruleAppSet] : ruleApps) {
-                if (excludedRelations.count(tuple.relation_name) > 0) {
+                if (excludedRelations.count(tuple.relation_name) > 0 ||
+                        (excludedTuples != nullptr && excludedTuples->count(tuple) > 0) ||
+                        (includedTuples != nullptr && includedTuples->count(tuple) == 0)) {
                     continue;
                 }
                 auto node = graph->createNode(tuple, 0.0);
@@ -2107,34 +2173,29 @@ public:
 //                continue;  // skip fact nodes currently
 //            }
                 for (const auto& ruleApp : *ruleAppSet) {
+                    if (includedRuleApps != nullptr &&
+                            includedRuleApps->count(ruleApp) == 0) {
+                        continue;
+                    }
                     if (suppressedRuleApps != nullptr &&
                             suppressedRuleApps->count(ruleApp) != 0) {
-                        if (detachedSuppressedEvents != nullptr) {
-                            auto event = graph->createDetachedHyperedgeFromRuleApp(ruleApp, ruleManager);
-                            if (event) {
-                                detachedSuppressedEvents->emplace(ruleApp, event);
-                                graph->createTemplateHyperedgeFromRuleApp(
-                                        ruleApp, ruleManager, event);
-                            }
-                        }
                         continue;
                     }
-                    auto edge = graph->createHyperedgeFromRuleApp(ruleApp, ruleManager);
+                    auto edge = graph->createHyperedgeFromRuleApp(
+                            ruleApp, ruleManager, exactTemplateInstantiations);
                 }
             }
-            if (extraTemplateRuleApps != nullptr) {
-                for (const auto& ruleApp : *extraTemplateRuleApps) {
-                    const Rule* rule = ruleManager.getRule(ruleApp.ruleId);
-                    if (rule == nullptr ||
-                            rule->isDeterminstic() ||
-                            excludedRelations.count(rule->getHead().getRelation()) > 0) {
+            if (rootTemplateInstantiations != nullptr) {
+                for (const auto& [tuple, instantiation] :
+                        *rootTemplateInstantiations) {
+                    if (!instantiation || !instantiation->member ||
+                            excludedRelations.count(tuple.relation_name) > 0) {
                         continue;
                     }
-                    auto event = graph->createDetachedHyperedgeFromRuleApp(ruleApp, ruleManager);
-                    if (event) {
-                        graph->createTemplateHyperedgeFromRuleApp(
-                                ruleApp, ruleManager, event);
-                    }
+                    NodePtr root = graph->createNode(tuple, 0.0);
+                    EdgePtr edge = graph->createHyperedge({}, root);
+                    edge->setPendingExactTemplateReferences(
+                            {{instantiation, false}});
                 }
             }
         }
@@ -2185,7 +2246,10 @@ WorkingSubgraphView WorkingDerivationGraph::prune(const std::vector<souffle::Rel
     return prune(outputRelationNames);
 }
 
-WorkingSubgraphView WorkingDerivationGraph::prune(const std::vector<std::string>& outputRelations) {
+WorkingSubgraphView WorkingDerivationGraph::prune(
+        const std::vector<std::string>& outputRelations,
+        const std::unordered_set<UntypedTuple>* precomputedOutputTuples,
+        bool assumePreGraphLive) {
     FunctionTimer totalTimer("prune working graph");
     const bool profileEnabled = fcProfileEnabled;
     using Clock = std::chrono::steady_clock;
@@ -2216,7 +2280,14 @@ WorkingSubgraphView WorkingDerivationGraph::prune(const std::vector<std::string>
         const auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune: initialize outputs");
         for (const auto& node : nodes) {
-            if (outputRelationNames.count(node->getTuple().relation_name) > 0 || node->isQueryNode()) {
+            if (assumePreGraphLive) {
+                liveNodes.insert(node);
+            }
+            const bool isPrecomputedOutput = precomputedOutputTuples != nullptr &&
+                    precomputedOutputTuples->count(node->getTuple()) > 0;
+            if ((!isPrecomputedOutput &&
+                        outputRelationNames.count(node->getTuple().relation_name) > 0) ||
+                    node->isQueryNode()) {
                 liveNodes.insert(node);
                 workQueue.push(node);
                 node->setQuery();
@@ -2233,26 +2304,34 @@ WorkingSubgraphView WorkingDerivationGraph::prune(const std::vector<std::string>
     {
         const auto t0 = Clock::now();
         FunctionTimer scopeTimer("prune: evidence and backward BFS");
-        for (const auto& node : evidenceNodes) {
-            if (liveNodes.insert(node).second) {
-                workQueue.push(node);
+        if (assumePreGraphLive) {
+            for (const auto& edge : edges) {
+                if (!edge->hasSelfDependency()) {
+                    liveEdges.insert(edge);
+                }
             }
-        }
+        } else {
+            for (const auto& node : evidenceNodes) {
+                if (liveNodes.insert(node).second) {
+                    workQueue.push(node);
+                }
+            }
 
-        while (!workQueue.empty()) {
-            NodePtr current = workQueue.front();
-            workQueue.pop();
-            if (current->isFact) {
-                continue;
-            }
-            for (const auto& edge : current->getIncomingEdges()) {
-                if (edge->hasSelfDependency()) {
+            while (!workQueue.empty()) {
+                NodePtr current = workQueue.front();
+                workQueue.pop();
+                if (current->isFact) {
                     continue;
                 }
-                liveEdges.insert(edge);
-                for (const auto& inputNode : edge->getInputs()) {
-                    if (liveNodes.insert(inputNode).second) {
-                        workQueue.push(inputNode);
+                for (const auto& edge : current->getIncomingEdges()) {
+                    if (edge->hasSelfDependency()) {
+                        continue;
+                    }
+                    liveEdges.insert(edge);
+                    for (const auto& inputNode : edge->getInputs()) {
+                        if (liveNodes.insert(inputNode).second) {
+                            workQueue.push(inputNode);
+                        }
                     }
                 }
             }

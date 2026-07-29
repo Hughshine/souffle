@@ -6,6 +6,7 @@
 #include "souffle/Derivation.h"
 #include "souffle/SouffleInterface.h"
 #include "souffle/problog/RuleManager.h"
+#include "souffle/problog/ExactProvenanceTemplate.h"
 
 #include <cstddef>
 #include <map>
@@ -36,6 +37,25 @@ struct LiftedWmcResult {
   std::size_t witnessIndexedRows = 0;
   std::size_t witnessIndexedTupleFormulas = 0;
   std::size_t witnessIndexedTemplateDdNodes = 0;
+  std::size_t templateBackedTuples = 0;
+  std::size_t templateDefinitions = 0;
+  std::size_t templateEventBindings = 0;
+  std::size_t directPreflightRelations = 0;
+  std::size_t directEvaluatedRelations = 0;
+  std::size_t directPreflightTuples = 0;
+  std::size_t directPreflightRows = 0;
+  std::size_t composedBodyReferences = 0;
+  std::size_t partialTemplateTuples = 0;
+  std::size_t partialTemplateRuleApplications = 0;
+  std::size_t wmcFamilyCacheHits = 0;
+  std::size_t wmcFamilyCacheMisses = 0;
+  double directMultiWitnessMs = 0.0;
+  double directPreflightMs = 0.0;
+  double directEvaluationMs = 0.0;
+  double eligibilityMs = 0.0;
+  double abstractGraphMs = 0.0;
+  double symbolicDdMs = 0.0;
+  double instantiateWmcMs = 0.0;
   std::string executionMode;
   std::vector<std::string> handledOutputRelations;
   std::vector<std::string> handledRelations;
@@ -47,6 +67,16 @@ struct LiftedWmcResult {
   std::string witnessIndexedRelations;
   std::string witnessIndexedTupleStats;
   std::map<std::string, double> probabilities;
+  std::unordered_set<UntypedTuple> excludedTuples;
+  std::unordered_map<UntypedTuple,
+      std::shared_ptr<const PendingExactTemplateInstantiation>>
+      templateInstantiations;
+  /** Supported producer disjuncts attached to a residual concrete tuple. */
+  std::unordered_map<UntypedTuple,
+      std::shared_ptr<const PendingExactTemplateInstantiation>>
+      rootTemplateInstantiations;
+  /** Ground producers represented by rootTemplateInstantiations. */
+  std::unordered_set<RuleApplication> suppressedRuleApplications;
 };
 
 struct LiftedBoundaryInliningStats {

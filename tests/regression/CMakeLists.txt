@@ -2,22 +2,6 @@
 
 set(REGRESSION_RUNNER "${CMAKE_CURRENT_SOURCE_DIR}/run_regression_case.py")
 
-add_executable(canonical_rule_schema_test canonical_rule_schema_test.cpp)
-target_link_libraries(canonical_rule_schema_test PRIVATE compiled)
-add_test(NAME regression.canonical_rule_schema COMMAND canonical_rule_schema_test)
-set_tests_properties(regression.canonical_rule_schema PROPERTIES
-    LABELS "regression;canonical_rule_schema"
-    TIMEOUT 60
-)
-
-add_executable(provenance_fingerprint_test provenance_fingerprint_test.cpp)
-target_link_libraries(provenance_fingerprint_test PRIVATE compiled)
-add_test(NAME regression.provenance_fingerprint COMMAND provenance_fingerprint_test)
-set_tests_properties(regression.provenance_fingerprint PROPERTIES
-    LABELS "regression;provenance_fingerprint"
-    TIMEOUT 60
-)
-
 function(add_regression_case test_name case_id timeout_sec)
     add_test(
         NAME "regression.${test_name}"
@@ -55,7 +39,9 @@ add_regression_case(lifted_multi_witness_direct lifted_multi_witness_direct 300)
 add_regression_case(lifted_disconnected_witness_fallback lifted_disconnected_witness_fallback 300)
 add_regression_case(lifted_boundary_shared_event lifted_boundary_shared_event 300)
 add_regression_case(lifted_internal_template_ref lifted_internal_template_ref 300)
-
+add_regression_case(lifted_compositional_pointwise lifted_compositional_pointwise 300)
+add_regression_case(lifted_partial_producer_pointwise lifted_partial_producer_pointwise 300)
+add_regression_case(lifted_pointwise_wmc_family_cache lifted_pointwise_wmc_family_cache 300)
 if (NOT TARGET check-regression)
     add_custom_target(check-regression
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --progress -L regression
